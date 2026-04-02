@@ -94,8 +94,43 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (To be populated during roadmap creation) | | |
+| LLM-01 | Phase 1: Foundation | Pending |
+| LLM-02 | Phase 1: Foundation | Pending |
+| LLM-05 | Phase 1: Foundation | Pending |
+| LLM-06 | Phase 1: Foundation | Pending |
+| ELEC-02 | Phase 1: Foundation | Pending |
+| AGNT-01 | Phase 2: Agent Core | Pending |
+| AGNT-02 | Phase 2: Agent Core | Pending |
+| AGNT-03 | Phase 2: Agent Core | Pending |
+| AGNT-04 | Phase 2: Agent Core | Pending |
+| AGNT-05 | Phase 2: Agent Core | Pending |
+| AGNT-06 | Phase 2: Agent Core | Pending |
+| TOOL-01 | Phase 2: Agent Core | Pending |
+| TOOL-02 | Phase 2: Agent Core | Pending |
+| TOOL-03 | Phase 2: Agent Core | Pending |
+| TOOL-04 | Phase 2: Agent Core | Pending |
+| TOOL-05 | Phase 2: Agent Core | Pending |
+| TOOL-06 | Phase 2: Agent Core | Pending |
+| TOOL-08 | Phase 2: Agent Core | Pending |
+| ELEC-01 | Phase 3: IDE Shell | Pending |
+| EDIT-01 | Phase 3: IDE Shell | Pending |
+| EDIT-02 | Phase 3: IDE Shell | Pending |
+| EDIT-03 | Phase 3: IDE Shell | Pending |
+| EDIT-04 | Phase 3: IDE Shell | Pending |
+| EDIT-05 | Phase 3: IDE Shell | Pending |
+| EDIT-06 | Phase 3: IDE Shell | Pending |
+| CHAT-01 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-02 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-03 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-04 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-05 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-06 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-07 | Phase 4: Chat Panel + Integration | Pending |
+| TOOL-07 | Phase 4: Chat Panel + Integration | Pending |
+| LLM-03 | Phase 4: Chat Panel + Integration | Pending |
+| LLM-04 | Phase 4: Chat Panel + Integration | Pending |
+| ELEC-03 | Phase 5: Polish + Packaging | Pending |
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-03 after initial definition*
+*Last updated: 2026-04-03 after roadmap creation*
