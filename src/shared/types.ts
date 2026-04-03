@@ -100,6 +100,30 @@ export type StreamEvent =
   | StreamDoneEvent
 
 // ============================================================
+// File Tree & Editor Types (Phase 3)
+// ============================================================
+
+// File tree node for directory explorer
+export interface FileTreeNode {
+  name: string
+  path: string // absolute path
+  isDirectory: boolean
+  children?: FileTreeNode[]
+  isExpanded?: boolean // UI state hint
+}
+
+// Tab state for editor
+export interface EditorTab {
+  id: string // unique tab ID
+  filePath: string // absolute file path
+  fileName: string // display name (basename)
+  content: string // current editor content
+  diskContent: string // last saved/on-disk content
+  isDirty: boolean // content !== diskContent
+  language: string // Monaco language ID (e.g. 'typescript', 'python')
+}
+
+// ============================================================
 // Conversation
 // ============================================================
 

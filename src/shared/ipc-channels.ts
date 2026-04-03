@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
+import type { FileTreeNode } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -24,7 +25,18 @@ export const IPC_CHANNELS = {
 
   // Settings channels (renderer -> main)
   'settings:get': 'settings:get',
-  'settings:update': 'settings:update'
+  'settings:update': 'settings:update',
+
+  // Workspace channels (renderer -> main)
+  'workspace:open_folder': 'workspace:open_folder',
+  'workspace:get_tree': 'workspace:get_tree',
+  'workspace:watch': 'workspace:watch',
+  'workspace:status': 'workspace:status',
+
+  // File channels (renderer -> main, plus main -> renderer for changes)
+  'file:read': 'file:read',
+  'file:save': 'file:save',
+  'file:changed': 'file:changed'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -52,6 +64,12 @@ export interface IpcRequestPayloads {
     baseURL?: string
     systemPrompt?: string
   }
+  'workspace:open_folder': void
+  'workspace:get_tree': { dirPath?: string; depth?: number }
+  'workspace:watch': void
+  'workspace:status': void
+  'file:read': { filePath: string }
+  'file:save': { filePath: string; content: string }
 }
 
 // Response payloads (main returns to renderer via ipcMain.handle return)
@@ -66,6 +84,12 @@ export interface IpcResponsePayloads {
     systemPrompt?: string
   }
   'settings:update': void
+  'workspace:open_folder': { rootPath: string } | null
+  'workspace:get_tree': FileTreeNode[]
+  'workspace:watch': void
+  'workspace:status': { rootPath: string | null; isWatching: boolean }
+  'file:read': { content: string; language: string }
+  'file:save': void
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -81,6 +105,7 @@ export interface IpcStreamPayloads {
     toolInput: Record<string, unknown>
     reason: string
   }
+  'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
 }
 
 // ============================================================
