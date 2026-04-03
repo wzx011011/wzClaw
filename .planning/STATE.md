@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-04-03T10:33:38.822Z"
+status: verifying
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-04-03T10:45:42.900Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 Phase: 02 (agent-core) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-03
 
 Progress: [░░░░░░░░░░] 0%
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02-agent-core P02 | 12min | 1 tasks | 9 files |
 | Phase 02-agent-core P01 | 20min | 1 tasks | 9 files |
 | Phase 02-agent-core P03 | 14min | 2 tasks | 9 files |
+| Phase 02-agent-core P04 | 7min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,10 @@ Recent decisions affecting current work:
 - [Phase 02-agent-core]: D-38: AgentLoop tracks tool names from tool_use_start events via Map<string,string> since tool_use_end lacks name field
 - [Phase 02-agent-core]: D-39: Permission denied is non-fatal — tool result with isError=true fed back to LLM
 - [Phase 02-agent-core]: D-40: ToolRegistry createDefaultTools registers all 6 tools (3 read-only + 3 destructive)
+- [Phase 02-agent-core]: D-41: registerIpcHandlers accepts (gateway, agentLoop, permissionManager) for full wiring
+- [Phase 02-agent-core]: D-42: AgentEvents forwarded as stream:* events to renderer for compatibility
+- [Phase 02-agent-core]: D-43: Window destroyed triggers agentLoop.cancel() + permissionManager.clearSession()
+- [Phase 02-agent-core]: D-44: agent:permission_response uses dynamic handleOnce via PermissionManager
 
 ### Pending Todos
 
@@ -93,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-03T10:33:38.818Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-04-03T10:45:42.896Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
