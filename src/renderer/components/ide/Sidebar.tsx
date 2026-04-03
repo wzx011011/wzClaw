@@ -1,5 +1,6 @@
 import React from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
+import FileExplorer from './FileExplorer'
 
 /**
  * Sidebar — file explorer panel on the left side of the IDE.
@@ -27,9 +28,7 @@ export default function Sidebar(): JSX.Element {
         ) : isLoading ? (
           <div className="sidebar-loading">Loading...</div>
         ) : (
-          // FileExplorer will be rendered here in Task 2
-          // For now, show a placeholder that the tree loaded
-          <div className="file-explorer" id="file-explorer-root" />
+          <FileExplorer />
         )}
       </div>
     </div>

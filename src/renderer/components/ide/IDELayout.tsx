@@ -1,8 +1,10 @@
-import React, { useEffect, useCallback } from 'react'
+import React, { useEffect } from 'react'
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
 import Sidebar from './Sidebar'
 import StatusBar from './StatusBar'
+import TabBar from './TabBar'
+import EditorPanel from './EditorPanel'
 import WelcomeScreen from './WelcomeScreen'
 import { useTabStore } from '../../stores/tab-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
@@ -16,8 +18,8 @@ import { useWorkspaceStore } from '../../stores/workspace-store'
  *   [StatusBar (fixed bottom)]
  */
 export default function IDELayout(): JSX.Element {
-  const activeTab = useTabStore((s) => s.getActiveTab())
   const activeTabId = useTabStore((s) => s.activeTabId)
+  const hasTabs = useTabStore((s) => s.tabs.length > 0)
   const saveTab = useTabStore((s) => s.saveTab)
   const openFolder = useWorkspaceStore((s) => s.openFolder)
   const handleFileChange = useWorkspaceStore((s) => s.handleFileChange)
@@ -51,13 +53,6 @@ export default function IDELayout(): JSX.Element {
     return unsubscribe
   }, [handleFileChange])
 
-  // Determine what to show in the editor area
-  const editorContent = activeTab ? (
-    <div className="editor-panel" id="editor-panel-mount" />
-  ) : (
-    <WelcomeScreen />
-  )
-
   return (
     <div className="ide-container">
       <div className="ide-main">
@@ -66,7 +61,10 @@ export default function IDELayout(): JSX.Element {
             <Sidebar />
           </Allotment.Pane>
           <Allotment.Pane>
-            {editorContent}
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              {hasTabs && <TabBar />}
+              {hasTabs ? <EditorPanel /> : <WelcomeScreen />}
+            </div>
           </Allotment.Pane>
         </Allotment>
       </div>
