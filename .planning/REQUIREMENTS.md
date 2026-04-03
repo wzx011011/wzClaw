@@ -16,12 +16,12 @@
 
 ### Tool System
 
-- [ ] **TOOL-01**: FileRead 工具 — 读取指定文件内容，返回带行号的文本
+- [x] **TOOL-01**: FileRead 工具 — 读取指定文件内容，返回带行号的文本
 - [x] **TOOL-02**: FileWrite 工具 — 创建或覆盖文件
 - [x] **TOOL-03**: FileEdit 工具 — 基于搜索替换的精确编辑（old_string → new_string），防止竞态条件
 - [x] **TOOL-04**: Bash 工具 — 执行 shell 命令，支持超时（默认 120s），流式输出 stdout/stderr
-- [ ] **TOOL-05**: Grep 工具 — 正则表达式搜索文件内容，返回匹配行
-- [ ] **TOOL-06**: Glob 工具 — 按文件名模式搜索文件路径
+- [x] **TOOL-05**: Grep 工具 — 正则表达式搜索文件内容，返回匹配行
+- [x] **TOOL-06**: Glob 工具 — 按文件名模式搜索文件路径
 - [ ] **TOOL-07**: 工具调用可视化 — 在 Chat 中显示 Agent 调用了什么工具，输入参数和输出结果
 - [x] **TOOL-08**: 工具权限系统 — 破坏性操作（文件写入、Bash 执行）需用户确认；只读操作可自动允许
 
@@ -105,12 +105,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGNT-04 | Phase 2: Agent Core | Pending |
 | AGNT-05 | Phase 2: Agent Core | Pending |
 | AGNT-06 | Phase 2: Agent Core | Pending |
-| TOOL-01 | Phase 2: Agent Core | Pending |
+| TOOL-01 | Phase 2: Agent Core | Complete |
 | TOOL-02 | Phase 2: Agent Core | Complete |
 | TOOL-03 | Phase 2: Agent Core | Complete |
 | TOOL-04 | Phase 2: Agent Core | Complete |
-| TOOL-05 | Phase 2: Agent Core | Pending |
-| TOOL-06 | Phase 2: Agent Core | Pending |
+| TOOL-05 | Phase 2: Agent Core | Complete |
+| TOOL-06 | Phase 2: Agent Core | Complete |
 | TOOL-08 | Phase 2: Agent Core | Complete |
 | ELEC-01 | Phase 3: IDE Shell | Pending |
 | EDIT-01 | Phase 3: IDE Shell | Pending |

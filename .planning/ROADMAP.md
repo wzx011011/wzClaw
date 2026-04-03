@@ -51,7 +51,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Tool interface + read-only tools (FileRead, Grep, Glob) + tool registry
+- [x] 02-01-PLAN.md — Tool interface + read-only tools (FileRead, Grep, Glob) + tool registry
 - [x] 02-02-PLAN.md — Destructive tools (FileWrite, FileEdit, Bash) + PermissionManager + IPC permission channels
 - [ ] 02-03-PLAN.md — Agent loop with LoopDetector, MessageBuilder, tool execution, cancellation, and safety guards
 - [ ] 02-04-PLAN.md — IPC integration wiring AgentLoop into main process entry point
