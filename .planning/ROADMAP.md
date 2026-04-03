@@ -87,7 +87,7 @@ Plans:
 **UI hint**: yes
 
 Plans:
-- [ ] 04-01-PLAN.md — Chat store + settings store + IDELayout three-pane integration + npm dependencies
+- [x] 04-01-PLAN.md — Chat store + settings store + IDELayout three-pane integration + npm dependencies
 - [ ] 04-02-PLAN.md — Chat panel UI (ChatPanel, ChatMessage, CodeBlock, ToolCard, PermissionRequest) with markdown + syntax highlighting + Apply button
 - [ ] 04-03-PLAN.md — SettingsManager with safeStorage + SettingsModal + model selector in chat header
 

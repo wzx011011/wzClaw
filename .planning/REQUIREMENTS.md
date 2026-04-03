@@ -27,13 +27,13 @@
 
 ### Chat Panel
 
-- [ ] **CHAT-01**: 侧边栏聊天面板，可调整大小、可折叠
-- [ ] **CHAT-02**: 流式响应显示 — 逐 token 实时渲染 LLM 输出
+- [x] **CHAT-01**: 侧边栏聊天面板，可调整大小、可折叠
+- [x] **CHAT-02**: 流式响应显示 — 逐 token 实时渲染 LLM 输出
 - [ ] **CHAT-03**: 代码块渲染 — 语法高亮 + 一键复制 + "Apply"按钮将代码插入编辑器
 - [ ] **CHAT-04**: Markdown 渲染 — 支持标题、列表、粗体、链接、表格
-- [ ] **CHAT-05**: 会话内消息历史 — 显示完整的对话记录（用户消息、助手回复、工具结果）
-- [ ] **CHAT-06**: 中途停止生成 — 用户可取消正在进行的响应
-- [ ] **CHAT-07**: 清空/重置对话 — 用户可开始新的对话
+- [x] **CHAT-05**: 会话内消息历史 — 显示完整的对话记录（用户消息、助手回复、工具结果）
+- [x] **CHAT-06**: 中途停止生成 — 用户可取消正在进行的响应
+- [x] **CHAT-07**: 清空/重置对话 — 用户可开始新的对话
 
 ### LLM Integration
 
@@ -119,13 +119,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-04 | Phase 3: IDE Shell | Complete |
 | EDIT-05 | Phase 3: IDE Shell | Complete |
 | EDIT-06 | Phase 3: IDE Shell | Complete |
-| CHAT-01 | Phase 4: Chat Panel + Integration | Pending |
-| CHAT-02 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-01 | Phase 4: Chat Panel + Integration | Complete |
+| CHAT-02 | Phase 4: Chat Panel + Integration | Complete |
 | CHAT-03 | Phase 4: Chat Panel + Integration | Pending |
 | CHAT-04 | Phase 4: Chat Panel + Integration | Pending |
-| CHAT-05 | Phase 4: Chat Panel + Integration | Pending |
-| CHAT-06 | Phase 4: Chat Panel + Integration | Pending |
-| CHAT-07 | Phase 4: Chat Panel + Integration | Pending |
+| CHAT-05 | Phase 4: Chat Panel + Integration | Complete |
+| CHAT-06 | Phase 4: Chat Panel + Integration | Complete |
+| CHAT-07 | Phase 4: Chat Panel + Integration | Complete |
 | TOOL-07 | Phase 4: Chat Panel + Integration | Pending |
 | LLM-03 | Phase 4: Chat Panel + Integration | Pending |
 | LLM-04 | Phase 4: Chat Panel + Integration | Pending |

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-04-03T12:31:53.405Z"
+status: executing
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-04-03T13:07:43.683Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 11
   percent: 0
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** AI Agent 能正确调用工具（读写文件、执行命令、搜索代码）完成编程任务，且用户能在 Chat Panel 中实时看到过程和结果。
-**Current focus:** Phase 03 — ide-shell
+**Current focus:** Phase 04 — chat-panel-integration
 
 ## Current Position
 
-Phase: 03 (ide-shell) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 04 (chat-panel-integration) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-04-03
 
 Progress: [░░░░░░░░░░] 0%
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03-ide-shell P01 | 10min | 2 tasks | 8 files |
 | Phase 03-ide-shell P02 | 11min | 2 tasks | 13 files |
 | Phase 03-ide-shell P03 | 8min | 2 tasks | 5 files |
+| Phase 04 P01 | 6min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,9 @@ Recent decisions affecting current work:
 - [Phase 03-ide-shell]: D-51: Ctrl+S triggers IPC saveTab, errors logged but dirty state preserved for retry
 - [Phase 03-ide-shell]: D-52: Agent edits trigger file:changed events via tool call input tracking by ID
 - [Phase 03-ide-shell]: D-53: Dirty tabs are NOT overwritten by external changes to protect user work
+- [Phase 04]: D-54: Chat store init() returns unsubscribe function, called once in IDELayout useEffect with cleanup
+- [Phase 04]: D-57: Three-pane Allotment layout [200, 500, 350] with Sidebar, Editor, ChatPanel
+- [Phase 04]: D-58: Settings store uses DEFAULT_MODELS constant for model label lookup
 
 ### Pending Todos
 
@@ -110,6 +114,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-03T12:31:53.402Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-04-03T13:07:43.678Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
