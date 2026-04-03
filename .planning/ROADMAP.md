@@ -71,7 +71,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Main process workspace management (WorkspaceManager, IPC handlers, chokidar watch, menu bar)
 - [x] 03-02-PLAN.md — Renderer IDE layout (Monaco Editor, file explorer, tab bar, Zustand stores)
-- [ ] 03-03-PLAN.md — Agent integration (Ctrl+S save, dirty tracking, agent edit auto-refresh, status bar)
+- [x] 03-03-PLAN.md — Agent integration (Ctrl+S save, dirty tracking, agent edit auto-refresh, status bar)
 
 ### Phase 4: Chat Panel + Integration
 **Goal**: Users interact with the AI agent through a sidebar chat panel, see streaming responses with tool call visualizations, configure API keys and models, and apply AI-generated code directly into the editor
