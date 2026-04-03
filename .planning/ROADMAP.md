@@ -66,13 +66,12 @@ Plans:
   3. User can open files from the explorer into Monaco Editor tabs, edit content, and see syntax highlighting
   4. User can save files (Ctrl+S), and the editor tracks dirty/modified state with visual indicators
   5. When the agent modifies a file (via FileWrite or FileEdit), the corresponding editor tab opens or refreshes automatically
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [x] 03-01-PLAN.md — Main process workspace management (WorkspaceManager, IPC handlers, chokidar watch, menu bar)
+- [ ] 03-02-PLAN.md — Renderer IDE layout (Monaco Editor, file explorer, tab bar, Zustand stores)
+- [ ] 03-03-PLAN.md — Agent integration (Ctrl+S save, dirty tracking, agent edit auto-refresh, status bar)
 
 ### Phase 4: Chat Panel + Integration
 **Goal**: Users interact with the AI agent through a sidebar chat panel, see streaming responses with tool call visualizations, configure API keys and models, and apply AI-generated code directly into the editor

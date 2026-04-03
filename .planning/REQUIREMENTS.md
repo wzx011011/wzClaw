@@ -49,13 +49,13 @@
 - [ ] **EDIT-01**: Monaco Editor 集成 — 代码编辑器，支持语法高亮
 - [ ] **EDIT-02**: Tab 多文件编辑 — 同时打开多个文件
 - [ ] **EDIT-03**: 文件树（Explorer）— 目录树视图，展示工作区文件结构
-- [ ] **EDIT-04**: 打开文件夹作为工作区 — 通过对话框选择项目根目录
+- [x] **EDIT-04**: 打开文件夹作为工作区 — 通过对话框选择项目根目录
 - [ ] **EDIT-05**: Agent 编辑文件后自动打开对应 Tab
 - [ ] **EDIT-06**: 文件保存和脏状态追踪
 
 ### Electron Shell
 
-- [ ] **ELEC-01**: Electron 桌面应用窗口，包含菜单栏和状态栏
+- [x] **ELEC-01**: Electron 桌面应用窗口，包含菜单栏和状态栏
 - [x] **ELEC-02**: IPC 通信桥接 — Main Process 和 Renderer Process 之间的类型安全通信
 - [ ] **ELEC-03**: 应用打包和分发（electron-builder）
 
@@ -112,11 +112,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-05 | Phase 2: Agent Core | Complete |
 | TOOL-06 | Phase 2: Agent Core | Complete |
 | TOOL-08 | Phase 2: Agent Core | Complete |
-| ELEC-01 | Phase 3: IDE Shell | Pending |
+| ELEC-01 | Phase 3: IDE Shell | Complete |
 | EDIT-01 | Phase 3: IDE Shell | Pending |
 | EDIT-02 | Phase 3: IDE Shell | Pending |
 | EDIT-03 | Phase 3: IDE Shell | Pending |
-| EDIT-04 | Phase 3: IDE Shell | Pending |
+| EDIT-04 | Phase 3: IDE Shell | Complete |
 | EDIT-05 | Phase 3: IDE Shell | Pending |
 | EDIT-06 | Phase 3: IDE Shell | Pending |
 | CHAT-01 | Phase 4: Chat Panel + Integration | Pending |

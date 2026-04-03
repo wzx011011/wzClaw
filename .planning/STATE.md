@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-04-03T10:45:42.900Z"
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-04-03T12:00:26.273Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 8
   percent: 0
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** AI Agent 能正确调用工具（读写文件、执行命令、搜索代码）完成编程任务，且用户能在 Chat Panel 中实时看到过程和结果。
-**Current focus:** Phase 02 — agent-core
+**Current focus:** Phase 03 — ide-shell
 
 ## Current Position
 
-Phase: 02 (agent-core) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
+Phase: 03 (ide-shell) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-04-03
 
 Progress: [░░░░░░░░░░] 0%
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02-agent-core P01 | 20min | 1 tasks | 9 files |
 | Phase 02-agent-core P03 | 14min | 2 tasks | 9 files |
 | Phase 02-agent-core P04 | 7min | 1 tasks | 3 files |
+| Phase 03-ide-shell P01 | 10min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,10 @@ Recent decisions affecting current work:
 - [Phase 02-agent-core]: D-42: AgentEvents forwarded as stream:* events to renderer for compatibility
 - [Phase 02-agent-core]: D-43: Window destroyed triggers agentLoop.cancel() + permissionManager.clearSession()
 - [Phase 02-agent-core]: D-44: agent:permission_response uses dynamic handleOnce via PermissionManager
+- [Phase 03-ide-shell]: D-45: WorkspaceManager is a singleton created at app startup, injected into IPC handlers as 4th parameter
+- [Phase 03-ide-shell]: D-46: Directory tree uses depth=1 default for lazy loading, renderer requests deeper levels on expand
+- [Phase 03-ide-shell]: D-47: File change events forwarded to all BrowserWindows to support multi-window in future
+- [Phase 03-ide-shell]: D-48: Language detection maps file extensions to Monaco language IDs using static lookup table
 
 ### Pending Todos
 
@@ -98,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-03T10:45:42.896Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-04-03T12:00:26.269Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
