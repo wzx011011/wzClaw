@@ -70,7 +70,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md — Main process workspace management (WorkspaceManager, IPC handlers, chokidar watch, menu bar)
-- [ ] 03-02-PLAN.md — Renderer IDE layout (Monaco Editor, file explorer, tab bar, Zustand stores)
+- [x] 03-02-PLAN.md — Renderer IDE layout (Monaco Editor, file explorer, tab bar, Zustand stores)
 - [ ] 03-03-PLAN.md — Agent integration (Ctrl+S save, dirty tracking, agent edit auto-refresh, status bar)
 
 ### Phase 4: Chat Panel + Integration
@@ -113,6 +113,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | Complete | 2026-04-03 |
 | 2. Agent Core | 0/4 | Planning complete | - |
-| 3. IDE Shell | 0/? | Not started | - |
+| 3. IDE Shell | 2/3 | In Progress|  |
 | 4. Chat Panel + Integration | 0/? | Not started | - |
 | 5. Polish + Packaging | 0/? | Not started | - |
