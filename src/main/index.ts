@@ -3,6 +3,9 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { LLMGateway } from './llm/gateway'
 import { registerIpcHandlers } from './ipc-handlers'
+import { createDefaultTools } from './tools/tool-registry'
+import { PermissionManager } from './permission/permission-manager'
+import { AgentLoop } from './agent/agent-loop'
 
 const gateway = new LLMGateway()
 
@@ -27,7 +30,16 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.wzxclaw')
-  registerIpcHandlers(gateway)
+
+  // Create tool registry with all default tools
+  const workingDirectory = process.cwd() // Phase 3 adds workspace selection
+  const toolRegistry = createDefaultTools(workingDirectory)
+  const permissionManager = new PermissionManager()
+  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager)
+
+  // Wire IPC handlers with all components
+  registerIpcHandlers(gateway, agentLoop, permissionManager)
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
