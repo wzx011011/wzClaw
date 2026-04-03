@@ -22,7 +22,7 @@
 - [x] **TOOL-04**: Bash 工具 — 执行 shell 命令，支持超时（默认 120s），流式输出 stdout/stderr
 - [x] **TOOL-05**: Grep 工具 — 正则表达式搜索文件内容，返回匹配行
 - [x] **TOOL-06**: Glob 工具 — 按文件名模式搜索文件路径
-- [ ] **TOOL-07**: 工具调用可视化 — 在 Chat 中显示 Agent 调用了什么工具，输入参数和输出结果
+- [x] **TOOL-07**: 工具调用可视化 — 在 Chat 中显示 Agent 调用了什么工具，输入参数和输出结果
 - [x] **TOOL-08**: 工具权限系统 — 破坏性操作（文件写入、Bash 执行）需用户确认；只读操作可自动允许
 
 ### Chat Panel
@@ -39,8 +39,8 @@
 
 - [x] **LLM-01**: 支持 OpenAI 兼容 API（覆盖 OpenAI、DeepSeek 及其他兼容端点）
 - [x] **LLM-02**: 支持 Anthropic API（Claude 模型）
-- [ ] **LLM-03**: API Key 配置界面 — 用户可输入并保存多个 Provider 的 API Key
-- [ ] **LLM-04**: 模型选择/切换 — 用户可在对话中切换使用不同模型
+- [x] **LLM-03**: API Key 配置界面 — 用户可输入并保存多个 Provider 的 API Key
+- [x] **LLM-04**: 模型选择/切换 — 用户可在对话中切换使用不同模型
 - [x] **LLM-05**: 流式响应处理 — SSE 流式接收 LLM 输出
 - [x] **LLM-06**: System Prompt 支持 — 可配置的系统提示词
 
@@ -126,9 +126,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CHAT-05 | Phase 4: Chat Panel + Integration | Complete |
 | CHAT-06 | Phase 4: Chat Panel + Integration | Complete |
 | CHAT-07 | Phase 4: Chat Panel + Integration | Complete |
-| TOOL-07 | Phase 4: Chat Panel + Integration | Pending |
-| LLM-03 | Phase 4: Chat Panel + Integration | Pending |
-| LLM-04 | Phase 4: Chat Panel + Integration | Pending |
+| TOOL-07 | Phase 4: Chat Panel + Integration | Complete |
+| LLM-03 | Phase 4: Chat Panel + Integration | Complete |
+| LLM-04 | Phase 4: Chat Panel + Integration | Complete |
 | ELEC-03 | Phase 5: Polish + Packaging | Pending |
 
 ---

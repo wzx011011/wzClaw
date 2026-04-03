@@ -89,7 +89,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Chat store + settings store + IDELayout three-pane integration + npm dependencies
 - [ ] 04-02-PLAN.md — Chat panel UI (ChatPanel, ChatMessage, CodeBlock, ToolCard, PermissionRequest) with markdown + syntax highlighting + Apply button
-- [ ] 04-03-PLAN.md — SettingsManager with safeStorage + SettingsModal + model selector in chat header
+- [x] 04-03-PLAN.md — SettingsManager with safeStorage + SettingsModal + model selector in chat header
 
 ### Phase 5: Polish + Packaging
 **Goal**: The application is packaged as an installable desktop application and passes end-to-end integration testing across all features
