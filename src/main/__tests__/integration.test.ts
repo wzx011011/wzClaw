@@ -14,6 +14,14 @@ vi.mock('electron', () => ({
     handle: vi.fn(),
     handleOnce: vi.fn(),
   },
+  app: {
+    getPath: vi.fn(() => '/tmp/test-userdata'),
+  },
+  safeStorage: {
+    isEncryptionAvailable: vi.fn(() => true),
+    encryptString: vi.fn(() => Buffer.from('encrypted')),
+    decryptString: vi.fn(() => 'decrypted'),
+  },
 }))
 
 // ============================================================
