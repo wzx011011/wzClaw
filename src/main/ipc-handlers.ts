@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
@@ -54,6 +55,9 @@ export function registerIpcHandlers(
     sender.once('destroyed', onWindowClosed)
 
     // Run agent loop and forward events to renderer
+    // Track tool call inputs by ID to extract file paths for agent edit notifications (per D-52)
+    const toolCallInputs = new Map<string, Record<string, unknown>>()
+
     try {
       for await (const agentEvent of agentLoop.run(result.data.content, config, sender)) {
         switch (agentEvent.type) {
@@ -61,12 +65,14 @@ export function registerIpcHandlers(
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
             break
           case 'agent:tool_call':
+            // Store tool input so we can extract file path on tool_result (per D-52)
+            toolCallInputs.set(agentEvent.toolCallId, agentEvent.input)
             sender.send(IPC_CHANNELS['stream:tool_use_start'], {
               id: agentEvent.toolCallId,
               name: agentEvent.toolName,
             })
             break
-          case 'agent:tool_result':
+          case 'agent:tool_result': {
             sender.send(IPC_CHANNELS['stream:tool_use_end'], {
               id: agentEvent.toolCallId,
               parsedInput: {
@@ -75,7 +81,26 @@ export function registerIpcHandlers(
                 toolName: agentEvent.toolName,
               },
             })
+
+            // Forward file changes from agent tool execution to renderer (per D-52)
+            if (!agentEvent.isError && (agentEvent.toolName === 'FileWrite' || agentEvent.toolName === 'FileEdit')) {
+              const toolInput = toolCallInputs.get(agentEvent.toolCallId)
+              const filePath = toolInput?.path as string | undefined
+              if (filePath) {
+                const absolutePath = path.isAbsolute(filePath)
+                  ? filePath
+                  : path.resolve(config.workingDirectory, filePath)
+                sender.send(IPC_CHANNELS['file:changed'], {
+                  filePath: absolutePath,
+                  changeType: 'modified'
+                })
+              }
+            }
+
+            // Clean up tracked input to avoid memory leak
+            toolCallInputs.delete(agentEvent.toolCallId)
             break
+          }
           case 'agent:permission_request':
             sender.send(IPC_CHANNELS['agent:permission_request'], {
               toolName: agentEvent.toolName,
