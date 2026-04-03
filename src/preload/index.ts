@@ -50,6 +50,15 @@ const api = {
     return () => ipcRenderer.removeListener('file:changed', handler)
   },
 
+  // Permission request listener — returns unsubscribe function (per D-64, D-65)
+  onPermissionRequest: (callback: (payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => void) => {
+    const handler = (_: unknown, payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => callback(payload)
+    ipcRenderer.on('agent:permission_request', handler)
+    return () => ipcRenderer.removeListener('agent:permission_request', handler)
+  },
+  sendPermissionResponse: (response: { approved: boolean; sessionCache: boolean }) =>
+    ipcRenderer.invoke('agent:permission_response', response),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
