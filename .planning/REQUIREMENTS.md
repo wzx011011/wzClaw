@@ -57,7 +57,7 @@
 
 - [x] **ELEC-01**: Electron 桌面应用窗口，包含菜单栏和状态栏
 - [x] **ELEC-02**: IPC 通信桥接 — Main Process 和 Renderer Process 之间的类型安全通信
-- [ ] **ELEC-03**: 应用打包和分发（electron-builder）
+- [x] **ELEC-03**: 应用打包和分发（electron-builder）
 
 ## v2 Requirements
 
@@ -129,7 +129,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-07 | Phase 4: Chat Panel + Integration | Complete |
 | LLM-03 | Phase 4: Chat Panel + Integration | Complete |
 | LLM-04 | Phase 4: Chat Panel + Integration | Complete |
-| ELEC-03 | Phase 5: Polish + Packaging | Pending |
+| ELEC-03 | Phase 5: Polish + Packaging | Complete |
 
 ---
 *Requirements defined: 2026-04-03*

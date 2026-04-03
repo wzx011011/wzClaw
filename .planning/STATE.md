@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-04-03T13:22:56.375Z"
+status: executing
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-04-03T14:15:08.307Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 15
+  completed_plans: 14
   percent: 0
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** AI Agent 能正确调用工具（读写文件、执行命令、搜索代码）完成编程任务，且用户能在 Chat Panel 中实时看到过程和结果。
-**Current focus:** Phase 04 — chat-panel-integration
+**Current focus:** Phase 05 — polish-packaging
 
 ## Current Position
 
-Phase: 04 (chat-panel-integration) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 05 (polish-packaging) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-04-03
 
 Progress: [░░░░░░░░░░] 0%
@@ -64,6 +64,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 04 P01 | 6min | 2 tasks | 6 files |
 | Phase 04 P03 | 7min | 2 tasks | 5 files |
 | Phase 04 P02 | 10min | 2 tasks | 8 files |
+| Phase 05 P01 | 2062s | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,11 @@ Recent decisions affecting current work:
 - [Phase 04]: D-60: CodeBlock Apply button inserts code into active editor via tab store, user Ctrl+S to save
 - [Phase 04]: D-62: ToolCard collapsible details with output truncated at 500 chars and show more toggle
 - [Phase 04]: D-68: Stop button visible when isStreaming, Clear button visible when messages exist
+- [Phase 05]: D-70: NSIS installer with oneClick=false for install directory choice
+- [Phase 05]: D-71: deleteAppDataOnUninstall=false preserves safeStorage API keys
+- [Phase 05]: D-72: x64-only target for personal Windows 10+ tool
+- [Phase 05]: D-73: Icon generated via Node.js raw bytes (256x256 multi-size ICO)
+- [Phase 05]: D-74: Excluded CLAUDE.md, vitest config, tsbuildinfo, log files from package
 
 ### Pending Todos
 
@@ -124,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-03T13:22:56.371Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-04-03T14:15:08.303Z
+Stopped at: Completed 05-01-PLAN.md
 Resume file: None
