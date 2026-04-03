@@ -2,6 +2,9 @@ import type { Tool } from './tool-interface'
 import type { ToolDefinition } from '../../shared/types'
 import { toDefinition } from './tool-interface'
 import { FileReadTool } from './file-read'
+import { FileWriteTool } from './file-write'
+import { FileEditTool } from './file-edit'
+import { BashTool } from './bash'
 import { GrepTool } from './grep'
 import { GlobTool } from './glob'
 
@@ -32,8 +35,9 @@ export class ToolRegistry {
 }
 
 /**
- * Factory that creates a ToolRegistry with the 3 read-only tools.
- * FileWrite, FileEdit, and Bash will be added in Plan 02.
+ * Factory that creates a ToolRegistry with all 6 tools.
+ * Read-only tools: FileRead, Grep, Glob (no approval required)
+ * Destructive tools: FileWrite, FileEdit, Bash (requires approval per D-32)
  */
 export function createDefaultTools(workingDirectory: string): ToolRegistry {
   const registry = new ToolRegistry()
@@ -42,6 +46,11 @@ export function createDefaultTools(workingDirectory: string): ToolRegistry {
   registry.register(new FileReadTool())
   registry.register(new GrepTool())
   registry.register(new GlobTool())
+
+  // Destructive tools (requires approval per D-32)
+  registry.register(new FileWriteTool())
+  registry.register(new FileEditTool())
+  registry.register(new BashTool(workingDirectory))
 
   return registry
 }

@@ -69,10 +69,10 @@ describe('ToolRegistry', () => {
 })
 
 describe('createDefaultTools', () => {
-  it('creates a registry with 3 read-only tools', () => {
+  it('creates a registry with all 6 tools', () => {
     const registry = createDefaultTools('/test/project')
     const tools = registry.getAll()
-    expect(tools.length).toBe(3)
+    expect(tools.length).toBe(6)
   })
 
   it('registers FileRead tool', () => {
@@ -93,8 +93,26 @@ describe('createDefaultTools', () => {
     expect(registry.get('Glob')?.requiresApproval).toBe(false)
   })
 
-  it('no tools require approval (all are read-only)', () => {
+  it('registers FileWrite tool (requires approval)', () => {
     const registry = createDefaultTools('/test/project')
-    expect(registry.getApprovalRequired()).toEqual([])
+    expect(registry.get('FileWrite')).toBeDefined()
+    expect(registry.get('FileWrite')?.requiresApproval).toBe(true)
+  })
+
+  it('registers FileEdit tool (requires approval)', () => {
+    const registry = createDefaultTools('/test/project')
+    expect(registry.get('FileEdit')).toBeDefined()
+    expect(registry.get('FileEdit')?.requiresApproval).toBe(true)
+  })
+
+  it('registers Bash tool (requires approval)', () => {
+    const registry = createDefaultTools('/test/project')
+    expect(registry.get('Bash')).toBeDefined()
+    expect(registry.get('Bash')?.requiresApproval).toBe(true)
+  })
+
+  it('3 tools require approval (FileWrite, FileEdit, Bash)', () => {
+    const registry = createDefaultTools('/test/project')
+    expect(registry.getApprovalRequired()).toEqual(['FileWrite', 'FileEdit', 'Bash'])
   })
 })
