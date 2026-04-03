@@ -37,12 +37,12 @@
 
 ### LLM Integration
 
-- [ ] **LLM-01**: 支持 OpenAI 兼容 API（覆盖 OpenAI、DeepSeek 及其他兼容端点）
-- [ ] **LLM-02**: 支持 Anthropic API（Claude 模型）
+- [x] **LLM-01**: 支持 OpenAI 兼容 API（覆盖 OpenAI、DeepSeek 及其他兼容端点）
+- [x] **LLM-02**: 支持 Anthropic API（Claude 模型）
 - [ ] **LLM-03**: API Key 配置界面 — 用户可输入并保存多个 Provider 的 API Key
 - [ ] **LLM-04**: 模型选择/切换 — 用户可在对话中切换使用不同模型
-- [ ] **LLM-05**: 流式响应处理 — SSE 流式接收 LLM 输出
-- [ ] **LLM-06**: System Prompt 支持 — 可配置的系统提示词
+- [x] **LLM-05**: 流式响应处理 — SSE 流式接收 LLM 输出
+- [x] **LLM-06**: System Prompt 支持 — 可配置的系统提示词
 
 ### Editor
 
@@ -94,10 +94,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LLM-01 | Phase 1: Foundation | Pending |
-| LLM-02 | Phase 1: Foundation | Pending |
-| LLM-05 | Phase 1: Foundation | Pending |
-| LLM-06 | Phase 1: Foundation | Pending |
+| LLM-01 | Phase 1: Foundation | Complete |
+| LLM-02 | Phase 1: Foundation | Complete |
+| LLM-05 | Phase 1: Foundation | Complete |
+| LLM-06 | Phase 1: Foundation | Complete |
 | ELEC-02 | Phase 1: Foundation | Complete |
 | AGNT-01 | Phase 2: Agent Core | Pending |
 | AGNT-02 | Phase 2: Agent Core | Pending |
