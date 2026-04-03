@@ -7,18 +7,10 @@ import type { AgentLoop } from './agent/agent-loop'
 import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
+import { SettingsManager } from './settings-manager'
 
-// In-memory settings for Phase 1 (Phase 4 adds persistence)
-let currentSettings = {
-  provider: 'openai' as string,
-  model: 'gpt-4o',
-  hasApiKey: false,
-  baseURL: undefined as string | undefined,
-  systemPrompt: undefined as string | undefined,
-}
-
-// Store API keys in memory (Phase 4 uses safeStorage)
-const apiKeys = new Map<string, string>()
+// Persistent settings with encrypted API key storage (per D-66)
+const settingsManager = new SettingsManager()
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -26,6 +18,9 @@ export function registerIpcHandlers(
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager
 ): void {
+  // Load persisted settings from disk
+  settingsManager.load()
+
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
   // events to the renderer via webContents.send
@@ -38,11 +33,21 @@ export function registerIpcHandlers(
 
     const sender = event.sender
 
+    // Ensure the LLM gateway has the current provider configured with up-to-date settings
+    const config = settingsManager.getCurrentConfig()
+    if (config.apiKey) {
+      gateway.addProvider({
+        provider: config.provider as 'openai' | 'anthropic',
+        apiKey: config.apiKey,
+        baseURL: config.baseURL
+      })
+    }
+
     // Build AgentConfig from current settings; use workspace root if available
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const config: AgentConfig = {
-      model: currentSettings.model,
-      systemPrompt: currentSettings.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    const agentConfig: AgentConfig = {
+      model: config.model,
+      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       workingDirectory,
       conversationId: result.data.conversationId,
     }
@@ -50,7 +55,7 @@ export function registerIpcHandlers(
     // Cleanup on window close
     const onWindowClosed = (): void => {
       agentLoop.cancel()
-      permissionManager.clearSession(config.conversationId)
+      permissionManager.clearSession(agentConfig.conversationId)
     }
     sender.once('destroyed', onWindowClosed)
 
@@ -59,7 +64,7 @@ export function registerIpcHandlers(
     const toolCallInputs = new Map<string, Record<string, unknown>>()
 
     try {
-      for await (const agentEvent of agentLoop.run(result.data.content, config, sender)) {
+      for await (const agentEvent of agentLoop.run(result.data.content, agentConfig, sender)) {
         switch (agentEvent.type) {
           case 'agent:text':
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
@@ -88,8 +93,8 @@ export function registerIpcHandlers(
               const filePath = toolInput?.path as string | undefined
               if (filePath) {
                 const absolutePath = path.isAbsolute(filePath)
-                  ? filePath
-                  : path.resolve(config.workingDirectory, filePath)
+                      ? filePath
+                      : path.resolve(agentConfig.workingDirectory, filePath)
                 sender.send(IPC_CHANNELS['file:changed'], {
                   filePath: absolutePath,
                   changeType: 'modified'
@@ -137,24 +142,17 @@ export function registerIpcHandlers(
   // request is in flight. No static handler needed here.
 
   // ============================================================
-  // Settings: get
+  // Settings: get — returns settings from persistent storage
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['settings:get'], () => {
-    return currentSettings
+    return settingsManager.getSettings()
   })
 
   // ============================================================
-  // Settings: update
+  // Settings: update — persists settings with encrypted API keys
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['settings:update'], (_event, request) => {
-    if (request.provider) currentSettings.provider = request.provider
-    if (request.model) currentSettings.model = request.model
-    if (request.apiKey) {
-      apiKeys.set(currentSettings.provider, request.apiKey)
-      currentSettings.hasApiKey = true
-    }
-    if (request.baseURL !== undefined) currentSettings.baseURL = request.baseURL
-    if (request.systemPrompt !== undefined) currentSettings.systemPrompt = request.systemPrompt
+    settingsManager.updateSettings(request)
   })
 
   // ============================================================
