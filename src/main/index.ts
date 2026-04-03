@@ -1,6 +1,10 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { LLMGateway } from './llm/gateway'
+import { registerIpcHandlers } from './ipc-handlers'
+
+const gateway = new LLMGateway()
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -23,6 +27,7 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.wzxclaw')
+  registerIpcHandlers(gateway)
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
