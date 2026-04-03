@@ -56,7 +56,7 @@
 ### Electron Shell
 
 - [ ] **ELEC-01**: Electron 桌面应用窗口，包含菜单栏和状态栏
-- [ ] **ELEC-02**: IPC 通信桥接 — Main Process 和 Renderer Process 之间的类型安全通信
+- [x] **ELEC-02**: IPC 通信桥接 — Main Process 和 Renderer Process 之间的类型安全通信
 - [ ] **ELEC-03**: 应用打包和分发（electron-builder）
 
 ## v2 Requirements
@@ -98,7 +98,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LLM-02 | Phase 1: Foundation | Pending |
 | LLM-05 | Phase 1: Foundation | Pending |
 | LLM-06 | Phase 1: Foundation | Pending |
-| ELEC-02 | Phase 1: Foundation | Pending |
+| ELEC-02 | Phase 1: Foundation | Complete |
 | AGNT-01 | Phase 2: Agent Core | Pending |
 | AGNT-02 | Phase 2: Agent Core | Pending |
 | AGNT-03 | Phase 2: Agent Core | Pending |
