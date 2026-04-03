@@ -102,7 +102,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — electron-builder NSIS config + app icon + build verification
-- [ ] 05-02-PLAN.md — Full NSIS installer build + human E2E workflow verification
+- [x] 05-02-PLAN.md — Full NSIS installer build + human E2E workflow verification
 
 ## Progress
 
