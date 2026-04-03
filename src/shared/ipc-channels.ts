@@ -18,6 +18,10 @@ export const IPC_CHANNELS = {
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
 
+  // Permission channels (main -> renderer request, renderer -> main response)
+  'agent:permission_request': 'agent:permission_request',
+  'agent:permission_response': 'agent:permission_response',
+
   // Settings channels (renderer -> main)
   'settings:get': 'settings:get',
   'settings:update': 'settings:update'
@@ -36,6 +40,10 @@ export interface IpcRequestPayloads {
     content: string
   }
   'agent:stop': void
+  'agent:permission_response': {
+    approved: boolean
+    sessionCache: boolean
+  }
   'settings:get': void
   'settings:update': {
     provider?: string
@@ -68,6 +76,11 @@ export interface IpcStreamPayloads {
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
   'stream:error': { error: string }
   'stream:done': { usage: { inputTokens: number; outputTokens: number } }
+  'agent:permission_request': {
+    toolName: string
+    toolInput: Record<string, unknown>
+    reason: string
+  }
 }
 
 // ============================================================
