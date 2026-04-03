@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation** - Shared types, IPC protocol, and LLM Gateway with multi-provider streaming
 - [ ] **Phase 2: Agent Core** - Agent Runtime conversation loop, Tool System (6 tools), and permission model
 - [ ] **Phase 3: IDE Shell** - Electron app window, Monaco Editor integration, file explorer, and workspace management
-- [ ] **Phase 4: Chat Panel + Integration** - Chat UI, tool call visualization, settings panel, and end-to-end wiring
+- [x] **Phase 4: Chat Panel + Integration** - Chat UI, tool call visualization, settings panel, and end-to-end wiring (completed 2026-04-03)
 - [ ] **Phase 5: Polish + Packaging** - Application packaging, final integration testing, and distribution
 
 ## Phase Details
@@ -98,11 +98,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. The application builds as a packaged installer (or portable executable) that launches without a development environment
   2. End-to-end workflow works in the packaged build: open workspace, send chat message, agent executes tools, apply code to editor, save file
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 05-01-PLAN.md — electron-builder NSIS config + app icon + build verification
+- [ ] 05-02-PLAN.md — Full NSIS installer build + human E2E workflow verification
 
 ## Progress
 
@@ -114,5 +114,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Foundation | 3/3 | Complete | 2026-04-03 |
 | 2. Agent Core | 0/4 | Planning complete | - |
 | 3. IDE Shell | 2/3 | In Progress|  |
-| 4. Chat Panel + Integration | 0/3 | Planning complete | - |
-| 5. Polish + Packaging | 0/? | Not started | - |
+| 4. Chat Panel + Integration | 0/3 | Complete    | 2026-04-03 |
+| 5. Polish + Packaging | 0/2 | Planning complete | - |
