@@ -12,7 +12,7 @@ Build a Cursor-like AI coding IDE desktop application, starting from the foundat
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation** - Shared types, IPC protocol, and LLM Gateway with multi-provider streaming
+- [x] **Phase 1: Foundation** - Shared types, IPC protocol, and LLM Gateway with multi-provider streaming
 - [ ] **Phase 2: Agent Core** - Agent Runtime conversation loop, Tool System (6 tools), and permission model
 - [ ] **Phase 3: IDE Shell** - Electron app window, Monaco Editor integration, file explorer, and workspace management
 - [ ] **Phase 4: Chat Panel + Integration** - Chat UI, tool call visualization, settings panel, and end-to-end wiring
@@ -30,12 +30,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A configurable system prompt is included in all LLM requests
   4. Main process and renderer process can exchange typed messages through IPC channels without runtime type errors
   5. Shared TypeScript type definitions compile without errors and are importable from both main and renderer process code
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [x] 01-01: TBD
 - [x] 01-02: TBD
-- [ ] 01-03: TBD
+- [x] 01-03: TBD
 
 ### Phase 2: Agent Core
 **Goal**: An Agent Runtime can autonomously drive multi-turn LLM conversations with tool execution, safely handling file operations, command execution, and code search with user-controlled permissions
@@ -48,13 +48,13 @@ Plans:
   4. Destructive operations (FileWrite, FileEdit, Bash) prompt for user approval before executing; read-only operations (FileRead, Grep, Glob) execute automatically
   5. The agent stops after detecting repeated identical tool calls (3+ consecutive) and caps total tool iterations per turn at 25
   6. An in-progress agent conversation can be cancelled mid-stream and cleanly terminates all pending operations
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [x] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
-- [ ] 02-04: TBD
+- [ ] 02-01-PLAN.md — Tool interface + read-only tools (FileRead, Grep, Glob) + tool registry
+- [ ] 02-02-PLAN.md — Destructive tools (FileWrite, FileEdit, Bash) + PermissionManager + IPC permission channels
+- [ ] 02-03-PLAN.md — Agent loop with LoopDetector, MessageBuilder, tool execution, cancellation, and safety guards
+- [ ] 02-04-PLAN.md — IPC integration wiring AgentLoop into main process entry point
 
 ### Phase 3: IDE Shell
 **Goal**: Users have a desktop IDE window with a code editor, file explorer, and multi-file tab system for opening and editing project files
@@ -112,8 +112,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/? | Not started | - |
-| 2. Agent Core | 0/? | Not started | - |
+| 1. Foundation | 3/3 | Complete | 2026-04-03 |
+| 2. Agent Core | 0/4 | Planning complete | - |
 | 3. IDE Shell | 0/? | Not started | - |
 | 4. Chat Panel + Integration | 0/? | Not started | - |
 | 5. Polish + Packaging | 0/? | Not started | - |
