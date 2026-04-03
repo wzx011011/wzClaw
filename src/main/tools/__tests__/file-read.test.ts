@@ -3,23 +3,20 @@ import { FileReadTool } from '../file-read'
 import { MAX_FILE_READ_LINES, MAX_TOOL_RESULT_CHARS } from '../../../shared/constants'
 import * as fs from 'fs'
 import * as path from 'path'
-
-vi.mock('fs', () => ({
-  readFile: vi.fn(),
-  existsSync: vi.fn()
-}))
+import * as os from 'os'
 
 describe('FileReadTool', () => {
   let tool: FileReadTool
   const defaultContext = { workingDirectory: '/test/project' }
+  let tempDir: string
 
   beforeEach(() => {
     tool = new FileReadTool()
-    vi.clearAllMocks()
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileread-test-'))
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    fs.rmSync(tempDir, { recursive: true, force: true })
   })
 
   it('has correct name and description', () => {
@@ -36,13 +33,10 @@ describe('FileReadTool', () => {
   })
 
   it('reads an existing file and returns content with line numbers', async () => {
-    const content = 'line1\nline2\nline3'
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(null, content)
-    })
+    const filePath = path.join(tempDir, 'test.txt')
+    fs.writeFileSync(filePath, 'line1\nline2\nline3')
 
-    const result = await tool.execute({ path: '/test/project/test.txt' }, defaultContext)
+    const result = await tool.execute({ path: filePath }, defaultContext)
     expect(result.isError).toBe(false)
     expect(result.output).toContain('1\tline1')
     expect(result.output).toContain('2\tline2')
@@ -50,25 +44,20 @@ describe('FileReadTool', () => {
   })
 
   it('returns error for non-existent file', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(false)
-
-    const result = await tool.execute({ path: '/test/project/missing.txt' }, defaultContext)
+    const result = await tool.execute(
+      { path: path.join(tempDir, 'missing.txt') },
+      defaultContext
+    )
     expect(result.isError).toBe(true)
     expect(result.output).toContain('File not found')
     expect(result.output).toContain('missing.txt')
   })
 
   it('respects offset parameter', async () => {
-    const content = 'line1\nline2\nline3\nline4\nline5'
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(null, content)
-    })
+    const filePath = path.join(tempDir, 'test.txt')
+    fs.writeFileSync(filePath, 'line1\nline2\nline3\nline4\nline5')
 
-    const result = await tool.execute(
-      { path: '/test/project/test.txt', offset: 2 },
-      defaultContext
-    )
+    const result = await tool.execute({ path: filePath, offset: 2 }, defaultContext)
     expect(result.isError).toBe(false)
     expect(result.output).toContain('3\tline3')
     expect(result.output).not.toContain('1\tline1')
@@ -76,16 +65,10 @@ describe('FileReadTool', () => {
   })
 
   it('respects limit parameter', async () => {
-    const content = 'line1\nline2\nline3\nline4\nline5'
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(null, content)
-    })
+    const filePath = path.join(tempDir, 'test.txt')
+    fs.writeFileSync(filePath, 'line1\nline2\nline3\nline4\nline5')
 
-    const result = await tool.execute(
-      { path: '/test/project/test.txt', limit: 2 },
-      defaultContext
-    )
+    const result = await tool.execute({ path: filePath, limit: 2 }, defaultContext)
     expect(result.isError).toBe(false)
     expect(result.output).toContain('1\tline1')
     expect(result.output).toContain('2\tline2')
@@ -93,41 +76,36 @@ describe('FileReadTool', () => {
   })
 
   it('truncates output at MAX_FILE_READ_LINES lines', async () => {
+    const filePath = path.join(tempDir, 'big.txt')
     const lines = Array.from({ length: 3000 }, (_, i) => `line${i + 1}`)
-    const content = lines.join('\n')
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(null, content)
-    })
+    fs.writeFileSync(filePath, lines.join('\n'))
 
-    const result = await tool.execute({ path: '/test/project/big.txt' }, defaultContext)
+    const result = await tool.execute({ path: filePath }, defaultContext)
     expect(result.isError).toBe(false)
     const outputLines = result.output.split('\n').filter((l) => l.length > 0)
     expect(outputLines.length).toBeLessThanOrEqual(MAX_FILE_READ_LINES)
   })
 
   it('truncates output at MAX_TOOL_RESULT_CHARS characters', async () => {
+    const filePath = path.join(tempDir, 'long.txt')
     const longLine = 'x'.repeat(50000)
-    const content = longLine + '\n'
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(null, content)
-    })
+    fs.writeFileSync(filePath, longLine + '\n')
 
-    const result = await tool.execute({ path: '/test/project/long.txt' }, defaultContext)
+    const result = await tool.execute({ path: filePath }, defaultContext)
     expect(result.isError).toBe(false)
     expect(result.output.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS)
   })
 
-  it('handles fs.readFile errors gracefully', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.readFile as any).mockImplementation((_p: string, _e: string, cb: Function) => {
-      cb(new Error('Permission denied'))
-    })
+  it('handles relative paths resolved against workingDirectory', async () => {
+    const filePath = path.join(tempDir, 'test.txt')
+    fs.writeFileSync(filePath, 'hello world')
 
-    const result = await tool.execute({ path: '/test/project/test.txt' }, defaultContext)
-    expect(result.isError).toBe(true)
-    expect(result.output).toContain('Permission denied')
+    const result = await tool.execute(
+      { path: 'test.txt' },
+      { workingDirectory: tempDir }
+    )
+    expect(result.isError).toBe(false)
+    expect(result.output).toContain('hello world')
   })
 
   it('rejects invalid input (missing path)', async () => {

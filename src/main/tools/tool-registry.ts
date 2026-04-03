@@ -1,6 +1,9 @@
 import type { Tool } from './tool-interface'
 import type { ToolDefinition } from '../../shared/types'
 import { toDefinition } from './tool-interface'
+import { FileReadTool } from './file-read'
+import { GrepTool } from './grep'
+import { GlobTool } from './glob'
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
@@ -28,7 +31,17 @@ export class ToolRegistry {
   }
 }
 
+/**
+ * Factory that creates a ToolRegistry with the 3 read-only tools.
+ * FileWrite, FileEdit, and Bash will be added in Plan 02.
+ */
 export function createDefaultTools(workingDirectory: string): ToolRegistry {
-  // Stub - not implemented yet
-  return new ToolRegistry()
+  const registry = new ToolRegistry()
+
+  // Read-only tools (no approval required)
+  registry.register(new FileReadTool())
+  registry.register(new GrepTool())
+  registry.register(new GlobTool())
+
+  return registry
 }
