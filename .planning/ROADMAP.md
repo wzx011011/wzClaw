@@ -83,13 +83,13 @@ Plans:
   3. Code blocks in chat responses render with syntax highlighting and have an "Apply" button that inserts the code into the active editor tab
   4. User can input and save API keys for multiple providers (OpenAI-compatible, Anthropic) through a settings panel, and switch between models during a conversation
   5. User can stop an in-progress generation and clear/reset the conversation to start fresh
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [ ] 04-01-PLAN.md — Chat store + settings store + IDELayout three-pane integration + npm dependencies
+- [ ] 04-02-PLAN.md — Chat panel UI (ChatPanel, ChatMessage, CodeBlock, ToolCard, PermissionRequest) with markdown + syntax highlighting + Apply button
+- [ ] 04-03-PLAN.md — SettingsManager with safeStorage + SettingsModal + model selector in chat header
 
 ### Phase 5: Polish + Packaging
 **Goal**: The application is packaged as an installable desktop application and passes end-to-end integration testing across all features
@@ -114,5 +114,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Foundation | 3/3 | Complete | 2026-04-03 |
 | 2. Agent Core | 0/4 | Planning complete | - |
 | 3. IDE Shell | 2/3 | In Progress|  |
-| 4. Chat Panel + Integration | 0/? | Not started | - |
+| 4. Chat Panel + Integration | 0/3 | Planning complete | - |
 | 5. Polish + Packaging | 0/? | Not started | - |
