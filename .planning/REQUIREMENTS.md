@@ -7,12 +7,12 @@
 
 ### Agent Runtime
 
-- [ ] **AGNT-01**: Agent 能与 LLM 进行多轮对话循环（发送消息 → 接收回复 → 解析工具调用 → 执行工具 → 反馈结果 → 循环）
-- [ ] **AGNT-02**: Agent 支持流式输出，实时将 LLM 响应推送到 UI
-- [ ] **AGNT-03**: Agent 支持 tool_use 响应解析，能识别 LLM 请求的工具调用并执行
-- [ ] **AGNT-04**: Agent 有上下文窗口管理，能追踪 token 用量并在接近限制时自动截断/压缩
-- [ ] **AGNT-05**: Agent 有无限循环防护，检测重复工具调用并强制停止
-- [ ] **AGNT-06**: Agent 支持中途取消（AbortController），用户可停止正在进行的生成
+- [x] **AGNT-01**: Agent 能与 LLM 进行多轮对话循环（发送消息 → 接收回复 → 解析工具调用 → 执行工具 → 反馈结果 → 循环）
+- [x] **AGNT-02**: Agent 支持流式输出，实时将 LLM 响应推送到 UI
+- [x] **AGNT-03**: Agent 支持 tool_use 响应解析，能识别 LLM 请求的工具调用并执行
+- [x] **AGNT-04**: Agent 有上下文窗口管理，能追踪 token 用量并在接近限制时自动截断/压缩
+- [x] **AGNT-05**: Agent 有无限循环防护，检测重复工具调用并强制停止
+- [x] **AGNT-06**: Agent 支持中途取消（AbortController），用户可停止正在进行的生成
 
 ### Tool System
 
@@ -99,12 +99,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LLM-05 | Phase 1: Foundation | Complete |
 | LLM-06 | Phase 1: Foundation | Complete |
 | ELEC-02 | Phase 1: Foundation | Complete |
-| AGNT-01 | Phase 2: Agent Core | Pending |
-| AGNT-02 | Phase 2: Agent Core | Pending |
-| AGNT-03 | Phase 2: Agent Core | Pending |
-| AGNT-04 | Phase 2: Agent Core | Pending |
-| AGNT-05 | Phase 2: Agent Core | Pending |
-| AGNT-06 | Phase 2: Agent Core | Pending |
+| AGNT-01 | Phase 2: Agent Core | Complete |
+| AGNT-02 | Phase 2: Agent Core | Complete |
+| AGNT-03 | Phase 2: Agent Core | Complete |
+| AGNT-04 | Phase 2: Agent Core | Complete |
+| AGNT-05 | Phase 2: Agent Core | Complete |
+| AGNT-06 | Phase 2: Agent Core | Complete |
 | TOOL-01 | Phase 2: Agent Core | Complete |
 | TOOL-02 | Phase 2: Agent Core | Complete |
 | TOOL-03 | Phase 2: Agent Core | Complete |
