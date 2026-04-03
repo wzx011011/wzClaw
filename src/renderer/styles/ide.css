@@ -1,0 +1,426 @@
+/* ============================================================
+   IDE Layout Styles — VS Code Dark+ Theme (per D-53)
+   ============================================================ */
+
+:root {
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #333333;
+  --text-primary: #cccccc;
+  --text-secondary: #858585;
+  --accent: #007acc;
+  --border: #404040;
+  --tab-active-bg: #1e1e1e;
+  --tab-inactive-bg: #2d2d2d;
+  --dirty-indicator: #c5c5c5;
+  --hover-bg: #2a2d2e;
+  --active-bg: #37373d;
+}
+
+/* Reset & Full viewport */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(121, 121, 121, 0.4);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(121, 121, 121, 0.7);
+}
+
+/* ============================================================
+   IDE Layout
+   ============================================================ */
+
+.ide-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.ide-main {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Override allotment defaults to match dark theme */
+.ide-main [data-allotment-variant='vertical'] > div,
+.ide-main [data-allotment-variant='horizontal'] > div {
+  border-color: var(--border);
+}
+
+.ide-main .split-sash {
+  background: var(--border);
+}
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+
+.sidebar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.sidebar-header .workspace-name {
+  color: var(--text-primary);
+  font-weight: 400;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.open-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  width: calc(100% - 24px);
+  justify-content: center;
+}
+
+.open-folder-btn:hover {
+  background: #1a8ad4;
+}
+
+.sidebar-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   File Explorer
+   ============================================================ */
+
+.file-explorer {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 22px;
+}
+
+.tree-node:hover {
+  background: var(--hover-bg);
+}
+
+.tree-node.active {
+  background: var(--active-bg);
+}
+
+.tree-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 10px;
+  margin-right: 4px;
+  color: var(--text-secondary);
+}
+
+.tree-icon.dir-icon {
+  color: #dcb67a;
+}
+
+.tree-icon.file-icon {
+  color: var(--text-secondary);
+}
+
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.tree-children {
+  /* Indentation handled by padding-left inline style */
+}
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 160px;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 16px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* ============================================================
+   Tab Bar
+   ============================================================ */
+
+.tab-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  height: 35px;
+  min-height: 35px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tab-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  height: 35px;
+  min-width: 100px;
+  max-width: 200px;
+  background: var(--tab-inactive-bg);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.tab-item.active {
+  background: var(--tab-active-bg);
+  border-top: 2px solid var(--accent);
+  padding-top: 0;
+}
+
+.tab-item:not(.active) {
+  border-top: 2px solid transparent;
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.tab-dirty {
+  color: var(--dirty-indicator);
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.tab-item:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Editor Panel
+   ============================================================ */
+
+.editor-panel {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+/* ============================================================
+   Status Bar
+   ============================================================ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 10px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 12px;
+  user-select: none;
+}
+
+.status-bar-left,
+.status-bar-center,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-bar-center {
+  flex: 1;
+  justify-content: center;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ============================================================
+   Welcome Screen
+   ============================================================ */
+
+.welcome-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  color: var(--text-secondary);
+  text-align: center;
+  gap: 16px;
+}
+
+.welcome-title {
+  font-size: 36px;
+  font-weight: 300;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.welcome-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.welcome-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.welcome-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.welcome-shortcut kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-primary);
+}
