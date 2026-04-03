@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { EditorTab } from '../../shared/types'
 
 // ============================================================
-// Tab Store (per D-49, D-50)
+// Tab Store (per D-49, D-50, D-51, D-52)
 // ============================================================
 
 interface TabState {
@@ -24,6 +24,8 @@ interface TabActions {
   saveTab: (tabId: string) => Promise<void>
   getActiveTab: () => EditorTab | undefined
   refreshTabContent: (tabId: string, newContent: string) => void
+  openOrRefreshTab: (filePath: string) => Promise<void>
+  handleExternalFileChange: (filePath: string, changeType: string) => Promise<void>
 }
 
 type TabStore = TabState & TabActions
@@ -100,15 +102,20 @@ export const useTabStore = create<TabStore>((set, get) => ({
     const tab = get().tabs.find((t) => t.id === tabId)
     if (!tab) return
 
-    await window.wzxclaw.saveFile({ filePath: tab.filePath, content: tab.content })
+    try {
+      await window.wzxclaw.saveFile({ filePath: tab.filePath, content: tab.content })
 
-    // Update diskContent to match current content, mark as clean
-    set({
-      tabs: get().tabs.map((t) => {
-        if (t.id !== tabId) return t
-        return { ...t, diskContent: t.content, isDirty: false }
+      // Update diskContent to match current content, mark as clean
+      set({
+        tabs: get().tabs.map((t) => {
+          if (t.id !== tabId) return t
+          return { ...t, diskContent: t.content, isDirty: false }
+        })
       })
-    })
+    } catch (err) {
+      // Log error but keep dirty state so user can retry (per D-51)
+      console.error('Failed to save file:', tab.filePath, err)
+    }
   },
 
   getActiveTab: () => {
@@ -128,5 +135,69 @@ export const useTabStore = create<TabStore>((set, get) => ({
         }
       })
     })
+  },
+
+  /**
+   * Open or refresh a tab for the given file path.
+   * Used by agent edit auto-refresh (per D-52):
+   * - If tab exists: re-read from disk and refresh content
+   * - If no tab: read file and open new tab
+   */
+  openOrRefreshTab: async (filePath: string) => {
+    const { tabs } = get()
+    const existing = tabs.find((t) => t.filePath === filePath)
+
+    try {
+      const result = await window.wzxclaw.readFile({ filePath })
+      const fileName = filePath.replace(/\\/g, '/').split('/').pop() ?? filePath
+
+      if (existing) {
+        // Refresh existing tab with fresh disk content (per D-52)
+        get().refreshTabContent(existing.id, result.content)
+        set({ activeTabId: existing.id })
+      } else {
+        // Open new tab with file content
+        get().openTab(filePath, fileName, result.content, result.language)
+      }
+    } catch (err) {
+      console.error('Failed to open/refresh tab for:', filePath, err)
+    }
+  },
+
+  /**
+   * Handle file change events from disk (chokidar) or agent tool execution (per D-52).
+   * Respects dirty state: will NOT overwrite a tab that has unsaved user edits.
+   */
+  handleExternalFileChange: async (filePath: string, changeType: string) => {
+    const { tabs } = get()
+
+    if (changeType === 'deleted') {
+      // Close any open tab for this file
+      const existing = tabs.find((t) => t.filePath === filePath)
+      if (existing) {
+        get().closeTab(existing.id)
+      }
+      return
+    }
+
+    // changeType === 'created' or 'modified'
+    const existing = tabs.find((t) => t.filePath === filePath)
+
+    if (existing) {
+      // If the tab is dirty (user has unsaved edits), skip refresh to avoid losing work
+      if (existing.isDirty) {
+        return
+      }
+      // Re-read file from disk and refresh the tab content
+      try {
+        const result = await window.wzxclaw.readFile({ filePath })
+        get().refreshTabContent(existing.id, result.content)
+      } catch (err) {
+        console.error('Failed to refresh tab for:', filePath, err)
+      }
+    }
+    // If no tab is open for this file and it's a 'created' event,
+    // we don't auto-open — the user or agent will open it explicitly.
+    // For 'modified', same — only refresh if already open.
   }
 }))

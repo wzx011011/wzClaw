@@ -10,8 +10,13 @@ import { useTabStore } from '../../stores/tab-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 
 /**
- * IDELayout — root layout component for the IDE (per D-41, D-44).
+ * IDELayout — root layout component for the IDE (per D-41, D-44, D-51, D-52).
  * Uses allotment for resizable split between sidebar and editor area.
+ *
+ * Wires:
+ * - Global Ctrl+S save (per D-51)
+ * - File change events from chokidar/agent (per D-52)
+ * - Ctrl+Shift+O open folder
  *
  * Layout:
  *   [Sidebar (resizable)] | [TabBar + EditorPanel/WelcomeScreen]
@@ -22,9 +27,10 @@ export default function IDELayout(): JSX.Element {
   const hasTabs = useTabStore((s) => s.tabs.length > 0)
   const saveTab = useTabStore((s) => s.saveTab)
   const openFolder = useWorkspaceStore((s) => s.openFolder)
-  const handleFileChange = useWorkspaceStore((s) => s.handleFileChange)
+  const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
+  const handleTabFileChange = useTabStore((s) => s.handleExternalFileChange)
 
-  // Register global keyboard shortcuts
+  // Register global keyboard shortcuts (per D-51)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+S / Cmd+S — save active tab
@@ -45,13 +51,15 @@ export default function IDELayout(): JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeTabId, saveTab, openFolder])
 
-  // Subscribe to file change events from main process
+  // Subscribe to file change events from main process (per D-52).
+  // Updates both workspace tree and open editor tabs.
   useEffect(() => {
-    const unsubscribe = window.wzxclaw.onFileChange((payload) => {
-      handleFileChange(payload.filePath, payload.changeType)
+    const unsubscribe = window.wzxclaw.onFileChanged((payload) => {
+      handleWorkspaceFileChange(payload.filePath, payload.changeType)
+      handleTabFileChange(payload.filePath, payload.changeType)
     })
     return unsubscribe
-  }, [handleFileChange])
+  }, [handleWorkspaceFileChange, handleTabFileChange])
 
   return (
     <div className="ide-container">
