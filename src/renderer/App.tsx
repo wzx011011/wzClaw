@@ -2,7 +2,11 @@ import type { Message } from '../shared/types'
 
 function App(): JSX.Element {
   // Phase 1: Minimal shell. Verify shared types are importable.
-  const _message: Message = undefined
+  const _message: Message = {
+    role: 'user',
+    content: 'wzxClaw initialized',
+    timestamp: Date.now()
+  }
 
   return (
     <div style={{ padding: 20, fontFamily: 'sans-serif' }}>
