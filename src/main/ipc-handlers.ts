@@ -1,9 +1,10 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
 import type { AgentLoop } from './agent/agent-loop'
 import type { PermissionManager } from './permission/permission-manager'
+import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
 
 // In-memory settings for Phase 1 (Phase 4 adds persistence)
@@ -21,7 +22,8 @@ const apiKeys = new Map<string, string>()
 export function registerIpcHandlers(
   gateway: LLMGateway,
   agentLoop: AgentLoop,
-  permissionManager: PermissionManager
+  permissionManager: PermissionManager,
+  workspaceManager: WorkspaceManager
 ): void {
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
@@ -35,11 +37,12 @@ export function registerIpcHandlers(
 
     const sender = event.sender
 
-    // Build AgentConfig from current settings
+    // Build AgentConfig from current settings; use workspace root if available
+    const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
     const config: AgentConfig = {
       model: currentSettings.model,
       systemPrompt: currentSettings.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      workingDirectory: process.cwd(), // Phase 3 adds workspace selection
+      workingDirectory,
       conversationId: result.data.conversationId,
     }
 
@@ -127,5 +130,63 @@ export function registerIpcHandlers(
     }
     if (request.baseURL !== undefined) currentSettings.baseURL = request.baseURL
     if (request.systemPrompt !== undefined) currentSettings.systemPrompt = request.systemPrompt
+  })
+
+  // ============================================================
+  // Workspace: open folder — shows native dialog, sets workspace
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['workspace:open_folder'], async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
+
+    const rootPath = await workspaceManager.openFolderDialog(win)
+    if (rootPath) {
+      // Forward file change events to all windows
+      workspaceManager.onFileChange((filePath, changeType) => {
+        for (const bw of BrowserWindow.getAllWindows()) {
+          bw.webContents.send(IPC_CHANNELS['file:changed'], { filePath, changeType })
+        }
+      })
+      return { rootPath }
+    }
+    return null
+  })
+
+  // ============================================================
+  // Workspace: get directory tree
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['workspace:get_tree'], async (_event, request) => {
+    return workspaceManager.getDirectoryTree(request?.dirPath, request?.depth)
+  })
+
+  // ============================================================
+  // Workspace: start watching
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['workspace:watch'], () => {
+    workspaceManager.startWatching()
+  })
+
+  // ============================================================
+  // Workspace: status
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['workspace:status'], () => {
+    return {
+      rootPath: workspaceManager.getWorkspaceRoot(),
+      isWatching: workspaceManager.isWatching()
+    }
+  })
+
+  // ============================================================
+  // File: read
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:read'], async (_event, request) => {
+    return workspaceManager.readFile(request.filePath)
+  })
+
+  // ============================================================
+  // File: save
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {
+    await workspaceManager.saveFile(request.filePath, request.content)
   })
 }

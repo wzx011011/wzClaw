@@ -33,11 +33,19 @@ const api = {
     return () => ipcRenderer.removeListener('stream:error', handler)
   },
 
-  // Files (stubs for Phase 3)
-  openFile: (request: { path: string }) => ipcRenderer.invoke('file:open', request),
-  saveFile: (request: { path: string; content: string }) => ipcRenderer.invoke('file:save', request),
-  onFileChanged: (callback: (payload: { path: string; content: string }) => void) => {
-    const handler = (_: unknown, payload: { path: string; content: string }) => callback(payload)
+  // Workspace
+  openFolder: () => ipcRenderer.invoke('workspace:open_folder'),
+  getDirectoryTree: (request: { dirPath?: string; depth?: number }) =>
+    ipcRenderer.invoke('workspace:get_tree', request),
+  getWorkspaceStatus: () => ipcRenderer.invoke('workspace:status'),
+
+  // File operations
+  readFile: (request: { filePath: string }) => ipcRenderer.invoke('file:read', request),
+  saveFile: (request: { filePath: string; content: string }) => ipcRenderer.invoke('file:save', request),
+
+  // File change listener — returns unsubscribe function
+  onFileChanged: (callback: (payload: { filePath: string; changeType: string }) => void) => {
+    const handler = (_: unknown, payload: { filePath: string; changeType: string }) => callback(payload)
     ipcRenderer.on('file:changed', handler)
     return () => ipcRenderer.removeListener('file:changed', handler)
   },
