@@ -12,11 +12,18 @@ Build a Cursor-like AI coding IDE desktop application, starting from the foundat
 
 Decimal phases appear between their surrounding integers in numeric order.
 
+**v1.0 (Complete):**
 - [x] **Phase 1: Foundation** - Shared types, IPC protocol, and LLM Gateway with multi-provider streaming
-- [ ] **Phase 2: Agent Core** - Agent Runtime conversation loop, Tool System (6 tools), and permission model
-- [ ] **Phase 3: IDE Shell** - Electron app window, Monaco Editor integration, file explorer, and workspace management
-- [x] **Phase 4: Chat Panel + Integration** - Chat UI, tool call visualization, settings panel, and end-to-end wiring (completed 2026-04-03)
-- [ ] **Phase 5: Polish + Packaging** - Application packaging, final integration testing, and distribution
+- [x] **Phase 2: Agent Core** - Agent Runtime conversation loop, Tool System (6 tools), and permission model
+- [x] **Phase 3: IDE Shell** - Electron app window, Monaco Editor integration, file explorer, and workspace management
+- [x] **Phase 4: Chat Panel + Integration** - Chat UI, tool call visualization, settings panel, and end-to-end wiring
+- [x] **Phase 5: Polish + Packaging** - Application packaging, final integration testing, and distribution
+
+**v1.2 (Active):**
+- [ ] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
+- [ ] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview
+- [ ] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system
+- [ ] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval
 
 ## Phase Details
 
@@ -30,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A configurable system prompt is included in all LLM requests
   4. Main process and renderer process can exchange typed messages through IPC channels without runtime type errors
   5. Shared TypeScript type definitions compile without errors and are importable from both main and renderer process code
-**Plans**: 3 plans
+**Plans**: 3 plans (complete)
 
 Plans:
 - [x] 01-01: TBD
@@ -48,7 +55,7 @@ Plans:
   4. Destructive operations (FileWrite, FileEdit, Bash) prompt for user approval before executing; read-only operations (FileRead, Grep, Glob) execute automatically
   5. The agent stops after detecting repeated identical tool calls (3+ consecutive) and caps total tool iterations per turn at 25
   6. An in-progress agent conversation can be cancelled mid-stream and cleanly terminates all pending operations
-**Plans**: 4 plans
+**Plans**: 4 plans (complete)
 
 Plans:
 - [x] 02-01-PLAN.md — Tool interface + read-only tools (FileRead, Grep, Glob) + tool registry
@@ -66,7 +73,7 @@ Plans:
   3. User can open files from the explorer into Monaco Editor tabs, edit content, and see syntax highlighting
   4. User can save files (Ctrl+S), and the editor tracks dirty/modified state with visual indicators
   5. When the agent modifies a file (via FileWrite or FileEdit), the corresponding editor tab opens or refreshes automatically
-**Plans**: 3 plans
+**Plans**: 3 plans (complete)
 
 Plans:
 - [x] 03-01-PLAN.md — Main process workspace management (WorkspaceManager, IPC handlers, chokidar watch, menu bar)
@@ -83,7 +90,7 @@ Plans:
   3. Code blocks in chat responses render with syntax highlighting and have an "Apply" button that inserts the code into the active editor tab
   4. User can input and save API keys for multiple providers (OpenAI-compatible, Anthropic) through a settings panel, and switch between models during a conversation
   5. User can stop an in-progress generation and clear/reset the conversation to start fresh
-**Plans**: 3 plans
+**Plans**: 3 plans (complete)
 **UI hint**: yes
 
 Plans:
@@ -98,21 +105,80 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. The application builds as a packaged installer (or portable executable) that launches without a development environment
   2. End-to-end workflow works in the packaged build: open workspace, send chat message, agent executes tools, apply code to editor, save file
-**Plans**: 2 plans
+**Plans**: 2 plans (complete)
 
 Plans:
 - [x] 05-01-PLAN.md — electron-builder NSIS config + app icon + build verification
 - [x] 05-02-PLAN.md — Full NSIS installer build + human E2E workflow verification
 
+### Phase 6: Foundation Upgrades
+**Goal**: Conversations survive app restarts, the agent stays within its token budget, and users can invoke any feature via keyboard shortcut
+**Depends on**: Phase 5 (v1.0 complete)
+**Requirements**: PERSIST-01, PERSIST-02, PERSIST-03, PERSIST-04, PERSIST-05, PERSIST-06, CTX-01, CTX-02, CTX-03, CTX-04, CTX-05, CTX-06, CTX-07, CMD-01, CMD-02, CMD-03, CMD-04, CMD-05
+**Success Criteria** (what must be TRUE):
+  1. User can close and reopen the app, and previous chat sessions are visible in the session list with their messages fully restored
+  2. A conversation that grows beyond 80% of the model's context window is automatically compacted (older messages summarized) without interrupting the current agent turn
+  3. User can type /compact in chat to manually trigger context compaction and see the before/after token count
+  4. The token usage indicator in the chat panel shows current context utilization and updates after each agent turn
+  5. User presses Ctrl+Shift+P and sees a searchable command palette listing all available commands with keyboard shortcuts, and can execute any command by selecting it
+**Plans**: 3 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Session persistence (SessionStore JSONL, session IPC, SessionList UI, auto-save on agent:done)
+- [ ] 06-02-PLAN.md — Context management (TokenCounter js-tiktoken, ContextManager, AgentLoop integration, TokenIndicator UI)
+- [ ] 06-03-PLAN.md — Command palette (CommandStore, CommandPalette cmdk, Ctrl+Shift+P, 8 built-in commands)
+**UI hint**: yes
+
+### Phase 7: Core Interaction
+**Goal**: Users work with multiple AI conversations simultaneously, inject specific files into context, and review AI code changes with granular accept/reject control
+**Depends on**: Phase 6
+**Requirements**: SESSION-01, SESSION-02, SESSION-03, SESSION-04, SESSION-05, SESSION-06, SESSION-07, MENTION-01, MENTION-02, MENTION-03, MENTION-04, MENTION-05, MENTION-06, DIFF-01, DIFF-02, DIFF-03, DIFF-04, DIFF-05, DIFF-06, DIFF-07
+**Success Criteria** (what must be TRUE):
+  1. User can open multiple chat sessions as tabs, switch between them without losing state in any session, and create/delete sessions
+  2. Only the active session's agent loop runs; inactive sessions are lazy-loaded from disk when their tab is selected
+  3. User types @ in the chat input, sees a fuzzy-searchable file/folder picker, selects items to inject their content into the conversation, and sees injected content as collapsible blocks in the sent message
+  4. When the AI proposes file changes via FileWrite/FileEdit, a diff preview appears showing red (deletions) and green (additions) lines in the editor, and the user can accept or reject each hunk individually
+  5. User can accept all or reject all pending diffs via toolbar buttons, and rejected hunks are not written to disk while accepted hunks are applied immediately
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 8: Advanced Features
+**Goal**: Users have a fully interactive terminal panel, the agent can search the web and navigate code symbols, and tasks can be created and tracked during agent execution
+**Depends on**: Phase 6
+**Requirements**: TERM-01, TERM-02, TERM-03, TERM-04, TERM-05, TERM-06, TERM-07, TOOL-09, TOOL-10, TOOL-11, TOOL-12, TOOL-13, TASK-01, TASK-02, TASK-03, TASK-04, TASK-05
+**Success Criteria** (what must be TRUE):
+  1. User can open a terminal panel at the bottom of the IDE, type commands interactively, and see colored output rendered in real-time via xterm.js
+  2. Agent Bash tool can route commands through the visible terminal panel so the user sees what the agent is running, and terminal output is available to the agent for analysis
+  3. Agent can search the web for information (WebSearch tool) and fetch web page content (WebFetch tool) to gather external context during coding tasks
+  4. Agent can navigate code symbols (find definitions, search for symbols) using Monaco's built-in language support
+  5. Agent creates tasks with descriptions and status tracking during multi-step work, and the user sees a task list panel with real-time progress updates including dependency blocking
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 9: Codebase Indexing
+**Goal**: The agent can perform semantic search across the entire codebase using vector embeddings, finding relevant code that keyword search would miss
+**Depends on**: Phase 6
+**Requirements**: IDX-01, IDX-02, IDX-03, IDX-04, IDX-05, IDX-06, IDX-07, IDX-08
+**Success Criteria** (what must be TRUE):
+  1. Workspace files are indexed in the background using embedding vectors, and indexing status (indexing/ready/error with file count) is shown in the status bar
+  2. The agent can perform a semantic search query across the codebase and receives ranked code chunks relevant to the query, even when the query uses different terminology than the code
+  3. Index is built incrementally -- only new or modified files are re-indexed when files change, not the entire workspace
+  4. User can trigger a manual full re-index via the command palette, and large files (>100KB) and binary files are excluded automatically
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | Complete | 2026-04-03 |
-| 2. Agent Core | 0/4 | Planning complete | - |
-| 3. IDE Shell | 2/3 | In Progress|  |
-| 4. Chat Panel + Integration | 0/3 | Complete    | 2026-04-03 |
-| 5. Polish + Packaging | 0/2 | Planning complete | - |
+| 2. Agent Core | 4/4 | Complete | 2026-04-03 |
+| 3. IDE Shell | 3/3 | Complete | 2026-04-03 |
+| 4. Chat Panel + Integration | 3/3 | Complete | 2026-04-03 |
+| 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
+| 6. Foundation Upgrades | 0/3 | Not started | - |
+| 7. Core Interaction | 0/? | Not started | - |
+| 8. Advanced Features | 0/? | Not started | - |
+| 9. Codebase Indexing | 0/? | Not started | - |
