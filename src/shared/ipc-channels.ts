@@ -70,7 +70,13 @@ export const IPC_CHANNELS = {
   // Task channels (renderer -> main for list, main -> renderer for streaming)
   'task:list': 'task:list',
   'task:created': 'task:created',
-  'task:updated': 'task:updated'
+  'task:updated': 'task:updated',
+
+  // Index channels (renderer -> main for status/reindex/search, main -> renderer for progress)
+  'index:status': 'index:status',
+  'index:reindex': 'index:reindex',
+  'index:search': 'index:search',
+  'index:progress': 'index:progress'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -119,6 +125,9 @@ export interface IpcRequestPayloads {
   'terminal:output': { terminalId: string }
   'symbol:query': { operation: string; params: Record<string, unknown> }
   'task:list': void
+  'index:status': void
+  'index:reindex': void
+  'index:search': { query: string; topK?: number }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -152,6 +161,9 @@ export interface IpcResponsePayloads {
   'terminal:output': { buffer: string }
   'symbol:query': { results: Array<{ filePath: string; line: number; symbolName: string; kind: string }> }
   'task:list': AgentTask[]
+  'index:status': { status: string; fileCount: number; currentFile: string; error?: string }
+  'index:reindex': void
+  'index:search': Array<{ filePath: string; startLine: number; endLine: number; content: string; score: number }>
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -174,6 +186,7 @@ export interface IpcStreamPayloads {
   'symbol:result': { queryId: string; result: unknown; isError: boolean }
   'task:created': AgentTask
   'task:updated': AgentTask
+  'index:progress': { status: string; fileCount: number; currentFile: string; error?: string }
 }
 
 // ============================================================

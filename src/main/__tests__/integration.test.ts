@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn(),
     handleOnce: vi.fn(),
+    on: vi.fn(),
   },
   app: {
     getPath: vi.fn(() => '/tmp/test-userdata'),
@@ -57,14 +58,17 @@ describe('IPC Channels', () => {
 // Test 2: Tool registry wiring
 // ============================================================
 describe('Default Tool Registry', () => {
-  it('should register all 6 tools', () => {
+  it('should register all 9 base tools', () => {
     const registry = createDefaultTools(process.cwd())
     const tools = registry.getAll()
 
-    expect(tools).toHaveLength(6)
+    expect(tools).toHaveLength(9)
 
     const toolNames = tools.map((t) => t.name).sort()
-    expect(toolNames).toEqual(['Bash', 'FileEdit', 'FileRead', 'FileWrite', 'Glob', 'Grep'])
+    expect(toolNames).toEqual([
+      'Bash', 'FileEdit', 'FileRead', 'FileWrite', 'Glob', 'Grep',
+      'SemanticSearch', 'WebFetch', 'WebSearch'
+    ])
   })
 
   it('should have exactly 3 approval-required tools', () => {
@@ -91,7 +95,7 @@ describe('Default Tool Registry', () => {
     const registry = createDefaultTools(process.cwd())
     const definitions = registry.getDefinitions()
 
-    expect(definitions).toHaveLength(6)
+    expect(definitions).toHaveLength(9)
 
     for (const def of definitions) {
       expect(def.name).toBeTruthy()
@@ -111,7 +115,7 @@ describe('IPC Handler Registration', () => {
     vi.clearAllMocks()
   })
 
-  it('should register handlers without throwing when given gateway + agentLoop + permissionManager', async () => {
+  it('should register handlers without throwing when given all required components', async () => {
     // Import the mocked electron
     const { ipcMain } = await import('electron')
 
@@ -155,6 +159,26 @@ describe('IPC Handler Registration', () => {
       deleteSession: vi.fn(() => true),
     } as unknown
 
+    const mockContextManager = {
+      compact: vi.fn(),
+      getTokenCount: vi.fn(),
+    } as unknown
+
+    const mockTerminalManager = {
+      createTerminal: vi.fn(),
+      killTerminal: vi.fn(),
+      writeToTerminal: vi.fn(),
+      resizeTerminal: vi.fn(),
+      getOutputBuffer: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown
+
+    const mockTaskManager = {
+      getAllTasks: vi.fn(() => []),
+      createTask: vi.fn(),
+      updateTask: vi.fn(),
+    } as unknown
+
     // Dynamic import to get fresh module with our mocks
     const { registerIpcHandlers } = await import('../ipc-handlers')
 
@@ -165,7 +189,11 @@ describe('IPC Handler Registration', () => {
         mockAgentLoop as import('../agent/agent-loop').AgentLoop,
         mockPermissionManager as import('../permission/permission-manager').PermissionManager,
         mockWorkspaceManager as import('../workspace/workspace-manager').WorkspaceManager,
-        mockSessionStore as import('../persistence/session-store').SessionStore
+        mockSessionStore as import('../persistence/session-store').SessionStore,
+        mockContextManager as import('../context/context-manager').ContextManager,
+        mockTerminalManager as import('../terminal/terminal-manager').TerminalManager,
+        mockTaskManager as import('../tasks/task-manager').TaskManager,
+        null // indexingEngine (optional)
       )
     }).not.toThrow()
 
@@ -178,6 +206,9 @@ describe('IPC Handler Registration', () => {
     expect(handleCalls).toContain('agent:stop')
     expect(handleCalls).toContain('settings:get')
     expect(handleCalls).toContain('settings:update')
+    expect(handleCalls).toContain('index:status')
+    expect(handleCalls).toContain('index:reindex')
+    expect(handleCalls).toContain('index:search')
   })
 })
 

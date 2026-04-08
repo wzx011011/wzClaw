@@ -13,6 +13,7 @@ import type { TerminalManager } from './terminal/terminal-manager'
 import type { TaskManager } from './tasks/task-manager'
 import { SettingsManager } from './settings-manager'
 import { handleSymbolResult } from './tools/symbol-nav'
+import type { IndexingEngine } from './indexing/indexing-engine'
 
 // Persistent settings with encrypted API key storage (per D-66)
 const settingsManager = new SettingsManager()
@@ -25,10 +26,15 @@ export function registerIpcHandlers(
   sessionStore: SessionStore,
   contextManager: ContextManager,
   terminalManager: TerminalManager,
-  taskManager: TaskManager
+  taskManager: TaskManager,
+  indexingEngine: IndexingEngine | null,
+  onWorkspaceOpened?: (rootPath: string) => void
 ): void {
   // Load persisted settings from disk
   settingsManager.load()
+
+  // Mutable reference to IndexingEngine (updated when workspace opens)
+  const indexingEngineRef = { current: indexingEngine }
 
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
@@ -209,6 +215,12 @@ export function registerIpcHandlers(
         fileChangeUnsubscribe = null
       }
       forwardFileChanges()
+
+      // Notify index.ts to create IndexingEngine for the new workspace
+      if (onWorkspaceOpened) {
+        onWorkspaceOpened(rootPath)
+      }
+
       return { rootPath }
     }
     return null
@@ -567,4 +579,43 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['task:list'], () => {
     return taskManager.getAllTasks()
   })
+
+  // ============================================================
+  // Index: status — returns current indexing status
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['index:status'], () => {
+    return indexingEngineRef.current?.getStatus() ?? { status: 'idle', fileCount: 0, currentFile: '' }
+  })
+
+  // ============================================================
+  // Index: reindex — triggers full re-index of workspace
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['index:reindex'], async () => {
+    if (!indexingEngineRef.current) throw new Error('No workspace open')
+    await indexingEngineRef.current.indexFull()
+  })
+
+  // ============================================================
+  // Index: search — search the index from UI (separate from agent tool)
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['index:search'], async (_event, request) => {
+    if (!indexingEngineRef.current) return []
+    return indexingEngineRef.current.search(request.query, request.topK)
+  })
+
+  // ============================================================
+  // Index: progress — forward indexing progress to renderer
+  // ============================================================
+  // Use a wrapper that always reads from indexingEngineRef.current,
+  // so progress forwarding works even after workspace switch creates a new engine.
+  if (onWorkspaceOpened) {
+    // Initial progress forwarding for any pre-existing engine
+    if (indexingEngine) {
+      indexingEngine.onProgress((progress) => {
+        for (const bw of BrowserWindow.getAllWindows()) {
+          bw.webContents.send(IPC_CHANNELS['index:progress'], progress)
+        }
+      })
+    }
+  }
 }
