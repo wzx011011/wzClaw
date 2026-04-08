@@ -3,6 +3,7 @@ import Editor, { type OnMount } from '@monaco-editor/react'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useTabStore } from '../../stores/tab-store'
 import { useDiffStore } from '../../stores/diff-store'
+import SymbolService from './SymbolService'
 
 /**
  * EditorPanel — Monaco Editor wrapper (per D-42).
@@ -157,6 +158,7 @@ export default function EditorPanel(): JSX.Element {
 
   return (
     <div className="editor-panel">
+      <SymbolService editorRef={editorRef} />
       <Editor
         height="100%"
         language={activeTab.language}

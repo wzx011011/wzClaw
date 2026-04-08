@@ -11,6 +11,7 @@ import type { SessionStore } from './persistence/session-store'
 import type { ContextManager } from './context/context-manager'
 import type { TerminalManager } from './terminal/terminal-manager'
 import { SettingsManager } from './settings-manager'
+import { handleSymbolResult } from './tools/symbol-nav'
 
 // Persistent settings with encrypted API key storage (per D-66)
 const settingsManager = new SettingsManager()
@@ -549,5 +550,12 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['terminal:output'], async (_event, request) => {
     return { buffer: terminalManager.getOutputBuffer(request.terminalId) }
+  })
+
+  // ============================================================
+  // Symbol: result — resolves pending symbol queries from renderer
+  // ============================================================
+  ipcMain.on('symbol:result', (_event, payload) => {
+    handleSymbolResult(payload)
   })
 }

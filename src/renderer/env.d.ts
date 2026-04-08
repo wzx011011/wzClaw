@@ -43,6 +43,9 @@ declare global {
       terminalResize: (request: { terminalId: string; cols: number; rows: number }) => Promise<void>
       terminalOutput: (request: { terminalId: string }) => Promise<{ buffer: string }>
       onTerminalData: (cb: (p: { terminalId: string; data: string }) => void) => () => void
+      // Symbol navigation
+      onSymbolQuery: (cb: (p: { queryId: string; operation: string; params: Record<string, unknown> }) => void) => () => void
+      sendSymbolResult: (response: { queryId: string; result: unknown; isError: boolean }) => void
     }
   }
 }

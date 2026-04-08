@@ -61,7 +61,11 @@ export const IPC_CHANNELS = {
   'terminal:input': 'terminal:input',
   'terminal:resize': 'terminal:resize',
   'terminal:data': 'terminal:data',
-  'terminal:output': 'terminal:output'
+  'terminal:output': 'terminal:output',
+
+  // Symbol navigation channels (main -> renderer query, renderer -> main result)
+  'symbol:query': 'symbol:query',
+  'symbol:result': 'symbol:result'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -108,9 +112,8 @@ export interface IpcRequestPayloads {
   'terminal:input': { terminalId: string; data: string }
   'terminal:resize': { terminalId: string; cols: number; rows: number }
   'terminal:output': { terminalId: string }
+  'symbol:query': { operation: string; params: Record<string, unknown> }
 }
-
-// Response payloads (main returns to renderer via ipcMain.handle return)
 export interface IpcResponsePayloads {
   'agent:send_message': void
   'agent:stop': void
@@ -141,6 +144,7 @@ export interface IpcResponsePayloads {
   'terminal:input': void
   'terminal:resize': void
   'terminal:output': { buffer: string }
+  'symbol:query': { results: Array<{ filePath: string; line: number; symbolName: string; kind: string }> }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -159,6 +163,8 @@ export interface IpcStreamPayloads {
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
   'terminal:data': { terminalId: string; data: string }
+  'symbol:query': { queryId: string; operation: string; params: Record<string, unknown> }
+  'symbol:result': { queryId: string; result: unknown; isError: boolean }
 }
 
 // ============================================================

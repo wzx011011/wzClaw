@@ -96,6 +96,15 @@ const api = {
     ipcRenderer.on('terminal:data', handler)
     return () => ipcRenderer.removeListener('terminal:data', handler)
   },
+
+  // Symbol navigation (main -> renderer query, renderer -> main result)
+  onSymbolQuery: (callback: (payload: { queryId: string; operation: string; params: Record<string, unknown> }) => void) => {
+    const handler = (_: unknown, payload: { queryId: string; operation: string; params: Record<string, unknown> }) => callback(payload)
+    ipcRenderer.on('symbol:query', handler)
+    return () => ipcRenderer.removeListener('symbol:query', handler)
+  },
+  sendSymbolResult: (response: { queryId: string; result: unknown; isError: boolean }) =>
+    ipcRenderer.send('symbol:result', response),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

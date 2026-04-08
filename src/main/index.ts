@@ -99,7 +99,8 @@ app.whenReady().then(() => {
 
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-  const toolRegistry = createDefaultTools(workingDirectory, terminalManager)
+  const getWebContents = () => BrowserWindow.getAllWindows()[0]?.webContents ?? null
+  const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents)
   const permissionManager = new PermissionManager()
   const contextManager = new ContextManager()
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager)

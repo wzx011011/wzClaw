@@ -10,6 +10,7 @@ import { GrepTool } from './grep'
 import { GlobTool } from './glob'
 import { WebSearchTool } from './web-search'
 import { WebFetchTool } from './web-fetch'
+import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './symbol-nav'
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
@@ -38,11 +39,16 @@ export class ToolRegistry {
 }
 
 /**
- * Factory that creates a ToolRegistry with all 6 tools.
- * Read-only tools: FileRead, Grep, Glob (no approval required)
+ * Factory that creates a ToolRegistry with all tools.
+ * Read-only tools: FileRead, Grep, Glob, WebSearch, WebFetch (no approval required)
+ * Symbol tools: GoToDefinition, FindReferences, SearchSymbols (no approval required, requires Monaco IPC)
  * Destructive tools: FileWrite, FileEdit, Bash (requires approval per D-32)
  */
-export function createDefaultTools(workingDirectory: string, terminalManager?: TerminalManager): ToolRegistry {
+export function createDefaultTools(
+  workingDirectory: string,
+  terminalManager?: TerminalManager,
+  getWebContents?: () => Electron.WebContents | null
+): ToolRegistry {
   const registry = new ToolRegistry()
 
   // Read-only tools (no approval required)
@@ -53,6 +59,13 @@ export function createDefaultTools(workingDirectory: string, terminalManager?: T
   // Web tools (read-only, no approval required)
   registry.register(new WebSearchTool())
   registry.register(new WebFetchTool())
+
+  // Symbol navigation tools (read-only, requires Monaco IPC)
+  if (getWebContents) {
+    registry.register(new GoToDefinitionTool(getWebContents))
+    registry.register(new FindReferencesTool(getWebContents))
+    registry.register(new SearchSymbolsTool(getWebContents))
+  }
 
   // Destructive tools (requires approval per D-32)
   registry.register(new FileWriteTool())
