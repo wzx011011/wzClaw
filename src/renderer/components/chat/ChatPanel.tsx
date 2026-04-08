@@ -5,6 +5,7 @@ import { useChatStore } from '../../stores/chat-store'
 import ChatMessage from './ChatMessage'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
+import SessionList from './SessionList'
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -28,8 +29,12 @@ export default function ChatPanel(): JSX.Element {
   // Local UI state
   const [inputValue, setInputValue] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [showSessions, setShowSessions] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Session count for History button badge
+  const sessions = useChatStore((s) => s.sessions)
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -48,6 +53,15 @@ export default function ChatPanel(): JSX.Element {
   const handleSend = (): void => {
     const trimmed = inputValue.trim()
     if (!trimmed || isStreaming) return
+    if (trimmed === '/compact') {
+      // Trigger manual compact via IPC
+      window.wzxclaw.compactContext()
+      setInputValue('')
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
+      return
+    }
     sendMessage(trimmed)
     setInputValue('')
     if (textareaRef.current) {
@@ -94,6 +108,12 @@ export default function ChatPanel(): JSX.Element {
               Stop
             </button>
           )}
+          <button
+            className="chat-ctrl-btn"
+            onClick={() => setShowSessions(!showSessions)}
+          >
+            History{sessions.length > 0 ? ` (${sessions.length})` : ''}
+          </button>
           {messages.length > 0 && (
             <button className="chat-ctrl-btn" onClick={clearConversation}>
               Clear
@@ -108,6 +128,9 @@ export default function ChatPanel(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {/* Session list */}
+      <SessionList isOpen={showSessions} onToggle={() => setShowSessions(!showSessions)} />
 
       {/* Messages */}
       <div className="chat-messages">

@@ -25,6 +25,15 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
     )
   }
 
+  // Compacted context message (per CTX-03, CTX-05)
+  if (message.isCompacted) {
+    return (
+      <div className={content.includes('Auto-compacted') ? 'compact-result-auto' : 'compact-result'}>
+        {content}
+      </div>
+    )
+  }
+
   // Assistant message
   const streamingClass = isStreaming ? ' chat-message-streaming' : ''
 
@@ -36,17 +45,31 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
             rehypePlugins={[rehypeHighlight]}
             remarkPlugins={[remarkGfm]}
             components={{
-              code({ className, children, ...props }) {
-                // Check if this is a fenced code block (has language class from rehype-highlight)
+              code({ className, children, node, ...props }) {
+                // A code block (inside <pre>) has a parent <pre> element in the AST.
+                // Inline code does not. This is the reliable way to distinguish them.
+                const isBlock = node?.position?.start.line !== node?.position?.end.line
+                  || className?.includes('language-')
                 const match = /language-(\w+)/.exec(className || '')
-                const codeString = String(children).replace(/\n$/, '')
 
-                if (match) {
-                  // Fenced code block with language — use CodeBlock component
-                  return <CodeBlock code={codeString} language={match[1]} />
+                // rehype-highlight transforms children into React elements (spans),
+                // so we must extract text recursively instead of using String()
+                const extractText = (nodes: React.ReactNode): string => {
+                  if (typeof nodes === 'string') return nodes
+                  if (typeof nodes === 'number') return String(nodes)
+                  if (Array.isArray(nodes)) return nodes.map(extractText).join('')
+                  if (React.isValidElement(nodes) && nodes.props.children) {
+                    return extractText(nodes.props.children)
+                  }
+                  return ''
+                }
+                const codeString = extractText(children).replace(/\n$/, '')
+
+                if (isBlock) {
+                  return <CodeBlock code={codeString} language={match ? match[1] : 'text'} />
                 }
 
-                // Inline code (no language class) — render as <code>
+                // Inline code — render as <code>
                 return (
                   <code className={className} {...props}>
                     {children}

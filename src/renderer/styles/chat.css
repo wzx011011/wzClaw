@@ -669,3 +669,137 @@
   text-align: center;
   padding: 20px;
 }
+
+/* ============================================================
+   Session List (per UI-SPEC Component 2)
+   ============================================================ */
+
+.session-list {
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.session-list-empty {
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.session-list-empty p {
+  margin: 4px 0;
+}
+
+.session-list-empty p:first-child {
+  font-size: 13px;
+}
+
+.session-item {
+  display: flex;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+}
+
+.session-item:last-child {
+  border-bottom: none;
+}
+
+.session-item:hover {
+  background: var(--hover-bg);
+}
+
+.session-item.active {
+  border-left: 2px solid var(--accent);
+  background: var(--active-bg);
+}
+
+.session-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-item-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.session-item-time {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.session-item-delete {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  padding: 0;
+}
+
+.session-item:hover .session-item-delete {
+  display: block;
+}
+
+.session-item-delete:hover {
+  color: #f48771;
+}
+
+.session-item-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.session-item-confirm button {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Compact Result Messages (per CTX-03, CTX-05)
+   ============================================================ */
+
+.compact-result {
+  padding: 8px 12px;
+  background: rgba(137, 209, 133, 0.08);
+  border-left: 3px solid #89d185;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
+
+.compact-result-auto {
+  padding: 8px 12px;
+  background: rgba(137, 209, 133, 0.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
