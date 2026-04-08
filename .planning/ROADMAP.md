@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **v1.2 (Active):**
 - [x] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
-- [ ] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview
+- [x] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview (completed 2026-04-08)
 - [ ] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system
 - [ ] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval
 
@@ -145,8 +145,8 @@ Plans:
 - [x] 07-01-PLAN.md — Multi-session tabs (SessionTabs, chat-store extensions, Ctrl+T, IPC)
 - [x] 07-02-PLAN.md — @-mention file injection (MentionPicker, FileMention, fuzzy search, collapsible blocks)
 - [x] 07-03-PLAN.md — Inline diff preview (DiffStore, DiffPreview, Monaco decorations, accept/reject)
-- [ ] 07-04-PLAN.md — Gap closure: folder mentions (MENTION-03), FileEdit diff fix, diff keyboard shortcuts (DIFF-04)
-- [ ] 07-05-PLAN.md — Gap closure: multi-file diff navigator (DIFF-05)
+- [x] 07-04-PLAN.md — Gap closure: folder mentions (MENTION-03), FileEdit diff fix, diff keyboard shortcuts (DIFF-04)
+- [x] 07-05-PLAN.md — Gap closure: multi-file diff navigator (DIFF-05)
 **UI hint**: yes
 
 ### Phase 8: Advanced Features
@@ -186,6 +186,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Chat Panel + Integration | 3/3 | Complete | 2026-04-03 |
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
-| 7. Core Interaction | 3/5 | Executing | - |
+| 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
 | 8. Advanced Features | 0/? | Not started | - |
 | 9. Codebase Indexing | 0/? | Not started | - |
