@@ -42,6 +42,14 @@ export const MAX_TOOL_RESULT_CHARS = 30000
 export const MAX_FILE_READ_LINES = 2000
 export const MAX_AGENT_TURNS = 25
 
+// ============================================================
+// Terminal Constants (per TERM-06)
+// ============================================================
+
+export const TERMINAL_BUFFER_SIZE = 65536
+export const TERMINAL_DEFAULT_COLS = 80
+export const TERMINAL_DEFAULT_ROWS = 24
+
 // OpenAI-compatible endpoints
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'

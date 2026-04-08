@@ -9,9 +9,11 @@ import { AgentLoop } from './agent/agent-loop'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
+import { TerminalManager } from './terminal/terminal-manager'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
+const terminalManager = new TerminalManager()
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -97,7 +99,7 @@ app.whenReady().then(() => {
 
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-  const toolRegistry = createDefaultTools(workingDirectory)
+  const toolRegistry = createDefaultTools(workingDirectory, terminalManager)
   const permissionManager = new PermissionManager()
   const contextManager = new ContextManager()
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager)
@@ -106,7 +108,7 @@ app.whenReady().then(() => {
   const sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
   // Wire IPC handlers with all components including workspace manager, session store, and context manager
-  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager, sessionStore, contextManager)
+  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager, sessionStore, contextManager, terminalManager)
 
   // Set up Chromium menu bar
   Menu.setApplicationMenu(buildMenuBar())
@@ -127,5 +129,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  terminalManager.dispose()
   workspaceManager.dispose()
 })

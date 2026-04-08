@@ -53,7 +53,15 @@ export const IPC_CHANNELS = {
   'file:apply-hunk': 'file:apply-hunk',
 
   // Context channels (renderer -> main)
-  'agent:compact_context': 'agent:compact_context'
+  'agent:compact_context': 'agent:compact_context',
+
+  // Terminal channels (renderer <-> main)
+  'terminal:create': 'terminal:create',
+  'terminal:kill': 'terminal:kill',
+  'terminal:input': 'terminal:input',
+  'terminal:resize': 'terminal:resize',
+  'terminal:data': 'terminal:data',
+  'terminal:output': 'terminal:output'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -95,6 +103,11 @@ export interface IpcRequestPayloads {
   'session:rename': { sessionId: string; title: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'agent:compact_context': void
+  'terminal:create': { cwd: string }
+  'terminal:kill': { terminalId: string }
+  'terminal:input': { terminalId: string; data: string }
+  'terminal:resize': { terminalId: string; cols: number; rows: number }
+  'terminal:output': { terminalId: string }
 }
 
 // Response payloads (main returns to renderer via ipcMain.handle return)
@@ -123,6 +136,11 @@ export interface IpcResponsePayloads {
   'session:rename': { success: boolean }
   'file:apply-hunk': { success: boolean }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
+  'terminal:create': { terminalId: string }
+  'terminal:kill': void
+  'terminal:input': void
+  'terminal:resize': void
+  'terminal:output': { buffer: string }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -140,6 +158,7 @@ export interface IpcStreamPayloads {
   }
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
+  'terminal:data': { terminalId: string; data: string }
 }
 
 // ============================================================

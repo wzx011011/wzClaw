@@ -5,6 +5,7 @@ import { FileReadTool } from './file-read'
 import { FileWriteTool } from './file-write'
 import { FileEditTool } from './file-edit'
 import { BashTool } from './bash'
+import type { TerminalManager } from '../terminal/terminal-manager'
 import { GrepTool } from './grep'
 import { GlobTool } from './glob'
 
@@ -39,7 +40,7 @@ export class ToolRegistry {
  * Read-only tools: FileRead, Grep, Glob (no approval required)
  * Destructive tools: FileWrite, FileEdit, Bash (requires approval per D-32)
  */
-export function createDefaultTools(workingDirectory: string): ToolRegistry {
+export function createDefaultTools(workingDirectory: string, terminalManager?: TerminalManager): ToolRegistry {
   const registry = new ToolRegistry()
 
   // Read-only tools (no approval required)
@@ -50,7 +51,7 @@ export function createDefaultTools(workingDirectory: string): ToolRegistry {
   // Destructive tools (requires approval per D-32)
   registry.register(new FileWriteTool())
   registry.register(new FileEditTool())
-  registry.register(new BashTool(workingDirectory))
+  registry.register(new BashTool(workingDirectory, terminalManager))
 
   return registry
 }

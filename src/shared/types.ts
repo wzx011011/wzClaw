@@ -243,3 +243,13 @@ export const FolderMentionSchema = z.object({
   content: z.string(),
   size: z.number().nonnegative()
 })
+
+// ============================================================
+// Terminal Types (per TERM-01 through TERM-07)
+// ============================================================
+
+export interface TerminalInstance {
+  id: string
+  title: string
+  isActive: boolean
+}

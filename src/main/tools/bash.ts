@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { exec } from 'child_process'
 import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
+import type { TerminalManager } from '../terminal/terminal-manager'
 
 // ============================================================
 // Bash Tool (per TOOL-04, D-32, D-36)
@@ -34,6 +35,12 @@ export class BashTool implements Tool {
     required: ['command']
   }
 
+  private terminalManager?: TerminalManager
+
+  constructor(_workingDirectory: string, terminalManager?: TerminalManager) {
+    this.terminalManager = terminalManager
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: ToolExecutionContext
@@ -49,6 +56,23 @@ export class BashTool implements Tool {
 
     const { command, timeout } = parsed.data
     const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT
+
+    // Route through visible terminal when TerminalManager and active terminal exist (per TERM-04)
+    if (this.terminalManager) {
+      const activeId = this.terminalManager.getActiveTerminalId()
+      if (activeId) {
+        try {
+          const output = await this.terminalManager.runCommandInTerminal(activeId, command)
+          const truncated = output.length > MAX_TOOL_RESULT_CHARS
+            ? output.substring(0, MAX_TOOL_RESULT_CHARS) + '\n... [output truncated]'
+            : output
+          return { output: truncated, isError: false }
+        } catch (err) {
+          // Fall through to child_process.exec on terminal error
+          console.warn('Terminal routing failed, falling back to exec:', err)
+        }
+      }
+    }
 
     return new Promise<ToolExecutionResult>((resolve) => {
       const child = exec(

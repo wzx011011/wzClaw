@@ -9,6 +9,7 @@ import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
 import type { SessionStore } from './persistence/session-store'
 import type { ContextManager } from './context/context-manager'
+import type { TerminalManager } from './terminal/terminal-manager'
 import { SettingsManager } from './settings-manager'
 
 // Persistent settings with encrypted API key storage (per D-66)
@@ -20,7 +21,8 @@ export function registerIpcHandlers(
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,
   sessionStore: SessionStore,
-  contextManager: ContextManager
+  contextManager: ContextManager,
+  terminalManager: TerminalManager
 ): void {
   // Load persisted settings from disk
   settingsManager.load()
@@ -505,5 +507,47 @@ export function registerIpcHandlers(
       agentLoop.replaceMessages([summaryMsg, ...recentMessages])
     }
     return { beforeTokens: result.beforeTokens, afterTokens: result.afterTokens }
+  })
+
+  // ============================================================
+  // Terminal: create — spawns PTY and subscribes to output
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['terminal:create'], async (event, request) => {
+    const terminalId = terminalManager.createTerminal(request.cwd)
+
+    // Forward PTY output to the renderer that created this terminal
+    terminalManager.onTerminalData(terminalId, (data) => {
+      event.sender.send(IPC_CHANNELS['terminal:data'], { terminalId, data })
+    })
+
+    return { terminalId }
+  })
+
+  // ============================================================
+  // Terminal: kill — kills PTY and removes from map
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['terminal:kill'], async (_event, request) => {
+    terminalManager.killTerminal(request.terminalId)
+  })
+
+  // ============================================================
+  // Terminal: input — writes data to PTY stdin
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['terminal:input'], async (_event, request) => {
+    terminalManager.writeToTerminal(request.terminalId, request.data)
+  })
+
+  // ============================================================
+  // Terminal: resize — resizes PTY dimensions
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['terminal:resize'], async (_event, request) => {
+    terminalManager.resizeTerminal(request.terminalId, request.cols, request.rows)
+  })
+
+  // ============================================================
+  // Terminal: output — returns current buffer for agent analysis
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['terminal:output'], async (_event, request) => {
+    return { buffer: terminalManager.getOutputBuffer(request.terminalId) }
   })
 }

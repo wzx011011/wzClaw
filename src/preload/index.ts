@@ -84,6 +84,18 @@ const api = {
   // Diff: apply accepted hunks to disk
   applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) =>
     ipcRenderer.invoke('file:apply-hunk', request),
+
+  // Terminal
+  createTerminal: (request: { cwd: string }) => ipcRenderer.invoke('terminal:create', request),
+  killTerminal: (request: { terminalId: string }) => ipcRenderer.invoke('terminal:kill', request),
+  terminalInput: (request: { terminalId: string; data: string }) => ipcRenderer.invoke('terminal:input', request),
+  terminalResize: (request: { terminalId: string; cols: number; rows: number }) => ipcRenderer.invoke('terminal:resize', request),
+  terminalOutput: (request: { terminalId: string }) => ipcRenderer.invoke('terminal:output', request),
+  onTerminalData: (callback: (payload: { terminalId: string; data: string }) => void) => {
+    const handler = (_: unknown, payload: { terminalId: string; data: string }) => callback(payload)
+    ipcRenderer.on('terminal:data', handler)
+    return () => ipcRenderer.removeListener('terminal:data', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)
