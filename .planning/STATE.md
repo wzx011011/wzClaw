@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-04-08T06:46:29.791Z"
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-04-08T08:54:01.002Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
   completed_phases: 7
-  total_plans: 23
-  completed_plans: 23
-  percent: 100
+  total_plans: 26
+  completed_plans: 25
+  percent: 96
 ---
 
 # Project State
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-08)
 
 **Core value:** AI Agent 能正确调用工具完成编程任务，用户在 IDE 中实时看到过程和结果，具备生产级 AI IDE 的核心体验
-**Current focus:** Phase 7 — core-interaction
+**Current focus:** Phase 8 — advanced-features
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
+Phase: 8 (advanced-features) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-04-08
 
@@ -68,6 +68,7 @@ Progress: [██████░░░░] 67%
 *Updated after each plan completion*
 | Phase 06 P03 | 12min | 2 tasks | 7 files |
 | Phase 07 P07-02 | 13min | 2 tasks | 10 files |
+| Phase 08 P02 | 15min | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,12 @@ Recent decisions affecting current work:
 - [Phase 07]: D-93: sendMessage formats mentions as [Context from path] blocks for LLM, UI strips them and shows collapsible blocks
 - [Phase 07]: D-94: pendingMentions stored as FileMention[] in chat-store, cleared after sendMessage
 - [Phase 07]: D-95: File size enforcement in IPC handler (102400 bytes), client alert on rejection
+- [Phase 08]: D-TOOL-01: DuckDuckGo Instant Answer API for web search -- free, no API key, good enough for MVP
+- [Phase 08]: D-TOOL-02: 3 separate symbol tools (GoToDefinition, FindReferences, SearchSymbols) instead of one multi-operation tool for cleaner agent UX
+- [Phase 08]: D-TOOL-03: SymbolService as hidden component inside EditorPanel subscribes to IPC queries via Monaco TypeScript worker
+- [Phase 08]: D-TOOL-04: SearchSymbols uses regex over all open Monaco models as fallback when TypeScript worker unavailable
+- [Phase 08]: D-TOOL-05: Shared pendingQueries Map in symbol-nav.ts handles IPC round-trip resolution with 10s timeout
+- [Phase 08]: D-TOOL-06: Rate limiting uses static module-level lastRequestTime for simplicity across all web tool instances
 
 ### Pending Todos
 
@@ -133,6 +140,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-08T04:25:56.932Z
-Stopped at: Completed 07-02-PLAN.md
+Last session: 2026-04-08T08:54:00.998Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None

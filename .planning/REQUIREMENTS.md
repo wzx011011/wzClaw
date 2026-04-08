@@ -120,9 +120,9 @@
 
 ### More Tools (TOOLv2)
 
-- [ ] **TOOL-09**: WebSearch tool — agent can search the web for information, with domain filtering
-- [ ] **TOOL-10**: WebFetch tool — agent can fetch and read web pages, converting to markdown
-- [ ] **TOOL-11**: LSP Symbol Navigation — agent can find symbol definitions and references using Monaco's built-in JS/TS support
+- [x] **TOOL-09**: WebSearch tool — agent can search the web for information, with domain filtering
+- [x] **TOOL-10**: WebFetch tool — agent can fetch and read web pages, converting to markdown
+- [x] **TOOL-11**: LSP Symbol Navigation — agent can find symbol definitions and references using Monaco's built-in JS/TS support
 - [ ] **TOOL-12**: LSP client infrastructure for future integration with external language servers
 - [ ] **TOOL-13**: NotebookEdit tool — agent can edit Jupyter notebook cells (.ipynb files)
 

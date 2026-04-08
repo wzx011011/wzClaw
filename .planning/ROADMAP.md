@@ -162,8 +162,8 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — Terminal panel (xterm.js + node-pty + TerminalManager + IDELayout integration + Bash routing)
-- [ ] 08-02-PLAN.md — Web tools + Symbol navigation (WebSearch, WebFetch, GoToDefinition, FindReferences, SearchSymbols)
+- [x] 08-01-PLAN.md — Terminal panel (xterm.js + node-pty + TerminalManager + IDELayout integration + Bash routing)
+- [x] 08-02-PLAN.md — Web tools + Symbol navigation (WebSearch, WebFetch, GoToDefinition, FindReferences, SearchSymbols)
 - [ ] 08-03-PLAN.md — Task management system (TaskManager, CreateTask/UpdateTask tools, TaskPanel UI)
 **UI hint**: yes
 
@@ -192,5 +192,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
-| 8. Advanced Features | 0/3 | Not started | - |
+| 8. Advanced Features | 2/3 | In Progress|  |
 | 9. Codebase Indexing | 0/? | Not started | - |
