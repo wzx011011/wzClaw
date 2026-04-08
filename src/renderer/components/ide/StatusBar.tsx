@@ -2,9 +2,11 @@ import React from 'react'
 import { useTabStore } from '../../stores/tab-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTerminalStore } from '../../stores/terminal-store'
+import { useIndexStore } from '../../stores/index-store'
 
 /**
- * StatusBar -- bottom status bar showing file path, dirty state, encoding, and agent status (per D-55).
+ * StatusBar -- bottom status bar showing file path, dirty state, encoding,
+ * agent status, and index status (per D-55, IDX-06, IDX-07).
  * Shows active terminal name when terminal panel is visible.
  */
 export default function StatusBar(): JSX.Element {
@@ -13,6 +15,8 @@ export default function StatusBar(): JSX.Element {
   const panelVisible = useTerminalStore((s) => s.panelVisible)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const tabs = useTerminalStore((s) => s.tabs)
+  const indexStatus = useIndexStore((s) => s.status)
+  const indexFileCount = useIndexStore((s) => s.fileCount)
 
   // Build display path -- show full path for active file, or workspace root, or placeholder
   const displayPath = activeTab
@@ -39,6 +43,23 @@ export default function StatusBar(): JSX.Element {
         {activeTerminal && (
           <span className="status-item">Terminal: {activeTerminal.title}</span>
         )}
+        <span className="status-item status-index">
+          {indexStatus === 'indexing' && (
+            <span title="Indexing codebase...">
+              ~ Indexing... ({indexFileCount})
+            </span>
+          )}
+          {indexStatus === 'ready' && (
+            <span title={`Index ready: ${indexFileCount} files indexed`}>
+              {indexFileCount} indexed
+            </span>
+          )}
+          {indexStatus === 'error' && (
+            <span className="index-error" title="Indexing error">
+              ! Index Error
+            </span>
+          )}
+        </span>
         <span className="status-item">Agent: Ready</span>
       </div>
     </div>

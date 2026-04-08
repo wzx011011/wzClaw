@@ -92,7 +92,7 @@ describe('CommandStore', () => {
   })
 
   describe('built-in commands', () => {
-    it('should register 8 built-in commands with correct labels and categories', () => {
+    it('should register 9 built-in commands with correct labels and categories', () => {
       const { registerBuiltInCommands } = useCommandStore.getState()
       registerBuiltInCommands({
         openFolder: vi.fn(),
@@ -100,10 +100,11 @@ describe('CommandStore', () => {
         createSession: vi.fn(),
         saveActiveTab: vi.fn(),
         updateSettings: vi.fn(),
-        openSettingsModal: vi.fn()
+        openSettingsModal: vi.fn(),
+        reindex: vi.fn()
       })
       const { commands } = useCommandStore.getState()
-      expect(commands).toHaveLength(8)
+      expect(commands).toHaveLength(9)
 
       const labels = commands.map((c) => c.label)
       expect(labels).toContain('Open Folder')
@@ -114,6 +115,7 @@ describe('CommandStore', () => {
       expect(labels).toContain('Toggle Terminal')
       expect(labels).toContain('Change Model')
       expect(labels).toContain('Open Settings')
+      expect(labels).toContain('Re-index Workspace')
     })
 
     it('should have correct shortcuts for Open Folder, Save File, Toggle Sidebar, and Toggle Terminal', () => {
@@ -191,7 +193,7 @@ describe('CommandStore', () => {
   })
 
   describe('unavailable commands', () => {
-    it('should have available: false flag on toggle-terminal command', () => {
+    it('should have available: true flag on toggle-terminal command (terminal implemented)', () => {
       const { registerBuiltInCommands } = useCommandStore.getState()
       registerBuiltInCommands({
         openFolder: vi.fn(),
@@ -199,12 +201,13 @@ describe('CommandStore', () => {
         createSession: vi.fn(),
         saveActiveTab: vi.fn(),
         updateSettings: vi.fn(),
-        openSettingsModal: vi.fn()
+        openSettingsModal: vi.fn(),
+        reindex: vi.fn()
       })
       const toggleTerminal = useCommandStore.getState().commands.find(
         (c) => c.id === 'view.toggle-terminal'
       )
-      expect(toggleTerminal?.available).toBe(false)
+      expect(toggleTerminal?.available).toBe(true)
     })
   })
 })

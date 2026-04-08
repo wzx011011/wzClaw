@@ -15,6 +15,7 @@ import { useChatStore } from '../../stores/chat-store'
 import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useTerminalStore } from '../../stores/terminal-store'
+import { useIndexStore } from '../../stores/index-store'
 
 /**
  * IDELayout — root layout component for the IDE (per D-41, D-44, D-51, D-52, D-57).
@@ -101,6 +102,12 @@ export default function IDELayout(): JSX.Element {
     return unsubscribe
   }, [initChat])
 
+  // Subscribe to index progress events (per IDX-06).
+  useEffect(() => {
+    const unsubscribe = useIndexStore.getState().init()
+    return unsubscribe
+  }, [])
+
   // Register built-in commands once on mount (per CMD-01)
   useEffect(() => {
     registerBuiltInCommands({
@@ -114,7 +121,8 @@ export default function IDELayout(): JSX.Element {
       updateSettings: (req) => useSettingsStore.getState().updateSettings(req),
       openSettingsModal: () => {
         window.dispatchEvent(new CustomEvent('wzxclaw:open-settings'))
-      }
+      },
+      reindex: () => useIndexStore.getState().reindex()
     })
   }, [registerBuiltInCommands])
 

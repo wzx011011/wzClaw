@@ -33,6 +33,7 @@ interface CommandActions {
     saveActiveTab: () => void
     updateSettings: (req: Record<string, unknown>) => void
     openSettingsModal: () => void
+    reindex: () => void
   }) => void
 }
 
@@ -143,6 +144,12 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
         label: 'Open Settings',
         category: 'Settings',
         handler: deps.openSettingsModal
+      },
+      {
+        id: 'index.reindex',
+        label: 'Re-index Workspace',
+        category: 'Index',
+        handler: deps.reindex
       }
     ]
 
