@@ -50,6 +50,7 @@ const STOP_WORDS = new Set([
 interface TfidfVocab {
   terms: Record<string, number>  // term -> index
   idf: Record<string, number>    // term -> IDF value
+  df: Record<string, number>     // term -> raw document frequency
   docCount: number               // number of documents used to build vocab
   size: number                   // vocabulary size
 }
@@ -62,6 +63,7 @@ const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
 const RATE_LIMIT_DELAY_MS = 100
 const BATCH_SIZE = 50
 const API_TIMEOUT_MS = 10000
+const MAX_VOCAB_SIZE = 50000 // Cap vocabulary to prevent unbounded memory growth
 
 export class EmbeddingClient {
   private apiKey: string | undefined
@@ -227,12 +229,15 @@ export class EmbeddingClient {
 
   /**
    * Update the TF-IDF vocabulary with new documents.
+   * Stores raw document frequency (df) for correct IDF recalculation.
+   * Caps vocabulary at MAX_VOCAB_SIZE terms to prevent unbounded memory growth.
    */
   private updateVocab(texts: string[]): void {
     if (!this.vocab) {
       this.vocab = {
         terms: {},
         idf: {},
+        df: {},
         docCount: 0,
         size: 0,
       }
@@ -253,23 +258,49 @@ export class EmbeddingClient {
       }
     }
 
-    // Update IDF values
-    const totalDocs = this.vocab.docCount + newDocCount
+    // Update raw document frequencies
     for (const [term, newCount] of Object.entries(termDocCount)) {
-      const existingCount = this.vocab.idf[term] ? (this.vocab.idf[term] * this.vocab.docCount) : 0
-      this.vocab.idf[term] = Math.log((totalDocs + 1) / (existingCount + newCount + 1)) + 1
+      this.vocab.df[term] = (this.vocab.df[term] || 0) + newCount
     }
 
-    // Recalculate IDF for all terms
+    const totalDocs = this.vocab.docCount + newDocCount
+
+    // Recalculate IDF for ALL terms using raw df values
     for (const term of Object.keys(this.vocab.terms)) {
-      if (!(term in termDocCount)) {
-        const existingCount = this.vocab.idf[term] ? (this.vocab.idf[term] * (this.vocab.docCount || 1)) : 0
-        this.vocab.idf[term] = Math.log((totalDocs + 1) / (existingCount + 1)) + 1
-      }
+      const df = this.vocab.df[term] || 0
+      this.vocab.idf[term] = Math.log((totalDocs + 1) / (df + 1)) + 1
     }
 
     this.vocab.docCount = totalDocs
+
+    // Cap vocabulary size by removing least-frequent terms
+    if (this.vocab.size > MAX_VOCAB_SIZE) {
+      this.pruneVocab()
+    }
+
     this.saveVocab()
+  }
+
+  /**
+   * Remove least-frequent terms to keep vocabulary within MAX_VOCAB_SIZE.
+   */
+  private pruneVocab(): void {
+    const termEntries = Object.entries(this.vocab!.df)
+      .sort((a, b) => a[1] - b[1]) // ascending by document frequency
+
+    const toRemove = termEntries.slice(0, termEntries.length - MAX_VOCAB_SIZE)
+    for (const [term] of toRemove) {
+      delete this.vocab!.terms[term]
+      delete this.vocab!.idf[term]
+      delete this.vocab!.df[term]
+    }
+
+    // Rebuild term indices after removal
+    let idx = 0
+    for (const term of Object.keys(this.vocab!.terms)) {
+      this.vocab!.terms[term] = idx++
+    }
+    this.vocab!.size = idx
   }
 
   /**
