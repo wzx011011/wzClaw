@@ -25,6 +25,14 @@ interface ToolCardProps {
 const OUTPUT_TRUNCATE_LENGTH = 500
 
 // ============================================================
+// URL Safety Check — prevent XSS from javascript: URIs
+// ============================================================
+
+function isSafeUrl(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://')
+}
+
+// ============================================================
 // WebSearch Output Renderer
 // ============================================================
 
@@ -42,7 +50,7 @@ function renderWebSearchOutput(output: string): JSX.Element {
 
         return (
           <div key={i} className="tool-card-web-result">
-            {url && (
+            {url && isSafeUrl(url) && (
               <a
                 className="tool-card-web-url"
                 href={url}
@@ -76,9 +84,13 @@ function renderWebFetchOutput(output: string, expanded: boolean): JSX.Element {
       {sourceUrl && (
         <div className="tool-card-web-source">
           Source:{' '}
-          <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
-            {sourceUrl}
-          </a>
+          {isSafeUrl(sourceUrl) ? (
+            <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
+              {sourceUrl}
+            </a>
+          ) : (
+            <span>{sourceUrl}</span>
+          )}
         </div>
       )}
       <div className={`tool-card-web-content ${expanded ? 'expanded' : ''}`}>
