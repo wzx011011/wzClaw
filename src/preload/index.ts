@@ -67,6 +67,7 @@ const api = {
   listSessions: () => ipcRenderer.invoke('session:list'),
   loadSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:load', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
+  renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
 
   // Session compacted stream listener
   onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => {

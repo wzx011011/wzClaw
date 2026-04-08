@@ -256,6 +256,13 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // Session: rename — updates session title via meta line
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:rename'], (_event, request) => {
+    return { success: sessionStore.renameSession(request.sessionId, request.title) }
+  })
+
+  // ============================================================
   // Agent: compact context — manual /compact command
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async () => {

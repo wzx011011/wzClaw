@@ -34,6 +34,8 @@ interface ChatState {
   error: string | null
   sessions: SessionMeta[]
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
+  activeSessionId: string
+  sessionsCache: Record<string, ChatMessage[]>
 }
 
 interface ChatActions {
@@ -44,17 +46,25 @@ interface ChatActions {
   loadSessionList: () => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
+  createSession: () => void
+  switchSession: (sessionId: string) => Promise<void>
+  renameSession: (sessionId: string, title: string) => Promise<void>
+  deleteSessionTab: (sessionId: string) => Promise<void>
 }
 
 type ChatStore = ChatState & ChatActions
 
-export const useChatStore = create<ChatStore>((set, get) => ({
+export const useChatStore = create<ChatStore>((set, get) => {
+  const initialId = uuidv4()
+  return {
   messages: [],
-  conversationId: uuidv4(),
+  conversationId: initialId,
   isStreaming: false,
   error: null,
   sessions: [],
   currentTokenUsage: null,
+  activeSessionId: initialId,
+  sessionsCache: {},
 
   /**
    * Subscribe to all 5 stream IPC events. Returns unsubscribe function.
@@ -269,9 +279,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
    * Clear all messages and reset conversation ID.
    */
   clearConversation: () => {
+    const newId = uuidv4()
     set({
       messages: [],
-      conversationId: uuidv4(),
+      conversationId: newId,
+      activeSessionId: newId,
       error: null
     })
   },
@@ -330,5 +342,140 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } catch (err) {
       console.error('Failed to delete session:', err)
     }
+  },
+
+  /**
+   * Create a new session. Preserves current session messages in cache,
+   * generates new UUID, clears messages, and switches to new session.
+   */
+  createSession: () => {
+    const { messages, conversationId } = get()
+    const newId = uuidv4()
+
+    // Cache current session messages if any exist
+    const newCache = { ...get().sessionsCache }
+    if (messages.length > 0) {
+      newCache[conversationId] = messages
+    }
+
+    set({
+      messages: [],
+      conversationId: newId,
+      activeSessionId: newId,
+      error: null,
+      sessionsCache: newCache
+    })
+  },
+
+  /**
+   * Switch to a different session. Saves current messages to cache,
+   * loads target session from cache or IPC, and sets activeSessionId.
+   * No-op if switching to the same session.
+   */
+  switchSession: async (sessionId: string) => {
+    const { activeSessionId, messages, conversationId } = get()
+
+    // No-op if switching to same session
+    if (activeSessionId === sessionId) return
+
+    // Save current messages to cache
+    const newCache = { ...get().sessionsCache }
+    newCache[conversationId] = messages
+
+    // Check cache first
+    const cached = newCache[sessionId]
+    if (cached) {
+      set({
+        messages: cached,
+        conversationId: sessionId,
+        activeSessionId: sessionId,
+        sessionsCache: newCache
+      })
+    } else {
+      // Load from IPC
+      await get().loadSession(sessionId)
+      set({
+        activeSessionId: sessionId,
+        sessionsCache: newCache
+      })
+    }
+  },
+
+  /**
+   * Rename a session. Updates title in sessions array and calls IPC.
+   */
+  renameSession: async (sessionId: string, title: string) => {
+    try {
+      await window.wzxclaw.renameSession({ sessionId, title })
+      const { sessions } = get()
+      set({
+        sessions: sessions.map(s =>
+          s.id === sessionId ? { ...s, title } : s
+        )
+      })
+    } catch (err) {
+      console.error('Failed to rename session:', err)
+    }
+  },
+
+  /**
+   * Delete a session tab. Calls deleteSession IPC, removes from cache,
+   * and switches to another session if the deleted one was active.
+   */
+  deleteSessionTab: async (sessionId: string) => {
+    try {
+      await window.wzxclaw.deleteSession({ sessionId })
+      const { activeSessionId, sessionsCache } = get()
+
+      // Remove from cache
+      const newCache = { ...sessionsCache }
+      delete newCache[sessionId]
+
+      if (activeSessionId === sessionId) {
+        // Switch to another session or create new
+        const remaining = Object.keys(newCache)
+        if (remaining.length > 0) {
+          const targetId = remaining[remaining.length - 1]
+          const targetMessages = newCache[targetId]
+          set({
+            messages: targetMessages || [],
+            conversationId: targetId,
+            activeSessionId: targetId,
+            sessionsCache: newCache
+          })
+        } else {
+          // No cached sessions — reload list and pick first, or create new
+          const sessions = await window.wzxclaw.listSessions()
+          if (sessions.length > 0) {
+            const firstSession = sessions[0]
+            set({
+              sessions,
+              activeSessionId: firstSession.id,
+              conversationId: firstSession.id,
+              messages: [],
+              sessionsCache: newCache
+            })
+            // Load the session data
+            await get().loadSession(firstSession.id)
+            set({ activeSessionId: firstSession.id })
+          } else {
+            const newId = uuidv4()
+            set({
+              sessions,
+              messages: [],
+              conversationId: newId,
+              activeSessionId: newId,
+              sessionsCache: newCache
+            })
+          }
+        }
+      } else {
+        set({ sessionsCache: newCache })
+      }
+
+      await get().loadSessionList()
+    } catch (err) {
+      console.error('Failed to delete session tab:', err)
+    }
   }
-}))
+}})

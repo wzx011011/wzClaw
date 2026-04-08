@@ -113,19 +113,35 @@ export class SessionStore {
       const content = fs.readFileSync(filePath, 'utf-8')
       const lines = content.split('\n').filter(l => l.trim())
 
-      // Extract title from first user message
+      // Extract title: check for meta line first, then fall back to first user message
       let title = 'Untitled'
-      for (const line of lines) {
+      let messageLines = lines
+      // Check if first line is a meta line
+      if (lines.length > 0) {
         try {
-          const parsed = JSON.parse(line)
-          if (parsed.role === 'user' && parsed.content) {
-            title = parsed.content.length > 50
-              ? parsed.content.substring(0, 50) + '...'
-              : parsed.content
-            break
+          const parsed = JSON.parse(lines[0])
+          if (parsed.type === 'meta' && parsed.title) {
+            title = parsed.title
+            messageLines = lines.slice(1) // exclude meta line from message count
           }
         } catch {
-          // skip corrupted lines when extracting title
+          // not a meta line, proceed normally
+        }
+      }
+      // Fall back to first user message if title still default
+      if (title === 'Untitled') {
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line)
+            if (parsed.role === 'user' && parsed.content) {
+              title = parsed.content.length > 50
+                ? parsed.content.substring(0, 50) + '...'
+                : parsed.content
+              break
+            }
+          } catch {
+            // skip corrupted lines when extracting title
+          }
         }
       }
 
@@ -135,7 +151,7 @@ export class SessionStore {
         title,
         createdAt: stats.birthtimeMs,
         updatedAt: stats.mtimeMs,
-        messageCount: lines.length
+        messageCount: messageLines.filter(l => l.trim()).length
       })
     }
 
@@ -155,5 +171,46 @@ export class SessionStore {
       return true
     }
     return false
+  }
+
+  /**
+   * Rename a session by adding/updating a meta line at the top of the JSONL file.
+   * The meta line format: {"type":"meta","title":"..."}
+   * listSessions() checks for this meta line before falling back to first user message.
+   * Returns true if the session file existed and was updated, false otherwise.
+   */
+  renameSession(sessionId: string, title: string): boolean {
+    const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
+    if (!fs.existsSync(filePath)) {
+      return false
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const lines = content.split('\n')
+
+    // Check if first line is already a meta line
+    const metaLine = JSON.stringify({ type: 'meta', title })
+
+    if (lines.length > 0) {
+      try {
+        const parsed = JSON.parse(lines[0])
+        if (parsed.type === 'meta') {
+          // Replace existing meta line
+          lines[0] = metaLine
+        } else {
+          // Insert meta line at top
+          lines.unshift(metaLine)
+        }
+      } catch {
+        // First line corrupted, insert meta at top
+        lines.unshift(metaLine)
+      }
+    } else {
+      // Empty file, just write meta
+      lines.push(metaLine)
+    }
+
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
+    return true
   }
 }

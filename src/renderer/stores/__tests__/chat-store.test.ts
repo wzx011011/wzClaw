@@ -2,16 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useChatStore } from '../chat-store'
 import type { ChatMessage } from '../chat-store'
 
-// Mock uuid to return predictable values in tests
+// Mock uuid to return a predictable value
 vi.mock('uuid', () => ({
-  v4: vi.fn()
-    .mockReturnValueOnce('new-session-id-1')
-    .mockReturnValueOnce('new-session-id-2')
-    .mockReturnValueOnce('new-session-id-3')
-    .mockReturnValueOnce('new-msg-id-1')
-    .mockReturnValueOnce('new-msg-id-2')
-    .mockReturnValueOnce('new-msg-id-3')
-    .mockReturnValueOnce('new-msg-id-4')
+  v4: () => 'mock-uuid-new'
 }))
 
 // Store original global state
@@ -63,8 +56,9 @@ describe('ChatStore multi-session', () => {
       createSession()
 
       const state = useChatStore.getState()
-      expect(state.activeSessionId).toBe('new-session-id-1')
-      expect(state.conversationId).toBe('new-session-id-1')
+      // UUID mock returns 'mock-uuid-new' for the new session
+      expect(state.activeSessionId).toBe('mock-uuid-new')
+      expect(state.conversationId).toBe('mock-uuid-new')
       expect(state.messages).toEqual([])
     })
 

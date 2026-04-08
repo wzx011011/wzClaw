@@ -42,6 +42,7 @@ export const IPC_CHANNELS = {
   'session:list': 'session:list',
   'session:load': 'session:load',
   'session:delete': 'session:delete',
+  'session:rename': 'session:rename',
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
@@ -84,6 +85,7 @@ export interface IpcRequestPayloads {
   'session:list': void
   'session:load': { sessionId: string }
   'session:delete': { sessionId: string }
+  'session:rename': { sessionId: string; title: string }
   'agent:compact_context': void
 }
 
@@ -108,6 +110,7 @@ export interface IpcResponsePayloads {
   'session:list': SessionMeta[]
   'session:load': unknown[]
   'session:delete': { success: boolean }
+  'session:rename': { success: boolean }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
 }
 
