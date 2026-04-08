@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Polish + Packaging** - Application packaging, final integration testing, and distribution
 
 **v1.2 (Active):**
-- [ ] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
+- [x] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
 - [ ] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview
 - [ ] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system
 - [ ] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval
@@ -178,7 +178,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 3. IDE Shell | 3/3 | Complete | 2026-04-03 |
 | 4. Chat Panel + Integration | 3/3 | Complete | 2026-04-03 |
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
-| 6. Foundation Upgrades | 2/3 | In Progress | - |
+| 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 0/? | Not started | - |
 | 8. Advanced Features | 0/? | Not started | - |
 | 9. Codebase Indexing | 0/? | Not started | - |

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 06-03-PLAN.md
-last_updated: "2026-04-08T01:38:14.636Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-04-08T04:25:56.937Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
   completed_phases: 6
-  total_plans: 18
-  completed_plans: 18
-  percent: 100
+  total_plans: 21
+  completed_plans: 20
+  percent: 95
 ---
 
 # Project State
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-08)
 
 **Core value:** AI Agent 能正确调用工具完成编程任务，用户在 IDE 中实时看到过程和结果，具备生产级 AI IDE 的核心体验
-**Current focus:** Phase 06 — foundation-upgrades
+**Current focus:** Phase 7 — core-interaction
 
 ## Current Position
 
-Phase: 7
-Plan: Not started
+Phase: 7 (core-interaction) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-04-08
 
@@ -66,6 +66,7 @@ Progress: [██████░░░░] 67%
 
 *Updated after each plan completion*
 | Phase 06 P03 | 12min | 2 tasks | 7 files |
+| Phase 07 P07-02 | 13min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,10 @@ Recent decisions affecting current work:
 - [Phase 06]: D-86: Custom DOM event (wzxclaw:open-settings) bridges command palette to ChatPanel settings modal
 - [Phase 06]: D-87: Built-in commands use store.getState() for handler deps to always call latest store actions
 - [Phase 06]: D-88: Toggle Terminal registered with available:false as placeholder for Phase 8
+- [Phase 07]: D-92: MentionPicker uses simple char-order fuzzy matching with filename-priority ranking (no external library)
+- [Phase 07]: D-93: sendMessage formats mentions as [Context from path] blocks for LLM, UI strips them and shows collapsible blocks
+- [Phase 07]: D-94: pendingMentions stored as FileMention[] in chat-store, cleared after sendMessage
+- [Phase 07]: D-95: File size enforcement in IPC handler (102400 bytes), client alert on rejection
 
 ### Pending Todos
 
@@ -127,6 +132,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-08T01:26:55.909Z
-Stopped at: Completed 06-03-PLAN.md
+Last session: 2026-04-08T04:25:56.932Z
+Stopped at: Completed 07-02-PLAN.md
 Resume file: None

@@ -83,12 +83,12 @@
 
 ### @-mention Context (MENTION)
 
-- [ ] **MENTION-01**: User can type @ in chat input to open a context picker showing files and folders from the current workspace
-- [ ] **MENTION-02**: Selecting a file injects its content (up to 500 lines) into the conversation context with file path header
-- [ ] **MENTION-03**: Selecting a folder injects a directory tree summary into the context
-- [ ] **MENTION-04**: Multiple @-mentions can be included in a single message
-- [ ] **MENTION-05**: @-mention picker supports fuzzy search to quickly find files by name
-- [ ] **MENTION-06**: Injected file content is visible in the chat message as collapsible context blocks
+- [x] **MENTION-01**: User can type @ in chat input to open a context picker showing files and folders from the current workspace
+- [x] **MENTION-02**: Selecting a file injects its content (up to 500 lines) into the conversation context with file path header
+- [x] **MENTION-03**: Selecting a folder injects a directory tree summary into the context
+- [x] **MENTION-04**: Multiple @-mentions can be included in a single message
+- [x] **MENTION-05**: @-mention picker supports fuzzy search to quickly find files by name
+- [x] **MENTION-06**: Injected file content is visible in the chat message as collapsible context blocks
 
 ### Multi-session Management (SESSION)
 
