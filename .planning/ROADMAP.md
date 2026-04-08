@@ -159,7 +159,12 @@ Plans:
   3. Agent can search the web for information (WebSearch tool) and fetch web page content (WebFetch tool) to gather external context during coding tasks
   4. Agent can navigate code symbols (find definitions, search for symbols) using Monaco's built-in language support
   5. Agent creates tasks with descriptions and status tracking during multi-step work, and the user sees a task list panel with real-time progress updates including dependency blocking
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Terminal panel (xterm.js + node-pty + TerminalManager + IDELayout integration + Bash routing)
+- [ ] 08-02-PLAN.md — Web tools + Symbol navigation (WebSearch, WebFetch, GoToDefinition, FindReferences, SearchSymbols)
+- [ ] 08-03-PLAN.md — Task management system (TaskManager, CreateTask/UpdateTask tools, TaskPanel UI)
 **UI hint**: yes
 
 ### Phase 9: Codebase Indexing
@@ -187,5 +192,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
-| 8. Advanced Features | 0/? | Not started | - |
+| 8. Advanced Features | 0/3 | Not started | - |
 | 9. Codebase Indexing | 0/? | Not started | - |
