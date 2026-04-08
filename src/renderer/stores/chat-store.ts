@@ -411,12 +411,17 @@ export const useChatStore = create<ChatStore>((set, get) => {
         sessionsCache: newCache
       })
     } else {
-      // Load from IPC
+      // Load from IPC — verify success before updating activeSessionId
+      const prevError = get().error
       await get().loadSession(sessionId)
-      set({
-        activeSessionId: sessionId,
-        sessionsCache: newCache
-      })
+      // loadSession sets conversationId on success; only update activeSessionId
+      // if no new error was introduced (i.e., load succeeded)
+      if (!get().error || get().error === prevError) {
+        set({
+          activeSessionId: sessionId,
+          sessionsCache: newCache
+        })
+      }
     }
   },
 
