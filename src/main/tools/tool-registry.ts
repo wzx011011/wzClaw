@@ -8,6 +8,8 @@ import { BashTool } from './bash'
 import type { TerminalManager } from '../terminal/terminal-manager'
 import { GrepTool } from './grep'
 import { GlobTool } from './glob'
+import { WebSearchTool } from './web-search'
+import { WebFetchTool } from './web-fetch'
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
@@ -47,6 +49,10 @@ export function createDefaultTools(workingDirectory: string, terminalManager?: T
   registry.register(new FileReadTool())
   registry.register(new GrepTool())
   registry.register(new GlobTool())
+
+  // Web tools (read-only, no approval required)
+  registry.register(new WebSearchTool())
+  registry.register(new WebFetchTool())
 
   // Destructive tools (requires approval per D-32)
   registry.register(new FileWriteTool())

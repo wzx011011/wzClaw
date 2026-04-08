@@ -50,6 +50,14 @@ export const TERMINAL_BUFFER_SIZE = 65536
 export const TERMINAL_DEFAULT_COLS = 80
 export const TERMINAL_DEFAULT_ROWS = 24
 
+// ============================================================
+// Web Tool Constants (per TOOL-09, TOOL-10)
+// ============================================================
+
+export const WEB_CONTENT_MAX_CHARS = 15000
+export const WEB_FETCH_TIMEOUT_MS = 15000
+export const WEB_SEARCH_RATE_LIMIT_MS = 3000
+
 // OpenAI-compatible endpoints
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'

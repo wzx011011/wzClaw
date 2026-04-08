@@ -1579,3 +1579,69 @@
   width: 4px !important;
   margin-left: 3px;
 }
+
+/* ============================================================
+   Web Tool Card Styles (per TOOL-09, TOOL-10)
+   ============================================================ */
+
+.tool-card-web-result {
+  margin-bottom: 8px;
+}
+
+.tool-card-web-url {
+  color: var(--accent);
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  text-decoration: none;
+}
+
+.tool-card-web-url:hover {
+  text-decoration: underline;
+}
+
+.tool-card-web-title {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.tool-card-web-snippet {
+  color: var(--text-secondary);
+  font-size: 11px;
+  max-height: 2.4em;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.tool-card-web-source {
+  color: var(--accent);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.tool-card-web-source a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.tool-card-web-source a:hover {
+  text-decoration: underline;
+}
+
+.tool-card-web-content {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  transition: max-height 0.3s;
+}
+
+.tool-card-web-content.expanded {
+  max-height: none;
+}
