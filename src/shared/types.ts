@@ -163,6 +163,17 @@ export interface LLMConfig {
 }
 
 // ============================================================
+// File Mention Types (MENTION-01 through MENTION-06)
+// ============================================================
+
+export interface FileMention {
+  type: 'file_mention'
+  path: string
+  content: string
+  size: number
+}
+
+// ============================================================
 // Zod Schemas for IPC Validation
 // ============================================================
 
@@ -185,3 +196,10 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('error'), error: z.string() }),
   z.object({ type: z.literal('done'), usage: TokenUsageSchema })
 ])
+
+export const FileMentionSchema = z.object({
+  type: z.literal('file_mention'),
+  path: z.string().min(1),
+  content: z.string(),
+  size: z.number().nonnegative()
+})

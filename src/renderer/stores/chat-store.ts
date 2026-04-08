@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import type { SessionMeta } from '../../shared/types'
+import type { SessionMeta, FileMention } from '../../shared/types'
 
 // ============================================================
 // Chat Store (per D-54, D-55, D-56)
@@ -25,6 +25,8 @@ export interface ChatMessage {
   isStreaming?: boolean
   usage?: { inputTokens: number; outputTokens: number }
   isCompacted?: boolean
+  // @-mention context files (user messages only)
+  mentions?: FileMention[]
 }
 
 interface ChatState {
@@ -36,6 +38,7 @@ interface ChatState {
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
   activeSessionId: string
   sessionsCache: Record<string, ChatMessage[]>
+  pendingMentions: FileMention[]
 }
 
 interface ChatActions {
@@ -50,6 +53,9 @@ interface ChatActions {
   switchSession: (sessionId: string) => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
   deleteSessionTab: (sessionId: string) => Promise<void>
+  addMention: (mention: FileMention) => void
+  removeMention: (path: string) => void
+  clearMentions: () => void
 }
 
 type ChatStore = ChatState & ChatActions
@@ -65,6 +71,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
   currentTokenUsage: null,
   activeSessionId: initialId,
   sessionsCache: {},
+  pendingMentions: [],
 
   /**
    * Subscribe to all 5 stream IPC events. Returns unsubscribe function.
@@ -227,15 +234,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
   /**
    * Send a user message to the agent via IPC.
    * Creates a user ChatMessage + empty streaming assistant ChatMessage.
+   * If pendingMentions exist, formats file content into the message.
    */
   sendMessage: async (content: string) => {
-    const { conversationId, messages } = get()
+    const { conversationId, messages, pendingMentions } = get()
+
+    // Format mentions into message content for LLM context
+    let formattedContent = content
+    if (pendingMentions.length > 0) {
+      const contextBlocks = pendingMentions.map((m) =>
+        `[Context from ${m.path}]:\n${m.content}\n---`
+      ).join('\n')
+      formattedContent = `${contextBlocks}\n\n${content}`
+    }
 
     const userMsg: ChatMessage = {
       id: uuidv4(),
       role: 'user',
-      content,
-      timestamp: Date.now()
+      content: formattedContent,
+      timestamp: Date.now(),
+      mentions: pendingMentions.length > 0 ? [...pendingMentions] : undefined
     }
 
     const assistantMsg: ChatMessage = {
@@ -250,11 +268,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     set({
       messages: [...messages, userMsg, assistantMsg],
       isStreaming: true,
-      error: null
+      error: null,
+      pendingMentions: []
     })
 
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content })
+      await window.wzxclaw.sendMessage({ conversationId, content: formattedContent })
     } catch (err) {
       set({
         isStreaming: false,
@@ -477,5 +496,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
     } catch (err) {
       console.error('Failed to delete session tab:', err)
     }
+  },
+
+  /**
+   * Add a file mention to the pending list for the next message.
+   */
+  addMention: (mention: FileMention) => {
+    const { pendingMentions } = get()
+    // Avoid duplicates
+    if (pendingMentions.some((m) => m.path === mention.path)) return
+    set({ pendingMentions: [...pendingMentions, mention] })
+  },
+
+  /**
+   * Remove a pending mention by file path.
+   */
+  removeMention: (path: string) => {
+    const { pendingMentions } = get()
+    set({ pendingMentions: pendingMentions.filter((m) => m.path !== path) })
+  },
+
+  /**
+   * Clear all pending mentions (called after message sent).
+   */
+  clearMentions: () => {
+    set({ pendingMentions: [] })
   }
 }})

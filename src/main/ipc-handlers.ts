@@ -228,6 +228,40 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // File: read-content — reads file for @-mention injection with 100KB limit
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:read-content'], async (_event, request) => {
+    const result = IpcSchemas['file:read-content'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+
+    const { filePath } = result.data
+    const workspaceRoot = workspaceManager.getWorkspaceRoot()
+    if (!workspaceRoot) {
+      return { error: 'No workspace open', size: 0, limit: 102400 }
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(workspaceRoot, filePath)
+
+    const { stat, readFile } = await import('fs/promises')
+    const fileStat = await stat(absolutePath)
+    const size = fileStat.size
+    const limit = 102400 // 100KB
+
+    if (size > limit) {
+      return { error: 'File too large', size, limit }
+    }
+
+    const content = await readFile(absolutePath, 'utf-8')
+    // Return relative path for display
+    const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/')
+    return { content, size, path: relativePath }
+  })
+
+  // ============================================================
   // File: save
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {

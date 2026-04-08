@@ -37,6 +37,7 @@ export const IPC_CHANNELS = {
   'file:read': 'file:read',
   'file:save': 'file:save',
   'file:changed': 'file:changed',
+  'file:read-content': 'file:read-content',
 
   // Session channels (renderer -> main)
   'session:list': 'session:list',
@@ -81,6 +82,7 @@ export interface IpcRequestPayloads {
   'workspace:watch': void
   'workspace:status': void
   'file:read': { filePath: string }
+  'file:read-content': { filePath: string }
   'file:save': { filePath: string; content: string }
   'session:list': void
   'session:load': { sessionId: string }
@@ -106,6 +108,7 @@ export interface IpcResponsePayloads {
   'workspace:watch': void
   'workspace:status': { rootPath: string | null; isWatching: boolean }
   'file:read': { content: string; language: string }
+  'file:read-content': { content: string; size: number; path: string } | { error: string; size: number; limit: number }
   'file:save': void
   'session:list': SessionMeta[]
   'session:load': unknown[]
@@ -142,6 +145,23 @@ export const IpcSchemas = {
       content: z.string().min(1)
     }),
     response: z.undefined()
+  },
+  'file:read-content': {
+    request: z.object({
+      filePath: z.string().min(1)
+    }),
+    response: z.union([
+      z.object({
+        content: z.string(),
+        size: z.number(),
+        path: z.string()
+      }),
+      z.object({
+        error: z.string(),
+        size: z.number(),
+        limit: z.number()
+      })
+    ])
   },
   'stream:text_delta': z.object({ content: z.string() }),
   'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
