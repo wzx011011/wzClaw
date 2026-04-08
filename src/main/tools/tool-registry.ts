@@ -13,7 +13,9 @@ import { WebFetchTool } from './web-fetch'
 import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './symbol-nav'
 import { CreateTaskTool } from './create-task'
 import { UpdateTaskTool } from './update-task'
+import { SemanticSearchTool } from './semantic-search'
 import type { TaskManager } from '../tasks/task-manager'
+import type { IndexingEngine } from '../indexing/indexing-engine'
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
@@ -43,7 +45,7 @@ export class ToolRegistry {
 
 /**
  * Factory that creates a ToolRegistry with all tools.
- * Read-only tools: FileRead, Grep, Glob, WebSearch, WebFetch (no approval required)
+ * Read-only tools: FileRead, Grep, Glob, WebSearch, WebFetch, SemanticSearch (no approval required)
  * Symbol tools: GoToDefinition, FindReferences, SearchSymbols (no approval required, requires Monaco IPC)
  * Destructive tools: FileWrite, FileEdit, Bash (requires approval per D-32)
  */
@@ -51,7 +53,8 @@ export function createDefaultTools(
   workingDirectory: string,
   terminalManager?: TerminalManager,
   getWebContents?: () => Electron.WebContents | null,
-  taskManager?: TaskManager
+  taskManager?: TaskManager,
+  indexingEngine?: IndexingEngine
 ): ToolRegistry {
   const registry = new ToolRegistry()
 
@@ -59,6 +62,13 @@ export function createDefaultTools(
   registry.register(new FileReadTool())
   registry.register(new GrepTool())
   registry.register(new GlobTool())
+
+  // Semantic search tool (read-only, requires IndexingEngine)
+  const semanticSearch = new SemanticSearchTool()
+  if (indexingEngine) {
+    semanticSearch.setIndexingEngine(indexingEngine)
+  }
+  registry.register(semanticSearch)
 
   // Web tools (read-only, no approval required)
   registry.register(new WebSearchTool())
