@@ -11,6 +11,9 @@ import { GlobTool } from './glob'
 import { WebSearchTool } from './web-search'
 import { WebFetchTool } from './web-fetch'
 import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './symbol-nav'
+import { CreateTaskTool } from './create-task'
+import { UpdateTaskTool } from './update-task'
+import type { TaskManager } from '../tasks/task-manager'
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
@@ -47,7 +50,8 @@ export class ToolRegistry {
 export function createDefaultTools(
   workingDirectory: string,
   terminalManager?: TerminalManager,
-  getWebContents?: () => Electron.WebContents | null
+  getWebContents?: () => Electron.WebContents | null,
+  taskManager?: TaskManager
 ): ToolRegistry {
   const registry = new ToolRegistry()
 
@@ -65,6 +69,12 @@ export function createDefaultTools(
     registry.register(new GoToDefinitionTool(getWebContents))
     registry.register(new FindReferencesTool(getWebContents))
     registry.register(new SearchSymbolsTool(getWebContents))
+  }
+
+  // Task tools (no approval required)
+  if (taskManager && getWebContents) {
+    registry.register(new CreateTaskTool(taskManager, getWebContents))
+    registry.register(new UpdateTaskTool(taskManager, getWebContents))
   }
 
   // Destructive tools (requires approval per D-32)

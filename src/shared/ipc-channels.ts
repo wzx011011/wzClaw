@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
-import type { FileTreeNode, SessionMeta } from './types'
+import type { FileTreeNode, SessionMeta, AgentTask } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -65,7 +65,12 @@ export const IPC_CHANNELS = {
 
   // Symbol navigation channels (main -> renderer query, renderer -> main result)
   'symbol:query': 'symbol:query',
-  'symbol:result': 'symbol:result'
+  'symbol:result': 'symbol:result',
+
+  // Task channels (renderer -> main for list, main -> renderer for streaming)
+  'task:list': 'task:list',
+  'task:created': 'task:created',
+  'task:updated': 'task:updated'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -113,6 +118,7 @@ export interface IpcRequestPayloads {
   'terminal:resize': { terminalId: string; cols: number; rows: number }
   'terminal:output': { terminalId: string }
   'symbol:query': { operation: string; params: Record<string, unknown> }
+  'task:list': void
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -145,6 +151,7 @@ export interface IpcResponsePayloads {
   'terminal:resize': void
   'terminal:output': { buffer: string }
   'symbol:query': { results: Array<{ filePath: string; line: number; symbolName: string; kind: string }> }
+  'task:list': AgentTask[]
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -165,6 +172,8 @@ export interface IpcStreamPayloads {
   'terminal:data': { terminalId: string; data: string }
   'symbol:query': { queryId: string; operation: string; params: Record<string, unknown> }
   'symbol:result': { queryId: string; result: unknown; isError: boolean }
+  'task:created': AgentTask
+  'task:updated': AgentTask
 }
 
 // ============================================================

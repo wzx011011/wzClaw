@@ -253,3 +253,19 @@ export interface TerminalInstance {
   title: string
   isActive: boolean
 }
+
+// ============================================================
+// Task Management Types (per TASK-01 through TASK-05)
+// ============================================================
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+
+export interface AgentTask {
+  id: string
+  subject: string
+  description: string
+  status: TaskStatus
+  blockedBy: string[]    // task IDs this task depends on
+  createdAt: number
+  updatedAt: number
+}

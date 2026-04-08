@@ -10,6 +10,7 @@ import type { AgentConfig } from './agent/types'
 import type { SessionStore } from './persistence/session-store'
 import type { ContextManager } from './context/context-manager'
 import type { TerminalManager } from './terminal/terminal-manager'
+import type { TaskManager } from './tasks/task-manager'
 import { SettingsManager } from './settings-manager'
 import { handleSymbolResult } from './tools/symbol-nav'
 
@@ -23,7 +24,8 @@ export function registerIpcHandlers(
   workspaceManager: WorkspaceManager,
   sessionStore: SessionStore,
   contextManager: ContextManager,
-  terminalManager: TerminalManager
+  terminalManager: TerminalManager,
+  taskManager: TaskManager
 ): void {
   // Load persisted settings from disk
   settingsManager.load()
@@ -557,5 +559,12 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.on('symbol:result', (_event, payload) => {
     handleSymbolResult(payload)
+  })
+
+  // ============================================================
+  // Task: list — returns all agent tasks
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['task:list'], () => {
+    return taskManager.getAllTasks()
   })
 }

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { AgentTask } from '../shared/types'
 
 const api = {
   // Agent
@@ -105,6 +106,19 @@ const api = {
   },
   sendSymbolResult: (response: { queryId: string; result: unknown; isError: boolean }) =>
     ipcRenderer.send('symbol:result', response),
+
+  // Tasks
+  listTasks: () => ipcRenderer.invoke('task:list'),
+  onTaskCreated: (callback: (payload: AgentTask) => void) => {
+    const handler = (_: unknown, payload: AgentTask) => callback(payload)
+    ipcRenderer.on('task:created', handler)
+    return () => ipcRenderer.removeListener('task:created', handler)
+  },
+  onTaskUpdated: (callback: (payload: AgentTask) => void) => {
+    const handler = (_: unknown, payload: AgentTask) => callback(payload)
+    ipcRenderer.on('task:updated', handler)
+    return () => ipcRenderer.removeListener('task:updated', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

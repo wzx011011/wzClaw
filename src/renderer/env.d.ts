@@ -1,4 +1,4 @@
-import type { FileTreeNode, SessionMeta } from '../shared/types'
+import type { FileTreeNode, SessionMeta, AgentTask } from '../shared/types'
 
 declare global {
   interface Window {
@@ -46,6 +46,10 @@ declare global {
       // Symbol navigation
       onSymbolQuery: (cb: (p: { queryId: string; operation: string; params: Record<string, unknown> }) => void) => () => void
       sendSymbolResult: (response: { queryId: string; result: unknown; isError: boolean }) => void
+      // Tasks
+      listTasks: () => Promise<AgentTask[]>
+      onTaskCreated: (cb: (p: AgentTask) => void) => () => void
+      onTaskUpdated: (cb: (p: AgentTask) => void) => () => void
     }
   }
 }
