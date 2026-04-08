@@ -1,9 +1,9 @@
 # Requirements: wzxClaw
 
-**Defined:** 2026-04-03
-**Core Value:** AI Agent 能正确调用工具（读写文件、执行命令、搜索代码）完成编程任务，且用户能在 Chat Panel 中实时看到过程和结果。
+**Defined:** 2026-04-08
+**Core Value:** AI Agent 能正确调用工具完成编程任务，用户在 IDE 中实时看到过程和结果，具备生产级 AI IDE 的核心体验
 
-## v1 Requirements
+## v1.0 Requirements (Complete)
 
 ### Agent Runtime
 
@@ -14,7 +14,7 @@
 - [x] **AGNT-05**: Agent 有无限循环防护，检测重复工具调用并强制停止
 - [x] **AGNT-06**: Agent 支持中途取消（AbortController），用户可停止正在进行的生成
 
-### Tool System
+### Tool System (v1.0)
 
 - [x] **TOOL-01**: FileRead 工具 — 读取指定文件内容，返回带行号的文本
 - [x] **TOOL-02**: FileWrite 工具 — 创建或覆盖文件
@@ -25,7 +25,7 @@
 - [x] **TOOL-07**: 工具调用可视化 — 在 Chat 中显示 Agent 调用了什么工具，输入参数和输出结果
 - [x] **TOOL-08**: 工具权限系统 — 破坏性操作（文件写入、Bash 执行）需用户确认；只读操作可自动允许
 
-### Chat Panel
+### Chat Panel (v1.0)
 
 - [x] **CHAT-01**: 侧边栏聊天面板，可调整大小、可折叠
 - [x] **CHAT-02**: 流式响应显示 — 逐 token 实时渲染 LLM 输出
@@ -35,7 +35,7 @@
 - [x] **CHAT-06**: 中途停止生成 — 用户可取消正在进行的响应
 - [x] **CHAT-07**: 清空/重置对话 — 用户可开始新的对话
 
-### LLM Integration
+### LLM Integration (v1.0)
 
 - [x] **LLM-01**: 支持 OpenAI 兼容 API（覆盖 OpenAI、DeepSeek 及其他兼容端点）
 - [x] **LLM-02**: 支持 Anthropic API（Claude 模型）
@@ -44,7 +44,7 @@
 - [x] **LLM-05**: 流式响应处理 — SSE 流式接收 LLM 输出
 - [x] **LLM-06**: System Prompt 支持 — 可配置的系统提示词
 
-### Editor
+### Editor (v1.0)
 
 - [x] **EDIT-01**: Monaco Editor 集成 — 代码编辑器，支持语法高亮
 - [x] **EDIT-02**: Tab 多文件编辑 — 同时打开多个文件
@@ -53,84 +53,174 @@
 - [x] **EDIT-05**: Agent 编辑文件后自动打开对应 Tab
 - [x] **EDIT-06**: 文件保存和脏状态追踪
 
-### Electron Shell
+### Electron Shell (v1.0)
 
 - [x] **ELEC-01**: Electron 桌面应用窗口，包含菜单栏和状态栏
 - [x] **ELEC-02**: IPC 通信桥接 — Main Process 和 Renderer Process 之间的类型安全通信
 - [x] **ELEC-03**: 应用打包和分发（electron-builder）
 
-## v2 Requirements
+## v1.2 Requirements
 
-### Inline Edit & Completion
+### Context Management (CTX)
 
-- **INLI-01**: Cmd+K Inline Edit — 选中代码后输入指令，生成 inline diff 预览
-- **INLI-02**: Tab 补全 — AI 驱动的代码自动补全
+- [ ] **CTX-01**: Agent loop tracks token usage per conversation turn (input + output tokens from API usage)
+- [ ] **CTX-02**: Token counting via js-tiktoken before each LLM call to estimate context utilization
+- [ ] **CTX-03**: Auto-compact triggers when conversation exceeds 80% of model context window, summarizing older messages into a condensed form
+- [ ] **CTX-04**: Compact only occurs between LLM turns, never during active tool execution (circuit breaker pattern)
+- [ ] **CTX-05**: User can manually trigger compact via a command (e.g., /compact in chat)
+- [ ] **CTX-06**: Context window size is configurable per model in settings (default: 128K for GLM, 200K for Claude)
+- [ ] **CTX-07**: Tool results are truncated to MAX_TOOL_RESULT_CHARS before adding to context
 
-### Advanced Features
+### Inline Diff Preview (DIFF)
 
-- **RULE-01**: 项目级规则文件（.wzxclawrules）— 自定义 AI 行为指令
-- **MENT-01**: @-mentions — 在 Chat 中通过 @Files、@Folders 附加上下文
-- **CHKP-01**: Checkpoints — Agent 修改前的代码快照，支持一键回滚
-- **HIST-01**: 对话历史持久化 — 保存和恢复历史会话
-- **MCP-01**: MCP 协议支持 — 扩展 Agent 工具能力
+- [ ] **DIFF-01**: When AI proposes file changes via FileWrite/FileEdit, a diff preview is shown instead of immediately writing to disk
+- [ ] **DIFF-02**: Diff uses Monaco decorations API to overlay colored lines on the active editor (green for additions, red for deletions)
+- [ ] **DIFF-03**: User can accept or reject each diff hunk individually
+- [ ] **DIFF-04**: User can accept all or reject all changes via toolbar buttons (Ctrl+Enter / Ctrl+Backspace)
+- [ ] **DIFF-05**: Multi-file changes show a file list navigator to review each file's changes
+- [ ] **DIFF-06**: Rejected hunks are not written to disk; accepted hunks are applied immediately
+- [ ] **DIFF-07**: Diff preview state is tracked per file — user cannot edit file while diff is pending
+
+### @-mention Context (MENTION)
+
+- [ ] **MENTION-01**: User can type @ in chat input to open a context picker showing files and folders from the current workspace
+- [ ] **MENTION-02**: Selecting a file injects its content (up to 500 lines) into the conversation context with file path header
+- [ ] **MENTION-03**: Selecting a folder injects a directory tree summary into the context
+- [ ] **MENTION-04**: Multiple @-mentions can be included in a single message
+- [ ] **MENTION-05**: @-mention picker supports fuzzy search to quickly find files by name
+- [ ] **MENTION-06**: Injected file content is visible in the chat message as collapsible context blocks
+
+### Multi-session Management (SESSION)
+
+- [ ] **SESSION-01**: User can open multiple chat sessions as tabs in the chat panel
+- [ ] **SESSION-02**: Each session has independent conversation history, agent loop state, and context
+- [ ] **SESSION-03**: User can switch between sessions without losing state in any session
+- [ ] **SESSION-04**: User can create a new session via button or keyboard shortcut
+- [ ] **SESSION-05**: User can delete a session, with confirmation dialog
+- [ ] **SESSION-06**: Session list shows session title (auto-generated from first message) and creation time
+- [ ] **SESSION-07**: Only the active session's agent loop is "hot" — inactive sessions are lazy-loaded from persistence
+
+### Command Palette (CMD)
+
+- [ ] **CMD-01**: Ctrl+Shift+P opens a command palette overlay with fuzzy search
+- [ ] **CMD-02**: Commands are registered with name, category, shortcut, and handler function
+- [ ] **CMD-03**: Built-in commands include: open file, open folder, new session, clear session, toggle terminal, toggle sidebar, change model, settings
+- [ ] **CMD-04**: Command palette shows keyboard shortcuts next to command names where applicable
+- [ ] **CMD-05**: Plugin system allows future registration of custom commands
+
+### Terminal Panel (TERM)
+
+- [ ] **TERM-01**: A terminal panel is available at the bottom of the IDE layout, toggleable via button or command
+- [ ] **TERM-02**: Terminal uses xterm.js for rendering and node-pty for PTY backend (same stack as VS Code)
+- [ ] **TERM-03**: User can type and execute commands in the terminal interactively
+- [ ] **TERM-04**: Multiple terminal instances can be opened as tabs within the terminal panel
+- [ ] **TERM-05**: Agent Bash tool can optionally route command execution through the terminal panel for visibility
+- [ ] **TERM-06**: Terminal output is captured and available to the agent for analysis (e.g., error diagnosis)
+- [ ] **TERM-07**: Terminal working directory syncs with the current workspace root
+
+### More Tools (TOOLv2)
+
+- [ ] **TOOL-09**: WebSearch tool — agent can search the web for information, with domain filtering
+- [ ] **TOOL-10**: WebFetch tool — agent can fetch and read web pages, converting to markdown
+- [ ] **TOOL-11**: LSP Symbol Navigation — agent can find symbol definitions and references using Monaco's built-in JS/TS support
+- [ ] **TOOL-12**: LSP client infrastructure for future integration with external language servers
+- [ ] **TOOL-13**: NotebookEdit tool — agent can edit Jupyter notebook cells (.ipynb files)
+
+### Codebase Indexing (IDX)
+
+- [ ] **IDX-01**: Project files are indexed in the background using embedding vectors for semantic search
+- [ ] **IDX-02**: Indexing uses file-level embeddings via the configured LLM API (e.g., OpenAI text-embedding-3-small)
+- [ ] **IDX-03**: Vector storage uses sql.js with sqlite-vec extension (WASM, no native dependency)
+- [ ] **IDX-04**: Index is built incrementally — only new/modified files are re-indexed on file change
+- [ ] **IDX-05**: Agent can perform semantic search across the codebase to find relevant code
+- [ ] **IDX-06**: Indexing status is shown in the status bar (indexing/ready/error + file count)
+- [ ] **IDX-07**: User can trigger manual re-index via command palette
+- [ ] **IDX-08**: Large files (>100KB) and binary files are excluded from indexing
+
+### Session Persistence (PERSIST)
+
+- [x] **PERSIST-01**: Chat sessions are persisted to disk as JSONL files (one JSON object per line, append-only)
+- [x] **PERSIST-02**: Sessions are auto-saved after each agent turn completes
+- [x] **PERSIST-03**: On app restart, previous sessions are loaded and visible in the session list
+- [x] **PERSIST-04**: Session restoration recovers messages, tool calls, and usage metadata
+- [x] **PERSIST-05**: Corrupted/malformed lines in JSONL are skipped gracefully without losing the rest of the session
+- [x] **PERSIST-06**: Sessions are stored per-project in userData/sessions/{project-hash}/
+
+### Task/Plan System (TASK)
+
+- [ ] **TASK-01**: Agent can create tasks with subject, description, and status (pending/in_progress/completed)
+- [ ] **TASK-02**: Tasks support dependencies (blockedBy/blocks) — a task cannot start until its blockers are resolved
+- [ ] **TASK-03**: Tasks are displayed in a task list panel, filterable by status
+- [ ] **TASK-04**: Agent updates task status as it works through them
+- [ ] **TASK-05**: User can view task progress in real-time as the agent works
+
+## v2 Requirements (Deferred)
+
+### Inline AI Editing
+- **INLINE-01**: Tab completion (ghost text suggestions) — requires FIM model inference
+- **INLINE-02**: Ctrl+K inline edit (select code → AI rewrite) — requires diff application in editor
+
+### Advanced Agent
+- **AGENT-01**: Subagent spawning (parallel agents with memory isolation)
+- **AGENT-02**: MCP protocol support (external tool servers)
+- **AGENT-03**: Hooks system (pre/post tool execution scripts)
+
+### Collaboration
+- **COLLAB-01**: Export conversation as Markdown
+- **COLLAB-02**: Cloud agent (remote execution)
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| VS Code 扩展 API 兼容 | 不是 VS Code fork，不需要兼容 VS Code 扩展生态 |
-| 内置终端 | MVP 只需 Bash 工具执行命令，不需要交互式终端 |
-| LSP/语言服务 | 依赖 Monaco 内置语言服务，不自建 LSP |
-| 代码库索引/语义搜索 | 复杂度极高，MVP 用 Grep/Glob 即可 |
-| 多人协作 | 个人工具 |
-| 付费/用户体系 | 个人工具 |
-| Vim 模式 | Monaco 自带快捷键已够用 |
-| 浏览器工具 | 复杂度极高，后续版本 |
-| 多 Agent 并行 | 复杂度高，后续版本 |
+| Tab completion (ghost text) | Requires dedicated FIM model + inference optimization — defer to v2 |
+| Ctrl+K inline edit | Complex editor integration, depends on inline diff first — defer to v2 |
+| MCP protocol | Complex external server management — defer to v2 |
+| Hooks system | Script execution lifecycle management — defer to v2 |
+| Subagent spawning | Architecture complexity, memory isolation — defer to v2 |
+| VS Code extension compatibility | Not a VS Code fork, incompatible extension API |
+| Debug mode | Runtime instrumentation — defer to v3 |
+| Visual editor | Drag-and-drop UI design — defer to v3 |
+| Cloud agent | Remote execution infrastructure — not applicable for personal tool |
+| Voice input | Hardware dependency, niche use case — defer to v3 |
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LLM-01 | Phase 1: Foundation | Complete |
-| LLM-02 | Phase 1: Foundation | Complete |
-| LLM-05 | Phase 1: Foundation | Complete |
-| LLM-06 | Phase 1: Foundation | Complete |
-| ELEC-02 | Phase 1: Foundation | Complete |
-| AGNT-01 | Phase 2: Agent Core | Complete |
-| AGNT-02 | Phase 2: Agent Core | Complete |
-| AGNT-03 | Phase 2: Agent Core | Complete |
-| AGNT-04 | Phase 2: Agent Core | Complete |
-| AGNT-05 | Phase 2: Agent Core | Complete |
-| AGNT-06 | Phase 2: Agent Core | Complete |
-| TOOL-01 | Phase 2: Agent Core | Complete |
-| TOOL-02 | Phase 2: Agent Core | Complete |
-| TOOL-03 | Phase 2: Agent Core | Complete |
-| TOOL-04 | Phase 2: Agent Core | Complete |
-| TOOL-05 | Phase 2: Agent Core | Complete |
-| TOOL-06 | Phase 2: Agent Core | Complete |
-| TOOL-08 | Phase 2: Agent Core | Complete |
-| ELEC-01 | Phase 3: IDE Shell | Complete |
-| EDIT-01 | Phase 3: IDE Shell | Complete |
-| EDIT-02 | Phase 3: IDE Shell | Complete |
-| EDIT-03 | Phase 3: IDE Shell | Complete |
-| EDIT-04 | Phase 3: IDE Shell | Complete |
-| EDIT-05 | Phase 3: IDE Shell | Complete |
-| EDIT-06 | Phase 3: IDE Shell | Complete |
-| CHAT-01 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-02 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-03 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-04 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-05 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-06 | Phase 4: Chat Panel + Integration | Complete |
-| CHAT-07 | Phase 4: Chat Panel + Integration | Complete |
-| TOOL-07 | Phase 4: Chat Panel + Integration | Complete |
-| LLM-03 | Phase 4: Chat Panel + Integration | Complete |
-| LLM-04 | Phase 4: Chat Panel + Integration | Complete |
-| ELEC-03 | Phase 5: Polish + Packaging | Complete |
+| AGNT-01 through AGNT-06 | Phase 2: Agent Core | Complete |
+| TOOL-01 through TOOL-08 | Phase 2: Agent Core | Complete |
+| CHAT-01 through CHAT-07 | Phase 4: Chat Panel | Complete |
+| LLM-01 through LLM-06 | Phase 1: Foundation | Complete |
+| EDIT-01 through EDIT-06 | Phase 3: IDE Shell | Complete |
+| ELEC-01 through ELEC-03 | Phase 3/5 | Complete |
+| CTX-01 through CTX-07 | Phase 6: Foundation Upgrades | Pending |
+| DIFF-01 through DIFF-07 | Phase 7: Core Interaction | Pending |
+| MENTION-01 through MENTION-06 | Phase 7: Core Interaction | Pending |
+| SESSION-01 through SESSION-07 | Phase 7: Core Interaction | Pending |
+| CMD-01 through CMD-05 | Phase 6: Foundation Upgrades | Pending |
+| TERM-01 through TERM-07 | Phase 8: Advanced Features | Pending |
+| TOOL-09 through TOOL-13 | Phase 8: Advanced Features | Pending |
+| IDX-01 through IDX-08 | Phase 9: Codebase Indexing | Pending |
+| PERSIST-01 through PERSIST-06 | Phase 6: Foundation Upgrades | Pending |
+| TASK-01 through TASK-05 | Phase 8: Advanced Features | Pending |
+
+**Coverage:**
+- v1.0 requirements: 33 total -- all Complete
+- v1.2 requirements: 63 total
+- Mapped to phases: 63
+- Unmapped: 0
+
+**Coverage Map (v1.2):**
+
+| Phase | Requirements | Count |
+|-------|-------------|-------|
+| Phase 6: Foundation Upgrades | CTX-01..07, CMD-01..05, PERSIST-01..06 | 18 |
+| Phase 7: Core Interaction | SESSION-01..07, MENTION-01..06, DIFF-01..07 | 20 |
+| Phase 8: Advanced Features | TERM-01..07, TOOL-09..13, TASK-01..05 | 17 |
+| Phase 9: Codebase Indexing | IDX-01..08 | 8 |
+| **Total** | | **63** |
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-03 after roadmap creation*
+*Last updated: 2026-04-08 -- v1.2 roadmap created, traceability updated*

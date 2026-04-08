@@ -124,7 +124,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — Session persistence (SessionStore JSONL, session IPC, SessionList UI, auto-save on agent:done)
+- [x] 06-01-PLAN.md — Session persistence (SessionStore JSONL, session IPC, SessionList UI, auto-save on agent:done)
 - [ ] 06-02-PLAN.md — Context management (TokenCounter js-tiktoken, ContextManager, AgentLoop integration, TokenIndicator UI)
 - [ ] 06-03-PLAN.md — Command palette (CommandStore, CommandPalette cmdk, Ctrl+Shift+P, 8 built-in commands)
 **UI hint**: yes

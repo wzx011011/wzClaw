@@ -2,45 +2,57 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-04-03T14:27:48.881Z"
-last_activity: 2026-04-03
+status: executing
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-04-08T00:40:09Z"
+last_activity: 2026-04-08 -- Phase 06 Plan 01 (Session Persistence) completed
 progress:
-  total_phases: 5
+  total_phases: 9
   completed_phases: 5
-  total_plans: 15
-  completed_plans: 15
-  percent: 0
+  total_plans: 18
+  completed_plans: 16
+  percent: 89
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-03)
+See: .planning/PROJECT.md (updated 2026-04-08)
 
-**Core value:** AI Agent 能正确调用工具（读写文件、执行命令、搜索代码）完成编程任务，且用户能在 Chat Panel 中实时看到过程和结果。
-**Current focus:** Phase 05 — polish-packaging
+**Core value:** AI Agent 能正确调用工具完成编程任务，用户在 IDE 中实时看到过程和结果，具备生产级 AI IDE 的核心体验
+**Current focus:** Phase 06 — foundation-upgrades
 
 ## Current Position
 
-Phase: 05 (polish-packaging) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
-Last activity: 2026-04-03
+Phase: 06 (foundation-upgrades) — EXECUTING
+Plan: 1 of 3 COMPLETE
+Status: Plan 01 (Session Persistence) done, continuing to Plan 02
+Last activity: 2026-04-08 -- Phase 06 Plan 01 completed
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed (v1.0): 15
+- Total plans completed (v1.2): 0
 - Average duration: -
-- Total execution time: 0 hours
+- Total execution time (v1.0): ~2.5 hours
+- Total execution time (v1.2): 0 hours
 
-**By Phase:**
+**By Phase (v1.0):**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 01 Foundation | 3 | ~55min | ~18min |
+| 02 Agent Core | 4 | ~53min | ~13min |
+| 03 IDE Shell | 3 | ~29min | ~10min |
+| 04 Chat Panel | 3 | ~23min | ~8min |
+| 05 Polish | 2 | ~40min | ~20min |
+
+**By Phase (v1.2):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -48,24 +60,10 @@ Progress: [░░░░░░░░░░] 0%
 
 **Recent Trend:**
 
-- Last 5 plans: -
-- Trend: -
+- Last 5 plans (v1.0): 7min, 10min, 2062s, 6min, 369s
+- Trend: Stable
 
 *Updated after each plan completion*
-| Phase 01 P01 | 2100 | 2 tasks | 14 files |
-| Phase 01 P02 | 677s | 4 tasks | 7 files |
-| Phase 02-agent-core P02 | 12min | 1 tasks | 9 files |
-| Phase 02-agent-core P01 | 20min | 1 tasks | 9 files |
-| Phase 02-agent-core P03 | 14min | 2 tasks | 9 files |
-| Phase 02-agent-core P04 | 7min | 1 tasks | 3 files |
-| Phase 03-ide-shell P01 | 10min | 2 tasks | 8 files |
-| Phase 03-ide-shell P02 | 11min | 2 tasks | 13 files |
-| Phase 03-ide-shell P03 | 8min | 2 tasks | 5 files |
-| Phase 04 P01 | 6min | 2 tasks | 6 files |
-| Phase 04 P03 | 7min | 2 tasks | 5 files |
-| Phase 04 P02 | 10min | 2 tasks | 8 files |
-| Phase 05 P01 | 2062s | 2 tasks | 2 files |
-| Phase 05 P02 | 369s | 2 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -74,54 +72,37 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- ()
+- (v1.2 roadmap) Phase structure derived from research dependency waves: Wave 1 (Persistence+Context+Palette) -> Wave 2 (Multi-session+@-mention+Diff) -> Wave 3 (Terminal+Tools+Tasks) -> Wave 4 (Indexing)
+- (v1.2 roadmap) Codebase Indexing placed last as it is highest complexity and can be deferred without blocking other features
+- (v1.2 roadmap) Session Persistence placed first in Phase 6 because Multi-session Management (Phase 7) depends on it
+- (v1.2 roadmap) Context Management co-located with Persistence and Command Palette in Phase 6 as all three are foundational enablers
 - [Phase 01]: Shared types use Zod for runtime validation at IPC boundaries (D-09)
 - [Phase 01]: StreamEvent uses discriminated union on 'type' field for type-safe event handling (D-06)
 - [Phase 01]: OpenAI adapter system prompt injected as first message (role: system)
 - [Phase 01]: Anthropic system prompt sent as separate top-level system field
 - [Phase 01]: Gateway detectProvider routes claude* to anthropic, all else to openai
 - [Phase 01]: Both adapters yield error events instead of throwing for graceful agent loop handling
-- [Phase 02-agent-core]: D-32: Destructive tools require user approval via requiresApproval=true
-- [Phase 02-agent-core]: D-33: PermissionManager caches approvals per conversation per tool type
-- [Phase 02-agent-core]: D-36: Bash tool defaults to 30s timeout, configurable per invocation
-- [Phase 02-agent-core]: Tool tests use real temp files (os.tmpdir) instead of mocking fs -- more reliable on Windows
-- [Phase 02-agent-core]: Glob/Grep normalize backslash paths to forward slashes for cross-platform matching
-- [Phase 02-agent-core]: globToRegex uses **/ matching zero or more path segments via (.*\/)? pattern
-- [Phase 02-agent-core]: D-38: AgentLoop tracks tool names from tool_use_start events via Map<string,string> since tool_use_end lacks name field
-- [Phase 02-agent-core]: D-39: Permission denied is non-fatal — tool result with isError=true fed back to LLM
-- [Phase 02-agent-core]: D-40: ToolRegistry createDefaultTools registers all 6 tools (3 read-only + 3 destructive)
-- [Phase 02-agent-core]: D-41: registerIpcHandlers accepts (gateway, agentLoop, permissionManager) for full wiring
-- [Phase 02-agent-core]: D-42: AgentEvents forwarded as stream:* events to renderer for compatibility
-- [Phase 02-agent-core]: D-43: Window destroyed triggers agentLoop.cancel() + permissionManager.clearSession()
-- [Phase 02-agent-core]: D-44: agent:permission_response uses dynamic handleOnce via PermissionManager
-- [Phase 03-ide-shell]: D-45: WorkspaceManager is a singleton created at app startup, injected into IPC handlers as 4th parameter
-- [Phase 03-ide-shell]: D-46: Directory tree uses depth=1 default for lazy loading, renderer requests deeper levels on expand
-- [Phase 03-ide-shell]: D-47: File change events forwarded to all BrowserWindows to support multi-window in future
-- [Phase 03-ide-shell]: D-48: Language detection maps file extensions to Monaco language IDs using static lookup table
-- [Phase 03-ide-shell]: Allotment chosen over react-split-pane for resizable panels, StrictMode removed for Monaco compatibility
-- [Phase 03-ide-shell]: D-50: Dirty tracking via content !== diskContent comparison
-- [Phase 03-ide-shell]: D-51: Ctrl+S triggers IPC saveTab, errors logged but dirty state preserved for retry
-- [Phase 03-ide-shell]: D-52: Agent edits trigger file:changed events via tool call input tracking by ID
-- [Phase 03-ide-shell]: D-53: Dirty tabs are NOT overwritten by external changes to protect user work
-- [Phase 04]: D-54: Chat store init() returns unsubscribe function, called once in IDELayout useEffect with cleanup
-- [Phase 04]: D-57: Three-pane Allotment layout [200, 500, 350] with Sidebar, Editor, ChatPanel
-- [Phase 04]: D-58: Settings store uses DEFAULT_MODELS constant for model label lookup
-- [Phase 04]: D-66: SettingsManager uses safeStorage.encryptString/decryptString for API keys, plaintext fallback on unsupported systems
-- [Phase 04]: D-67: Model selector in chat header changes model + provider atomically via settings store
-- [Phase 04]: D-68: Gateway refreshed with current provider config before each agent:send_message call
-- [Phase 04]: D-69: SettingsModal syncs local form state from settings store on each open
-- [Phase 04]: D-58: ChatMessage ReactMarkdown code override detects fenced code blocks for CodeBlock component rendering
-- [Phase 04]: D-60: CodeBlock Apply button inserts code into active editor via tab store, user Ctrl+S to save
-- [Phase 04]: D-62: ToolCard collapsible details with output truncated at 500 chars and show more toggle
-- [Phase 04]: D-68: Stop button visible when isStreaming, Clear button visible when messages exist
-- [Phase 05]: D-70: NSIS installer with oneClick=false for install directory choice
-- [Phase 05]: D-71: deleteAppDataOnUninstall=false preserves safeStorage API keys
-- [Phase 05]: D-72: x64-only target for personal Windows 10+ tool
-- [Phase 05]: D-73: Icon generated via Node.js raw bytes (256x256 multi-size ICO)
-- [Phase 05]: D-74: Excluded CLAUDE.md, vitest config, tsbuildinfo, log files from package
-- [Phase 05]: D-75: NSIS installer builds at 90.6 MB (reasonable for Electron app with Monaco + multiple LLM SDKs)
-- [Phase 05]: D-76: Code signing skipped (no certificate) -- expected for personal tool
-- [Phase 05]: D-77: E2E workflow verification deferred to manual testing since it requires human interaction
+- [Phase 02]: D-32: Destructive tools require user approval via requiresApproval=true
+- [Phase 02]: D-33: PermissionManager caches approvals per conversation per tool type
+- [Phase 02]: D-36: Bash tool defaults to 30s timeout, configurable per invocation
+- [Phase 02]: Tool tests use real temp files (os.tmpdir) instead of mocking fs
+- [Phase 02]: Glob/Grep normalize backslash paths to forward slashes for cross-platform matching
+- [Phase 02]: D-38: AgentLoop tracks tool names from tool_use_start events via Map<string,string>
+- [Phase 02]: D-39: Permission denied is non-fatal -- tool result with isError=true fed back to LLM
+- [Phase 02]: D-40: ToolRegistry createDefaultTools registers all 6 tools
+- [Phase 02]: D-42: AgentEvents forwarded as stream:* events to renderer
+- [Phase 03]: D-45: WorkspaceManager is a singleton created at app startup
+- [Phase 03]: D-46: Directory tree uses depth=1 default for lazy loading
+- [Phase 03]: D-50: Dirty tracking via content !== diskContent comparison
+- [Phase 04]: D-54: Chat store init() returns unsubscribe function
+- [Phase 04]: D-57: Three-pane Allotment layout [200, 500, 350]
+- [Phase 04]: D-66: SettingsManager uses safeStorage.encryptString/decryptString for API keys
+- [Phase 05]: D-70: NSIS installer with oneClick=false
+- [Phase 05]: D-75: NSIS installer builds at 90.6 MB
+- [Phase 06]: D-76: SessionStore uses TestSessionStore pattern in tests for Electron-free unit testing
+- [Phase 06]: D-77: Auto-save appends ALL messages on each agent:done (not delta), safe for persistence
+- [Phase 06]: D-78: Session title derived from first user message, truncated to 50 chars with ellipsis
+- [Phase 06]: D-79: isCompacted messages rendered with dedicated green/accent border styling
 
 ### Pending Todos
 
@@ -129,11 +110,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- Research flagged: LLM Gateway streaming implementation for Anthropic SDK needs careful API review during Phase 1 planning (tool call chunk accumulation patterns differ between providers)
-- Research flagged: Windows-specific Bash tool sandboxing needs research during Phase 2 (most documentation targets macOS/Linux)
+- v2-PIT-01: node-pty native module requires @electron/rebuild -- test build+package cycle in Phase 8
+- v2-PIT-02: Auto-compact during tool execution can lose tool results -- use circuit breaker pattern (only compact between LLM turns)
+- v2-PIT-06: Codebase Indexing scope explosion risk -- strictly scope to file-level embeddings, no AST chunking
 
 ## Session Continuity
 
-Last session: 2026-04-03T14:26:19.767Z
-Stopped at: Completed 05-02-PLAN.md
-Resume file: None
+Last session: 2026-04-08T00:40:09Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: .planning/phases/06-foundation-upgrades/06-01-SUMMARY.md
