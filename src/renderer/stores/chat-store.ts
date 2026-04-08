@@ -60,6 +60,48 @@ interface ChatActions {
 
 type ChatStore = ChatState & ChatActions
 
+// ============================================================
+// LRU eviction for sessionsCache
+// ============================================================
+
+const MAX_SESSIONS_CACHE_SIZE = 10
+const sessionAccessOrder: string[] = []
+
+/**
+ * Record access to a session and evict the least-recently-used entry
+ * if the cache exceeds the cap. Returns a new cache object.
+ */
+function touchSession(cache: Record<string, ChatMessage[]>, sessionId: string): Record<string, ChatMessage[]> {
+  // Move session to most-recent position
+  const idx = sessionAccessOrder.indexOf(sessionId)
+  if (idx >= 0) {
+    sessionAccessOrder.splice(idx, 1)
+  }
+  sessionAccessOrder.push(sessionId)
+
+  // Evict oldest entries if over cap
+  let result = cache
+  while (sessionAccessOrder.length > MAX_SESSIONS_CACHE_SIZE) {
+    const oldest = sessionAccessOrder.shift()!
+    if (oldest in result) {
+      const evicted = { ...result }
+      delete evicted[oldest]
+      result = evicted
+    }
+  }
+  return result
+}
+
+/**
+ * Remove a session from the LRU tracking (e.g., on delete).
+ */
+function removeSessionFromLru(sessionId: string): void {
+  const idx = sessionAccessOrder.indexOf(sessionId)
+  if (idx >= 0) {
+    sessionAccessOrder.splice(idx, 1)
+  }
+}
+
 export const useChatStore = create<ChatStore>((set, get) => {
   const initialId = uuidv4()
   return {
@@ -375,9 +417,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const newId = uuidv4()
 
     // Cache current session messages if any exist
-    const newCache = { ...get().sessionsCache }
+    let newCache = { ...get().sessionsCache }
     if (messages.length > 0) {
       newCache[conversationId] = messages
+      newCache = touchSession(newCache, conversationId)
     }
 
     set({
@@ -400,29 +443,32 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // No-op if switching to same session
     if (activeSessionId === sessionId) return
 
-    // Save current messages to cache
-    const newCache = { ...get().sessionsCache }
+    // Save current messages to cache and apply LRU eviction
+    let newCache = { ...get().sessionsCache }
     newCache[conversationId] = messages
+    newCache = touchSession(newCache, conversationId)
 
     // Check cache first
     const cached = newCache[sessionId]
     if (cached) {
+      const touchedCache = touchSession(newCache, sessionId)
       set({
         messages: cached,
         conversationId: sessionId,
         activeSessionId: sessionId,
-        sessionsCache: newCache
+        sessionsCache: touchedCache
       })
     } else {
-      // Load from IPC — verify success before updating activeSessionId
+      // Load from IPC -- verify success before updating activeSessionId
       const prevError = get().error
       await get().loadSession(sessionId)
       // loadSession sets conversationId on success; only update activeSessionId
       // if no new error was introduced (i.e., load succeeded)
       if (!get().error || get().error === prevError) {
+        const touchedCache = touchSession(newCache, sessionId)
         set({
           activeSessionId: sessionId,
-          sessionsCache: newCache
+          sessionsCache: touchedCache
         })
       }
     }
@@ -454,9 +500,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
       await window.wzxclaw.deleteSession({ sessionId })
       const { activeSessionId, sessionsCache } = get()
 
-      // Remove from cache
+      // Remove from cache and LRU tracking
       const newCache = { ...sessionsCache }
       delete newCache[sessionId]
+      removeSessionFromLru(sessionId)
 
       if (activeSessionId === sessionId) {
         // Switch to another session or create new
