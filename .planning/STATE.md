@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-04-08T10:20:57.445Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-04-08T10:40:56Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 29
-  completed_plans: 27
-  percent: 93
+  completed_plans: 28
+  percent: 97
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-08)
 ## Current Position
 
 Phase: 9 (codebase-indexing) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-08
 
-Progress: [██████░░░░] 67%
+Progress: [███████░░░] 97%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [██████░░░░] 67%
 | Phase 08 P02 | 15min | 2 tasks | 14 files |
 | Phase 08 P03 | 1208 | 2 tasks | 15 files |
 | Phase 09 P01 | 24 | 2 tasks | 8 files |
+| Phase 09 P02 | 6 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,9 @@ Recent decisions affecting current work:
 - [Phase 09]: D-IDX-03: Native fetch with AbortController for embedding API (avoids SDK overhead)
 - [Phase 09]: D-IDX-04: Mock fetch in tests instead of real API calls
 - [Phase 09]: D-IDX-05: VectorStore cache updated in-place after mutations for synchronous search
+- [Phase 09]: D-IDX-06: Setter injection for IndexingEngine on SemanticSearchTool -- tool created before workspace is open, engine reference set later
+- [Phase 09]: D-IDX-07: Mutable ref wrapper (indexingEngineRef) in ipc-handlers.ts allows workspace switch to replace engine without re-registering handlers
+- [Phase 09]: D-IDX-08: onWorkspaceOpened callback from ipc-handlers to index.ts avoids circular dependency, index.ts owns engine lifecycle
 
 ### Pending Todos
 
@@ -153,6 +157,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-08T10:20:57.440Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-04-08T10:40:56Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None

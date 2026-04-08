@@ -132,7 +132,7 @@
 - [x] **IDX-02**: Indexing uses file-level embeddings via the configured LLM API (e.g., OpenAI text-embedding-3-small)
 - [x] **IDX-03**: Vector storage uses sql.js with sqlite-vec extension (WASM, no native dependency)
 - [x] **IDX-04**: Index is built incrementally — only new/modified files are re-indexed on file change
-- [ ] **IDX-05**: Agent can perform semantic search across the codebase to find relevant code
+- [x] **IDX-05**: Agent can perform semantic search across the codebase to find relevant code
 - [ ] **IDX-06**: Indexing status is shown in the status bar (indexing/ready/error + file count)
 - [ ] **IDX-07**: User can trigger manual re-index via command palette
 - [x] **IDX-08**: Large files (>100KB) and binary files are excluded from indexing
@@ -201,7 +201,7 @@
 | CMD-01 through CMD-05 | Phase 6: Foundation Upgrades | Pending |
 | TERM-01 through TERM-07 | Phase 8: Advanced Features | Pending |
 | TOOL-09 through TOOL-13 | Phase 8: Advanced Features | Pending |
-| IDX-01 through IDX-08 | Phase 9: Codebase Indexing | Pending |
+| IDX-01 through IDX-08 | Phase 9: Codebase Indexing | In Progress |
 | PERSIST-01 through PERSIST-06 | Phase 6: Foundation Upgrades | Pending |
 | TASK-01 through TASK-05 | Phase 8: Advanced Features | Pending |
 
