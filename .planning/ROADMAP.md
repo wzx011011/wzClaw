@@ -139,7 +139,14 @@ Plans:
   3. User types @ in the chat input, sees a fuzzy-searchable file/folder picker, selects items to inject their content into the conversation, and sees injected content as collapsible blocks in the sent message
   4. When the AI proposes file changes via FileWrite/FileEdit, a diff preview appears showing red (deletions) and green (additions) lines in the editor, and the user can accept or reject each hunk individually
   5. User can accept all or reject all pending diffs via toolbar buttons, and rejected hunks are not written to disk while accepted hunks are applied immediately
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [x] 07-01-PLAN.md — Multi-session tabs (SessionTabs, chat-store extensions, Ctrl+T, IPC)
+- [x] 07-02-PLAN.md — @-mention file injection (MentionPicker, FileMention, fuzzy search, collapsible blocks)
+- [x] 07-03-PLAN.md — Inline diff preview (DiffStore, DiffPreview, Monaco decorations, accept/reject)
+- [ ] 07-04-PLAN.md — Gap closure: folder mentions (MENTION-03), FileEdit diff fix, diff keyboard shortcuts (DIFF-04)
+- [ ] 07-05-PLAN.md — Gap closure: multi-file diff navigator (DIFF-05)
 **UI hint**: yes
 
 ### Phase 8: Advanced Features
@@ -179,6 +186,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Chat Panel + Integration | 3/3 | Complete | 2026-04-03 |
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
-| 7. Core Interaction | 0/? | Not started | - |
+| 7. Core Interaction | 3/5 | Executing | - |
 | 8. Advanced Features | 0/? | Not started | - |
 | 9. Codebase Indexing | 0/? | Not started | - |
