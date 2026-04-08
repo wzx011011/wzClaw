@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useTaskStore, getTaskActiveCount } from '../../stores/task-store'
 import ChatMessage from './ChatMessage'
 import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
@@ -9,6 +10,7 @@ import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import SessionList from './SessionList'
 import SessionTabs from './SessionTabs'
+import TaskPanel from './TaskPanel'
 import TokenIndicator from './TokenIndicator'
 import type { MentionItem } from '../../../shared/types'
 
@@ -48,6 +50,11 @@ export default function ChatPanel(): JSX.Element {
   // Session count for History button badge
   const sessions = useChatStore((s) => s.sessions)
 
+  // Task panel state
+  const taskPanelVisible = useTaskStore((s) => s.panelVisible)
+  const toggleTaskPanel = useTaskStore((s) => s.togglePanel)
+  const activeTaskCount = useTaskStore((s) => getTaskActiveCount(s.tasks))
+
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -58,6 +65,12 @@ export default function ChatPanel(): JSX.Element {
     const handler = () => setShowSettings(true)
     window.addEventListener('wzxclaw:open-settings', handler)
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
+  }, [])
+
+  // Initialize task store — subscribe to IPC events for real-time updates
+  useEffect(() => {
+    const unsub = useTaskStore.getState().init()
+    return unsub
   }, [])
 
   // Auto-resize textarea and detect @-mention trigger
@@ -177,6 +190,13 @@ export default function ChatPanel(): JSX.Element {
           )}
           <button
             className="chat-ctrl-btn"
+            onClick={toggleTaskPanel}
+            style={activeTaskCount > 0 && !taskPanelVisible ? { color: 'var(--accent)' } : {}}
+          >
+            Tasks{activeTaskCount > 0 ? ` (${activeTaskCount})` : ''}
+          </button>
+          <button
+            className="chat-ctrl-btn"
             onClick={() => setShowSettings(true)}
             title="Settings"
           >
@@ -208,6 +228,11 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Diff preview for pending file changes */}
       <DiffPreview />
+
+      {/* Task panel for agent task tracking */}
+      {taskPanelVisible && (
+        <TaskPanel onClose={() => useTaskStore.getState().togglePanel()} />
+      )}
 
       {/* Error banner */}
       {error && (
