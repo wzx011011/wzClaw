@@ -1022,3 +1022,172 @@
   background: rgba(244, 135, 113, 0.15);
   color: #f48771;
 }
+
+/* ============================================================
+   @-Mention Picker (per MENTION-01, MENTION-02, MENTION-05)
+   ============================================================ */
+
+.mention-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 40px; /* leave room for send button */
+  max-height: 300px;
+  overflow-y: auto;
+  background: #252526;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  z-index: 100;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+  margin-bottom: 4px;
+}
+
+.mention-picker-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.1s;
+}
+
+.mention-picker-item:hover,
+.mention-picker-active {
+  background: #2d2d2d;
+}
+
+.mention-match {
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.mention-loading {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+/* ============================================================
+   @-Mention Badges (pending in input area)
+   ============================================================ */
+
+.chat-input-area-wrapper {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.mention-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px 0 12px;
+}
+
+.mention-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: #3c3c3c;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--accent);
+  border: 1px solid rgba(0, 122, 204, 0.3);
+}
+
+.mention-badge-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.mention-badge-remove:hover {
+  opacity: 1;
+  color: #f48771;
+}
+
+/* ============================================================
+   @-Mention Context Blocks (in sent messages)
+   ============================================================ */
+
+.mention-blocks {
+  margin-bottom: 8px;
+}
+
+.mention-block {
+  border-left: 3px solid var(--accent);
+  background: rgba(0, 122, 204, 0.06);
+  border-radius: 4px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+
+.mention-block-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.mention-block-header:hover {
+  background: rgba(0, 122, 204, 0.12);
+}
+
+.mention-block-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.mention-block-path {
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-block-size {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.mention-block-toggle {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.mention-block-content {
+  border-top: 1px solid var(--border);
+  background: #1e1e1e;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.mention-block-content pre {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-primary);
+}

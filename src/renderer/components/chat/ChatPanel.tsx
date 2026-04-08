@@ -1,13 +1,15 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
 import ChatMessage from './ChatMessage'
+import MentionPicker from './MentionPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import SessionList from './SessionList'
 import SessionTabs from './SessionTabs'
 import TokenIndicator from './TokenIndicator'
+import type { FileMention } from '../../../shared/types'
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -32,8 +34,15 @@ export default function ChatPanel(): JSX.Element {
   const [inputValue, setInputValue] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
+  const [showMentionPicker, setShowMentionPicker] = useState(false)
+  const [mentionFilter, setMentionFilter] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Mention store actions
+  const addMention = useChatStore((s) => s.addMention)
+  const removeMention = useChatStore((s) => s.removeMention)
+  const pendingMentions = useChatStore((s) => s.pendingMentions)
 
   // Session count for History button badge
   const sessions = useChatStore((s) => s.sessions)
@@ -50,18 +59,48 @@ export default function ChatPanel(): JSX.Element {
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
 
-  // Auto-resize textarea
+  // Auto-resize textarea and detect @-mention trigger
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    setInputValue(e.target.value)
+    const value = e.target.value
+    setInputValue(value)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
     }
+
+    // Detect @ trigger: find the last @ that is at start or preceded by whitespace
+    const cursorPos = e.target.selectionStart
+    const textBeforeCursor = value.slice(0, cursorPos)
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
+    if (lastAtIndex !== -1 && (lastAtIndex === 0 || /\s/.test(textBeforeCursor[lastAtIndex - 1]))) {
+      // Extract filter text after @
+      const filterText = textBeforeCursor.slice(lastAtIndex + 1)
+      // Only show picker if no spaces in filter (still typing the filename)
+      if (!filterText.includes(' ') && filterText.length < 100) {
+        setShowMentionPicker(true)
+        setMentionFilter(filterText)
+        return
+      }
+    }
+    setShowMentionPicker(false)
   }
+
+  const handleMentionSelect = useCallback((mention: FileMention) => {
+    addMention(mention)
+    // Remove the @query from the input
+    const lastAtIndex = inputValue.lastIndexOf('@')
+    if (lastAtIndex !== -1) {
+      const before = inputValue.slice(0, lastAtIndex)
+      setInputValue(before)
+    }
+    setShowMentionPicker(false)
+    setMentionFilter('')
+    textareaRef.current?.focus()
+  }, [inputValue, addMention])
 
   const handleSend = (): void => {
     const trimmed = inputValue.trim()
-    if (!trimmed || isStreaming) return
+    if ((!trimmed && pendingMentions.length === 0) || isStreaming) return
     if (trimmed === '/compact') {
       // Trigger manual compact via IPC
       window.wzxclaw.compactContext()
@@ -71,15 +110,21 @@ export default function ChatPanel(): JSX.Element {
       }
       return
     }
-    sendMessage(trimmed)
+    sendMessage(trimmed || 'See the attached files.')
     setInputValue('')
+    setShowMentionPicker(false)
+    setMentionFilter('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // If mention picker is visible, let it handle navigation keys
+    if (showMentionPicker && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Escape')) {
+      return // MentionPicker handles these via window keydown
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !showMentionPicker) {
       e.preventDefault()
       handleSend()
     }
@@ -168,24 +213,49 @@ export default function ChatPanel(): JSX.Element {
       )}
 
       {/* Input area */}
-      <div className="chat-input-area">
-        <textarea
-          ref={textareaRef}
-          className="chat-input"
-          value={inputValue}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-          rows={1}
-          disabled={isStreaming}
-        />
-        <button
-          className="chat-send-btn"
-          onClick={handleSend}
-          disabled={!inputValue.trim() || isStreaming}
-        >
-          &#9654;
-        </button>
+      <div className="chat-input-area-wrapper">
+        {/* Pending mention badges */}
+        {pendingMentions.length > 0 && (
+          <div className="mention-badges">
+            {pendingMentions.map((m) => (
+              <span key={m.path} className="mention-badge">
+                @{m.path}
+                <button
+                  className="mention-badge-remove"
+                  onClick={() => removeMention(m.path)}
+                >
+                  x
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="chat-input-area" style={{ position: 'relative' }}>
+          <textarea
+            ref={textareaRef}
+            className="chat-input"
+            value={inputValue}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message... (Enter to send, Shift+Enter for newline, @ to mention files)"
+            rows={1}
+            disabled={isStreaming}
+          />
+          <button
+            className="chat-send-btn"
+            onClick={handleSend}
+            disabled={(!inputValue.trim() && pendingMentions.length === 0) || isStreaming}
+          >
+            &#9654;
+          </button>
+          {/* Mention picker dropdown */}
+          <MentionPicker
+            visible={showMentionPicker}
+            filter={mentionFilter}
+            onSelect={handleMentionSelect}
+            onClose={() => { setShowMentionPicker(false); setMentionFilter('') }}
+          />
+        </div>
       </div>
 
       {/* Settings modal */}

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
@@ -8,19 +8,61 @@ import ToolCard from './ToolCard'
 
 // ============================================================
 // ChatMessage — Single message rendering (per D-58, D-59)
+// Now renders @-mention context blocks for user messages.
 // ============================================================
 
 interface ChatMessageProps {
   message: ChatMessageType
 }
 
+/**
+ * Collapsible context block for an @-mention file.
+ */
+function MentionBlock({ mention }: { mention: { type: string; path: string; content: string; size: number } }): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const sizeLabel = mention.size < 1024
+    ? `${mention.size}B`
+    : mention.size < 1024 * 1024
+      ? `${(mention.size / 1024).toFixed(1)}KB`
+      : `${(mention.size / 1024 / 1024).toFixed(1)}MB`
+
+  return (
+    <div className="mention-block">
+      <div className="mention-block-header" onClick={() => setExpanded(!expanded)}>
+        <span className="mention-block-label">[context]</span>
+        <span className="mention-block-path">{mention.path}</span>
+        <span className="mention-block-size">{sizeLabel}</span>
+        <span className="mention-block-toggle">{expanded ? '\u25BC' : '\u25B6'}</span>
+      </div>
+      {expanded && (
+        <div className="mention-block-content">
+          <pre>{mention.content}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ChatMessage({ message }: ChatMessageProps): JSX.Element {
-  const { role, content, isStreaming, toolCalls, usage } = message
+  const { role, content, isStreaming, toolCalls, usage, mentions } = message
 
   if (role === 'user') {
+    // Show mention context blocks if present, then the display content
+    // The content sent to LLM includes formatted mentions; we show the original message
+    const displayContent = mentions && mentions.length > 0
+      ? content.split('\n\n').filter(line => !line.startsWith('[Context from')).join('\n\n').trim() || content
+      : content
+
     return (
       <div className="chat-message chat-message-user">
-        {content}
+        {mentions && mentions.length > 0 && (
+          <div className="mention-blocks">
+            {mentions.map((m, i) => (
+              <MentionBlock key={`${m.path}-${i}`} mention={m} />
+            ))}
+          </div>
+        )}
+        {displayContent}
       </div>
     )
   }
