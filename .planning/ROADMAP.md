@@ -164,7 +164,7 @@ Plans:
 Plans:
 - [x] 08-01-PLAN.md — Terminal panel (xterm.js + node-pty + TerminalManager + IDELayout integration + Bash routing)
 - [x] 08-02-PLAN.md — Web tools + Symbol navigation (WebSearch, WebFetch, GoToDefinition, FindReferences, SearchSymbols)
-- [ ] 08-03-PLAN.md — Task management system (TaskManager, CreateTask/UpdateTask tools, TaskPanel UI)
+- [x] 08-03-PLAN.md — Task management system (TaskManager, CreateTask/UpdateTask tools, TaskPanel UI)
 **UI hint**: yes
 
 ### Phase 9: Codebase Indexing

@@ -148,11 +148,11 @@
 
 ### Task/Plan System (TASK)
 
-- [ ] **TASK-01**: Agent can create tasks with subject, description, and status (pending/in_progress/completed)
-- [ ] **TASK-02**: Tasks support dependencies (blockedBy/blocks) — a task cannot start until its blockers are resolved
-- [ ] **TASK-03**: Tasks are displayed in a task list panel, filterable by status
-- [ ] **TASK-04**: Agent updates task status as it works through them
-- [ ] **TASK-05**: User can view task progress in real-time as the agent works
+- [x] **TASK-01**: Agent can create tasks with subject, description, and status (pending/in_progress/completed)
+- [x] **TASK-02**: Tasks support dependencies (blockedBy/blocks) — a task cannot start until its blockers are resolved
+- [x] **TASK-03**: Tasks are displayed in a task list panel, filterable by status
+- [x] **TASK-04**: Agent updates task status as it works through them
+- [x] **TASK-05**: User can view task progress in real-time as the agent works
 
 ## v2 Requirements (Deferred)
 
