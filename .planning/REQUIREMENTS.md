@@ -102,11 +102,11 @@
 
 ### Command Palette (CMD)
 
-- [ ] **CMD-01**: Ctrl+Shift+P opens a command palette overlay with fuzzy search
-- [ ] **CMD-02**: Commands are registered with name, category, shortcut, and handler function
-- [ ] **CMD-03**: Built-in commands include: open file, open folder, new session, clear session, toggle terminal, toggle sidebar, change model, settings
-- [ ] **CMD-04**: Command palette shows keyboard shortcuts next to command names where applicable
-- [ ] **CMD-05**: Plugin system allows future registration of custom commands
+- [x] **CMD-01**: Ctrl+Shift+P opens a command palette overlay with fuzzy search
+- [x] **CMD-02**: Commands are registered with name, category, shortcut, and handler function
+- [x] **CMD-03**: Built-in commands include: open file, open folder, new session, clear session, toggle terminal, toggle sidebar, change model, settings
+- [x] **CMD-04**: Command palette shows keyboard shortcuts next to command names where applicable
+- [x] **CMD-05**: Plugin system allows future registration of custom commands
 
 ### Terminal Panel (TERM)
 
