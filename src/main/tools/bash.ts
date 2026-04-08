@@ -57,6 +57,9 @@ export class BashTool implements Tool {
     const { command, timeout } = parsed.data
     const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT
 
+    // Security audit trail: log every executed command for visibility
+    console.log(`[BashTool] Executing command: ${command}`)
+
     // Route through visible terminal when TerminalManager and active terminal exist (per TERM-04)
     if (this.terminalManager) {
       const activeId = this.terminalManager.getActiveTerminalId()
@@ -107,12 +110,18 @@ export class BashTool implements Tool {
           }
 
           resolve({ output, isError })
+
+          // Clean up abort listener to prevent memory leak
+          if (onAbort && context.abortSignal) {
+            context.abortSignal.removeEventListener('abort', onAbort)
+          }
         }
       )
 
       // Handle abort signal
+      let onAbort: (() => void) | null = null
       if (context.abortSignal) {
-        const onAbort = (): void => {
+        onAbort = (): void => {
           child.kill()
         }
         if (context.abortSignal.aborted) {
