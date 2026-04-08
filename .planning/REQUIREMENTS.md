@@ -63,13 +63,13 @@
 
 ### Context Management (CTX)
 
-- [ ] **CTX-01**: Agent loop tracks token usage per conversation turn (input + output tokens from API usage)
-- [ ] **CTX-02**: Token counting via js-tiktoken before each LLM call to estimate context utilization
-- [ ] **CTX-03**: Auto-compact triggers when conversation exceeds 80% of model context window, summarizing older messages into a condensed form
-- [ ] **CTX-04**: Compact only occurs between LLM turns, never during active tool execution (circuit breaker pattern)
-- [ ] **CTX-05**: User can manually trigger compact via a command (e.g., /compact in chat)
-- [ ] **CTX-06**: Context window size is configurable per model in settings (default: 128K for GLM, 200K for Claude)
-- [ ] **CTX-07**: Tool results are truncated to MAX_TOOL_RESULT_CHARS before adding to context
+- [x] **CTX-01**: Agent loop tracks token usage per conversation turn (input + output tokens from API usage)
+- [x] **CTX-02**: Token counting via js-tiktoken before each LLM call to estimate context utilization
+- [x] **CTX-03**: Auto-compact triggers when conversation exceeds 80% of model context window, summarizing older messages into a condensed form
+- [x] **CTX-04**: Compact only occurs between LLM turns, never during active tool execution (circuit breaker pattern)
+- [x] **CTX-05**: User can manually trigger compact via a command (e.g., /compact in chat)
+- [x] **CTX-06**: Context window size is configurable per model in settings (default: 128K for GLM, 200K for Claude)
+- [x] **CTX-07**: Tool results are truncated to MAX_TOOL_RESULT_CHARS before adding to context
 
 ### Inline Diff Preview (DIFF)
 
@@ -194,7 +194,7 @@
 | LLM-01 through LLM-06 | Phase 1: Foundation | Complete |
 | EDIT-01 through EDIT-06 | Phase 3: IDE Shell | Complete |
 | ELEC-01 through ELEC-03 | Phase 3/5 | Complete |
-| CTX-01 through CTX-07 | Phase 6: Foundation Upgrades | Pending |
+| CTX-01 through CTX-07 | Phase 6: Foundation Upgrades | Complete |
 | DIFF-01 through DIFF-07 | Phase 7: Core Interaction | Pending |
 | MENTION-01 through MENTION-06 | Phase 7: Core Interaction | Pending |
 | SESSION-01 through SESSION-07 | Phase 7: Core Interaction | Pending |

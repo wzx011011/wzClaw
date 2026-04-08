@@ -125,7 +125,7 @@ Plans:
 
 Plans:
 - [x] 06-01-PLAN.md — Session persistence (SessionStore JSONL, session IPC, SessionList UI, auto-save on agent:done)
-- [ ] 06-02-PLAN.md — Context management (TokenCounter js-tiktoken, ContextManager, AgentLoop integration, TokenIndicator UI)
+- [x] 06-02-PLAN.md — Context management (TokenCounter js-tiktoken, ContextManager, AgentLoop integration, TokenIndicator UI)
 - [ ] 06-03-PLAN.md — Command palette (CommandStore, CommandPalette cmdk, Ctrl+Shift+P, 8 built-in commands)
 **UI hint**: yes
 
@@ -178,7 +178,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 3. IDE Shell | 3/3 | Complete | 2026-04-03 |
 | 4. Chat Panel + Integration | 3/3 | Complete | 2026-04-03 |
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
-| 6. Foundation Upgrades | 0/3 | Not started | - |
+| 6. Foundation Upgrades | 2/3 | In Progress | - |
 | 7. Core Interaction | 0/? | Not started | - |
 | 8. Advanced Features | 0/? | Not started | - |
 | 9. Codebase Indexing | 0/? | Not started | - |
