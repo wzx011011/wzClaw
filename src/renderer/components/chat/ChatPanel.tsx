@@ -3,6 +3,7 @@ import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
 import ChatMessage from './ChatMessage'
+import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
@@ -204,6 +205,9 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Permission requests */}
       <PermissionRequest />
+
+      {/* Diff preview for pending file changes */}
+      <DiffPreview />
 
       {/* Error banner */}
       {error && (
