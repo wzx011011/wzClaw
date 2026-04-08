@@ -1,6 +1,17 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
+
+/**
+ * Check whether a file path is within the workspace root boundary.
+ * Uses normalized, case-insensitive comparison to prevent path traversal
+ * on Windows (e.g., junction points, case variations, ".." segments).
+ */
+function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
+  const normalized = path.resolve(filePath).toLowerCase()
+  const root = path.resolve(workspaceRoot).toLowerCase()
+  return normalized === root || normalized.startsWith(root + path.sep)
+}
 import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
 import type { AgentLoop } from './agent/agent-loop'
@@ -276,6 +287,11 @@ export function registerIpcHandlers(
       ? filePath
       : path.resolve(workspaceRoot, filePath)
 
+    // Verify the resolved path stays within the workspace boundary
+    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
+      return { error: 'Access denied: file path is outside the workspace root', size: 0, limit: 102400 }
+    }
+
     const { stat, readFile } = await import('fs/promises')
     const fileStat = await stat(absolutePath)
     const size = fileStat.size
@@ -311,7 +327,7 @@ export function registerIpcHandlers(
       : path.resolve(workspaceRoot, dirPath)
 
     // Verify the resolved path stays within the workspace boundary
-    if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
       return { error: 'Access denied: directory path is outside the workspace root' }
     }
 
@@ -426,7 +442,7 @@ export function registerIpcHandlers(
       : path.resolve(workspaceRoot, filePath)
 
     // Verify the resolved path stays within the workspace boundary
-    if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
       throw new Error('Access denied: file path is outside the workspace root')
     }
 
@@ -483,7 +499,7 @@ export function registerIpcHandlers(
         : path.resolve(workspaceRoot, filePath)
 
       // Verify the resolved path stays within the workspace boundary
-      if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+      if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
         throw new Error('Access denied: file path is outside the workspace root')
       }
 
