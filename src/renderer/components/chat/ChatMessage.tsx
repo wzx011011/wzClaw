@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
@@ -87,7 +88,7 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
       {content && (
         <div className="chat-message-content">
           <ReactMarkdown
-            rehypePlugins={[rehypeHighlight]}
+            rehypePlugins={[rehypeRaw, rehypeHighlight]}
             remarkPlugins={[remarkGfm]}
             components={{
               code({ className, children, node, ...props }) {

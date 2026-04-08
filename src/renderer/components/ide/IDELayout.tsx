@@ -1,6 +1,8 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
+import TitleBar from './TitleBar'
+import ActivityBar from './ActivityBar'
 import Sidebar from './Sidebar'
 import StatusBar from './StatusBar'
 import TabBar from './TabBar'
@@ -42,6 +44,9 @@ export default function IDELayout(): JSX.Element {
   const openPalette = useCommandStore((s) => s.openPalette)
   const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
   const showTerminal = useTerminalStore((s) => s.panelVisible)
+
+  // Activity Bar state — controls which sidebar view is shown
+  const [activeView, setActiveView] = useState('explorer')
 
   // Register global keyboard shortcuts (per D-51)
   useEffect(() => {
@@ -128,30 +133,39 @@ export default function IDELayout(): JSX.Element {
 
   return (
     <div className="ide-container">
+      <TitleBar />
       <div className="ide-main">
-        <Allotment defaultSizes={[200, 500, 350]} minSizes={[150, 300, 250]}>
-          <Allotment.Pane preferredSize={200} minSize={150} maxSize={500}>
-            <Sidebar />
-          </Allotment.Pane>
-          <Allotment.Pane>
-            <Allotment vertical defaultSizes={showTerminal ? [70, 30] : [100]}>
-              <Allotment.Pane minSize={200}>
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  {hasTabs && <TabBar />}
-                  {hasTabs ? <EditorPanel /> : <WelcomeScreen />}
-                </div>
+        <ActivityBar activeView={activeView} onViewChange={setActiveView} />
+        <div className="ide-content">
+          <Allotment
+            defaultSizes={activeView ? [200, 500, 350] : [0, 700, 350]}
+            minSizes={activeView ? [150, 300, 250] : [0, 300, 250]}
+          >
+            {activeView && (
+              <Allotment.Pane preferredSize={200} minSize={150} maxSize={400}>
+                <Sidebar />
               </Allotment.Pane>
-              {showTerminal && (
-                <Allotment.Pane minSize={100}>
-                  <TerminalPanel />
+            )}
+            <Allotment.Pane>
+              <Allotment vertical defaultSizes={showTerminal ? [70, 30] : [100]}>
+                <Allotment.Pane minSize={200}>
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    {hasTabs && <TabBar />}
+                    {hasTabs ? <EditorPanel /> : <WelcomeScreen />}
+                  </div>
                 </Allotment.Pane>
-              )}
-            </Allotment>
-          </Allotment.Pane>
-          <Allotment.Pane preferredSize={350} minSize={250} maxSize={600}>
-            <ChatPanel />
-          </Allotment.Pane>
-        </Allotment>
+                {showTerminal && (
+                  <Allotment.Pane minSize={100}>
+                    <TerminalPanel />
+                  </Allotment.Pane>
+                )}
+              </Allotment>
+            </Allotment.Pane>
+            <Allotment.Pane preferredSize={350} minSize={250} maxSize={600}>
+              <ChatPanel />
+            </Allotment.Pane>
+          </Allotment>
+        </div>
       </div>
       <StatusBar />
       <CommandPalette />

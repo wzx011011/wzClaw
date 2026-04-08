@@ -1,7 +1,7 @@
 import { dialog, BrowserWindow } from 'electron'
 import { readdir, readFile, writeFile, stat } from 'fs/promises'
 import { join, basename, extname } from 'path'
-import { watch, type FSWatcher } from 'chokidar'
+import type { FSWatcher } from 'chokidar'
 import type { FileTreeNode } from '../../shared/types'
 
 // ============================================================
@@ -121,7 +121,9 @@ export class WorkspaceManager {
 
     // Start watching the new workspace
     this.stopWatching()
-    this.startWatching()
+    this.startWatching().catch((err) => {
+      console.error('[WorkspaceManager] Failed to start watching:', err)
+    })
 
     return selectedPath
   }
@@ -205,10 +207,11 @@ export class WorkspaceManager {
    * Starts chokidar file watching on the workspace root.
    * Fires registered callbacks on file add/change/unlink events.
    */
-  startWatching(): void {
+  async startWatching(): Promise<void> {
     if (!this.workspaceRoot) return
     if (this.watcher) return // Already watching
 
+    const { watch } = await import('chokidar')
     this.watcher = watch(this.workspaceRoot, {
       ignoreInitial: true,
       ignored: [

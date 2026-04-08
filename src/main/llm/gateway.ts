@@ -31,6 +31,7 @@ export class LLMGateway {
 
   private detectProvider(model: string): LLMProvider {
     if (model.startsWith('claude')) return 'anthropic'
+    if (model.startsWith('glm-5')) return 'anthropic' // GLM-5 series via Anthropic-compatible API
     return 'openai' // OpenAI, DeepSeek, and any OpenAI-compatible endpoint
   }
 

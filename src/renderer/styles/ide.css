@@ -1,30 +1,77 @@
 /* ============================================================
-   IDE Layout Styles — VS Code Dark+ Theme (per D-53)
+   IDE Layout Styles — Midnight Theme (Cursor-inspired)
    ============================================================ */
 
+/* Font imports — Inter for UI, JetBrains Mono for code */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #333333;
-  --text-primary: #cccccc;
-  --text-secondary: #858585;
-  --accent: #007acc;
-  --border: #404040;
-  --tab-active-bg: #1e1e1e;
-  --tab-inactive-bg: #2d2d2d;
+  /* Midnight color palette */
+  --bg-primary: #181818;
+  --bg-secondary: #1f1f1f;
+  --bg-tertiary: #2b2b2b;
+  --bg-elevated: #323232;
+  --bg-input: #141414;
+
+  /* Text hierarchy */
+  --text-primary: #e0e0e0;
+  --text-secondary: #808080;
+  --text-muted: #5a5a5a;
+
+  /* Accent — purple */
+  --accent: #7c3aed;
+  --accent-hover: #6d28d9;
+  --accent-subtle: rgba(124, 58, 237, 0.15);
+
+  /* Borders */
+  --border: #2e2e2e;
+  --border-subtle: #252525;
+  --border-focus: var(--accent);
+
+  /* Tabs */
+  --tab-active-bg: #181818;
+  --tab-inactive-bg: #232323;
+
+  /* Interactive states */
+  --hover-bg: #2a2a2a;
+  --active-bg: #333333;
   --dirty-indicator: #c5c5c5;
-  --hover-bg: #2a2d2e;
-  --active-bg: #37373d;
+
+  /* Semantic colors */
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --error: #f87171;
 
   /* Token indicator thresholds */
   --token-healthy: var(--accent);
-  --token-warning: #dcb67a;
-  --token-danger: #f48771;
+  --token-warning: var(--warning);
+  --token-danger: var(--error);
 
   /* Command palette */
-  --palette-backdrop: rgba(0, 0, 0, 0.5);
+  --palette-backdrop: rgba(0, 0, 0, 0.6);
   --palette-selected-bg: var(--accent);
   --palette-selected-text: #ffffff;
+
+  /* Spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Radius scale */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+
+  /* Titlebar */
+  --titlebar-height: 38px;
 }
 
 /* Reset & Full viewport */
@@ -40,14 +87,17 @@ html, body, #root {
   overflow: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling — thin and subtle */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -55,12 +105,16 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(121, 121, 121, 0.4);
-  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(121, 121, 121, 0.7);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ============================================================
@@ -74,19 +128,98 @@ html, body, #root {
   width: 100%;
 }
 
+/* Drag region for custom titlebar */
+.ide-titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  min-height: var(--titlebar-height);
+  background: var(--bg-primary);
+  -webkit-app-region: drag;
+  user-select: none;
+  padding-left: var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ide-titlebar-brand {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
 .ide-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Activity Bar — narrow icon strip on the far left */
+.activity-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 48px;
+  min-width: 48px;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+  gap: var(--sp-1);
+}
+
+.activity-bar-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+  position: relative;
+}
+
+.activity-bar-item:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.activity-bar-item.active {
+  color: var(--text-primary);
+}
+
+.activity-bar-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 1px 1px 0;
+}
+
+.activity-bar-spacer {
+  flex: 1;
+}
+
+.ide-content {
   flex: 1;
   overflow: hidden;
 }
 
 /* Override allotment defaults to match dark theme */
-.ide-main [data-allotment-variant='vertical'] > div,
-.ide-main [data-allotment-variant='horizontal'] > div {
-  border-color: var(--border);
+.ide-content [data-allotment-variant='vertical'] > div,
+.ide-content [data-allotment-variant='horizontal'] > div {
+  border-color: var(--border-subtle);
 }
 
-.ide-main .split-sash {
-  background: var(--border);
+.ide-content .split-sash {
+  background: var(--border-subtle);
 }
 
 /* ============================================================
@@ -105,26 +238,27 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
+  height: 34px;
+  min-height: 34px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
   user-select: none;
 }
 
 .sidebar-header .workspace-name {
-  color: var(--text-primary);
-  font-weight: 400;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 11px;
   text-transform: none;
   letter-spacing: normal;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 150px;
+  max-width: 140px;
 }
 
 .sidebar-content {
@@ -137,28 +271,31 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 12px;
-  padding: 6px 12px;
+  margin: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   background: var(--accent);
   color: #ffffff;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
   width: calc(100% - 24px);
   justify-content: center;
+  transition: background var(--transition-fast);
 }
 
 .open-folder-btn:hover {
-  background: #1a8ad4;
+  background: var(--accent-hover);
 }
 
 .sidebar-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-  color: var(--text-secondary);
+  padding: var(--sp-5);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* ============================================================
@@ -174,13 +311,15 @@ html, body, #root {
 .tree-node {
   display: flex;
   align-items: center;
-  padding: 2px 4px;
+  padding: 1px var(--sp-2);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-height: 22px;
+  min-height: 24px;
+  border-radius: 0;
+  transition: background var(--transition-fast);
 }
 
 .tree-node:hover {
@@ -194,24 +333,51 @@ html, body, #root {
 .tree-icon {
   flex-shrink: 0;
   width: 16px;
-  text-align: center;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 10px;
-  margin-right: 4px;
-  color: var(--text-secondary);
+  margin-right: var(--sp-1);
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
 }
 
 .tree-icon.dir-icon {
-  color: #dcb67a;
+  color: var(--text-secondary);
 }
 
 .tree-icon.file-icon {
-  color: var(--text-secondary);
+  font-size: 12px;
 }
+
+/* File type icon colors */
+.tree-icon.file-icon-ts { color: #3178c6; }
+.tree-icon.file-icon-tsx { color: #3178c6; }
+.tree-icon.file-icon-js { color: #f7df1e; }
+.tree-icon.file-icon-jsx { color: #61dafb; }
+.tree-icon.file-icon-json { color: #fbbf24; }
+.tree-icon.file-icon-css { color: #38bdf8; }
+.tree-icon.file-icon-html { color: #f97316; }
+.tree-icon.file-icon-md { color: #808080; }
+.tree-icon.file-icon-py { color: #3572a5; }
+.tree-icon.file-icon-rs { color: #dea584; }
+.tree-icon.file-icon-go { color: #00add8; }
+.tree-icon.file-icon-yaml { color: #cb171e; }
+.tree-icon.file-icon-sh { color: #4eaa25; }
+.tree-icon.file-icon-git { color: #f05032; }
+.tree-icon.file-icon-config { color: #6d28d9; }
+.tree-icon.file-icon-image { color: #a855f7; }
 
 .tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-primary);
+  font-size: 12px;
+}
+
+.tree-node:hover .tree-label {
+  color: #fff;
 }
 
 .tree-children {
@@ -221,25 +387,27 @@ html, body, #root {
 /* Context menu */
 .context-menu {
   position: fixed;
-  background: var(--bg-tertiary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 0;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) 0;
   min-width: 160px;
   z-index: 1000;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 .context-menu-item {
   display: block;
   width: 100%;
-  padding: 6px 16px;
+  padding: 6px var(--sp-4);
   background: none;
   border: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
   text-align: left;
+  transition: background var(--transition-fast);
 }
 
 .context-menu-item:hover {
@@ -255,42 +423,50 @@ html, body, #root {
   display: flex;
   flex-direction: row;
   align-items: center;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border);
-  height: 35px;
-  min-height: 35px;
+  background: var(--bg-secondary);
+  height: 36px;
+  min-height: 36px;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .tab-bar::-webkit-scrollbar {
-  height: 3px;
+  height: 0;
 }
 
 .tab-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  height: 35px;
-  min-width: 100px;
-  max-width: 200px;
-  background: var(--tab-inactive-bg);
-  border-right: 1px solid var(--border);
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3);
+  height: 36px;
+  min-width: 80px;
+  max-width: 180px;
+  background: transparent;
+  border: none;
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
   position: relative;
+  transition: background var(--transition-fast);
 }
 
 .tab-item.active {
-  background: var(--tab-active-bg);
-  border-top: 2px solid var(--accent);
-  padding-top: 0;
+  background: var(--bg-primary);
 }
 
-.tab-item:not(.active) {
-  border-top: 2px solid transparent;
+.tab-item:not(.active):hover {
+  background: var(--hover-bg);
+}
+
+.tab-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
 }
 
 .tab-name {
@@ -298,13 +474,18 @@ html, body, #root {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: color var(--transition-fast);
+}
+
+.tab-item.active .tab-name {
   color: var(--text-primary);
-  font-size: 13px;
 }
 
 .tab-dirty {
   color: var(--dirty-indicator);
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -317,13 +498,13 @@ html, body, #root {
   height: 18px;
   border: none;
   background: none;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 14px;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
 }
 
 .tab-item:hover .tab-close {
@@ -331,7 +512,7 @@ html, body, #root {
 }
 
 .tab-close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
 
@@ -354,12 +535,13 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 22px;
-  min-height: 22px;
-  padding: 0 10px;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 12px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 var(--sp-3);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
   user-select: none;
 }
 
@@ -368,7 +550,7 @@ html, body, #root {
 .status-bar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .status-bar-center {
@@ -379,12 +561,21 @@ html, body, #root {
 .status-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
+  transition: color var(--transition-fast);
+}
+
+.status-item:hover {
+  color: var(--text-secondary);
 }
 
 .status-dirty {
-  color: #e8e855;
+  color: var(--warning);
   font-weight: 600;
+}
+
+.status-bar .status-accent {
+  color: var(--accent);
 }
 
 /* ============================================================
@@ -398,46 +589,47 @@ html, body, #root {
   justify-content: center;
   height: 100%;
   width: 100%;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-align: center;
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .welcome-title {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 300;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   letter-spacing: -0.5px;
 }
 
 .welcome-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .welcome-shortcuts {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 16px;
-  font-size: 13px;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+  font-size: 12px;
 }
 
 .welcome-shortcut {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  color: var(--text-muted);
 }
 
 .welcome-shortcut kbd {
   display: inline-block;
-  padding: 2px 6px;
+  padding: 2px 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  font-family: inherit;
-  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  color: var(--text-secondary);
 }
 
 /* ============================================================
@@ -449,19 +641,16 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-subtle);
 }
 
 .chat-header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  height: 42px;
+  min-height: 42px;
 }
 
 .chat-header-title {
@@ -472,31 +661,24 @@ html, body, #root {
   color: var(--text-secondary);
 }
 
-.chat-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Model selector dropdown in chat header (per D-67) */
+/* Model selector dropdown in chat header */
 .chat-model-select {
-  flex: 1;
-  background: var(--bg-tertiary);
+  background: var(--bg-input);
   color: var(--text-primary);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   outline: none;
   min-width: 0;
+  flex: 1;
+  transition: border-color var(--transition-fast);
 }
 
 .chat-model-select:hover {
-  border-color: var(--accent);
+  border-color: var(--text-muted);
 }
 
 .chat-model-select:focus {
@@ -510,7 +692,7 @@ html, body, #root {
   justify-content: center;
   width: 16px;
   height: 16px;
-  background: #d4a017;
+  background: var(--warning);
   color: #000;
   border-radius: 50%;
   font-size: 11px;
@@ -518,29 +700,83 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-/* Gear/settings button in chat header */
-.chat-settings-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text-secondary);
+/* Icon buttons in chat header */
+.chat-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
   cursor: pointer;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-family: inherit;
+  font-size: 16px;
   flex-shrink: 0;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-settings-btn:hover {
+.chat-icon-btn:hover {
   background: var(--hover-bg);
   color: var(--text-primary);
-  border-color: var(--accent);
+}
+
+.chat-icon-btn.active {
+  color: var(--accent);
+}
+
+/* More menu dropdown */
+.chat-more-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--sp-1);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) 0;
+  min-width: 160px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.chat-more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 6px var(--sp-3);
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.chat-more-menu-item:hover {
+  background: var(--hover-bg);
+}
+
+.chat-more-menu-item .menu-icon {
+  width: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.chat-more-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: var(--sp-1) 0;
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--sp-3);
 }
 
 /* ============================================================
@@ -563,11 +799,11 @@ html, body, #root {
 .settings-modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   width: 420px;
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .settings-header {
@@ -675,7 +911,7 @@ html, body, #root {
 }
 
 .settings-save-btn:hover {
-  background: #1a8ad4;
+  background: var(--accent-hover);
 }
 
 .settings-save-btn:disabled {
@@ -911,13 +1147,13 @@ html, body, #root {
 .terminal-container {
   flex: 1;
   overflow: hidden;
-  background: #1e1e1e;
+  background: var(--bg-primary);
   padding: 0;
 }
 
 /* xterm overrides for dark theme consistency */
 .terminal-container .xterm {
-  padding: 4px 0;
+  padding: var(--sp-1);
 }
 
 .terminal-container .xterm-viewport {

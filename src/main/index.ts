@@ -34,6 +34,15 @@ function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    backgroundColor: '#181818',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#181818',
+      symbolColor: '#e0e0e0',
+      height: 38
+    },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false

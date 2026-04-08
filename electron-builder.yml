@@ -30,3 +30,4 @@ nsis:
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
   shortcutName: wzxClaw
+npmRebuild: false

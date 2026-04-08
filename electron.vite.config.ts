@@ -4,7 +4,18 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: [
+          'uuid',
+          'openai',
+          '@anthropic-ai/sdk',
+          'zustand',
+          'dotenv',
+          'zod'
+        ]
+      })
+    ],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')

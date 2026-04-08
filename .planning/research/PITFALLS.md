@@ -1,7 +1,10 @@
 # Pitfalls Research: wzxClaw AI Coding IDE
 
-**Researched:** 2026-04-03
+**Researched:** 2026-04-08 (v1.2 update)
 **Confidence:** HIGH
+
+> v1.0 pitfalls (PIT-01 through PIT-10) below are archived — they have been addressed in the shipped codebase.
+> v1.2 pitfalls (v2-PIT-01 onward) cover new risks from the 10 new features.
 
 ## Critical Pitfalls
 
@@ -102,3 +105,67 @@
 | PIT-08: Monaco integration | Phase 3 (Editor Shell) | MEDIUM |
 | PIT-09: Build size | Phase 3 (Electron Shell) | LOW-MEDIUM |
 | PIT-10: Token counting | Phase 1 (LLM Gateway) | MEDIUM |
+
+---
+
+## v1.2 Pitfalls (NEW features)
+
+### v2-PIT-01: node-pty Native Module Compilation
+**Risk:** HIGH | **Feature:** Terminal Panel
+node-pty requires `@electron/rebuild` for native compilation. If `externalizeDepsPlugin()` doesn't exclude it, packaged build crashes with missing native module errors — same pattern as v1.0 ESM fix.
+**Prevention:** Test node-pty build+package cycle in isolation first. Add to electron.vite.config.ts exclude list.
+
+### v2-PIT-02: Context Auto-Compact During Tool Execution
+**Risk:** HIGH | **Feature:** Context Management
+If auto-compact triggers while tools are executing, the compacted context may lose tool results about to be returned, causing orphaned tool_result messages.
+**Prevention:** Hold compaction during active tool execution. Only compact between LLM turns. Use Claude Code's "circuit breaker" pattern.
+
+### v2-PIT-03: Monaco Diff Decorations vs DiffEditor
+**Risk:** MEDIUM | **Feature:** Inline Diff Preview
+Monaco has two approaches: DiffEditor (separate instance) and decorations API (overlay). Using DiffEditor replaces the user's current view. Decorations is correct for inline diff but has subtleties with multi-line edits.
+**Prevention:** Use decorations API exclusively. Test with multi-line insertions/deletions. Don't mix both.
+
+### v2-PIT-04: Terminal PTY vs child_process.exec Conflict
+**Risk:** MEDIUM | **Feature:** Terminal Panel
+Existing Bash tool uses `child_process.exec`. Terminal needs `node-pty` for interactive PTY. Running both on the same directory creates file system races.
+**Prevention:** Dual mode: PTY for user-visible terminal, `child_process.exec` for agent tool execution. Never share state.
+
+### v2-PIT-05: Session JSONL Corruption on Crash
+**Risk:** MEDIUM | **Feature:** Session Persistence
+Append-only JSONL is crash-safe for writes, but mid-line crashes create partial JSON. Restore fails on malformed lines.
+**Prevention:** Use explicit newline flushing. On restore, skip malformed lines with try/catch per line. Never append partial objects.
+
+### v2-PIT-06: Codebase Indexing Scope Explosion
+**Risk:** HIGH | **Feature:** Codebase Indexing
+Vector indexing explodes in complexity: AST chunking, incremental re-indexing, embedding API costs, SQLite vector extension compatibility. Can consume more time than all other features combined.
+**Prevention:** Strictly scope to file-level embeddings, no AST chunking, background indexing with debounce. Consider deferring to v1.3.
+
+### v2-PIT-07: Multi-Session Memory Leaks
+**Risk:** MEDIUM | **Feature:** Multi-session Management
+Each session holds an AgentLoop with message history, tool tracking, abort controllers. Multiple sessions can exceed Electron renderer's ~1.5GB limit.
+**Prevention:** Lazy-load session state. Only active session stays "hot". Inactive sessions serialize to JSONL. Cap at 10 concurrent sessions.
+
+### v2-PIT-08: LSP Without Full Language Server
+**Risk:** MEDIUM | **Feature:** More Tools (LSP)
+LSPTool needs running language servers. Bundling servers for all file types is impractical. Regex-based "go to definition" is unreliable.
+**Prevention:** Start with Monaco's built-in JS/TS support. Add LSP for other languages only if explicitly needed. Scope to operations Monaco supports.
+
+### v2-PIT-09: @-mention File Size Blowout
+**Risk:** LOW | **Feature:** @-mention Context
+@-mentioning a large file injects entire content, consuming tokens rapidly, potentially triggering auto-compact loops.
+**Prevention:** Cap @-mention file injection at 500 lines. Show warning for large files. Use MAX_FILE_READ_LINES constant.
+
+### v2-PIT-10: Command Palette Shortcut Conflicts
+**Risk:** LOW | **Feature:** Command Palette
+Electron menu and Monaco editor shortcuts can conflict. Ctrl+K, Ctrl+P already used by Monaco.
+**Prevention:** Audit Monaco's default keybindings. Use unique combinations.
+
+### v2-PIT-11: IPC Channel Explosion
+**Risk:** MEDIUM | **Feature:** All (cross-cutting)
+8 new IPC namespaces doubles the surface area. Preload bridge becomes unmaintainable without careful organization.
+**Prevention:** Follow established IPC_CHANNELS + IpcSchemas pattern. Group by namespace. Add convention comments.
+
+### v2-PIT-12: Zustand Store Proliferation
+**Risk:** LOW | **Feature:** All (cross-cutting)
+10 new features could mean 10 new stores, causing state sync issues.
+**Prevention:** Limit to 3-4 new stores. Merge related features into existing stores where logical.

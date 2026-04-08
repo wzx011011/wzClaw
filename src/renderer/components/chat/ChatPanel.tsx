@@ -38,9 +38,11 @@ export default function ChatPanel(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
   const [showMentionPicker, setShowMentionPicker] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
@@ -66,6 +68,18 @@ export default function ChatPanel(): JSX.Element {
     window.addEventListener('wzxclaw:open-settings', handler)
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
+
+  // Close more menu on outside click
+  useEffect(() => {
+    if (!showMoreMenu) return
+    const handler = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showMoreMenu])
 
   // Initialize task store — subscribe to IPC events for real-time updates
   useEffect(() => {
@@ -153,10 +167,9 @@ export default function ChatPanel(): JSX.Element {
 
   return (
     <div className="chat-panel">
-      {/* Header */}
+      {/* Header — simplified icon-based design */}
       <div className="chat-header">
         <div className="chat-header-left">
-          <span>Chat</span>
           <select
             className="chat-model-select"
             value={model}
@@ -173,35 +186,68 @@ export default function ChatPanel(): JSX.Element {
         </div>
         <div className="chat-header-controls">
           {isStreaming && (
-            <button className="chat-ctrl-btn chat-stop-btn" onClick={stopGeneration}>
-              Stop
+            <button className="chat-icon-btn" onClick={stopGeneration} title="Stop generation">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
             </button>
           )}
+          {/* New conversation */}
           <button
-            className="chat-ctrl-btn"
-            onClick={() => setShowSessions(!showSessions)}
+            className="chat-icon-btn"
+            onClick={() => useChatStore.getState().createSession()}
+            title="New conversation (Ctrl+T)"
           >
-            History{sessions.length > 0 ? ` (${sessions.length})` : ''}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
           </button>
-          {messages.length > 0 && (
-            <button className="chat-ctrl-btn" onClick={clearConversation}>
-              Clear
+          {/* More menu */}
+          <div style={{ position: 'relative' }} ref={moreMenuRef}>
+            <button
+              className={`chat-icon-btn${showMoreMenu ? ' active' : ''}`}
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
+              title="More options"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+              </svg>
             </button>
-          )}
-          <button
-            className="chat-ctrl-btn"
-            onClick={toggleTaskPanel}
-            style={activeTaskCount > 0 && !taskPanelVisible ? { color: 'var(--accent)' } : {}}
-          >
-            Tasks{activeTaskCount > 0 ? ` (${activeTaskCount})` : ''}
-          </button>
-          <button
-            className="chat-ctrl-btn"
-            onClick={() => setShowSettings(true)}
-            title="Settings"
-          >
-            Gear
-          </button>
+            {showMoreMenu && (
+              <div className="chat-more-menu">
+                <button
+                  className="chat-more-menu-item"
+                  onClick={() => { setShowSessions(!showSessions); setShowMoreMenu(false) }}
+                >
+                  <span className="menu-icon">📋</span>
+                  History{sessions.length > 0 ? ` (${sessions.length})` : ''}
+                </button>
+                {messages.length > 0 && (
+                  <button
+                    className="chat-more-menu-item"
+                    onClick={() => { clearConversation(); setShowMoreMenu(false) }}
+                  >
+                    <span className="menu-icon">🗑</span>
+                    Clear conversation
+                  </button>
+                )}
+                <button
+                  className="chat-more-menu-item"
+                  onClick={() => { toggleTaskPanel(); setShowMoreMenu(false) }}
+                  style={activeTaskCount > 0 && !taskPanelVisible ? { color: 'var(--accent)' } : {}}
+                >
+                  <span className="menu-icon">📌</span>
+                  Tasks{activeTaskCount > 0 ? ` (${activeTaskCount})` : ''}
+                </button>
+                <div className="chat-more-menu-separator" />
+                <button
+                  className="chat-more-menu-item"
+                  onClick={() => { setShowSettings(true); setShowMoreMenu(false) }}
+                >
+                  <span className="menu-icon">⚙</span>
+                  Settings
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

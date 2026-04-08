@@ -107,11 +107,9 @@ export function registerIpcHandlers(
           case 'agent:tool_result': {
             sender.send(IPC_CHANNELS['stream:tool_use_end'], {
               id: agentEvent.toolCallId,
-              parsedInput: {
-                output: agentEvent.output,
-                isError: agentEvent.isError,
-                toolName: agentEvent.toolName,
-              },
+              output: agentEvent.output,
+              isError: agentEvent.isError,
+              toolName: agentEvent.toolName,
             })
 
             // Forward file changes from agent tool execution to renderer (per D-52)

@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
 - [x] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview (completed 2026-04-08)
 - [x] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system (completed 2026-04-08)
-- [ ] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval
+- [x] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval (completed 2026-04-08)
 
 ## Phase Details
 
@@ -198,4 +198,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
 | 8. Advanced Features | 3/3 | Complete    | 2026-04-08 |
-| 9. Codebase Indexing | 2/3 | In Progress|  |
+| 9. Codebase Indexing | 3/3 | Complete    | 2026-04-08 |

@@ -9,7 +9,7 @@
 
 wzxClaw is a personal, desktop AI coding IDE in the vein of Cursor, built from scratch rather than as a VS Code fork. The research shows a clear architectural path: an Electron shell with Monaco Editor for code editing, a React-based chat panel for AI interaction, and a custom Agent Runtime in the Electron main process that orchestrates LLM calls with a tool system for file operations and command execution. Unlike Cursor (which forks the entire VS Code codebase), wzxClaw builds its own shell, trading VS Code extension compatibility for full architectural control and a simpler codebase.
 
-The recommended approach is to build bottom-up in dependency order: shared types, then IPC protocol, then LLM Gateway, then Tool System, then Agent Runtime, and finally the Electron shell tying everything together. Two SDKs (OpenAI for OpenAI/DeepSeek, Anthropic for Claude) feed through a unified LLM Gateway adapter. The Agent Loop follows the pattern established by Claude Code: user message to LLM, parse streaming response for tool calls, execute tools, feed results back, repeat until the LLM produces a text-only response.
+The recommended approach is to build bottom-up in dependency order: shared types, then IPC protocol, then LLM Gateway, then Tool System, then Agent Runtime, and finally the Electron shell tying everything together. Two SDKs (OpenAI for OpenAI/DeepSeek, Anthropic for Claude) feed through a unified LLM Gateway adapter. The Agent Loop follows the pattern established by Claude Code's `query.ts`: user message to LLM, parse streaming response for tool calls, execute tools, feed results back, repeat until the LLM produces a text-only response.
 
 The key risks center on the Agent Runtime. Streaming tool call parsing is tricky because tool_use JSON arrives in chunks across both providers. The agent loop can cycle infinitely on repeated failures. Context windows overflow quickly as tool results accumulate. These are solvable with SDK-native streaming parsers, iteration caps, and token-aware context compaction -- but they must be designed in from the start, not bolted on later.
 
@@ -60,9 +60,9 @@ The stack is entirely TypeScript with Electron as the desktop shell. Every techn
 The architecture follows a strict Main Process / Renderer Process split enforced by Electron. The Agent Runtime, Tool System, and LLM Gateway all run in the Main Process (Node.js context) where they have direct file system and network access. The Renderer Process (Chromium) hosts Monaco Editor, Chat Panel, and File Explorer as React components sharing state through Zustand. Communication between processes uses typed IPC channels.
 
 **Major components:**
-1. **Agent Runtime** (Main Process) -- Conversation loop orchestrator. Manages message history, drives the LLM-to-tool-to-LLM cycle, handles streaming, abort, and context compaction. Inspired by Claude Code's query.ts pattern.
+1. **Agent Runtime** (Main Process) -- Conversation loop orchestrator. Manages message history, drives the LLM-to-tool-to-LLM cycle, handles streaming, abort, and context compaction. Inspired by Claude Code's `query.ts` async generator pattern.
 2. **LLM Gateway** (Main Process) -- Multi-provider adapter. Dual SDK approach: OpenAI SDK for OpenAI/DeepSeek, Anthropic SDK for Claude. Unified internal interface, provider-specific adapters at the boundary.
-3. **Tool System** (Main Process) -- Each tool implements a common interface (name, description, inputSchema, execute). MVP: FileRead, FileWrite, FileEdit, Bash, Grep, Glob. Permission model per tool.
+3. **Tool System** (Main Process) -- Each tool implements a common interface (name, description, inputSchema via Zod, execute, validateInput, checkPermissions, isConcurrencySafe, isReadOnly). MVP: FileRead, FileWrite, FileEdit, Bash, Grep, Glob. Tools execute concurrently (reads) or serially (writes) based on safety classification. Inspired by Claude Code's `Tool.ts` + `buildTool()` factory.
 4. **Chat Panel** (Renderer) -- React component for AI conversation. Streaming text display, markdown rendering, code blocks with Apply button, tool call visualization, message input.
 5. **Monaco Editor** (Renderer) -- File tabs, syntax highlighting, multi-file editing. Save triggers flow to main process via IPC.
 6. **File Explorer** (Renderer) -- Directory tree view. File open/create/delete/rename operations.
@@ -133,7 +133,7 @@ Phases with standard patterns (skip research-phase):
 |------|------------|-------|
 | Stack | HIGH | All versions verified against npm registry. Every technology is the industry standard for its category. Alternatives considered and rejected with clear rationale. |
 | Features | HIGH | Comprehensive competitive analysis against Cursor, Windsurf, Copilot, and Qoder. Feature priorities map to real user expectations documented in official docs. MVP recommendation is defensible. |
-| Architecture | HIGH | Based on direct analysis of Claude Code source patterns (query.ts, Tool.ts, types/). IPC channel design follows Electron best practices. Component boundaries are clean. |
+| Architecture | HIGH | Based on direct analysis of Claude Code source patterns (query.ts, Tool.ts, toolOrchestration.ts, StreamingToolExecutor.ts, autoCompact.ts, tokenBudget.ts). IPC channel design follows Electron best practices. Component boundaries are clean. |
 | Pitfalls | HIGH | All 10 pitfalls are concrete, with specific warning signs and prevention strategies. Phase mapping aligns with architectural dependencies. |
 
 **Overall confidence:** HIGH
@@ -142,7 +142,7 @@ Phases with standard patterns (skip research-phase):
 
 - **Windows-specific bash sandboxing:** Most AI IDE sandboxing documentation covers macOS/Linux. wzxClaw targets Windows 10+. Need to research Windows-specific approaches (job objects, process restrictions, or working-directory-only confinement) during Phase 2 planning.
 - **Monaco + Electron web worker setup:** The exact configuration for Monaco's language service workers inside Electron's renderer process requires careful testing. The @monaco-editor/react wrapper handles most of this, but custom language services may need manual worker configuration.
-- **Context compaction strategy:** Research identifies the need (compact at 80% of context limit) but the implementation approach (summarize older messages? Drop tool results? Use a secondary LLM call?) needs definition during Phase 2.
+- **Context compaction strategy:** Research identifies the need (compact at 80% of context limit) but the implementation approach (summarize older messages? Drop tool results? Use a secondary LLM call?) needs definition during Phase 2. Claude Code uses a secondary LLM call for summarization.
 - **Token counting across providers:** Different models use different tokenizers. tiktoken works for OpenAI models, Anthropic has its own counting. Need a pragmatic strategy during Phase 1 -- likely provider-specific token counters behind a common interface.
 
 ## Sources
@@ -158,6 +158,7 @@ Phases with standard patterns (skip research-phase):
 - GitHub Copilot official docs (docs.github.com/en/copilot) -- feature comparison
 - VS Code Agents Tutorial (code.visualstudio.com/docs/copilot/agents) -- agent patterns
 - DeepSeek API documentation (api-docs.deepseek.com) -- OpenAI compatibility confirmation
+- Claude Code source analysis (E:\ai\claude-code\) -- query.ts, Tool.ts, tools.ts, toolOrchestration.ts, StreamingToolExecutor.ts, toolExecution.ts, autoCompact.ts, microCompact.ts, tokenBudget.ts
 
 ### Secondary (MEDIUM confidence)
 - "Cursor Deep Dive: $29B by Forking VS Code" (mmntm.net) -- Cursor business/architecture analysis
