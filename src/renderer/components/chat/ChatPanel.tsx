@@ -42,6 +42,13 @@ export default function ChatPanel(): JSX.Element {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Listen for "Open Settings" from command palette (per CMD-01)
+  useEffect(() => {
+    const handler = () => setShowSettings(true)
+    window.addEventListener('wzxclaw:open-settings', handler)
+    return () => window.removeEventListener('wzxclaw:open-settings', handler)
+  }, [])
+
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     setInputValue(e.target.value)

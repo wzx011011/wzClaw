@@ -7,9 +7,12 @@ import TabBar from './TabBar'
 import EditorPanel from './EditorPanel'
 import WelcomeScreen from './WelcomeScreen'
 import ChatPanel from '../chat/ChatPanel'
+import CommandPalette from '../CommandPalette'
 import { useTabStore } from '../../stores/tab-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useCommandStore } from '../../stores/command-store'
+import { useSettingsStore } from '../../stores/settings-store'
 
 /**
  * IDELayout — root layout component for the IDE (per D-41, D-44, D-51, D-52, D-57).
@@ -33,6 +36,8 @@ export default function IDELayout(): JSX.Element {
   const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
   const handleTabFileChange = useTabStore((s) => s.handleExternalFileChange)
   const initChat = useChatStore((s) => s.init)
+  const openPalette = useCommandStore((s) => s.openPalette)
+  const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
 
   // Register global keyboard shortcuts (per D-51)
   useEffect(() => {
@@ -49,11 +54,16 @@ export default function IDELayout(): JSX.Element {
         e.preventDefault()
         openFolder()
       }
+      // Ctrl+Shift+P — command palette
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
+        e.preventDefault()
+        openPalette()
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, saveTab, openFolder])
+  }, [activeTabId, saveTab, openFolder, openPalette])
 
   // Subscribe to file change events from main process (per D-52).
   // Updates both workspace tree and open editor tabs.
@@ -70,6 +80,22 @@ export default function IDELayout(): JSX.Element {
     const unsubscribe = initChat()
     return unsubscribe
   }, [initChat])
+
+  // Register built-in commands once on mount (per CMD-01)
+  useEffect(() => {
+    registerBuiltInCommands({
+      openFolder: () => useWorkspaceStore.getState().openFolder(),
+      clearConversation: () => useChatStore.getState().clearConversation(),
+      saveActiveTab: () => {
+        const activeId = useTabStore.getState().activeTabId
+        if (activeId) useTabStore.getState().saveTab(activeId)
+      },
+      updateSettings: (req) => useSettingsStore.getState().updateSettings(req),
+      openSettingsModal: () => {
+        window.dispatchEvent(new CustomEvent('wzxclaw:open-settings'))
+      }
+    })
+  }, [registerBuiltInCommands])
 
   return (
     <div className="ide-container">
@@ -90,6 +116,7 @@ export default function IDELayout(): JSX.Element {
         </Allotment>
       </div>
       <StatusBar />
+      <CommandPalette />
     </div>
   )
 }
