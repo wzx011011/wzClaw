@@ -62,6 +62,21 @@ const api = {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
+
+  // Sessions
+  listSessions: () => ipcRenderer.invoke('session:list'),
+  loadSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:load', request),
+  deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
+
+  // Session compacted stream listener
+  onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => {
+    const handler = (_: unknown, payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => callback(payload)
+    ipcRenderer.on('session:compacted', handler)
+    return () => ipcRenderer.removeListener('session:compacted', handler)
+  },
+
+  // Compact context (manual trigger via /compact command)
+  compactContext: () => ipcRenderer.invoke('agent:compact_context'),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

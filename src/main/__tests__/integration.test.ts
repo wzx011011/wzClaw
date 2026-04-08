@@ -137,6 +137,24 @@ describe('IPC Handler Registration', () => {
       isRendererConnected: vi.fn(),
     } as unknown
 
+    const mockWorkspaceManager = {
+      getWorkspaceRoot: vi.fn(() => '/test/workspace'),
+      openFolderDialog: vi.fn(),
+      getDirectoryTree: vi.fn(),
+      startWatching: vi.fn(),
+      isWatching: vi.fn(),
+      readFile: vi.fn(),
+      saveFile: vi.fn(),
+    } as unknown
+
+    const mockSessionStore = {
+      appendMessage: vi.fn(),
+      appendMessages: vi.fn(),
+      loadSession: vi.fn(() => []),
+      listSessions: vi.fn(() => []),
+      deleteSession: vi.fn(() => true),
+    } as unknown
+
     // Dynamic import to get fresh module with our mocks
     const { registerIpcHandlers } = await import('../ipc-handlers')
 
@@ -145,7 +163,9 @@ describe('IPC Handler Registration', () => {
       registerIpcHandlers(
         mockGateway as import('../llm/gateway').LLMGateway,
         mockAgentLoop as import('../agent/agent-loop').AgentLoop,
-        mockPermissionManager as import('../permission/permission-manager').PermissionManager
+        mockPermissionManager as import('../permission/permission-manager').PermissionManager,
+        mockWorkspaceManager as import('../workspace/workspace-manager').WorkspaceManager,
+        mockSessionStore as import('../persistence/session-store').SessionStore
       )
     }).not.toThrow()
 

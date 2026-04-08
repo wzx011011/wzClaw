@@ -7,6 +7,7 @@ import type { AgentLoop } from './agent/agent-loop'
 import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
+import type { SessionStore } from './persistence/session-store'
 import { SettingsManager } from './settings-manager'
 
 // Persistent settings with encrypted API key storage (per D-66)
@@ -16,7 +17,8 @@ export function registerIpcHandlers(
   gateway: LLMGateway,
   agentLoop: AgentLoop,
   permissionManager: PermissionManager,
-  workspaceManager: WorkspaceManager
+  workspaceManager: WorkspaceManager,
+  sessionStore: SessionStore
 ): void {
   // Load persisted settings from disk
   settingsManager.load()
@@ -47,6 +49,7 @@ export function registerIpcHandlers(
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
     const agentConfig: AgentConfig = {
       model: config.model,
+      provider: config.provider as 'openai' | 'anthropic',
       systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       workingDirectory,
       conversationId: result.data.conversationId,
@@ -118,6 +121,15 @@ export function registerIpcHandlers(
             break
           case 'agent:done':
             sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+            // Auto-save messages after agent turn completes (PERSIST-02)
+            try {
+              const allMessages = agentLoop.getMessages()
+              for (const msg of allMessages) {
+                sessionStore.appendMessage(agentConfig.conversationId, msg)
+              }
+            } catch (saveErr) {
+              console.error('Failed to auto-save session:', saveErr)
+            }
             break
         }
       }
@@ -185,8 +197,8 @@ export function registerIpcHandlers(
   // ============================================================
   // Workspace: start watching
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['workspace:watch'], () => {
-    workspaceManager.startWatching()
+  ipcMain.handle(IPC_CHANNELS['workspace:watch'], async () => {
+    await workspaceManager.startWatching()
   })
 
   // ============================================================
@@ -211,5 +223,26 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {
     await workspaceManager.saveFile(request.filePath, request.content)
+  })
+
+  // ============================================================
+  // Session: list — returns all sessions for current project
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:list'], () => {
+    return sessionStore.listSessions()
+  })
+
+  // ============================================================
+  // Session: load — returns messages for a specific session
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:load'], (_event, request) => {
+    return sessionStore.loadSession(request.sessionId)
+  })
+
+  // ============================================================
+  // Session: delete — removes a session file
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:delete'], (_event, request) => {
+    return { success: sessionStore.deleteSession(request.sessionId) }
   })
 }

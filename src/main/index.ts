@@ -7,6 +7,7 @@ import { createDefaultTools } from './tools/tool-registry'
 import { PermissionManager } from './permission/permission-manager'
 import { AgentLoop } from './agent/agent-loop'
 import { WorkspaceManager } from './workspace/workspace-manager'
+import { SessionStore } from './persistence/session-store'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -40,21 +41,8 @@ function buildMenuBar(): Menu {
           accelerator: 'CmdOrCtrl+Shift+O',
           click: (_menuItem, browserWindow) => {
             if (browserWindow) {
-              browserWindow.webContents.send('workspace:open_folder')
-              // Trigger the IPC handler by having the renderer invoke it
-              // The menu click directly calls the workspace manager
-              workspaceManager.openFolderDialog(browserWindow).then((rootPath) => {
-                if (rootPath) {
-                  // Set up file change forwarding
-                  workspaceManager.onFileChange((filePath, changeType) => {
-                    for (const bw of BrowserWindow.getAllWindows()) {
-                      bw.webContents.send('file:changed', { filePath, changeType })
-                    }
-                  })
-                  // Notify renderer of the opened folder
-                  browserWindow.webContents.send('workspace:folder_opened', { rootPath })
-                }
-              })
+              // Trigger the same IPC flow as the sidebar button
+              browserWindow.webContents.executeJavaScript('window.wzxclaw.openFolder()')
             }
           }
         },
@@ -112,8 +100,11 @@ app.whenReady().then(() => {
   const permissionManager = new PermissionManager()
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager)
 
-  // Wire IPC handlers with all components including workspace manager
-  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager)
+  // Create session store for JSONL persistence (per PERSIST-01)
+  const sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
+
+  // Wire IPC handlers with all components including workspace manager and session store
+  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager, sessionStore)
 
   // Set up Chromium menu bar
   Menu.setApplicationMenu(buildMenuBar())

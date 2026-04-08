@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
-import type { FileTreeNode } from './types'
+import type { FileTreeNode, SessionMeta } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -36,7 +36,15 @@ export const IPC_CHANNELS = {
   // File channels (renderer -> main, plus main -> renderer for changes)
   'file:read': 'file:read',
   'file:save': 'file:save',
-  'file:changed': 'file:changed'
+  'file:changed': 'file:changed',
+
+  // Session channels (renderer -> main)
+  'session:list': 'session:list',
+  'session:load': 'session:load',
+  'session:delete': 'session:delete',
+
+  // Session stream channels (main -> renderer)
+  'session:compacted': 'session:compacted'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -70,6 +78,9 @@ export interface IpcRequestPayloads {
   'workspace:status': void
   'file:read': { filePath: string }
   'file:save': { filePath: string; content: string }
+  'session:list': void
+  'session:load': { sessionId: string }
+  'session:delete': { sessionId: string }
 }
 
 // Response payloads (main returns to renderer via ipcMain.handle return)
@@ -90,6 +101,9 @@ export interface IpcResponsePayloads {
   'workspace:status': { rootPath: string | null; isWatching: boolean }
   'file:read': { content: string; language: string }
   'file:save': void
+  'session:list': SessionMeta[]
+  'session:load': unknown[]
+  'session:delete': { success: boolean }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -106,6 +120,7 @@ export interface IpcStreamPayloads {
     reason: string
   }
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
+  'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
 }
 
 // ============================================================
