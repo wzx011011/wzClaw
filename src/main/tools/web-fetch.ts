@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import { WEB_CONTENT_MAX_CHARS, WEB_FETCH_TIMEOUT_MS, WEB_SEARCH_RATE_LIMIT_MS } from '../../shared/constants'
+import { WEB_CONTENT_MAX_CHARS, WEB_FETCH_TIMEOUT_MS } from '../../shared/constants'
+import { enforceRateLimit } from './rate-limiter'
 
 // ============================================================
 // Input Schema
@@ -10,21 +11,6 @@ const WebFetchInputSchema = z.object({
   url: z.string().min(1),
   maxLength: z.number().int().min(1000).optional()
 })
-
-// ============================================================
-// Rate Limiting (shared static state)
-// ============================================================
-
-let lastRequestTime = 0
-
-async function enforceRateLimit(): Promise<void> {
-  const now = Date.now()
-  const elapsed = now - lastRequestTime
-  if (elapsed < WEB_SEARCH_RATE_LIMIT_MS) {
-    await new Promise((resolve) => setTimeout(resolve, WEB_SEARCH_RATE_LIMIT_MS - elapsed))
-  }
-  lastRequestTime = Date.now()
-}
 
 // ============================================================
 // HTML-to-text conversion (MVP, no external library)

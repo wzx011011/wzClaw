@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import { WEB_SEARCH_RATE_LIMIT_MS } from '../../shared/constants'
+import { enforceRateLimit } from './rate-limiter'
 
 // ============================================================
 // Input Schema
@@ -10,21 +10,6 @@ const WebSearchInputSchema = z.object({
   query: z.string().min(1),
   maxResults: z.number().int().min(1).max(10).optional()
 })
-
-// ============================================================
-// Rate Limiting (shared static state)
-// ============================================================
-
-let lastRequestTime = 0
-
-async function enforceRateLimit(): Promise<void> {
-  const now = Date.now()
-  const elapsed = now - lastRequestTime
-  if (elapsed < WEB_SEARCH_RATE_LIMIT_MS) {
-    await new Promise((resolve) => setTimeout(resolve, WEB_SEARCH_RATE_LIMIT_MS - elapsed))
-  }
-  lastRequestTime = Date.now()
-}
 
 // ============================================================
 // WebSearchTool Implementation
