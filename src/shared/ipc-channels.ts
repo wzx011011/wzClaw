@@ -38,6 +38,7 @@ export const IPC_CHANNELS = {
   'file:save': 'file:save',
   'file:changed': 'file:changed',
   'file:read-content': 'file:read-content',
+  'file:read-folder-tree': 'file:read-folder-tree',
 
   // Session channels (renderer -> main)
   'session:list': 'session:list',
@@ -86,6 +87,7 @@ export interface IpcRequestPayloads {
   'workspace:status': void
   'file:read': { filePath: string }
   'file:read-content': { filePath: string }
+  'file:read-folder-tree': { dirPath: string }
   'file:save': { filePath: string; content: string }
   'session:list': void
   'session:load': { sessionId: string }
@@ -113,6 +115,7 @@ export interface IpcResponsePayloads {
   'workspace:status': { rootPath: string | null; isWatching: boolean }
   'file:read': { content: string; language: string }
   'file:read-content': { content: string; size: number; path: string } | { error: string; size: number; limit: number }
+  'file:read-folder-tree': { tree: string; fileCount: number; path: string } | { error: string }
   'file:save': void
   'session:list': SessionMeta[]
   'session:load': unknown[]
@@ -165,6 +168,21 @@ export const IpcSchemas = {
         error: z.string(),
         size: z.number(),
         limit: z.number()
+      })
+    ])
+  },
+  'file:read-folder-tree': {
+    request: z.object({
+      dirPath: z.string().min(1)
+    }),
+    response: z.union([
+      z.object({
+        tree: z.string(),
+        fileCount: z.number(),
+        path: z.string()
+      }),
+      z.object({
+        error: z.string()
       })
     ])
   },

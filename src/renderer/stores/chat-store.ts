@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import type { SessionMeta, FileMention } from '../../shared/types'
+import type { SessionMeta, MentionItem } from '../../shared/types'
 
 // ============================================================
 // Chat Store (per D-54, D-55, D-56)
@@ -25,8 +25,8 @@ export interface ChatMessage {
   isStreaming?: boolean
   usage?: { inputTokens: number; outputTokens: number }
   isCompacted?: boolean
-  // @-mention context files (user messages only)
-  mentions?: FileMention[]
+  // @-mention context files/folders (user messages only)
+  mentions?: MentionItem[]
 }
 
 interface ChatState {
@@ -38,7 +38,7 @@ interface ChatState {
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
   activeSessionId: string
   sessionsCache: Record<string, ChatMessage[]>
-  pendingMentions: FileMention[]
+  pendingMentions: MentionItem[]
 }
 
 interface ChatActions {
@@ -53,7 +53,7 @@ interface ChatActions {
   switchSession: (sessionId: string) => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
   deleteSessionTab: (sessionId: string) => Promise<void>
-  addMention: (mention: FileMention) => void
+  addMention: (mention: MentionItem) => void
   removeMention: (path: string) => void
   clearMentions: () => void
 }
@@ -242,9 +242,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Format mentions into message content for LLM context
     let formattedContent = content
     if (pendingMentions.length > 0) {
-      const contextBlocks = pendingMentions.map((m) =>
-        `[Context from ${m.path}]:\n${m.content}\n---`
-      ).join('\n')
+      const contextBlocks = pendingMentions.map((m) => {
+        if (m.type === 'folder_mention') {
+          return `[Context from ${m.path} (directory tree, ${m.size} entries)]:\n${m.content}\n---`
+        }
+        return `[Context from ${m.path}]:\n${m.content}\n---`
+      }).join('\n')
       formattedContent = `${contextBlocks}\n\n${content}`
     }
 
@@ -504,9 +507,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
   },
 
   /**
-   * Add a file mention to the pending list for the next message.
+   * Add a file or folder mention to the pending list for the next message.
    */
-  addMention: (mention: FileMention) => {
+  addMention: (mention: MentionItem) => {
     const { pendingMentions } = get()
     // Avoid duplicates
     if (pendingMentions.some((m) => m.path === mention.path)) return

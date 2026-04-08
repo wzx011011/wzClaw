@@ -42,6 +42,7 @@ const api = {
   // File operations
   readFile: (request: { filePath: string }) => ipcRenderer.invoke('file:read', request),
   readFileContent: (request: { filePath: string }) => ipcRenderer.invoke('file:read-content', request),
+  readFolderTree: (request: { dirPath: string }) => ipcRenderer.invoke('file:read-folder-tree', request),
   saveFile: (request: { filePath: string; content: string }) => ipcRenderer.invoke('file:save', request),
 
   // File change listener — returns unsubscribe function

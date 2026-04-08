@@ -1116,6 +1116,26 @@
   color: #f48771;
 }
 
+.mention-badge-folder {
+  border-color: rgba(220, 182, 122, 0.4);
+  color: #dcb67a;
+}
+
+.mention-picker-folder {
+  color: #dcb67a;
+}
+
+.mention-folder-icon {
+  margin-right: 4px;
+  font-size: 11px;
+}
+
+.mention-picker-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ============================================================
    @-Mention Context Blocks (in sent messages)
    ============================================================ */
@@ -1190,6 +1210,20 @@
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary);
+}
+
+/* Folder mention block variant */
+.mention-block-folder {
+  border-left-color: #dcb67a;
+  background: rgba(220, 182, 122, 0.06);
+}
+
+.mention-block-folder .mention-block-header:hover {
+  background: rgba(220, 182, 122, 0.12);
+}
+
+.mention-block-folder .mention-block-label {
+  color: #dcb67a;
 }
 
 /* ============================================================

@@ -173,6 +173,15 @@ export interface FileMention {
   size: number
 }
 
+export interface FolderMention {
+  type: 'folder_mention'
+  path: string
+  content: string  // directory tree summary text
+  size: number     // number of entries
+}
+
+export type MentionItem = FileMention | FolderMention
+
 // ============================================================
 // Diff Preview Types (DIFF-01 through DIFF-07)
 // ============================================================
@@ -223,6 +232,13 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
 
 export const FileMentionSchema = z.object({
   type: z.literal('file_mention'),
+  path: z.string().min(1),
+  content: z.string(),
+  size: z.number().nonnegative()
+})
+
+export const FolderMentionSchema = z.object({
+  type: z.literal('folder_mention'),
   path: z.string().min(1),
   content: z.string(),
   size: z.number().nonnegative()

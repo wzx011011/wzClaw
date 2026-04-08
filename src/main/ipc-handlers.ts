@@ -275,6 +275,121 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // File: read-folder-tree — generates directory tree summary for folder @-mention
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:read-folder-tree'], async (_event, request) => {
+    const result = IpcSchemas['file:read-folder-tree'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+
+    const { dirPath } = result.data
+    const workspaceRoot = workspaceManager.getWorkspaceRoot()
+    if (!workspaceRoot) {
+      return { error: 'No workspace open' }
+    }
+
+    const absolutePath = path.isAbsolute(dirPath)
+      ? dirPath
+      : path.resolve(workspaceRoot, dirPath)
+
+    // Verify the resolved path stays within the workspace boundary
+    if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+      return { error: 'Access denied: directory path is outside the workspace root' }
+    }
+
+    // Directories to skip
+    const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'out', 'coverage', '__pycache__', '.cache'])
+    const MAX_DEPTH = 3
+    const MAX_ENTRIES = 100
+
+    const { readdir, stat: fsStat } = await import('fs/promises')
+
+    interface TreeNode {
+      name: string
+      isDirectory: boolean
+      children: TreeNode[]
+    }
+
+    async function buildTree(dir: string, depth: number, entryCount: { count: number }): Promise<TreeNode[]> {
+      if (depth > MAX_DEPTH || entryCount.count >= MAX_ENTRIES) return []
+
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return []
+      }
+
+      // Sort: directories first, then files, both alphabetically
+      entries.sort((a, b) => {
+        if (a.isDirectory() && !b.isDirectory()) return -1
+        if (!a.isDirectory() && b.isDirectory()) return 1
+        return a.name.localeCompare(b.name)
+      })
+
+      const nodes: TreeNode[] = []
+      for (const entry of entries) {
+        if (entryCount.count >= MAX_ENTRIES) break
+        if (SKIP_DIRS.has(entry.name)) continue
+        if (entry.name.startsWith('.') && entry.name !== '.env') continue
+
+        entryCount.count++
+        const childPath = path.join(dir, entry.name)
+        const isDir = entry.isDirectory()
+
+        const node: TreeNode = {
+          name: entry.name,
+          isDirectory: isDir,
+          children: []
+        }
+
+        if (isDir) {
+          node.children = await buildTree(childPath, depth + 1, entryCount)
+        }
+
+        nodes.push(node)
+      }
+      return nodes
+    }
+
+    try {
+      const dirStat = await fsStat(absolutePath)
+      if (!dirStat.isDirectory()) {
+        return { error: 'Path is not a directory' }
+      }
+
+      const entryCount = { count: 0 }
+      const children = await buildTree(absolutePath, 1, entryCount)
+
+      // Format as tree string
+      function formatTree(nodes: TreeNode[], prefix: string): string {
+        let result = ''
+        for (let i = 0; i < nodes.length; i++) {
+          const isLast = i === nodes.length - 1
+          const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251C\u2500\u2500 '
+          const suffix = nodes[i].isDirectory ? '/' : ''
+          result += `${prefix}${connector}${nodes[i].name}${suffix}\n`
+
+          if (nodes[i].isDirectory && nodes[i].children.length > 0) {
+            const newPrefix = prefix + (isLast ? '    ' : '\u2502   ')
+            result += formatTree(nodes[i].children, newPrefix)
+          }
+        }
+        return result
+      }
+
+      const dirName = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/') || path.basename(absolutePath)
+      const tree = `${dirName}/\n` + formatTree(children, '')
+      const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/')
+
+      return { tree, fileCount: entryCount.count, path: relativePath }
+    } catch (err) {
+      return { error: `Failed to read directory: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  })
+
+  // ============================================================
   // File: save — validates filePath and enforces workspace boundary
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {

@@ -16,20 +16,23 @@ interface ChatMessageProps {
 }
 
 /**
- * Collapsible context block for an @-mention file.
+ * Collapsible context block for an @-mention file or folder.
  */
 function MentionBlock({ mention }: { mention: { type: string; path: string; content: string; size: number } }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
-  const sizeLabel = mention.size < 1024
-    ? `${mention.size}B`
-    : mention.size < 1024 * 1024
-      ? `${(mention.size / 1024).toFixed(1)}KB`
-      : `${(mention.size / 1024 / 1024).toFixed(1)}MB`
+  const isFolder = mention.type === 'folder_mention'
+  const sizeLabel = isFolder
+    ? `${mention.size} entries`
+    : mention.size < 1024
+      ? `${mention.size}B`
+      : mention.size < 1024 * 1024
+        ? `${(mention.size / 1024).toFixed(1)}KB`
+        : `${(mention.size / 1024 / 1024).toFixed(1)}MB`
 
   return (
-    <div className="mention-block">
+    <div className={`mention-block${isFolder ? ' mention-block-folder' : ''}`}>
       <div className="mention-block-header" onClick={() => setExpanded(!expanded)}>
-        <span className="mention-block-label">[context]</span>
+        <span className="mention-block-label">[context]{isFolder ? ' [dir]' : ''}</span>
         <span className="mention-block-path">{mention.path}</span>
         <span className="mention-block-size">{sizeLabel}</span>
         <span className="mention-block-toggle">{expanded ? '\u25BC' : '\u25B6'}</span>

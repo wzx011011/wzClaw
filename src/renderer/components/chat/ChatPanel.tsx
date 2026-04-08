@@ -10,7 +10,7 @@ import SettingsModal from './SettingsModal'
 import SessionList from './SessionList'
 import SessionTabs from './SessionTabs'
 import TokenIndicator from './TokenIndicator'
-import type { FileMention } from '../../../shared/types'
+import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -86,7 +86,7 @@ export default function ChatPanel(): JSX.Element {
     setShowMentionPicker(false)
   }
 
-  const handleMentionSelect = useCallback((mention: FileMention) => {
+  const handleMentionSelect = useCallback((mention: MentionItem) => {
     addMention(mention)
     // Remove the @query from the input
     const lastAtIndex = inputValue.lastIndexOf('@')
@@ -222,8 +222,8 @@ export default function ChatPanel(): JSX.Element {
         {pendingMentions.length > 0 && (
           <div className="mention-badges">
             {pendingMentions.map((m) => (
-              <span key={m.path} className="mention-badge">
-                @{m.path}
+              <span key={m.path} className={`mention-badge${m.type === 'folder_mention' ? ' mention-badge-folder' : ''}`}>
+                @{m.path}{m.type === 'folder_mention' ? ' [dir]' : ''}
                 <button
                   className="mention-badge-remove"
                   onClick={() => removeMention(m.path)}

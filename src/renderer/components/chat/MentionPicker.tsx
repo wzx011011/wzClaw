@@ -1,43 +1,55 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
-import type { FileMention } from '../../../shared/types'
+import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
-// MentionPicker — Fuzzy file picker dropdown triggered by @
-// (per MENTION-01, MENTION-02, MENTION-05)
+// MentionPicker — Fuzzy file/folder picker dropdown triggered by @
+// (per MENTION-01, MENTION-02, MENTION-03, MENTION-05)
 // ============================================================
 
 interface MentionPickerProps {
   visible: boolean
   filter: string
-  onSelect: (file: FileMention) => void
+  onSelect: (item: MentionItem) => void
   onClose: () => void
 }
 
 interface FlatFileEntry {
   path: string  // relative path
-  name: string  // filename only
+  name: string  // filename or directory name only
   absPath: string
+  isDirectory: boolean
 }
 
 /**
- * Flatten the workspace file tree into a list of relative-path file entries.
+ * Flatten the workspace file tree into a list of relative-path entries,
+ * including both files and directories as selectable items.
  */
 function flattenTree(nodes: { name: string; path: string; isDirectory: boolean; children?: any[] }[], rootPath: string): FlatFileEntry[] {
   const results: FlatFileEntry[] = []
   for (const node of nodes) {
+    const relative = node.path.replace(/\\/g, '/').startsWith(rootPath.replace(/\\/g, '/'))
+      ? node.path.replace(/\\/g, '/').slice(rootPath.replace(/\\/g, '/').length + 1)
+      : node.path
+
     if (node.isDirectory) {
+      // Include directory as a selectable entry
+      results.push({
+        path: relative,
+        name: node.name,
+        absPath: node.path,
+        isDirectory: true
+      })
+      // Also recurse into children
       if (node.children) {
         results.push(...flattenTree(node.children, rootPath))
       }
     } else {
-      const relative = node.path.replace(/\\/g, '/').startsWith(rootPath.replace(/\\/g, '/'))
-        ? node.path.replace(/\\/g, '/').slice(rootPath.replace(/\\/g, '/').length + 1)
-        : node.path
       results.push({
         path: relative,
         name: node.name,
-        absPath: node.path
+        absPath: node.path,
+        isDirectory: false
       })
     }
   }
@@ -139,21 +151,38 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
     if (loading) return // prevent double-click
     setLoading(entry.path)
     try {
-      const result = await window.wzxclaw.readFileContent({ filePath: entry.path })
-      if ('error' in result) {
-        // File too large — show alert, don't add
-        alert(`Cannot add ${entry.path}: ${result.error} (${(result.size / 1024).toFixed(1)}KB exceeds ${(result.limit / 1024).toFixed(0)}KB limit)`)
-        return
+      if (entry.isDirectory) {
+        // Read folder tree for directory mentions
+        const result = await window.wzxclaw.readFolderTree({ dirPath: entry.path })
+        if ('error' in result) {
+          alert(`Cannot add ${entry.path}: ${result.error}`)
+          return
+        }
+        const mention = {
+          type: 'folder_mention' as const,
+          path: result.path,
+          content: result.tree,
+          size: result.fileCount
+        }
+        onSelect(mention)
+      } else {
+        // Read file content for file mentions
+        const result = await window.wzxclaw.readFileContent({ filePath: entry.path })
+        if ('error' in result) {
+          // File too large — show alert, don't add
+          alert(`Cannot add ${entry.path}: ${result.error} (${(result.size / 1024).toFixed(1)}KB exceeds ${(result.limit / 1024).toFixed(0)}KB limit)`)
+          return
+        }
+        const mention = {
+          type: 'file_mention' as const,
+          path: result.path,
+          content: result.content,
+          size: result.size
+        }
+        onSelect(mention)
       }
-      const mention: FileMention = {
-        type: 'file_mention',
-        path: result.path,
-        content: result.content,
-        size: result.size
-      }
-      onSelect(mention)
     } catch (err) {
-      console.error('Failed to read file for mention:', err)
+      console.error('Failed to read entry for mention:', err)
     } finally {
       setLoading(null)
     }
@@ -187,11 +216,14 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
       {filteredFiles.map((entry, idx) => (
         <div
           key={entry.absPath}
-          className={`mention-picker-item${idx === selectedIndex ? ' mention-picker-active' : ''}`}
+          className={`mention-picker-item${idx === selectedIndex ? ' mention-picker-active' : ''}${entry.isDirectory ? ' mention-picker-folder' : ''}`}
           onClick={() => handleSelect(entry)}
           onMouseEnter={() => setSelectedIndex(idx)}
         >
-          {renderPath(entry)}
+          <span className="mention-picker-entry">
+            {entry.isDirectory && <span className="mention-folder-icon">\uD83D\uDCC1</span>}
+            {renderPath(entry)}
+          </span>
           {loading === entry.path && <span className="mention-loading">...</span>}
         </div>
       ))}
