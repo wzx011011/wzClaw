@@ -36,7 +36,7 @@ export const DEFAULT_SYSTEM_PROMPT = `You are an expert AI coding assistant. Fol
 3. Prefer using tools (FileWrite, FileEdit) to apply code changes to the user's workspace when possible.
 4. Be concise. Lead with the code, then briefly explain key decisions if needed.
 5. If you are unsure about requirements, ask a clarifying question before writing code.`
-export const MAX_DIFF_FILE_LINES = 5000 // files with more lines skip inline diff
+export const MAX_DIFF_FILE_LINES = 1000 // files with more lines skip inline diff (S2-07: 5001*5001 DP table at 5000 = ~200MB)
 export const DIFF_CONTEXT_LINES = 3     // context lines around each hunk
 export const MAX_TOOL_RESULT_CHARS = 30000
 export const MAX_FILE_READ_LINES = 2000
