@@ -55,6 +55,16 @@ declare global {
       reindex: () => Promise<void>
       searchIndex: (request: { query: string; topK?: number }) => Promise<Array<{ filePath: string; startLine: number; endLine: number; content: string; score: number }>>
       onIndexProgress: (cb: (p: { status: string; fileCount: number; currentFile: string; error?: string }) => void) => () => void
+      // Browser
+      navigateBrowser: (url: string) => Promise<{ title: string }>
+      screenshotBrowser: () => Promise<{ base64: string }>
+      closeBrowser: () => Promise<void>
+      onBrowserScreenshot: (cb: (p: { url: string; base64: string; timestamp: number }) => void) => () => void
+      onBrowserStatus: (cb: (p: { running: boolean; url: string | null }) => void) => () => void
+      // Mobile
+      startMobileServer: () => Promise<{ lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }>
+      stopMobileServer: () => Promise<void>
+      onMobileStatus: (cb: (p: { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }) => void) => () => void
     }
   }
 }

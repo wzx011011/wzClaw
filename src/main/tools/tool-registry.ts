@@ -20,6 +20,13 @@ import type { IndexingEngine } from '../indexing/indexing-engine'
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map()
 
+  // Tools known to be read-only (no side effects)
+  private static readonly READ_ONLY_TOOLS = new Set([
+    'FileRead', 'Grep', 'Glob', 'WebSearch', 'WebFetch',
+    'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
+    'CreateTask', 'UpdateTask'
+  ])
+
   register(tool: Tool): void {
     this.tools.set(tool.name, tool)
   }
@@ -40,6 +47,11 @@ export class ToolRegistry {
     return this.getAll()
       .filter((tool) => tool.requiresApproval)
       .map((tool) => tool.name)
+  }
+
+  isReadOnly(toolName: string): boolean {
+    const tool = this.tools.get(toolName)
+    return tool?.isReadOnly ?? ToolRegistry.READ_ONLY_TOOLS.has(toolName)
   }
 }
 

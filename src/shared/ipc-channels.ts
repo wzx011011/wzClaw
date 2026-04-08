@@ -76,7 +76,33 @@ export const IPC_CHANNELS = {
   'index:status': 'index:status',
   'index:reindex': 'index:reindex',
   'index:search': 'index:search',
-  'index:progress': 'index:progress'
+  'index:progress': 'index:progress',
+
+  // Git channels (renderer -> main)
+  'git:status': 'git:status',
+
+  // Permission mode channels (renderer -> main)
+  'permission:get_mode': 'permission:get_mode',
+  'permission:set_mode': 'permission:set_mode',
+
+  // MCP channels (renderer -> main)
+  'mcp:list_servers': 'mcp:list_servers',
+  'mcp:add_server': 'mcp:add_server',
+  'mcp:remove_server': 'mcp:remove_server',
+  'mcp:list_tools': 'mcp:list_tools',
+
+  // Browser channels (renderer -> main for control, main -> renderer for screenshot/status)
+  'browser:navigate': 'browser:navigate',
+  'browser:take_screenshot': 'browser:take_screenshot',
+  'browser:close': 'browser:close',
+  'browser:screenshot': 'browser:screenshot',
+  'browser:status': 'browser:status',
+
+  // Mobile channels (renderer -> main, main -> renderer)
+  'mobile:start': 'mobile:start',
+  'mobile:stop': 'mobile:stop',
+  'mobile:status': 'mobile:status',
+  'mobile:qrcode': 'mobile:qrcode'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -128,6 +154,18 @@ export interface IpcRequestPayloads {
   'index:status': void
   'index:reindex': void
   'index:search': { query: string; topK?: number }
+  'git:status': void
+  'permission:get_mode': void
+  'permission:set_mode': { mode: string }
+  'mcp:list_servers': void
+  'mcp:add_server': { name: string; command?: string; args?: string[]; url?: string; transport: 'stdio' | 'sse' }
+  'mcp:remove_server': { name: string }
+  'mcp:list_tools': void
+  'browser:navigate': { url: string }
+  'browser:take_screenshot': void
+  'browser:close': void
+  'mobile:start': void
+  'mobile:stop': void
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -164,6 +202,18 @@ export interface IpcResponsePayloads {
   'index:status': { status: string; fileCount: number; currentFile: string; error?: string }
   'index:reindex': void
   'index:search': Array<{ filePath: string; startLine: number; endLine: number; content: string; score: number }>
+  'git:status': { branch: string; changedFiles: number }
+  'permission:get_mode': { mode: string }
+  'permission:set_mode': void
+  'mcp:list_servers': Array<{ name: string; transport: string; connected: boolean }>
+  'mcp:add_server': void
+  'mcp:remove_server': void
+  'mcp:list_tools': Array<{ name: string; description: string; serverName: string }>
+  'browser:navigate': { title: string }
+  'browser:take_screenshot': { base64: string }
+  'browser:close': void
+  'mobile:start': { lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }
+  'mobile:stop': void
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -187,6 +237,10 @@ export interface IpcStreamPayloads {
   'task:created': AgentTask
   'task:updated': AgentTask
   'index:progress': { status: string; fileCount: number; currentFile: string; error?: string }
+  'browser:screenshot': { url: string; base64: string; timestamp: number }
+  'browser:status': { running: boolean; url: string | null }
+  'mobile:status': { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }
+  'mobile:qrcode': { qrCode: string }
 }
 
 // ============================================================
@@ -251,5 +305,17 @@ export const IpcSchemas = {
   'stream:text_delta': z.object({ content: z.string() }),
   'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
   'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),
-  'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) })
+  'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) }),
+  'session:load': {
+    request: z.object({ sessionId: z.string().min(1) }),
+    response: z.array(z.unknown())
+  },
+  'session:delete': {
+    request: z.object({ sessionId: z.string().min(1) }),
+    response: z.object({ success: z.boolean() })
+  },
+  'session:rename': {
+    request: z.object({ sessionId: z.string().min(1), title: z.string().min(1) }),
+    response: z.object({ success: z.boolean() })
+  }
 } as const

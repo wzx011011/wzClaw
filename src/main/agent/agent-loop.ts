@@ -7,6 +7,8 @@ import { MAX_AGENT_TURNS } from '../../shared/constants'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { ContextManager } from '../context/context-manager'
+import { getGitContext } from '../git/git-context'
+import type { HookRegistry } from '../hooks/hook-registry'
 import type { AgentEvent, AgentConfig } from './types'
 
 // ============================================================
@@ -34,7 +36,8 @@ export class AgentLoop {
     private gateway: LLMGateway,
     private toolRegistry: ToolRegistry,
     private permissionManager: PermissionManager,
-    private contextManager: ContextManager
+    private contextManager: ContextManager,
+    private hookRegistry?: HookRegistry
   ) {}
 
   /**
@@ -65,8 +68,21 @@ export class AgentLoop {
 
     // Build system prompt with tool descriptions
     const toolDefinitions = this.toolRegistry.getDefinitions()
+
+    // Inject git context into system prompt
+    let gitContext = ''
+    try {
+      gitContext = await getGitContext(config.workingDirectory)
+    } catch {
+      // Git not available — skip
+    }
+
+    const basePrompt = gitContext
+      ? `${config.systemPrompt}\n\n${gitContext}`
+      : config.systemPrompt
+
     const systemPrompt = this.messageBuilder.buildSystemPrompt(
-      config.systemPrompt,
+      basePrompt,
       toolDefinitions
     )
 
@@ -206,138 +222,86 @@ export class AgentLoop {
         return
       }
 
-      // Process tool calls
+      // Process tool calls with concurrency:
+      // Read-only tools execute in parallel, write tools sequentially
       let loopDetected = false
-      for (const toolCall of toolCalls) {
-        // Yield tool call event
-        yield {
-          type: 'agent:tool_call',
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          input: toolCall.input
-        }
 
-        // Record for loop detection
+      // Helper to execute a single tool call
+      const executeSingleTool = async (toolCall: ToolCall): Promise<AgentEvent[]> => {
+        const events: AgentEvent[] = []
+
         this.loopDetector.record(toolCall.name, toolCall.input)
-
-        // Check for loop
         if (this.loopDetector.isLooping()) {
-          yield {
+          events.push({
             type: 'agent:error',
             error: 'Loop detected: same tool call repeated 3+ times',
             recoverable: true
-          }
+          })
           loopDetected = true
-          break
+          return events
         }
 
-        // Look up tool in registry
         const tool = this.toolRegistry.get(toolCall.name)
         if (!tool) {
-          // Tool not found — create error result
           const output = ContextManager.truncateToolResult(`Tool not found: ${toolCall.name}`)
-          this.messages.push({
-            role: 'tool_result',
-            toolCallId: toolCall.id,
-            content: output,
-            isError: true,
-            timestamp: Date.now()
-          })
-          yield {
-            type: 'agent:tool_result',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            output,
-            isError: true
-          }
-          continue
+          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
+          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output, isError: true })
+          return events
         }
 
-        // Permission check for destructive tools
-        if (tool.requiresApproval) {
-          yield {
-            type: 'agent:permission_request',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            input: toolCall.input
-          }
-
+        if (this.permissionManager.needsApproval(toolCall.name, toolCall.input)) {
+          events.push({ type: 'agent:permission_request', toolCallId: toolCall.id, toolName: toolCall.name, input: toolCall.input })
           let approved = false
           if (sender) {
-            approved = await this.permissionManager.requestApproval(
-              config.conversationId,
-              toolCall.name,
-              toolCall.input,
-              sender
-            )
-          } else {
-            // No sender available — deny by default
-            approved = false
+            approved = await this.permissionManager.requestApproval(config.conversationId, toolCall.name, toolCall.input, sender)
           }
-
           if (!approved) {
             const output = `Permission denied for tool: ${toolCall.name}`
-            this.messages.push({
-              role: 'tool_result',
-              toolCallId: toolCall.id,
-              content: output,
-              isError: true,
-              timestamp: Date.now()
-            })
-            yield {
-              type: 'agent:tool_result',
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              output,
-              isError: true
-            }
-            continue
+            this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
+            events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output, isError: true })
+            return events
           }
         }
 
-        // Execute tool
         try {
-          const result = await tool.execute(toolCall.input, {
-            workingDirectory: config.workingDirectory,
-            abortSignal: this.abortController.signal ?? undefined
-          })
-
-          // Truncate tool results exceeding MAX_TOOL_RESULT_CHARS (CTX-07)
+          await this.hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
+          const result = await tool.execute(toolCall.input, { workingDirectory: config.workingDirectory, abortSignal: this.abortController!.signal })
           const truncatedOutput = ContextManager.truncateToolResult(result.output)
-
-          this.messages.push({
-            role: 'tool_result',
-            toolCallId: toolCall.id,
-            content: truncatedOutput,
-            isError: result.isError,
-            timestamp: Date.now()
-          })
-
-          yield {
-            type: 'agent:tool_result',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            output: result.output,
-            isError: result.isError
-          }
+          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: truncatedOutput, isError: result.isError, timestamp: Date.now() })
+          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: result.output, isError: result.isError })
+          await this.hookRegistry?.emit('post-tool', { toolName: toolCall.name, toolInput: toolCall.input, toolOutput: truncatedOutput, isError: result.isError, conversationId: config.conversationId })
         } catch (err) {
-          const errorMsg = ContextManager.truncateToolResult(
-            err instanceof Error ? err.message : String(err)
-          )
-          this.messages.push({
-            role: 'tool_result',
-            toolCallId: toolCall.id,
-            content: errorMsg,
-            isError: true,
-            timestamp: Date.now()
-          })
-          yield {
-            type: 'agent:tool_result',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            output: errorMsg,
-            isError: true
-          }
+          const errorMsg = ContextManager.truncateToolResult(err instanceof Error ? err.message : String(err))
+          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: errorMsg, isError: true, timestamp: Date.now() })
+          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: errorMsg, isError: true })
+        }
+        return events
+      }
+
+      // Partition into read-only and write groups
+      const readOnlyCalls = toolCalls.filter((tc) => this.toolRegistry.isReadOnly(tc.name))
+      const writeCalls = toolCalls.filter((tc) => !this.toolRegistry.isReadOnly(tc.name))
+
+      // Yield tool_call events for all
+      for (const toolCall of toolCalls) {
+        yield { type: 'agent:tool_call', toolCallId: toolCall.id, toolName: toolCall.name, input: toolCall.input }
+      }
+
+      // Execute read-only tools in parallel
+      if (readOnlyCalls.length > 0) {
+        const results = await Promise.all(readOnlyCalls.map(executeSingleTool))
+        for (const events of results) {
+          for (const ev of events) yield ev
+          if (loopDetected) break
+        }
+      }
+
+      // Execute write tools sequentially
+      if (!loopDetected) {
+        for (const tc of writeCalls) {
+          const events = await executeSingleTool(tc)
+          for (const ev of events) yield ev
+          if (loopDetected) break
         }
       }
 

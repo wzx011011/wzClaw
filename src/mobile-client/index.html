@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>wzxClaw Remote</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1 class="logo">wzxClaw</h1>
+      <span class="status" id="status">连接中…</span>
+    </header>
+
+    <main class="messages" id="messages">
+      <div class="empty-state" id="emptyState">
+        <p>等待消息…</p>
+      </div>
+    </main>
+
+    <footer class="input-bar">
+      <textarea
+        id="input"
+        rows="1"
+        placeholder="输入指令…"
+        autocomplete="off"
+        autocorrect="off"
+        spellcheck="false"
+      ></textarea>
+      <button id="sendBtn" class="btn-send" title="发送">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+      <button id="stopBtn" class="btn-stop hidden" title="停止">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+        </svg>
+      </button>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

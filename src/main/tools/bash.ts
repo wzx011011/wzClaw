@@ -3,6 +3,8 @@ import { exec } from 'child_process'
 import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { TerminalManager } from '../terminal/terminal-manager'
+import { analyzeBashCommand } from './bash-security'
+import { isReadOnlyBashCommand } from './bash-readonly'
 
 // ============================================================
 // Bash Tool (per TOOL-04, D-32, D-36)
@@ -56,6 +58,20 @@ export class BashTool implements Tool {
 
     const { command, timeout } = parsed.data
     const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT
+
+    // Security analysis — block dangerous commands before execution
+    const security = analyzeBashCommand(command)
+    if (security.blocked) {
+      return {
+        output: `Command blocked: ${security.reason}`,
+        isError: true
+      }
+    }
+
+    // Log security warnings if any
+    if (security.warnings.length > 0) {
+      console.warn(`[BashTool] Security warnings for command "${command}":`, security.warnings)
+    }
 
     // Security audit trail: log every executed command for visibility
     console.log(`[BashTool] Executing command: ${command}`)

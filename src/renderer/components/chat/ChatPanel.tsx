@@ -57,9 +57,12 @@ export default function ChatPanel(): JSX.Element {
   const toggleTaskPanel = useTaskStore((s) => s.togglePanel)
   const activeTaskCount = useTaskStore((s) => getTaskActiveCount(s.tasks))
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change — use rAF for smooth scheduling
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const raf = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
+    return () => cancelAnimationFrame(raf)
   }, [messages])
 
   // Listen for "Open Settings" from command palette (per CMD-01)

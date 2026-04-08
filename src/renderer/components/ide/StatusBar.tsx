@@ -1,29 +1,24 @@
 import React from 'react'
-import { useTabStore } from '../../stores/tab-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
+import { useChatStore } from '../../stores/chat-store'
 
 /**
- * StatusBar -- bottom status bar showing file path, dirty state, encoding,
- * agent status, and index status (per D-55, IDX-06, IDX-07).
- * Shows active terminal name when terminal panel is visible.
+ * StatusBar -- bottom status bar showing workspace path, agent status,
+ * terminal info, and index status.
  */
 export default function StatusBar(): JSX.Element {
-  const activeTab = useTabStore((s) => s.getActiveTab())
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const panelVisible = useTerminalStore((s) => s.panelVisible)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const tabs = useTerminalStore((s) => s.tabs)
   const indexStatus = useIndexStore((s) => s.status)
   const indexFileCount = useIndexStore((s) => s.fileCount)
+  const isStreaming = useChatStore((s) => s.isStreaming)
 
-  // Build display path -- show full path for active file, or workspace root, or placeholder
-  const displayPath = activeTab
-    ? activeTab.filePath
-    : rootPath ?? 'wzxClaw'
+  const displayPath = rootPath ?? 'No folder open'
 
-  // Find active terminal title for status bar display
   const activeTerminal = panelVisible && activeTerminalId
     ? tabs.find((t) => t.id === activeTerminalId)
     : null
@@ -32,13 +27,8 @@ export default function StatusBar(): JSX.Element {
     <div className="status-bar">
       <div className="status-bar-left">
         <span className="status-item">{displayPath}</span>
-        {activeTab?.isDirty && (
-          <span className="status-item status-dirty">Modified</span>
-        )}
       </div>
-      <div className="status-bar-center">
-        <span className="status-item">UTF-8</span>
-      </div>
+      <div className="status-bar-center" />
       <div className="status-bar-right">
         {activeTerminal && (
           <span className="status-item">Terminal: {activeTerminal.title}</span>
@@ -60,7 +50,9 @@ export default function StatusBar(): JSX.Element {
             </span>
           )}
         </span>
-        <span className="status-item">Agent: Ready</span>
+        <span className="status-item">
+          {isStreaming ? 'Agent: Working...' : 'Agent: Ready'}
+        </span>
       </div>
     </div>
   )

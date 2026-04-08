@@ -25,9 +25,7 @@ import type { TaskManager } from './tasks/task-manager'
 import { SettingsManager } from './settings-manager'
 import { handleSymbolResult } from './tools/symbol-nav'
 import type { IndexingEngine } from './indexing/indexing-engine'
-
-// Persistent settings with encrypted API key storage (per D-66)
-const settingsManager = new SettingsManager()
+import { getGitStatusShort } from './git/git-context'
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -39,11 +37,9 @@ export function registerIpcHandlers(
   terminalManager: TerminalManager,
   taskManager: TaskManager,
   indexingEngine: IndexingEngine | null,
+  settingsManager: SettingsManager,
   onWorkspaceOpened?: (rootPath: string) => void
 ): void {
-  // Load persisted settings from disk
-  settingsManager.load()
-
   // Mutable reference to IndexingEngine (updated when workspace opens)
   const indexingEngineRef = { current: indexingEngine }
 
@@ -458,21 +454,33 @@ export function registerIpcHandlers(
   // Session: load — returns messages for a specific session
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:load'], async (_event, request) => {
-    return sessionStore.loadSession(request.sessionId)
+    const result = IpcSchemas['session:load'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    return sessionStore.loadSession(result.data.sessionId)
   })
 
   // ============================================================
   // Session: delete — removes a session file
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:delete'], async (_event, request) => {
-    return { success: await sessionStore.deleteSession(request.sessionId) }
+    const result = IpcSchemas['session:delete'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    return { success: await sessionStore.deleteSession(result.data.sessionId) }
   })
 
   // ============================================================
   // Session: rename — updates session title via meta line
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:rename'], async (_event, request) => {
-    return { success: await sessionStore.renameSession(request.sessionId, request.title) }
+    const result = IpcSchemas['session:rename'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    return { success: await sessionStore.renameSession(result.data.sessionId, result.data.title) }
   })
 
   // ============================================================
@@ -632,4 +640,27 @@ export function registerIpcHandlers(
       })
     }
   }
+
+  // ============================================================
+  // Git: status — returns branch name and changed file count
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['git:status'], async () => {
+    const cwd = workspaceManager.getWorkspaceRoot()
+    if (!cwd) return { branch: '', changedFiles: 0 }
+    return getGitStatusShort(cwd)
+  })
+
+  // ============================================================
+  // Permission: get_mode — returns current permission mode
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['permission:get_mode'], () => {
+    return { mode: permissionManager.getMode() }
+  })
+
+  // ============================================================
+  // Permission: set_mode — changes permission mode
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['permission:set_mode'], (_event, request) => {
+    permissionManager.setMode(request.mode)
+  })
 }

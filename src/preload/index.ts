@@ -130,6 +130,30 @@ const api = {
     ipcRenderer.on('index:progress', handler)
     return () => ipcRenderer.removeListener('index:progress', handler)
   },
+
+  // Browser
+  navigateBrowser: (url: string) => ipcRenderer.invoke('browser:navigate', { url }),
+  screenshotBrowser: () => ipcRenderer.invoke('browser:take_screenshot'),
+  closeBrowser: () => ipcRenderer.invoke('browser:close'),
+  onBrowserScreenshot: (callback: (payload: { url: string; base64: string; timestamp: number }) => void) => {
+    const handler = (_: unknown, payload: { url: string; base64: string; timestamp: number }) => callback(payload)
+    ipcRenderer.on('browser:screenshot', handler)
+    return () => ipcRenderer.removeListener('browser:screenshot', handler)
+  },
+  onBrowserStatus: (callback: (payload: { running: boolean; url: string | null }) => void) => {
+    const handler = (_: unknown, payload: { running: boolean; url: string | null }) => callback(payload)
+    ipcRenderer.on('browser:status', handler)
+    return () => ipcRenderer.removeListener('browser:status', handler)
+  },
+
+  // Mobile
+  startMobileServer: () => ipcRenderer.invoke('mobile:start'),
+  stopMobileServer: () => ipcRenderer.invoke('mobile:stop'),
+  onMobileStatus: (callback: (payload: { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }) => void) => {
+    const handler = (_: unknown, payload: any) => callback(payload)
+    ipcRenderer.on('mobile:status', handler)
+    return () => ipcRenderer.removeListener('mobile:status', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

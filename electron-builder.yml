@@ -4,20 +4,25 @@ directories:
   buildResources: build
   output: dist
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  - '!{.env,.env.*}'
-  - '!**/__tests__/*'
-  - '!**/*.test.*'
-  - '!**/*.spec.*'
-  - '!.planning/*'
-  - '!CLAUDE.md'
-  - '!vitest.config.*'
-  - '!*.tsbuildinfo'
-  - '!**/*.log'
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+  - "!{.env,.env.*}"
+  - "!**/__tests__/*"
+  - "!**/*.test.*"
+  - "!**/*.spec.*"
+  - "!.planning/*"
+  - "!CLAUDE.md"
+  - "!vitest.config.*"
+  - "!*.tsbuildinfo"
+  - "!**/*.log"
+extraResources:
+  - from: src/mobile-client
+    to: mobile-client
+    filter:
+      - "**/*"
 win:
   icon: build/icon.ico
   target:

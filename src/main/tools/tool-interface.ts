@@ -33,6 +33,7 @@ export interface Tool {
   readonly description: string
   readonly inputSchema: Record<string, unknown>
   readonly requiresApproval: boolean
+  readonly isReadOnly?: boolean
   execute(
     input: Record<string, unknown>,
     context: ToolExecutionContext

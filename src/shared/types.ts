@@ -153,6 +153,9 @@ export interface SessionMeta {
 
 export type LLMProvider = 'openai' | 'anthropic'
 
+// Permission modes matching Z Code's 4-mode system
+export type PermissionMode = 'always-ask' | 'accept-edits' | 'plan' | 'bypass'
+
 export interface LLMConfig {
   provider: LLMProvider
   model: string
