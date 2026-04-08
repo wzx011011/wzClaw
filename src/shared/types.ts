@@ -136,6 +136,18 @@ export interface Conversation {
 }
 
 // ============================================================
+// Session Persistence (per PERSIST-01 through PERSIST-06)
+// ============================================================
+
+export interface SessionMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+// ============================================================
 // LLM Configuration (per D-15, D-16)
 // ============================================================
 
