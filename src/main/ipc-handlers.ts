@@ -133,9 +133,7 @@ export function registerIpcHandlers(
             // Auto-save messages after agent turn completes (PERSIST-02)
             try {
               const allMessages = agentLoop.getMessages()
-              for (const msg of allMessages) {
-                sessionStore.appendMessage(agentConfig.conversationId, msg)
-              }
+              await sessionStore.appendMessages(agentConfig.conversationId, allMessages)
             } catch (saveErr) {
               console.error('Failed to auto-save session:', saveErr)
             }
@@ -306,29 +304,29 @@ export function registerIpcHandlers(
   // ============================================================
   // Session: list — returns all sessions for current project
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:list'], () => {
+  ipcMain.handle(IPC_CHANNELS['session:list'], async () => {
     return sessionStore.listSessions()
   })
 
   // ============================================================
   // Session: load — returns messages for a specific session
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:load'], (_event, request) => {
+  ipcMain.handle(IPC_CHANNELS['session:load'], async (_event, request) => {
     return sessionStore.loadSession(request.sessionId)
   })
 
   // ============================================================
   // Session: delete — removes a session file
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:delete'], (_event, request) => {
-    return { success: sessionStore.deleteSession(request.sessionId) }
+  ipcMain.handle(IPC_CHANNELS['session:delete'], async (_event, request) => {
+    return { success: await sessionStore.deleteSession(request.sessionId) }
   })
 
   // ============================================================
   // Session: rename — updates session title via meta line
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:rename'], (_event, request) => {
-    return { success: sessionStore.renameSession(request.sessionId, request.title) }
+  ipcMain.handle(IPC_CHANNELS['session:rename'], async (_event, request) => {
+    return { success: await sessionStore.renameSession(request.sessionId, request.title) }
   })
 
   // ============================================================
