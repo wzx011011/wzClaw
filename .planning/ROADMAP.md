@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **v1.2 (Active):**
 - [x] **Phase 6: Foundation Upgrades** - Session persistence, context management, and command palette
 - [x] **Phase 7: Core Interaction** - Multi-session management, @-mention context injection, and inline diff preview (completed 2026-04-08)
-- [ ] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system
+- [x] **Phase 8: Advanced Features** - Terminal panel, expanded tool set, and task/plan system (completed 2026-04-08)
 - [ ] **Phase 9: Codebase Indexing** - Vector semantic search with embedding-based code retrieval
 
 ## Phase Details
@@ -176,7 +176,12 @@ Plans:
   2. The agent can perform a semantic search query across the codebase and receives ranked code chunks relevant to the query, even when the query uses different terminology than the code
   3. Index is built incrementally -- only new or modified files are re-indexed when files change, not the entire workspace
   4. User can trigger a manual full re-index via the command palette, and large files (>100KB) and binary files are excluded automatically
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — Indexing core engine (CodeChunker, VectorStore, EmbeddingClient, IndexingEngine)
+- [ ] 09-02-PLAN.md — SemanticSearch tool + IPC channels + app lifecycle wiring
+- [ ] 09-03-PLAN.md — UI integration (IndexStore, StatusBar, command palette Re-index)
 
 ## Progress
 
@@ -192,5 +197,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Polish + Packaging | 2/2 | Complete | 2026-04-03 |
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
-| 8. Advanced Features | 2/3 | In Progress|  |
-| 9. Codebase Indexing | 0/? | Not started | - |
+| 8. Advanced Features | 3/3 | Complete    | 2026-04-08 |
+| 9. Codebase Indexing | 0/3 | Not started | - |
