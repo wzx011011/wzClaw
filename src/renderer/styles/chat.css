@@ -1238,6 +1238,78 @@
   overflow-y: auto;
 }
 
+/* Multi-file diff navigator (DIFF-05) */
+.diff-file-list {
+  display: flex;
+  align-items: center;
+  background: #1e1e1e;
+  border-bottom: 1px solid var(--border);
+  gap: 2px;
+  padding: 4px 8px;
+  overflow-x: auto;
+}
+
+.diff-file-list::-webkit-scrollbar {
+  height: 3px;
+}
+
+.diff-file-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.diff-file-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  background: #2d2d2d;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.diff-file-item:hover {
+  background: #3c3c3c;
+}
+
+.diff-file-item-active {
+  border-color: var(--accent);
+  background: rgba(0, 122, 204, 0.1);
+}
+
+.diff-file-item-resolved {
+  opacity: 0.5;
+}
+
+.diff-file-item-path {
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-file-item-badge {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.diff-file-counter {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 4px;
+}
+
+.diff-toolbar-btn.nav-btn {
+  padding: 2px 8px;
+  min-width: 24px;
+}
+
 .diff-preview-toolbar {
   display: flex;
   align-items: center;

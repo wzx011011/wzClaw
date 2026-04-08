@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useDiffStore } from '../../stores/diff-store'
 
 // ============================================================
 // DiffPreview — Inline diff toolbar with Accept All / Reject All
 // and per-hunk Accept/Reject buttons (per DIFF-01 through DIFF-07)
+// Multi-file navigator for reviewing AI changes across files (DIFF-05)
 // ============================================================
 
 export default function DiffPreview(): JSX.Element | null {
@@ -14,9 +15,23 @@ export default function DiffPreview(): JSX.Element | null {
   const acceptAll = useDiffStore((s) => s.acceptAll)
   const rejectAll = useDiffStore((s) => s.rejectAll)
   const setActiveDiff = useDiffStore((s) => s.setActiveDiff)
+  const clearDiffs = useDiffStore((s) => s.clearDiffs)
+
+  // Auto-clear when all diffs are fully resolved (no pending hunks remaining)
+  useEffect(() => {
+    if (pendingDiffs.length > 0) {
+      const allResolved = pendingDiffs.every(
+        (d) => d.hunks.filter((h) => h.status === 'pending').length === 0
+      )
+      if (allResolved) {
+        clearDiffs()
+      }
+    }
+  }, [pendingDiffs, clearDiffs])
 
   if (!activeDiffId) return null
 
+  const currentIndex = pendingDiffs.findIndex((d) => d.id === activeDiffId)
   const diff = pendingDiffs.find((d) => d.id === activeDiffId)
   if (!diff) return null
 
@@ -45,9 +60,59 @@ export default function DiffPreview(): JSX.Element | null {
 
   return (
     <div className="diff-preview">
+      {/* Multi-file navigator — shown when there are 2+ pending diffs */}
+      {pendingDiffs.length > 1 && (
+        <div className="diff-file-list">
+          {pendingDiffs.map((d) => {
+            const dPendingCount = d.hunks.filter((h) => h.status === 'pending').length
+            const isResolved = dPendingCount === 0
+            return (
+              <div
+                key={d.id}
+                className={`diff-file-item${d.id === activeDiffId ? ' diff-file-item-active' : ''}${isResolved ? ' diff-file-item-resolved' : ''}`}
+                onClick={() => setActiveDiff(d.id)}
+                title={d.filePath}
+              >
+                <span className="diff-file-item-path">{d.filePath.split('/').pop()}</span>
+                <span className="diff-file-item-badge">
+                  {isResolved ? 'Done' : `${dPendingCount} pending`}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="diff-preview-toolbar">
         <div className="diff-preview-toolbar-left">
+          {pendingDiffs.length > 1 && (
+            <>
+              <button
+                className="diff-toolbar-btn nav-btn"
+                onClick={() => {
+                  if (currentIndex > 0) setActiveDiff(pendingDiffs[currentIndex - 1].id)
+                }}
+                disabled={currentIndex <= 0}
+                title="Previous file"
+              >
+                &lt;
+              </button>
+              <span className="diff-file-counter">
+                {currentIndex + 1} / {pendingDiffs.length}
+              </span>
+              <button
+                className="diff-toolbar-btn nav-btn"
+                onClick={() => {
+                  if (currentIndex < pendingDiffs.length - 1) setActiveDiff(pendingDiffs[currentIndex + 1].id)
+                }}
+                disabled={currentIndex >= pendingDiffs.length - 1}
+                title="Next file"
+              >
+                &gt;
+              </button>
+            </>
+          )}
           <span className="diff-preview-file">{diff.filePath}</span>
           <span className="diff-status-badge">
             {pendingCount} of {totalHunks} pending
