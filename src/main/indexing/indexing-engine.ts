@@ -2,9 +2,9 @@
 // IndexingEngine - Orchestrates full/incremental indexing
 // ============================================================
 
-import * as fs from 'fs'
 import * as path from 'path'
 import { createHash as cryptoCreateHash } from 'node:crypto'
+import * as fsp from 'fs/promises'
 import { CodeChunker } from './code-chunker'
 import { VectorStore, BINARY_EXTENSIONS, MAX_INDEX_FILE_SIZE, SKIP_DIRS, type IndexEntry } from './vector-store'
 import { EmbeddingClient } from './embedding-client'
@@ -60,7 +60,7 @@ export class IndexingEngine {
     this.updateProgress({ status: 'indexing', fileCount: 0, currentFile: '' })
 
     try {
-      const files = this.walkWorkspace()
+      const files = await this.walkWorkspace()
       let indexedCount = 0
 
       // Get existing entries' mtimes for incremental check
@@ -81,7 +81,12 @@ export class IndexingEngine {
         if (this.disposed) return
 
         const absolutePath = path.join(this.workspaceRoot, filePath)
-        const stat = fs.statSync(absolutePath)
+        let stat: fsp.Stats
+        try {
+          stat = await fsp.stat(absolutePath)
+        } catch {
+          continue
+        }
 
         // Skip files >100KB
         if (stat.size > MAX_INDEX_FILE_SIZE) continue
@@ -100,7 +105,7 @@ export class IndexingEngine {
         this.updateProgress({ ...this.progress, currentFile: filePath })
 
         try {
-          const content = fs.readFileSync(absolutePath, 'utf-8')
+          const content = await fsp.readFile(absolutePath, 'utf-8')
           const language = getLanguageFromPath(absolutePath)
           const chunks = this.chunker.chunkFile(filePath, content, language)
 
@@ -180,14 +185,19 @@ export class IndexingEngine {
     const relativePath = path.relative(this.workspaceRoot, absolutePath).replace(/\\/g, '/')
 
     // Check file size and extension
-    const stat = fs.statSync(absolutePath)
+    let stat: fsp.Stats
+    try {
+      stat = await fsp.stat(absolutePath)
+    } catch {
+      return
+    }
     if (stat.size > MAX_INDEX_FILE_SIZE) return
 
     const ext = path.extname(absolutePath).toLowerCase()
     if (BINARY_EXTENSIONS.has(ext)) return
 
     try {
-      const content = fs.readFileSync(absolutePath, 'utf-8')
+      const content = await fsp.readFile(absolutePath, 'utf-8')
       const language = getLanguageFromPath(absolutePath)
       const chunks = this.chunker.chunkFile(relativePath, content, language)
 
@@ -297,13 +307,13 @@ export class IndexingEngine {
    * Walk workspace directory and return relative file paths.
    * Skips SKIP_DIRS and hidden directories.
    */
-  private walkWorkspace(): string[] {
+  private async walkWorkspace(): Promise<string[]> {
     const files: string[] = []
 
-    const walk = (dir: string, relativeDir: string) => {
-      let entries: fs.Dirent[]
+    const walk = async (dir: string, relativeDir: string): Promise<void> => {
+      let entries: fsp.Dirent[]
       try {
-        entries = fs.readdirSync(dir, { withFileTypes: true })
+        entries = await fsp.readdir(dir, { withFileTypes: true })
       } catch {
         return
       }
@@ -318,14 +328,14 @@ export class IndexingEngine {
         const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name
 
         if (entry.isDirectory()) {
-          walk(fullPath, relativePath)
+          await walk(fullPath, relativePath)
         } else if (entry.isFile()) {
           files.push(relativePath.replace(/\\/g, '/'))
         }
       }
     }
 
-    walk(this.workspaceRoot, '')
+    await walk(this.workspaceRoot, '')
     return files
   }
 }

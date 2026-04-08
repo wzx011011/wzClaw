@@ -2,9 +2,9 @@
 // VectorStore - JSON file-based vector storage with cosine similarity
 // ============================================================
 
-import * as fs from 'fs'
 import * as path from 'path'
 import { createHash } from 'crypto'
+import * as fsp from 'fs/promises'
 
 /**
  * A single indexed entry in the vector store.
@@ -94,14 +94,20 @@ export class VectorStore {
     this.indexDir = path.join(workspaceRoot, '.wzxclaw', 'index')
     this.vectorsPath = path.join(this.indexDir, 'vectors.jsonl')
     this.metaPath = path.join(this.indexDir, 'meta.json')
-    fs.mkdirSync(this.indexDir, { recursive: true })
+  }
+
+  /**
+   * Ensure the index directory exists (async, called before I/O operations).
+   */
+  private async ensureDir(): Promise<void> {
+    await fsp.mkdir(this.indexDir, { recursive: true })
   }
 
   /**
    * Generate a unique ID for an entry based on file path and line.
    */
   private generateId(filePath: string, startLine: number): string {
-    return createHash('md5').update(`${filePath}:${startLine}`).digest('hex').slice(0, 16)
+    return createHash('sha256').update(`${filePath}:${startLine}`).digest('hex').slice(0, 16)
   }
 
   /**
@@ -177,8 +183,8 @@ export class VectorStore {
    */
   async clear(): Promise<void> {
     try {
-      fs.rmSync(this.indexDir, { recursive: true, force: true })
-      fs.mkdirSync(this.indexDir, { recursive: true })
+      await fsp.rm(this.indexDir, { recursive: true, force: true })
+      await this.ensureDir()
     } catch {
       // Ignore errors during cleanup
     }
@@ -191,13 +197,15 @@ export class VectorStore {
   async loadAll(): Promise<IndexEntry[]> {
     if (this.cache) return this.cache
 
-    if (!fs.existsSync(this.vectorsPath)) {
+    try {
+      await fsp.access(this.vectorsPath)
+    } catch {
       this.cache = []
       return []
     }
 
     try {
-      const content = fs.readFileSync(this.vectorsPath, 'utf-8')
+      const content = await fsp.readFile(this.vectorsPath, 'utf-8')
       const lines = content.split('\n').filter(line => line.trim().length > 0)
       this.cache = lines.map(line => JSON.parse(line) as IndexEntry)
       return this.cache
@@ -211,8 +219,9 @@ export class VectorStore {
    * Write all entries to vectors.jsonl and update meta.json.
    */
   private async writeAll(entries: IndexEntry[]): Promise<void> {
+    await this.ensureDir()
     const lines = entries.map(e => JSON.stringify(e))
-    fs.writeFileSync(this.vectorsPath, lines.join('\n') + '\n', 'utf-8')
+    await fsp.writeFile(this.vectorsPath, lines.join('\n') + '\n', 'utf-8')
 
     // Update meta.json
     const meta = {
@@ -220,6 +229,6 @@ export class VectorStore {
       created: Date.now(),
       fileCount: new Set(entries.map(e => e.filePath)).size,
     }
-    fs.writeFileSync(this.metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    await fsp.writeFile(this.metaPath, JSON.stringify(meta, null, 2), 'utf-8')
   }
 }
