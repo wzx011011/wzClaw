@@ -6,6 +6,7 @@ import type { Message, ToolCall, StreamEvent, LLMProvider } from '../../shared/t
 import { MAX_AGENT_TURNS } from '../../shared/constants'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
+import { ContextManager } from '../context/context-manager'
 import type { AgentEvent, AgentConfig } from './types'
 
 // ============================================================
@@ -32,7 +33,8 @@ export class AgentLoop {
   constructor(
     private gateway: LLMGateway,
     private toolRegistry: ToolRegistry,
-    private permissionManager: PermissionManager
+    private permissionManager: PermissionManager,
+    private contextManager: ContextManager
   ) {}
 
   /**
@@ -68,8 +70,8 @@ export class AgentLoop {
       toolDefinitions
     )
 
-    // Detect provider from model name
-    const provider: LLMProvider = config.model.startsWith('claude') ? 'anthropic' : 'openai'
+    // Use provider from config (set by settings manager, not guessed from model name)
+    const provider: LLMProvider = config.provider
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
     let turnCount = 0
@@ -102,6 +104,34 @@ export class AgentLoop {
           input_schema: t.inputSchema
         })),
         abortSignal: this.abortController.signal
+      }
+
+      // Context management: check if compaction needed before LLM call
+      if (this.contextManager.shouldCompact(this.messages, config.model)) {
+        const result = await this.contextManager.compact(
+          this.messages,
+          this.gateway,
+          config.model,
+          config.provider,
+          config.systemPrompt
+        )
+        if (result.summary) {
+          // Replace messages with compacted version
+          const summaryMsg: Message = {
+            role: 'user',
+            content: `[Context Summary]\n${result.summary}`,
+            timestamp: Date.now()
+          }
+          const recentMessages = this.messages.slice(-result.keptRecentCount)
+          this.messages = [summaryMsg, ...recentMessages]
+
+          yield {
+            type: 'agent:compacted',
+            beforeTokens: result.beforeTokens,
+            afterTokens: result.afterTokens,
+            auto: true
+          }
+        }
       }
 
       // Stream from LLM
@@ -155,6 +185,9 @@ export class AgentLoop {
       totalUsage.inputTokens += streamUsage.inputTokens
       totalUsage.outputTokens += streamUsage.outputTokens
 
+      // Track usage in ContextManager for token indicator
+      this.contextManager.trackTokenUsage(streamUsage.inputTokens, streamUsage.outputTokens)
+
       // Record assistant message
       this.messages.push({
         role: 'assistant',
@@ -202,7 +235,7 @@ export class AgentLoop {
         const tool = this.toolRegistry.get(toolCall.name)
         if (!tool) {
           // Tool not found — create error result
-          const output = `Tool not found: ${toolCall.name}`
+          const output = ContextManager.truncateToolResult(`Tool not found: ${toolCall.name}`)
           this.messages.push({
             role: 'tool_result',
             toolCallId: toolCall.id,
@@ -269,10 +302,13 @@ export class AgentLoop {
             abortSignal: this.abortController.signal ?? undefined
           })
 
+          // Truncate tool results exceeding MAX_TOOL_RESULT_CHARS (CTX-07)
+          const truncatedOutput = ContextManager.truncateToolResult(result.output)
+
           this.messages.push({
             role: 'tool_result',
             toolCallId: toolCall.id,
-            content: result.output,
+            content: truncatedOutput,
             isError: result.isError,
             timestamp: Date.now()
           })
@@ -285,7 +321,9 @@ export class AgentLoop {
             isError: result.isError
           }
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err)
+          const errorMsg = ContextManager.truncateToolResult(
+            err instanceof Error ? err.message : String(err)
+          )
           this.messages.push({
             role: 'tool_result',
             toolCallId: toolCall.id,
@@ -343,5 +381,12 @@ export class AgentLoop {
    */
   getMessages(): Message[] {
     return [...this.messages]
+  }
+
+  /**
+   * Replace internal messages (used after manual compaction via /compact).
+   */
+  replaceMessages(messages: Message[]): void {
+    this.messages = messages
   }
 }

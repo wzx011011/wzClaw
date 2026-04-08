@@ -152,6 +152,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (lastStreamingIdx) {
         set({
           isStreaming: false,
+          currentTokenUsage: payload.usage,
           messages: messages.map((m, i) =>
             i === lastStreamingIdx.i
               ? { ...m, isStreaming: false, usage: payload.usage }

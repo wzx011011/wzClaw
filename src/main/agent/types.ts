@@ -44,6 +44,13 @@ export interface AgentDoneEvent {
   turnCount: number
 }
 
+export interface AgentCompactedEvent {
+  type: 'agent:compacted'
+  beforeTokens: number
+  afterTokens: number
+  auto: boolean
+}
+
 export type AgentEvent =
   | AgentTextEvent
   | AgentToolCallEvent
@@ -51,6 +58,7 @@ export type AgentEvent =
   | AgentPermissionRequestEvent
   | AgentErrorEvent
   | AgentDoneEvent
+  | AgentCompactedEvent
 
 // ============================================================
 // Agent Configuration
@@ -58,6 +66,7 @@ export type AgentEvent =
 
 export interface AgentConfig {
   model: string
+  provider: LLMProvider
   systemPrompt: string
   workingDirectory: string
   conversationId: string

@@ -803,3 +803,54 @@
   color: var(--text-secondary);
   margin: 8px 0;
 }
+
+/* ============================================================
+   Token Indicator (per UI-SPEC Component 3)
+   ============================================================ */
+
+.token-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+}
+
+.token-bar {
+  width: 60px;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.token-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+
+.token-bar-fill.healthy {
+  background: var(--accent);
+}
+
+.token-bar-fill.warning {
+  background: #dcb67a;
+}
+
+.token-bar-fill.danger {
+  background: #f48771;
+}
+
+.token-text {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.token-text.warning {
+  color: #dcb67a;
+}
+
+.token-text.danger {
+  color: #f48771;
+}

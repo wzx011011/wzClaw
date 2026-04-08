@@ -44,7 +44,10 @@ export const IPC_CHANNELS = {
   'session:delete': 'session:delete',
 
   // Session stream channels (main -> renderer)
-  'session:compacted': 'session:compacted'
+  'session:compacted': 'session:compacted',
+
+  // Context channels (renderer -> main)
+  'agent:compact_context': 'agent:compact_context'
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -81,6 +84,7 @@ export interface IpcRequestPayloads {
   'session:list': void
   'session:load': { sessionId: string }
   'session:delete': { sessionId: string }
+  'agent:compact_context': void
 }
 
 // Response payloads (main returns to renderer via ipcMain.handle return)
@@ -104,6 +108,7 @@ export interface IpcResponsePayloads {
   'session:list': SessionMeta[]
   'session:load': unknown[]
   'session:delete': { success: boolean }
+  'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
 }
 
 // Stream payloads (main sends to renderer via webContents.send)

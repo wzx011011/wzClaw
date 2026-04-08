@@ -8,6 +8,7 @@ import { PermissionManager } from './permission/permission-manager'
 import { AgentLoop } from './agent/agent-loop'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore } from './persistence/session-store'
+import { ContextManager } from './context/context-manager'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -98,13 +99,14 @@ app.whenReady().then(() => {
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
   const toolRegistry = createDefaultTools(workingDirectory)
   const permissionManager = new PermissionManager()
-  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager)
+  const contextManager = new ContextManager()
+  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager)
 
   // Create session store for JSONL persistence (per PERSIST-01)
   const sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
-  // Wire IPC handlers with all components including workspace manager and session store
-  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager, sessionStore)
+  // Wire IPC handlers with all components including workspace manager, session store, and context manager
+  registerIpcHandlers(gateway, agentLoop, permissionManager, workspaceManager, sessionStore, contextManager)
 
   // Set up Chromium menu bar
   Menu.setApplicationMenu(buildMenuBar())

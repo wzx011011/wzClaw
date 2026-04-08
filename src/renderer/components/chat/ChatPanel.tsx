@@ -6,6 +6,7 @@ import ChatMessage from './ChatMessage'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import SessionList from './SessionList'
+import TokenIndicator from './TokenIndicator'
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -101,6 +102,7 @@ export default function ChatPanel(): JSX.Element {
             ))}
           </select>
           {!hasApiKey && <span className="chat-no-key-warning" title="No API key configured">!</span>}
+          <TokenIndicator />
         </div>
         <div className="chat-header-controls">
           {isStreaming && (

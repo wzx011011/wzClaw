@@ -59,6 +59,18 @@ function createMockPermissionManager(approved: boolean = true) {
   }
 }
 
+function createMockContextManager() {
+  return {
+    shouldCompact: vi.fn().mockReturnValue(false),
+    compact: vi.fn().mockResolvedValue({ summary: '', keptRecentCount: 4, beforeTokens: 0, afterTokens: 0 }),
+    trackTokenUsage: vi.fn(),
+    getContextWindowForModel: vi.fn().mockReturnValue(128000),
+    getTotalUsage: vi.fn().mockReturnValue({ inputTokens: 0, outputTokens: 0 }),
+    resetUsage: vi.fn(),
+    estimateTokens: vi.fn().mockReturnValue(0)
+  }
+}
+
 // Collect all events from an async generator
 async function collectEvents(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const events: AgentEvent[] = []
@@ -93,7 +105,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -135,7 +147,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([fileReadTool])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -189,7 +201,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([fileReadTool])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -231,7 +243,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([fileReadTool])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -265,7 +277,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -306,7 +318,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([]) // Empty — no tools registered
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -344,7 +356,7 @@ describe('AgentLoop', () => {
     // Create a mock sender
     const mockSender = { send: vi.fn() }
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -384,7 +396,7 @@ describe('AgentLoop', () => {
 
     const mockSender = { send: vi.fn() }
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -426,7 +438,7 @@ describe('AgentLoop', () => {
 
     const mockSender = { send: vi.fn() }
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',
@@ -457,7 +469,7 @@ describe('AgentLoop', () => {
     const registry = createMockRegistry([])
     const permissionMgr = createMockPermissionManager()
 
-    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any)
+    const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
       systemPrompt: 'You are helpful.',

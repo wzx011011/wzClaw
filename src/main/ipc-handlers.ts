@@ -8,6 +8,7 @@ import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
 import type { SessionStore } from './persistence/session-store'
+import type { ContextManager } from './context/context-manager'
 import { SettingsManager } from './settings-manager'
 
 // Persistent settings with encrypted API key storage (per D-66)
@@ -18,7 +19,8 @@ export function registerIpcHandlers(
   agentLoop: AgentLoop,
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,
-  sessionStore: SessionStore
+  sessionStore: SessionStore,
+  contextManager: ContextManager
 ): void {
   // Load persisted settings from disk
   settingsManager.load()
@@ -118,6 +120,13 @@ export function registerIpcHandlers(
             break
           case 'agent:error':
             sender.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
+            break
+          case 'agent:compacted':
+            sender.send(IPC_CHANNELS['session:compacted'], {
+              beforeTokens: agentEvent.beforeTokens,
+              afterTokens: agentEvent.afterTokens,
+              auto: agentEvent.auto
+            })
             break
           case 'agent:done':
             sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
@@ -244,5 +253,33 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:delete'], (_event, request) => {
     return { success: sessionStore.deleteSession(request.sessionId) }
+  })
+
+  // ============================================================
+  // Agent: compact context — manual /compact command
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async () => {
+    const messages = agentLoop.getMessages()
+    const config = settingsManager.getCurrentConfig()
+    if (messages.length === 0) return null
+
+    const result = await contextManager.compact(
+      messages,
+      gateway,
+      config.model,
+      config.provider,
+      config.systemPrompt
+    )
+    if (result.summary) {
+      // Build compacted messages and replace in agent loop
+      const summaryMsg = {
+        role: 'user' as const,
+        content: `[Context Summary]\n${result.summary}`,
+        timestamp: Date.now()
+      }
+      const recentMessages = messages.slice(-result.keptRecentCount)
+      agentLoop.replaceMessages([summaryMsg, ...recentMessages])
+    }
+    return { beforeTokens: result.beforeTokens, afterTokens: result.afterTokens }
   })
 }
