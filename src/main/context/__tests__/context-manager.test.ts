@@ -208,7 +208,8 @@ describe('ContextManager', () => {
       const truncated = ContextManager.truncateToolResult(content)
       expect(truncated.length).toBeLessThan(content.length)
       expect(truncated).toContain('[truncated 40000 -> 30000 chars]')
-      expect(truncated.length).toBe(30000 + '[truncated 40000 -> 30000 chars]'.length)
+      // 30000 chars + '\n' + suffix
+      expect(truncated.length).toBe(30000 + 1 + '[truncated 40000 -> 30000 chars]'.length)
     })
   })
 
