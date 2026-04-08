@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import type { PendingDiff, DiffHunk } from '../../shared/types'
+import { MAX_DIFF_FILE_LINES } from '../../shared/constants'
 
 // ============================================================
 // Diff Store (per DIFF-01 through DIFF-07)
@@ -33,6 +34,15 @@ function computeHunks(originalContent: string, modifiedContent: string): DiffHun
   const originalLines = originalContent.split('\n')
   const modifiedLines = modifiedContent.split('\n')
   const hunks: DiffHunk[] = []
+
+  // Guard against O(n*m) memory exhaustion for large files (Issue 4)
+  // LCS DP table allocates (m+1)*(n+1) entries; cap at MAX_DIFF_FILE_LINES
+  if (originalLines.length > MAX_DIFF_FILE_LINES || modifiedLines.length > MAX_DIFF_FILE_LINES) {
+    console.warn(
+      `Diff skipped: file too large (${originalLines.length}/${modifiedLines.length} lines, limit ${MAX_DIFF_FILE_LINES})`
+    )
+    return []
+  }
 
   // Simple LCS-based diff using a DP table
   const m = originalLines.length
