@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useTerminalStore } from './terminal-store'
 
 // ============================================================
 // Command Store — pluggable command registry for Command Palette
@@ -128,8 +129,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
         label: 'Toggle Terminal',
         category: 'View',
         shortcut: 'Ctrl+`',
-        available: false, // Coming soon (Phase 8)
-        handler: () => {}
+        available: true,
+        handler: () => useTerminalStore.getState().togglePanel()
       },
       {
         id: 'settings.change-model',

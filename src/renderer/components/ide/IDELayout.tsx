@@ -6,6 +6,7 @@ import StatusBar from './StatusBar'
 import TabBar from './TabBar'
 import EditorPanel from './EditorPanel'
 import WelcomeScreen from './WelcomeScreen'
+import TerminalPanel from './TerminalPanel'
 import ChatPanel from '../chat/ChatPanel'
 import CommandPalette from '../CommandPalette'
 import { useTabStore } from '../../stores/tab-store'
@@ -13,6 +14,7 @@ import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useChatStore } from '../../stores/chat-store'
 import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
+import { useTerminalStore } from '../../stores/terminal-store'
 
 /**
  * IDELayout — root layout component for the IDE (per D-41, D-44, D-51, D-52, D-57).
@@ -38,6 +40,7 @@ export default function IDELayout(): JSX.Element {
   const initChat = useChatStore((s) => s.init)
   const openPalette = useCommandStore((s) => s.openPalette)
   const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
+  const showTerminal = useTerminalStore((s) => s.panelVisible)
 
   // Register global keyboard shortcuts (per D-51)
   useEffect(() => {
@@ -63,6 +66,18 @@ export default function IDELayout(): JSX.Element {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 't') {
         e.preventDefault()
         useChatStore.getState().createSession()
+      }
+      // Ctrl+` — toggle terminal panel
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === '`') {
+        e.preventDefault()
+        useTerminalStore.getState().togglePanel()
+      }
+      // Ctrl+Shift+` — new terminal when panel visible
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === '`') {
+        e.preventDefault()
+        if (useTerminalStore.getState().panelVisible) {
+          useTerminalStore.getState().createTerminal()
+        }
       }
     }
 
@@ -111,10 +126,19 @@ export default function IDELayout(): JSX.Element {
             <Sidebar />
           </Allotment.Pane>
           <Allotment.Pane>
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              {hasTabs && <TabBar />}
-              {hasTabs ? <EditorPanel /> : <WelcomeScreen />}
-            </div>
+            <Allotment vertical defaultSizes={showTerminal ? [70, 30] : [100]}>
+              <Allotment.Pane minSize={200}>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  {hasTabs && <TabBar />}
+                  {hasTabs ? <EditorPanel /> : <WelcomeScreen />}
+                </div>
+              </Allotment.Pane>
+              {showTerminal && (
+                <Allotment.Pane minSize={100}>
+                  <TerminalPanel />
+                </Allotment.Pane>
+              )}
+            </Allotment>
           </Allotment.Pane>
           <Allotment.Pane preferredSize={350} minSize={250} maxSize={600}>
             <ChatPanel />
