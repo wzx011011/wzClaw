@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-04-08T09:21:13.860Z"
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-04-08T10:20:57.445Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
   completed_phases: 8
-  total_plans: 26
-  completed_plans: 26
-  percent: 100
+  total_plans: 29
+  completed_plans: 27
+  percent: 93
 ---
 
 # Project State
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-08)
 
 **Core value:** AI Agent 能正确调用工具完成编程任务，用户在 IDE 中实时看到过程和结果，具备生产级 AI IDE 的核心体验
-**Current focus:** Phase 8 — advanced-features
+**Current focus:** Phase 9 — codebase-indexing
 
 ## Current Position
 
-Phase: 8 (advanced-features) — EXECUTING
-Plan: 3 of 3
+Phase: 9 (codebase-indexing) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-04-08
 
@@ -53,6 +53,7 @@ Progress: [██████░░░░] 67%
 | 05 Polish | 2 | ~40min | ~20min |
 | 06 | 3 | - | - |
 | 7 | 5 | - | - |
+| 8 | 3 | - | - |
 
 **By Phase (v1.2):**
 
@@ -70,6 +71,7 @@ Progress: [██████░░░░] 67%
 | Phase 07 P07-02 | 13min | 2 tasks | 10 files |
 | Phase 08 P02 | 15min | 2 tasks | 14 files |
 | Phase 08 P03 | 1208 | 2 tasks | 15 files |
+| Phase 09 P01 | 24 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -133,6 +135,11 @@ Recent decisions affecting current work:
 - [Phase 08]: D-TASK-03: Completing blocker cascades status update to dependents
 - [Phase 08]: D-TASK-04: TaskStore init() returns unsubscribe matching chat-store pattern
 - [Phase 08]: D-TASK-05: TaskPanel between DiffPreview and error banner
+- [Phase 09]: D-IDX-01: Use sha256 for entry ID hashing (md5 not available in all environments)
+- [Phase 09]: D-IDX-02: Skip all hidden dirs during workspace walk to avoid indexing metadata
+- [Phase 09]: D-IDX-03: Native fetch with AbortController for embedding API (avoids SDK overhead)
+- [Phase 09]: D-IDX-04: Mock fetch in tests instead of real API calls
+- [Phase 09]: D-IDX-05: VectorStore cache updated in-place after mutations for synchronous search
 
 ### Pending Todos
 
@@ -146,6 +153,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-08T09:21:13.855Z
-Stopped at: Completed 08-03-PLAN.md
+Last session: 2026-04-08T10:20:57.440Z
+Stopped at: Completed 09-01-PLAN.md
 Resume file: None

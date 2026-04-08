@@ -179,7 +179,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Indexing core engine (CodeChunker, VectorStore, EmbeddingClient, IndexingEngine)
+- [x] 09-01-PLAN.md — Indexing core engine (CodeChunker, VectorStore, EmbeddingClient, IndexingEngine)
 - [ ] 09-02-PLAN.md — SemanticSearch tool + IPC channels + app lifecycle wiring
 - [ ] 09-03-PLAN.md — UI integration (IndexStore, StatusBar, command palette Re-index)
 
@@ -198,4 +198,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 6. Foundation Upgrades | 3/3 | Complete | 2026-04-08 |
 | 7. Core Interaction | 5/5 | Complete    | 2026-04-08 |
 | 8. Advanced Features | 3/3 | Complete    | 2026-04-08 |
-| 9. Codebase Indexing | 0/3 | Not started | - |
+| 9. Codebase Indexing | 1/3 | In Progress|  |
