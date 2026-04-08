@@ -297,6 +297,21 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // File: apply-hunk — write accepted diff hunks to disk
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:apply-hunk'], async (_event, request) => {
+    try {
+      const { filePath, modifiedContent } = request as { filePath: string; hunksToApply: string[]; modifiedContent: string }
+      const { writeFile } = await import('fs/promises')
+      await writeFile(filePath, modifiedContent, 'utf-8')
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to apply hunk:', error)
+      return { success: false }
+    }
+  })
+
+  // ============================================================
   // Agent: compact context — manual /compact command
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async () => {

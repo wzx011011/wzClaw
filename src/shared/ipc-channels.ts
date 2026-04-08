@@ -48,6 +48,9 @@ export const IPC_CHANNELS = {
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
 
+  // Diff channels (renderer -> main)
+  'file:apply-hunk': 'file:apply-hunk',
+
   // Context channels (renderer -> main)
   'agent:compact_context': 'agent:compact_context'
 } as const
@@ -88,6 +91,7 @@ export interface IpcRequestPayloads {
   'session:load': { sessionId: string }
   'session:delete': { sessionId: string }
   'session:rename': { sessionId: string; title: string }
+  'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'agent:compact_context': void
 }
 
@@ -114,6 +118,7 @@ export interface IpcResponsePayloads {
   'session:load': unknown[]
   'session:delete': { success: boolean }
   'session:rename': { success: boolean }
+  'file:apply-hunk': { success: boolean }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
 }
 

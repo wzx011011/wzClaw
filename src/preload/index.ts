@@ -79,6 +79,10 @@ const api = {
 
   // Compact context (manual trigger via /compact command)
   compactContext: () => ipcRenderer.invoke('agent:compact_context'),
+
+  // Diff: apply accepted hunks to disk
+  applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) =>
+    ipcRenderer.invoke('file:apply-hunk', request),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

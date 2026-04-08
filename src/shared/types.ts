@@ -174,6 +174,30 @@ export interface FileMention {
 }
 
 // ============================================================
+// Diff Preview Types (DIFF-01 through DIFF-07)
+// ============================================================
+
+export interface DiffHunk {
+  id: string
+  startIndex: number
+  endIndex: number
+  type: 'add' | 'delete' | 'replace'
+  originalLines: string[]
+  modifiedLines: string[]
+  status: 'pending' | 'accepted' | 'rejected'
+}
+
+export interface PendingDiff {
+  id: string
+  filePath: string
+  originalContent: string
+  modifiedContent: string
+  hunks: DiffHunk[]
+  toolCallId: string
+  timestamp: number
+}
+
+// ============================================================
 // Zod Schemas for IPC Validation
 // ============================================================
 
