@@ -20,7 +20,23 @@ const pendingQueries = new Map<string, { resolve: (result: unknown) => void; tim
 let queryCounter = 0
 
 function generateQueryId(): string {
+  // Cap counter to prevent floating-point precision issues after MAX_SAFE_INTEGER
+  if (queryCounter > Number.MAX_SAFE_INTEGER - 1000) {
+    queryCounter = 0
+  }
   return `sym-${Date.now()}-${++queryCounter}`
+}
+
+/**
+ * Clean up all pending symbol queries (e.g., when webContents is destroyed).
+ * Rejects all pending queries to prevent memory leaks from dangling references.
+ */
+export function cleanupPendingQueries(): void {
+  for (const [queryId, pending] of pendingQueries) {
+    clearTimeout(pending.timer)
+    pending.resolve([]) // Resolve with empty results instead of rejecting
+  }
+  pendingQueries.clear()
 }
 
 /**
