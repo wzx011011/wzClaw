@@ -50,6 +50,11 @@ declare global {
       listTasks: () => Promise<AgentTask[]>
       onTaskCreated: (cb: (p: AgentTask) => void) => () => void
       onTaskUpdated: (cb: (p: AgentTask) => void) => () => void
+      // Index
+      getIndexStatus: () => Promise<{ status: string; fileCount: number; currentFile: string; error?: string }>
+      reindex: () => Promise<void>
+      searchIndex: (request: { query: string; topK?: number }) => Promise<Array<{ filePath: string; startLine: number; endLine: number; content: string; score: number }>>
+      onIndexProgress: (cb: (p: { status: string; fileCount: number; currentFile: string; error?: string }) => void) => () => void
     }
   }
 }

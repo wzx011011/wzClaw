@@ -119,6 +119,17 @@ const api = {
     ipcRenderer.on('task:updated', handler)
     return () => ipcRenderer.removeListener('task:updated', handler)
   },
+
+  // Index
+  getIndexStatus: () => ipcRenderer.invoke('index:status'),
+  reindex: () => ipcRenderer.invoke('index:reindex'),
+  searchIndex: (request: { query: string; topK?: number }) =>
+    ipcRenderer.invoke('index:search', request),
+  onIndexProgress: (callback: (payload: { status: string; fileCount: number; currentFile: string; error?: string }) => void) => {
+    const handler = (_: unknown, payload: { status: string; fileCount: number; currentFile: string; error?: string }) => callback(payload)
+    ipcRenderer.on('index:progress', handler)
+    return () => ipcRenderer.removeListener('index:progress', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)
