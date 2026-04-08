@@ -69,10 +69,16 @@ describe('ToolRegistry', () => {
 })
 
 describe('createDefaultTools', () => {
-  it('creates a registry with all 6 tools', () => {
+  it('creates a registry with 8 tools (6 core + 2 web, no symbol tools without getWebContents)', () => {
     const registry = createDefaultTools('/test/project')
     const tools = registry.getAll()
-    expect(tools.length).toBe(6)
+    expect(tools.length).toBe(8)
+  })
+
+  it('creates a registry with 11 tools when getWebContents is provided', () => {
+    const registry = createDefaultTools('/test/project', undefined, () => null)
+    const tools = registry.getAll()
+    expect(tools.length).toBe(11)
   })
 
   it('registers FileRead tool', () => {
