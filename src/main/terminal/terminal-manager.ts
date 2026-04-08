@@ -156,7 +156,8 @@ export class TerminalManager {
 
   /**
    * Run a command in a terminal and capture output for agent analysis.
-   * Writes command + newline, then captures output for up to 30 seconds.
+   * Writes command + newline, then captures output until stability detected
+   * or up to 30 seconds timeout.
    */
   async runCommandInTerminal(id: string, command: string): Promise<string> {
     const entry = this.terminals.get(id)
@@ -172,14 +173,27 @@ export class TerminalManager {
 
     // Wait and collect output for up to 30 seconds
     const CAPTURE_TIMEOUT = 30000
-    const CHECK_INTERVAL = 200
+    const STABILITY_THRESHOLD = 500 // ms with no new data to consider command complete
+    const MIN_WAIT = 1000 // minimum ms before checking stability
 
     return new Promise<string>((resolve) => {
       const startTime = Date.now()
       let capturedOutput = ''
+      let lastDataTime = 0
+      let resolved = false
+
+      const doResolve = (): void => {
+        if (resolved) return
+        resolved = true
+        clearInterval(timer)
+        unsub()
+        const fullBuffer = entry.buffer.slice(bufferBefore)
+        resolve(fullBuffer || capturedOutput)
+      }
 
       const collectOutput = (data: string): void => {
         capturedOutput += data
+        lastDataTime = Date.now()
       }
 
       // Subscribe to data events
@@ -187,27 +201,18 @@ export class TerminalManager {
 
       const timer = setInterval(() => {
         const elapsed = Date.now() - startTime
-        // If we have output and enough time passed for the command to complete
-        if (elapsed > 2000 && capturedOutput.length > 0) {
-          // Check if output seems stable (no new data for 500ms)
-          // For simplicity, we resolve after timeout or a reasonable wait
-        }
         if (elapsed >= CAPTURE_TIMEOUT) {
-          clearInterval(timer)
-          unsub()
-          // Also include buffer content that accumulated since the command
-          const fullBuffer = entry.buffer.slice(bufferBefore)
-          resolve(fullBuffer || capturedOutput)
+          doResolve()
+          return
         }
-      }, CHECK_INTERVAL)
-
-      // Early exit if the command is simple and we get output quickly
-      setTimeout(() => {
-        // Check after 3 seconds if we have any output
-        if (capturedOutput.length > 0) {
-          // Don't resolve yet, wait for more output or timeout
+        // After minimum wait, check if output has been stable
+        if (elapsed > MIN_WAIT && capturedOutput.length > 0) {
+          const timeSinceLastData = Date.now() - lastDataTime
+          if (timeSinceLastData >= STABILITY_THRESHOLD) {
+            doResolve()
+          }
         }
-      }, 3000)
+      }, 200)
     })
   }
 
