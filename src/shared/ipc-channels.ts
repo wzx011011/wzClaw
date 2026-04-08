@@ -168,6 +168,21 @@ export const IpcSchemas = {
       })
     ])
   },
+  'file:save': {
+    request: z.object({
+      filePath: z.string().min(1),
+      content: z.string()
+    }),
+    response: z.void()
+  },
+  'file:apply-hunk': {
+    request: z.object({
+      filePath: z.string().min(1),
+      hunksToApply: z.array(z.string()),
+      modifiedContent: z.string()
+    }),
+    response: z.object({ success: z.boolean() })
+  },
   'stream:text_delta': z.object({ content: z.string() }),
   'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
   'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),

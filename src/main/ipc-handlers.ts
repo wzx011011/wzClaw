@@ -179,18 +179,33 @@ export function registerIpcHandlers(
   // ============================================================
   // Workspace: open folder — shows native dialog, sets workspace
   // ============================================================
+  let fileChangeUnsubscribe: (() => void) | null = null
+
+  function forwardFileChanges(): void {
+    const callback = (filePath: string, changeType: string) => {
+      for (const bw of BrowserWindow.getAllWindows()) {
+        bw.webContents.send(IPC_CHANNELS['file:changed'], { filePath, changeType })
+      }
+    }
+    workspaceManager.onFileChange(callback)
+    // Return an unsubscribe function that removes this specific callback
+    fileChangeUnsubscribe = () => {
+      workspaceManager.offFileChange(callback)
+    }
+  }
+
   ipcMain.handle(IPC_CHANNELS['workspace:open_folder'], async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return null
 
     const rootPath = await workspaceManager.openFolderDialog(win)
     if (rootPath) {
-      // Forward file change events to all windows
-      workspaceManager.onFileChange((filePath, changeType) => {
-        for (const bw of BrowserWindow.getAllWindows()) {
-          bw.webContents.send(IPC_CHANNELS['file:changed'], { filePath, changeType })
-        }
-      })
+      // Clean up previous listener to prevent accumulation
+      if (fileChangeUnsubscribe) {
+        fileChangeUnsubscribe()
+        fileChangeUnsubscribe = null
+      }
+      forwardFileChanges()
       return { rootPath }
     }
     return null
@@ -262,10 +277,30 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // File: save
+  // File: save — validates filePath and enforces workspace boundary
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {
-    await workspaceManager.saveFile(request.filePath, request.content)
+    const result = IpcSchemas['file:save'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+
+    const { filePath } = result.data
+    const workspaceRoot = workspaceManager.getWorkspaceRoot()
+    if (!workspaceRoot) {
+      throw new Error('No workspace open')
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(workspaceRoot, filePath)
+
+    // Verify the resolved path stays within the workspace boundary
+    if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+      throw new Error('Access denied: file path is outside the workspace root')
+    }
+
+    await workspaceManager.saveFile(absolutePath, result.data.content)
   })
 
   // ============================================================
@@ -297,13 +332,33 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // File: apply-hunk — write accepted diff hunks to disk
+  // File: apply-hunk — validates filePath, enforces workspace boundary,
+  // writes accepted diff hunks to disk
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:apply-hunk'], async (_event, request) => {
     try {
-      const { filePath, modifiedContent } = request as { filePath: string; hunksToApply: string[]; modifiedContent: string }
+      const result = IpcSchemas['file:apply-hunk'].request.safeParse(request)
+      if (!result.success) {
+        throw new Error(`Invalid request: ${result.error.message}`)
+      }
+
+      const { filePath, modifiedContent } = result.data
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot) {
+        throw new Error('No workspace open')
+      }
+
+      const absolutePath = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(workspaceRoot, filePath)
+
+      // Verify the resolved path stays within the workspace boundary
+      if (!absolutePath.startsWith(workspaceRoot + path.sep) && absolutePath !== workspaceRoot) {
+        throw new Error('Access denied: file path is outside the workspace root')
+      }
+
       const { writeFile } = await import('fs/promises')
-      await writeFile(filePath, modifiedContent, 'utf-8')
+      await writeFile(absolutePath, modifiedContent, 'utf-8')
       return { success: true }
     } catch (error) {
       console.error('Failed to apply hunk:', error)
