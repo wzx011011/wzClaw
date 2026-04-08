@@ -59,6 +59,11 @@ export default function IDELayout(): JSX.Element {
         e.preventDefault()
         openPalette()
       }
+      // Ctrl+T — new chat session
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 't') {
+        e.preventDefault()
+        useChatStore.getState().createSession()
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -86,6 +91,7 @@ export default function IDELayout(): JSX.Element {
     registerBuiltInCommands({
       openFolder: () => useWorkspaceStore.getState().openFolder(),
       clearConversation: () => useChatStore.getState().clearConversation(),
+      createSession: () => useChatStore.getState().createSession(),
       saveActiveTab: () => {
         const activeId = useTabStore.getState().activeTabId
         if (activeId) useTabStore.getState().saveTab(activeId)

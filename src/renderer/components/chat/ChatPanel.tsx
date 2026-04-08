@@ -6,6 +6,7 @@ import ChatMessage from './ChatMessage'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import SessionList from './SessionList'
+import SessionTabs from './SessionTabs'
 import TokenIndicator from './TokenIndicator'
 
 // ============================================================
@@ -140,6 +141,9 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Session list */}
       <SessionList isOpen={showSessions} onToggle={() => setShowSessions(!showSessions)} />
+
+      {/* Session tabs */}
+      <SessionTabs />
 
       {/* Messages */}
       <div className="chat-messages">

@@ -854,3 +854,171 @@
 .token-text.danger {
   color: #f48771;
 }
+
+/* ============================================================
+   Session Tabs (per 07-CONTEXT.md)
+   ============================================================ */
+
+.chat-tabs-bar {
+  display: flex;
+  align-items: center;
+  background: #1e1e1e;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.chat-tabs-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.chat-tabs-bar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.chat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 180px;
+  border-right: 1px solid var(--border);
+  transition: background 0.1s;
+  position: relative;
+  user-select: none;
+}
+
+.chat-tab:hover {
+  background: #2d2d2d;
+}
+
+.chat-tab-active {
+  background: #252526;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 4px;
+}
+
+.chat-tab-active:hover {
+  background: #252526;
+}
+
+.chat-tab-confirming {
+  background: rgba(244, 135, 113, 0.15);
+}
+
+.chat-tab-confirming:hover {
+  background: rgba(244, 135, 113, 0.25);
+}
+
+.chat-tab-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.chat-tab-active .chat-tab-title {
+  color: var(--text-primary);
+}
+
+.chat-tab-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 3px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.chat-tab:hover .chat-tab-close {
+  display: flex;
+}
+
+.chat-tab-close:hover {
+  background: rgba(244, 135, 113, 0.2);
+  color: #f48771;
+}
+
+.chat-tab-confirming .chat-tab-close {
+  display: flex;
+  color: #f48771;
+  font-weight: bold;
+}
+
+.chat-tab-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-tab-new:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.chat-tab-rename-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 1px 4px;
+  width: 120px;
+  outline: none;
+}
+
+.chat-tab-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #252526;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.chat-tab-context-item {
+  display: block;
+  width: 100%;
+  padding: 6px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.chat-tab-context-item:hover {
+  background: var(--hover-bg);
+}
+
+.chat-tab-context-item-danger:hover {
+  background: rgba(244, 135, 113, 0.15);
+  color: #f48771;
+}

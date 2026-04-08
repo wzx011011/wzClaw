@@ -28,6 +28,7 @@ interface CommandActions {
   registerBuiltInCommands: (deps: {
     openFolder: () => void
     clearConversation: () => void
+    createSession: () => void
     saveActiveTab: () => void
     updateSettings: (req: Record<string, unknown>) => void
     openSettingsModal: () => void
@@ -102,7 +103,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
         id: 'session.new',
         label: 'New Session',
         category: 'Session',
-        handler: deps.clearConversation
+        shortcut: 'Ctrl+T',
+        handler: deps.createSession
       },
       {
         id: 'session.clear',

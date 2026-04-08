@@ -97,6 +97,7 @@ describe('CommandStore', () => {
       registerBuiltInCommands({
         openFolder: vi.fn(),
         clearConversation: vi.fn(),
+        createSession: vi.fn(),
         saveActiveTab: vi.fn(),
         updateSettings: vi.fn(),
         openSettingsModal: vi.fn()
@@ -120,6 +121,7 @@ describe('CommandStore', () => {
       registerBuiltInCommands({
         openFolder: vi.fn(),
         clearConversation: vi.fn(),
+        createSession: vi.fn(),
         saveActiveTab: vi.fn(),
         updateSettings: vi.fn(),
         openSettingsModal: vi.fn()
@@ -137,6 +139,9 @@ describe('CommandStore', () => {
 
       const toggleTerminal = commands.find((c) => c.id === 'view.toggle-terminal')
       expect(toggleTerminal?.shortcut).toBe('Ctrl+`')
+
+      const newSession = commands.find((c) => c.id === 'session.new')
+      expect(newSession?.shortcut).toBe('Ctrl+T')
     })
   })
 
@@ -191,6 +196,7 @@ describe('CommandStore', () => {
       registerBuiltInCommands({
         openFolder: vi.fn(),
         clearConversation: vi.fn(),
+        createSession: vi.fn(),
         saveActiveTab: vi.fn(),
         updateSettings: vi.fn(),
         openSettingsModal: vi.fn()
