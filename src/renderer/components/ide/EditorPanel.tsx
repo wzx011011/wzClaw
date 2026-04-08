@@ -45,6 +45,36 @@ export default function EditorPanel(): JSX.Element {
           }
         }
       )
+
+      // Ctrl+Enter: Accept all pending diffs for current file
+      editor.addCommand(
+        // eslint-disable-next-line no-bitwise
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+        () => {
+          const { activeDiffId, pendingDiffs, acceptAll } = useDiffStore.getState()
+          if (activeDiffId) {
+            const diff = pendingDiffs.find(d => d.id === activeDiffId)
+            if (diff && diff.filePath === activeTab?.filePath) {
+              acceptAll(activeDiffId)
+            }
+          }
+        }
+      )
+
+      // Ctrl+Backspace: Reject all pending diffs for current file
+      editor.addCommand(
+        // eslint-disable-next-line no-bitwise
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backspace,
+        () => {
+          const { activeDiffId, pendingDiffs, rejectAll } = useDiffStore.getState()
+          if (activeDiffId) {
+            const diff = pendingDiffs.find(d => d.id === activeDiffId)
+            if (diff && diff.filePath === activeTab?.filePath) {
+              rejectAll(activeDiffId)
+            }
+          }
+        }
+      )
     },
     [saveTab]
   )

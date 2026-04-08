@@ -61,9 +61,17 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
   const handleReviewChanges = (): void => {
     if (!filePath || !isFileModifying) return
 
-    const modifiedContent = name === 'FileWrite'
-      ? String(input?.content ?? '')
-      : '' // For FileEdit, the modified content would need to be computed
+    let modifiedContent: string
+    if (name === 'FileWrite') {
+      modifiedContent = String(input?.content ?? '')
+    } else {
+      // FileEdit: compute modified content by applying old_string -> new_string replacement
+      const oldStr = String(input?.old_string ?? '')
+      const newStr = String(input?.new_string ?? '')
+      const original = originalContent ?? ''
+      // Use single replacement (FileEdit already validates uniqueness)
+      modifiedContent = oldStr ? original.replace(oldStr, newStr) : original
+    }
 
     const diff: PendingDiff = {
       id: `diff-${toolCall.id}`,
