@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-04-08T10:40:56Z"
+status: verifying
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-04-08T10:54:42.593Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 29
-  completed_plans: 28
-  percent: 97
+  completed_plans: 29
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-08)
 
 Phase: 9 (codebase-indexing) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-08
 
 Progress: [███████░░░] 97%
@@ -73,6 +73,7 @@ Progress: [███████░░░] 97%
 | Phase 08 P03 | 1208 | 2 tasks | 15 files |
 | Phase 09 P01 | 24 | 2 tasks | 8 files |
 | Phase 09 P02 | 6 | 2 tasks | 8 files |
+| Phase 09 P03 | 325 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,9 @@ Recent decisions affecting current work:
 - [Phase 09]: D-IDX-06: Setter injection for IndexingEngine on SemanticSearchTool -- tool created before workspace is open, engine reference set later
 - [Phase 09]: D-IDX-07: Mutable ref wrapper (indexingEngineRef) in ipc-handlers.ts allows workspace switch to replace engine without re-registering handlers
 - [Phase 09]: D-IDX-08: onWorkspaceOpened callback from ipc-handlers to index.ts avoids circular dependency, index.ts owns engine lifecycle
+- [Phase 09]: D-IDX-09: IndexStore follows chat-store pattern -- init() returns unsubscribe, subscribe to IPC progress events
+- [Phase 09]: D-IDX-10: Status bar uses simple ASCII text for index status (no codicon dependency)
+- [Phase 09]: D-IDX-11: Re-index Workspace command in Index category, wired via store.getState().reindex()
 
 ### Pending Todos
 
@@ -157,6 +161,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-08T10:40:56Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-04-08T10:54:42.588Z
+Stopped at: Completed 09-03-PLAN.md
 Resume file: None

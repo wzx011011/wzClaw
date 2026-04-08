@@ -181,7 +181,7 @@ Plans:
 Plans:
 - [x] 09-01-PLAN.md — Indexing core engine (CodeChunker, VectorStore, EmbeddingClient, IndexingEngine)
 - [x] 09-02-PLAN.md — SemanticSearch tool + IPC channels + app lifecycle wiring
-- [ ] 09-03-PLAN.md — UI integration (IndexStore, StatusBar, command palette Re-index)
+- [x] 09-03-PLAN.md — UI integration (IndexStore, StatusBar, command palette Re-index)
 
 ## Progress
 

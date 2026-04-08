@@ -133,8 +133,8 @@
 - [x] **IDX-03**: Vector storage uses sql.js with sqlite-vec extension (WASM, no native dependency)
 - [x] **IDX-04**: Index is built incrementally — only new/modified files are re-indexed on file change
 - [x] **IDX-05**: Agent can perform semantic search across the codebase to find relevant code
-- [ ] **IDX-06**: Indexing status is shown in the status bar (indexing/ready/error + file count)
-- [ ] **IDX-07**: User can trigger manual re-index via command palette
+- [x] **IDX-06**: Indexing status is shown in the status bar (indexing/ready/error + file count)
+- [x] **IDX-07**: User can trigger manual re-index via command palette
 - [x] **IDX-08**: Large files (>100KB) and binary files are excluded from indexing
 
 ### Session Persistence (PERSIST)
