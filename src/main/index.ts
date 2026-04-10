@@ -1,7 +1,25 @@
 import { app, BrowserWindow, Menu, ipcMain } from 'electron'
-import { join } from 'path'
+import path from 'path'
+import crypto from 'crypto'
+const { join } = path
 import { networkInterfaces } from 'os'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+// Inline replacements for @electron-toolkit/utils (v4 CJS compat issue)
+const is = { dev: !app.isPackaged }
+const electronApp = {
+  setAppUserModelId(id: string) {
+    if (is.dev) { app.setAppUserModelId(process.execPath) }
+    else { app.setAppUserModelId(id) }
+  }
+}
+const optimizer = {
+  watchWindowShortcuts(win: BrowserWindow) {
+    win.webContents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'F12') {
+        win.webContents.toggleDevTools()
+      }
+    })
+  }
+}
 import { LLMGateway } from './llm/gateway'
 import { registerIpcHandlers } from './ipc-handlers'
 import { createDefaultTools } from './tools/tool-registry'
@@ -33,6 +51,7 @@ import {
 import { MobileServer } from './mobile/mobile-server'
 import { TunnelManager } from './mobile/tunnel-manager'
 import { generateQRCode } from './mobile/qr-generator'
+import { RelayClient } from './mobile/relay-client'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -41,6 +60,7 @@ const taskManager = new TaskManager()
 const browserManager = new BrowserManager()
 const mobileServer = new MobileServer()
 const tunnelManager = new TunnelManager()
+const relayClient = new RelayClient()
 
 // Module-level IndexingEngine reference (created when workspace opens)
 let indexingEngine: IndexingEngine | null = null
@@ -186,6 +206,12 @@ app.whenReady().then(() => {
   // Load persisted settings for embedding API config
   settingsManager.load()
 
+  // Auto-connect to relay if token is saved
+  const savedRelayToken = settingsManager.getRelayToken()
+  if (savedRelayToken) {
+    relayClient.connect(savedRelayToken)
+  }
+
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
   const getWebContents = () => BrowserWindow.getAllWindows()[0]?.webContents ?? null
@@ -230,21 +256,114 @@ app.whenReady().then(() => {
     }
   })
 
-  // Handle mobile client commands → agent
-  mobileServer.on('client-message', async (msg: { clientId: string; event: string; data: any }) => {
+  // Forward relay status to renderer
+  relayClient.on('status', (data) => {
+    for (const bw of BrowserWindow.getAllWindows()) {
+      bw.webContents.send(IPC_CHANNELS['relay:status'], data)
+    }
+  })
+
+  // Session store reference — assigned after creation below, but captured by closure
+  let sessionStore: SessionStore
+  // Track mobile session ID for persisting mobile-initiated conversations
+  let mobileSessionId: string | null = null
+
+  // Helper: broadcast to both mobile transports
+  const broadcastToMobile = (event: string, data: unknown) => {
+    mobileServer.broadcast(event, data)
+    relayClient.broadcast(event, data)
+  }
+
+  // Helper: send workspace info to mobile
+  const sendWorkspaceInfoToMobile = async () => {
+    const workspaceRoot = workspaceManager.getWorkspaceRoot()
+    if (!workspaceRoot || !sessionStore) return
+    try {
+      const sessions = await sessionStore.listSessions()
+      broadcastToMobile('session:workspace:info', {
+        workspaceName: path.basename(workspaceRoot),
+        workspacePath: workspaceRoot,
+        activeSessionId: mobileSessionId,
+        sessionCount: sessions.length
+      })
+    } catch (err) {
+      console.error('[sendWorkspaceInfoToMobile]', err)
+    }
+  }
+
+  // Handle mobile client commands → agent (from local mobileServer or relay)
+  const handleClientMessage = async (msg: { clientId: string; event: string; data: any }) => {
+    console.log('[handleClientMessage]', msg.clientId, msg.event, JSON.stringify(msg.data)?.substring(0, 200))
+    try {
+
+    // -- Session sync: list sessions --
+    if (msg.event === 'session:list:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot || !sessionStore) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
+        return
+      }
+      try {
+        const sessions = await sessionStore.listSessions()
+        broadcastToMobile('session:list:response', {
+          requestId,
+          workspaceName: path.basename(workspaceRoot),
+          workspacePath: workspaceRoot,
+          sessions
+        })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- Session sync: load session messages (with pagination) --
+    if (msg.event === 'session:load:request') {
+      const { requestId = '', sessionId, offset = 0, limit = 50 } = msg.data ?? {}
+      if (!sessionStore) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
+        return
+      }
+      try {
+        const allMessages = await sessionStore.loadSession(sessionId)
+        const total = allMessages.length
+        const sliced = allMessages.slice(offset, offset + limit)
+        broadcastToMobile('session:load:response', {
+          requestId,
+          sessionId,
+          messages: sliced,
+          total,
+          offset,
+          hasMore: (offset + limit) < total
+        })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'SESSION_NOT_FOUND' })
+      }
+      return
+    }
+
+    // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
-      // Build agent config from current settings
+      // Use session ID from mobile, or generate one for this mobile conversation
+      const sessionId = msg.data.sessionId || mobileSessionId || crypto.randomUUID()
+      mobileSessionId = sessionId
+
       const config = settingsManager.getCurrentConfig()
       const agentConfig: AgentConfig = {
         model: config.model,
         provider: config.provider as 'openai' | 'anthropic',
         systemPrompt: config.systemPrompt,
         workingDirectory,
-        conversationId: 'mobile',
+        conversationId: sessionId,
       }
+
+      // Broadcast the assigned session ID back to mobile so it can track it
+      broadcastToMobile('session:active', { sessionId })
+
       try {
         for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig)) {
-          // Forward stream events to both renderer and mobile clients
+          // Forward stream events to renderer
           const wc = BrowserWindow.getAllWindows()[0]?.webContents
           if (wc) {
             switch (agentEvent.type) {
@@ -266,13 +385,29 @@ app.whenReady().then(() => {
             }
           }
           mobileServer.broadcast(`stream:${agentEvent.type}`, agentEvent)
+          relayClient.broadcast(`stream:${agentEvent.type}`, agentEvent)
         }
       } catch (err: any) {
         mobileServer.broadcast('stream:error', { error: err.message })
+        relayClient.broadcast('stream:error', { error: err.message })
       }
-    } else if (msg.event === 'command:stop') {
+      return
+    }
+
+    if (msg.event === 'command:stop') {
       agentLoop.cancel()
     }
+    } catch (topErr: any) {
+      console.error('[handleClientMessage] UNCAUGHT ERROR:', topErr)
+    }
+  }
+
+  mobileServer.on('client-message', handleClientMessage)
+  relayClient.on('client-message', handleClientMessage)
+
+  // Send workspace info when mobile connects via relay
+  relayClient.on('mobile-connected', () => {
+    sendWorkspaceInfoToMobile()
   })
 
   // Register browser + mobile IPC handlers
@@ -290,6 +425,31 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS['browser:close'], async () => {
     await browserManager.close()
+  })
+
+  // Relay IPC handlers
+  ipcMain.handle(IPC_CHANNELS['relay:connect'], async (_e, request: { token: string }) => {
+    if (request.token) {
+      settingsManager.setRelayToken(request.token)
+    }
+    const token = request.token || settingsManager.getRelayToken()
+    if (token) {
+      relayClient.connect(token)
+    }
+    return relayClient.getStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS['relay:disconnect'], async () => {
+    relayClient.disconnect()
+  })
+
+  ipcMain.handle(IPC_CHANNELS['relay:qrcode'], async (_e, request?: { token: string }) => {
+    const token = request?.token || settingsManager.getRelayToken()
+    if (!token) throw new Error('No relay token configured')
+    const { generateQRCode } = await import('./mobile/qr-generator')
+    const relayUrl = `wss://relay.5945.top/?role=mobile&token=${encodeURIComponent(token)}`
+    const qrCode = await generateQRCode(relayUrl)
+    return { qrCode }
   })
 
   // Mobile handlers
@@ -332,11 +492,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS['mobile:stop'], async () => {
     await tunnelManager.close()
+    relayClient.dispose()
     await mobileServer.stop()
   })
 
   // Create session store for JSONL persistence (per PERSIST-01)
-  const sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
+  sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.

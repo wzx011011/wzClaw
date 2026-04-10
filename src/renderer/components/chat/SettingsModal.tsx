@@ -16,6 +16,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const settingsModel = useSettingsStore((s) => s.model)
   const settingsBaseURL = useSettingsStore((s) => s.baseURL)
   const settingsSystemPrompt = useSettingsStore((s) => s.systemPrompt)
+  const settingsRelayToken = useSettingsStore((s) => s.relayToken)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
 
   // Local form state initialized from settings store
@@ -24,7 +25,21 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const [apiKey, setApiKey] = useState('')
   const [baseURL, setBaseURL] = useState(settingsBaseURL ?? '')
   const [systemPrompt, setSystemPrompt] = useState(settingsSystemPrompt ?? '')
+  const [relayToken, setRelayToken] = useState(settingsRelayToken ?? '')
   const [saving, setSaving] = useState(false)
+  const [relayConnected, setRelayConnected] = useState(false)
+  const [relayConnecting, setRelayConnecting] = useState(false)
+  const [relayError, setRelayError] = useState<string | null>(null)
+
+  // Subscribe to relay status
+  useEffect(() => {
+    const unsub = window.wzxclaw.onRelayStatus((status) => {
+      setRelayConnected(status.connected)
+      setRelayConnecting(status.connecting)
+      if (status.connected) setRelayError(null)
+    })
+    return unsub
+  }, [])
 
   // Sync local state when settings store changes or modal opens
   useEffect(() => {
@@ -34,8 +49,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       setApiKey('')
       setBaseURL(settingsBaseURL ?? '')
       setSystemPrompt(settingsSystemPrompt ?? '')
+      setRelayToken(settingsRelayToken ?? '')
     }
-  }, [isOpen, settingsProvider, settingsModel, settingsBaseURL, settingsSystemPrompt])
+  }, [isOpen, settingsProvider, settingsModel, settingsBaseURL, settingsSystemPrompt, settingsRelayToken])
 
   if (!isOpen) return null
 
@@ -57,13 +73,26 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
         provider,
         model,
         baseURL: provider === 'openai' ? baseURL : undefined,
-        systemPrompt: systemPrompt || undefined
+        systemPrompt: systemPrompt || undefined,
+        relayToken: relayToken || undefined
       }
       // Only send API key if user entered one
       if (apiKey.trim()) {
         request.apiKey = apiKey.trim()
       }
       await updateSettings(request)
+      // Try connecting relay if token is provided
+      if (relayToken.trim()) {
+        try {
+          setRelayConnecting(true)
+          setRelayError(null)
+          await window.wzxclaw.connectRelay({ token: relayToken.trim() })
+        } catch (err: any) {
+          setRelayError(err.message || '连接失败')
+        } finally {
+          setRelayConnecting(false)
+        }
+      }
       onClose()
     } catch (err) {
       console.error('Failed to save settings:', err)
@@ -146,6 +175,24 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             rows={3}
             placeholder="You are a helpful AI coding assistant."
           />
+
+          {/* Relay Token section */}
+          <label className="settings-label">Relay Token</label>
+          <input
+            className="settings-input"
+            type="text"
+            value={relayToken}
+            onChange={(e) => setRelayToken(e.target.value)}
+            placeholder="Enter relay pairing token"
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 16px' }}>
+            {relayConnecting && <span style={{ color: '#fbbf24', fontSize: 12 }}>Connecting...</span>}
+            {relayConnected && <span style={{ color: '#4ade80', fontSize: 12 }}>Relay connected</span>}
+            {relayError && <span style={{ color: '#f87171', fontSize: 12 }}>Connection failed: {relayError}</span>}
+            {!relayConnecting && !relayConnected && !relayError && (
+              <span style={{ color: '#666', fontSize: 12 }}>Used for mobile app pairing via relay server</span>
+            )}
+          </div>
 
           {/* Save button */}
           <button

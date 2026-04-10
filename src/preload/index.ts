@@ -154,6 +154,17 @@ const api = {
     ipcRenderer.on('mobile:status', handler)
     return () => ipcRenderer.removeListener('mobile:status', handler)
   },
+
+  // Relay
+  connectRelay: (request: { token: string }) => ipcRenderer.invoke('relay:connect', request),
+  disconnectRelay: () => ipcRenderer.invoke('relay:disconnect'),
+  onRelayStatus: (callback: (payload: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => void) => {
+    const handler = (_: unknown, payload: any) => callback(payload)
+    ipcRenderer.on('relay:status', handler)
+    return () => ipcRenderer.removeListener('relay:status', handler)
+  },
+  getRelayQrCode: (request?: { token: string }) =>
+    ipcRenderer.invoke('relay:qrcode', request ?? {}),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

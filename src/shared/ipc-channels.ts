@@ -102,7 +102,13 @@ export const IPC_CHANNELS = {
   'mobile:start': 'mobile:start',
   'mobile:stop': 'mobile:stop',
   'mobile:status': 'mobile:status',
-  'mobile:qrcode': 'mobile:qrcode'
+  'mobile:qrcode': 'mobile:qrcode',
+
+  // Relay channels (renderer -> main, main -> renderer)
+  'relay:connect': 'relay:connect',
+  'relay:disconnect': 'relay:disconnect',
+  'relay:status': 'relay:status',
+  'relay:qrcode': 'relay:qrcode',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -129,6 +135,7 @@ export interface IpcRequestPayloads {
     apiKey?: string
     baseURL?: string
     systemPrompt?: string
+    relayToken?: string
   }
   'workspace:open_folder': void
   'workspace:get_tree': { dirPath?: string; depth?: number }
@@ -166,6 +173,9 @@ export interface IpcRequestPayloads {
   'browser:close': void
   'mobile:start': void
   'mobile:stop': void
+  'relay:connect': { token: string }
+  'relay:disconnect': void
+  'relay:qrcode': { token?: string }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -176,6 +186,7 @@ export interface IpcResponsePayloads {
     hasApiKey: boolean
     baseURL?: string
     systemPrompt?: string
+    relayToken?: string
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null
@@ -214,6 +225,9 @@ export interface IpcResponsePayloads {
   'browser:close': void
   'mobile:start': { lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }
   'mobile:stop': void
+  'relay:connect': void
+  'relay:disconnect': void
+  'relay:qrcode': { qrCode: string }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -240,6 +254,7 @@ export interface IpcStreamPayloads {
   'browser:screenshot': { url: string; base64: string; timestamp: number }
   'browser:status': { running: boolean; url: string | null }
   'mobile:status': { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }
+  'relay:status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'mobile:qrcode': { qrCode: string }
 }
 

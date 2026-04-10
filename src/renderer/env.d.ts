@@ -65,6 +65,11 @@ declare global {
       startMobileServer: () => Promise<{ lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }>
       stopMobileServer: () => Promise<void>
       onMobileStatus: (cb: (p: { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }) => void) => () => void
+      // Relay
+      connectRelay: (request: { token: string }) => Promise<void>
+      disconnectRelay: () => Promise<void>
+      onRelayStatus: (cb: (p: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => void) => () => void
+      getRelayQrCode: (request?: { token: string }) => Promise<{ qrCode: string }>
     }
   }
 }

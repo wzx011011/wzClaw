@@ -11,6 +11,7 @@ interface SettingsState {
   hasApiKey: boolean
   baseURL?: string
   systemPrompt?: string
+  relayToken?: string
   isLoading: boolean
 }
 
@@ -43,6 +44,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         hasApiKey: settings.hasApiKey,
         baseURL: settings.baseURL,
         systemPrompt: settings.systemPrompt,
+        relayToken: settings.relayToken,
         isLoading: false
       })
     } catch (err) {

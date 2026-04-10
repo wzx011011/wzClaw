@@ -15,6 +15,7 @@ interface StoredSettings {
   model: string
   baseURL?: string
   systemPrompt?: string
+  relayToken?: string
 }
 
 interface EncryptedKeys {
@@ -69,7 +70,8 @@ export class SettingsManager {
           provider: parsed.provider ?? 'openai',
           model: parsed.model ?? 'gpt-4o',
           baseURL: parsed.baseURL,
-          systemPrompt: parsed.systemPrompt
+          systemPrompt: parsed.systemPrompt,
+          relayToken: parsed.relayToken
         }
       } catch (err) {
         console.error('Failed to load settings.json:', err)
@@ -144,7 +146,8 @@ export class SettingsManager {
       model: this.settings.model,
       hasApiKey: this.decryptedKeys.has(this.settings.provider),
       baseURL: this.settings.baseURL,
-      systemPrompt: this.settings.systemPrompt
+      systemPrompt: this.settings.systemPrompt,
+      relayToken: this.settings.relayToken
     }
   }
 
@@ -157,11 +160,13 @@ export class SettingsManager {
     apiKey?: string
     baseURL?: string
     systemPrompt?: string
+    relayToken?: string
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
     if (request.baseURL !== undefined) this.settings.baseURL = request.baseURL
     if (request.systemPrompt !== undefined) this.settings.systemPrompt = request.systemPrompt
+    if (request.relayToken !== undefined) this.setRelayToken(request.relayToken)
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)
@@ -175,6 +180,15 @@ export class SettingsManager {
    */
   getApiKey(provider: string): string | undefined {
     return this.decryptedKeys.get(provider)
+  }
+
+  getRelayToken(): string | undefined {
+    return this.settings.relayToken
+  }
+
+  setRelayToken(token: string): void {
+    this.settings.relayToken = token
+    this.save()
   }
 
   /**
