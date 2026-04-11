@@ -243,8 +243,28 @@ app.whenReady().then(() => {
 
   // Plan mode controller — shared between tools and IPC handler
   const planModeController = new PlanModeController()
-  toolRegistry.register(new EnterPlanModeTool(permissionManager, getWebContents))
-  toolRegistry.register(new ExitPlanModeTool(permissionManager, getWebContents, planModeController))
+
+  // Sender wrapper for plan-mode tools: broadcasts plan-mode events to mobile alongside renderer
+  const getPlanModeSender = (): Electron.WebContents | null => {
+    const wc = getWebContents()
+    if (!wc) return null
+    return {
+      isDestroyed: () => wc.isDestroyed(),
+      send: (channel: string, ...args: unknown[]) => {
+        wc.send(channel, ...args)
+        if (channel === IPC_CHANNELS['agent:plan-mode-entered']) {
+          mobileServer.broadcast('stream:agent:plan_mode_entered', args[0] ?? {})
+          relayClient.broadcast('stream:agent:plan_mode_entered', args[0] ?? {})
+        } else if (channel === IPC_CHANNELS['agent:plan-mode-exited']) {
+          mobileServer.broadcast('stream:agent:plan_mode_exited', args[0] ?? {})
+          relayClient.broadcast('stream:agent:plan_mode_exited', args[0] ?? {})
+        }
+      }
+    } as unknown as Electron.WebContents
+  }
+
+  toolRegistry.register(new EnterPlanModeTool(permissionManager, getPlanModeSender))
+  toolRegistry.register(new ExitPlanModeTool(permissionManager, getPlanModeSender, planModeController))
 
   // AskUserQuestion tool — interactive question card in chat (Phase 4.2)
   const askUserTool = new AskUserQuestionTool(getWebContents)
@@ -613,6 +633,12 @@ app.whenReady().then(() => {
       return
     }
 
+    // -- Plan Mode: mobile approval/rejection --
+    if (msg.event === 'plan:decision') {
+      planModeController.resolveDecision(msg.data?.approved === true)
+      return
+    }
+
     // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
       // Use session ID from mobile, or generate one for this mobile conversation
@@ -649,7 +675,19 @@ app.whenReady().then(() => {
       }
 
       try {
-        for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig)) {
+        // Mobile sender: forwards stream:retrying to mobile alongside the renderer
+        const wcForMobile = BrowserWindow.getAllWindows()[0]?.webContents
+        const mobileSender = {
+          isDestroyed: () => wcForMobile?.isDestroyed() ?? true,
+          send: (channel: string, ...args: unknown[]) => {
+            if (wcForMobile && !wcForMobile.isDestroyed()) wcForMobile.send(channel, ...args)
+            if (channel === IPC_CHANNELS['stream:retrying']) {
+              mobileServer.broadcast('stream:retrying', args[0] ?? {})
+              relayClient.broadcast('stream:retrying', args[0] ?? {})
+            }
+          }
+        } as unknown as Electron.WebContents
+        for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig, mobileSender)) {
           // Forward stream events to renderer
           const wc = BrowserWindow.getAllWindows()[0]?.webContents
           if (wc) {
