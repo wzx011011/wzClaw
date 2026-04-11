@@ -2,7 +2,7 @@
 // Hook Registry — Pre/post tool execution and session lifecycle hooks
 // ============================================================
 
-export type HookEvent = 'pre-tool' | 'post-tool' | 'session-start' | 'session-end' | 'error'
+export type HookEvent = 'pre-tool' | 'post-tool' | 'session-start' | 'session-end' | 'error' | 'pre-compact' | 'post-compact' | 'permission-denied'
 
 export interface HookContext {
   event: HookEvent

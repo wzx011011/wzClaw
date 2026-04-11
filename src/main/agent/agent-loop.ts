@@ -54,6 +54,9 @@ export class AgentLoop {
     config: AgentConfig,
     sender?: Electron.WebContents
   ): AsyncGenerator<AgentEvent> {
+    // Emit session-start for this conversation turn
+    await this.hookRegistry?.emit('session-start', { conversationId: config.conversationId })
+
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
 
     // Create AbortController for this run
@@ -110,6 +113,7 @@ export class AgentLoop {
           error: 'Agent loop cancelled',
           recoverable: true
         }
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
 
@@ -133,6 +137,7 @@ export class AgentLoop {
 
       // Context management: check if compaction needed before LLM call
       if (this.contextManager.shouldCompact(this.messages, config.model)) {
+        await this.hookRegistry?.emit('pre-compact', { conversationId: config.conversationId })
         const result = await this.contextManager.compact(
           this.messages,
           this.gateway,
@@ -140,6 +145,7 @@ export class AgentLoop {
           config.provider,
           config.systemPrompt
         )
+        await this.hookRegistry?.emit('post-compact', { conversationId: config.conversationId })
         if (result.summary) {
           // Replace messages with compacted version
           const summaryMsg: Message = {
@@ -205,7 +211,10 @@ export class AgentLoop {
         if (hadError) break
       }
 
-      if (hadError) return
+      if (hadError) {
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
 
       totalUsage.inputTokens += streamUsage.inputTokens
       totalUsage.outputTokens += streamUsage.outputTokens
@@ -228,6 +237,7 @@ export class AgentLoop {
           usage: totalUsage,
           turnCount
         }
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
 
@@ -265,6 +275,7 @@ export class AgentLoop {
             approved = await this.permissionManager.requestApproval(config.conversationId, toolCall.name, toolCall.input, sender)
           }
           if (!approved) {
+            await this.hookRegistry?.emit('permission-denied', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
             const output = `Permission denied for tool: ${toolCall.name}`
             this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
             events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output, isError: true })
@@ -314,7 +325,10 @@ export class AgentLoop {
         }
       }
 
-      if (loopDetected) return
+      if (loopDetected) {
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
 
       // Continue loop — feed tool results back to LLM
     }
@@ -330,6 +344,7 @@ export class AgentLoop {
       usage: totalUsage,
       turnCount
     }
+    await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
   }
 
   /**

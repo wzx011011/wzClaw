@@ -87,4 +87,33 @@ export function registerBuiltInHooks(registry: HookRegistry): void {
     },
     priority: 1
   })
+
+  // Compaction lifecycle logging
+  registry.register({
+    id: 'builtin:pre-compact',
+    event: 'pre-compact',
+    handler: async (ctx) => {
+      console.log(`[Hook] Context compaction starting: ${ctx.conversationId}`)
+    },
+    priority: 10
+  })
+
+  registry.register({
+    id: 'builtin:post-compact',
+    event: 'post-compact',
+    handler: async (ctx) => {
+      console.log(`[Hook] Context compaction complete: ${ctx.conversationId}`)
+    },
+    priority: 10
+  })
+
+  // Permission-denied logging
+  registry.register({
+    id: 'builtin:permission-denied',
+    event: 'permission-denied',
+    handler: async (ctx) => {
+      console.warn(`[Hook] Permission denied for tool "${ctx.toolName}" in conversation ${ctx.conversationId}`)
+    },
+    priority: 10
+  })
 }

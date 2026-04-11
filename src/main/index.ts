@@ -38,6 +38,8 @@ import { SessionStore } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
 import { TaskManager } from './tasks/task-manager'
+import { HookRegistry } from './hooks/hook-registry'
+import { registerBuiltInHooks } from './hooks/built-in-hooks'
 import { CreateTaskTool } from './tools/create-task'
 import { UpdateTaskTool } from './tools/update-task'
 import { IndexingEngine } from './indexing/indexing-engine'
@@ -234,7 +236,12 @@ app.whenReady().then(() => {
   const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, taskManager, indexingEngine)
   const permissionManager = new PermissionManager()
   const contextManager = new ContextManager()
-  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager)
+
+  // Instantiate Hooks system and register built-in hooks
+  const hookRegistry = new HookRegistry()
+  registerBuiltInHooks(hookRegistry)
+
+  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry)
 
   // Instantiate and connect MCP servers (tools auto-register into toolRegistry)
   const mcpManager = new MCPManager(toolRegistry)
