@@ -19,14 +19,15 @@ export class AnthropicAdapter implements LLMAdapter {
       const params: Anthropic.MessageCreateParams = {
         model: options.model,
         max_tokens: options.maxTokens ?? 8192,
-        messages: options.messages
-          .filter(m => m.role !== 'system')
-          .map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content as string,
-          })),
+        // Messages are already in Anthropic format from MessageBuilder.buildAnthropicMessages
+        // (content is string for user/system, array of blocks for assistant+tool_use, array for tool_result)
+        messages: options.messages.filter(m => m.role !== 'system') as Anthropic.MessageParam[],
         ...(options.systemPrompt && { system: options.systemPrompt }),
         ...(options.temperature !== undefined && { temperature: options.temperature }),
+        // Pass tools via native API param so Claude generates tool_use blocks
+        ...(options.tools && options.tools.length > 0 && {
+          tools: options.tools as Anthropic.Tool[],
+        }),
       }
 
       const stream = this.client.messages.stream(params)

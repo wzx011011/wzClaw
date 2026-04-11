@@ -15,6 +15,8 @@ import { PromptTooLongError } from '../llm/retry'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { MemoryManager } from '../memory/memory-manager'
 import { truncateToolResult } from '../context/tool-result-budget'
+import { StreamingToolExecutor } from './streaming-tool-executor'
+import type { ToolExecResult } from './streaming-tool-executor'
 
 // ============================================================
 // AgentLoop (per D-23, D-35)
@@ -191,7 +193,7 @@ export class AgentLoop {
         }
       }
 
-      // Stream from LLM
+      // Stream from LLM — start tool executions eagerly via StreamingToolExecutor
       let textContent = ''
       const toolCalls: ToolCall[] = []
       let streamUsage = { inputTokens: 0, outputTokens: 0 }
@@ -199,6 +201,60 @@ export class AgentLoop {
 
       // Track tool names from tool_use_start events (tool_use_end doesn't include name)
       const toolNameMap = new Map<string, string>()
+
+      // Streaming executor: starts each tool execution as soon as its block finishes,
+      // overlapping with the remaining LLM stream for read-only tools.
+      const executor = new StreamingToolExecutor(this.toolRegistry.isReadOnly.bind(this.toolRegistry))
+
+      // Core tool execution helper.
+      // Handles loop detection, plan mode, permission checks, and tool.execute().
+      // Does NOT modify this.messages — caller processes results after waitAll().
+      const executeToolCore = async (toolCall: ToolCall): Promise<ToolExecResult> => {
+        this.loopDetector.record(toolCall.name, toolCall.input)
+        if (this.loopDetector.isLooping()) {
+          const msg = 'Loop detected: same tool call repeated 3+ times'
+          return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: true }
+        }
+
+        const tool = this.toolRegistry.get(toolCall.name)
+        if (!tool) {
+          const msg = ContextManager.truncateToolResult(`Tool not found: ${toolCall.name}`)
+          return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: false }
+        }
+
+        // Block write tools when plan mode is active
+        const planModeRejection = this.permissionManager.getPlanModeRejection(toolCall.name)
+        if (planModeRejection) {
+          const truncated = ContextManager.truncateToolResult(planModeRejection)
+          return { toolCallId: toolCall.id, toolName: toolCall.name, output: planModeRejection, truncatedOutput: truncated, isError: true, loopDetected: false }
+        }
+
+        if (this.permissionManager.needsApproval(toolCall.name, toolCall.input)) {
+          let approved = false
+          if (sender) {
+            approved = await this.permissionManager.requestApproval(config.conversationId, toolCall.name, toolCall.input, sender)
+          }
+          if (!approved) {
+            await this.hookRegistry?.emit('permission-denied', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
+            const msg = `Permission denied for tool: ${toolCall.name}`
+            return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: false }
+          }
+        }
+
+        try {
+          await this.hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
+          const result = await tool.execute(toolCall.input, {
+            workingDirectory: config.workingDirectory,
+            abortSignal: this.abortController!.signal
+          })
+          const truncatedOutput = truncateToolResult(toolCall.name, result.output)
+          await this.hookRegistry?.emit('post-tool', { toolName: toolCall.name, toolInput: toolCall.input, toolOutput: truncatedOutput, isError: result.isError, conversationId: config.conversationId })
+          return { toolCallId: toolCall.id, toolName: toolCall.name, output: result.output, truncatedOutput, isError: result.isError, loopDetected: false }
+        } catch (err) {
+          const msg = ContextManager.truncateToolResult(err instanceof Error ? err.message : String(err))
+          return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: false }
+        }
+      }
 
       try {
         for await (const event of this.gateway.stream(streamOptions)) {
@@ -213,13 +269,17 @@ export class AgentLoop {
               toolNameMap.set(event.id, event.name)
               break
 
-            case 'tool_use_end':
-              toolCalls.push({
-                id: event.id,
-                name: toolNameMap.get(event.id) || '',
-                input: event.parsedInput
-              })
+            case 'tool_use_end': {
+              const toolName = toolNameMap.get(event.id) || ''
+              const toolCall: ToolCall = { id: event.id, name: toolName, input: event.parsedInput }
+              toolCalls.push(toolCall)
+              // Emit tool_call event immediately so the UI shows the tool starting
+              yield { type: 'agent:tool_call', toolCallId: event.id, toolName, input: event.parsedInput }
+              // Start execution now — read-only tools run in parallel with the remaining
+              // LLM stream; write tools are chained sequentially
+              executor.onToolUseEnd(event.id, toolName, () => executeToolCore(toolCall))
               break
+            }
 
             case 'error':
               yield {
@@ -297,97 +357,25 @@ export class AgentLoop {
         return
       }
 
-      // Process tool calls with concurrency:
-      // Read-only tools execute in parallel, write tools sequentially
+      // Wait for all tool executions started during streaming to complete,
+      // then process results in original LLM-emission order.
       let loopDetected = false
-
-      // Helper to execute a single tool call
-      const executeSingleTool = async (toolCall: ToolCall): Promise<AgentEvent[]> => {
-        const events: AgentEvent[] = []
-
-        this.loopDetector.record(toolCall.name, toolCall.input)
-        if (this.loopDetector.isLooping()) {
-          events.push({
-            type: 'agent:error',
-            error: 'Loop detected: same tool call repeated 3+ times',
-            recoverable: true
+      if (executor.size > 0) {
+        const execResults = await executor.waitAll()
+        for (const result of execResults) {
+          if (result.loopDetected) {
+            yield { type: 'agent:error', error: 'Loop detected: same tool call repeated 3+ times', recoverable: true }
+            loopDetected = true
+            break
+          }
+          this.messages.push({
+            role: 'tool_result',
+            toolCallId: result.toolCallId,
+            content: result.truncatedOutput,
+            isError: result.isError,
+            timestamp: Date.now()
           })
-          loopDetected = true
-          return events
-        }
-
-        const tool = this.toolRegistry.get(toolCall.name)
-        if (!tool) {
-          const output = ContextManager.truncateToolResult(`Tool not found: ${toolCall.name}`)
-          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
-          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output, isError: true })
-          return events
-        }
-
-        // Check plan mode — block write tools while planning is active
-        const planModeRejection = this.permissionManager.getPlanModeRejection(toolCall.name)
-        if (planModeRejection) {
-          const output = ContextManager.truncateToolResult(planModeRejection)
-          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
-          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: planModeRejection, isError: true })
-          return events
-        }
-
-        if (this.permissionManager.needsApproval(toolCall.name, toolCall.input)) {
-          events.push({ type: 'agent:permission_request', toolCallId: toolCall.id, toolName: toolCall.name, input: toolCall.input })
-          let approved = false
-          if (sender) {
-            approved = await this.permissionManager.requestApproval(config.conversationId, toolCall.name, toolCall.input, sender)
-          }
-          if (!approved) {
-            await this.hookRegistry?.emit('permission-denied', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
-            const output = `Permission denied for tool: ${toolCall.name}`
-            this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
-            events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output, isError: true })
-            return events
-          }
-        }
-
-        try {
-          await this.hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
-          const result = await tool.execute(toolCall.input, { workingDirectory: config.workingDirectory, abortSignal: this.abortController!.signal })
-          // Use per-tool truncation strategy (middle/tail/head) instead of generic head-truncation
-          const truncatedOutput = truncateToolResult(toolCall.name, result.output)
-          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: truncatedOutput, isError: result.isError, timestamp: Date.now() })
-          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: result.output, isError: result.isError })
-          await this.hookRegistry?.emit('post-tool', { toolName: toolCall.name, toolInput: toolCall.input, toolOutput: truncatedOutput, isError: result.isError, conversationId: config.conversationId })
-        } catch (err) {
-          const errorMsg = ContextManager.truncateToolResult(err instanceof Error ? err.message : String(err))
-          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: errorMsg, isError: true, timestamp: Date.now() })
-          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: errorMsg, isError: true })
-        }
-        return events
-      }
-
-      // Partition into read-only and write groups
-      const readOnlyCalls = toolCalls.filter((tc) => this.toolRegistry.isReadOnly(tc.name))
-      const writeCalls = toolCalls.filter((tc) => !this.toolRegistry.isReadOnly(tc.name))
-
-      // Yield tool_call events for all
-      for (const toolCall of toolCalls) {
-        yield { type: 'agent:tool_call', toolCallId: toolCall.id, toolName: toolCall.name, input: toolCall.input }
-      }
-
-      // Execute read-only tools in parallel
-      if (readOnlyCalls.length > 0) {
-        const results = await Promise.all(readOnlyCalls.map(executeSingleTool))
-        for (const events of results) {
-          for (const ev of events) yield ev
-          if (loopDetected) break
-        }
-      }
-
-      // Execute write tools sequentially
-      if (!loopDetected) {
-        for (const tc of writeCalls) {
-          const events = await executeSingleTool(tc)
-          for (const ev of events) yield ev
-          if (loopDetected) break
+          yield { type: 'agent:tool_result', toolCallId: result.toolCallId, toolName: result.toolName, output: result.output, isError: result.isError }
         }
       }
 
