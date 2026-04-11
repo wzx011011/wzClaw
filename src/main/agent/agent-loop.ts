@@ -14,6 +14,7 @@ import type { AgentEvent, AgentConfig } from './types'
 import { PromptTooLongError } from '../llm/retry'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { MemoryManager } from '../memory/memory-manager'
+import { truncateToolResult } from '../context/tool-result-budget'
 
 // ============================================================
 // AgentLoop (per D-23, D-35)
@@ -341,7 +342,8 @@ export class AgentLoop {
         try {
           await this.hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
           const result = await tool.execute(toolCall.input, { workingDirectory: config.workingDirectory, abortSignal: this.abortController!.signal })
-          const truncatedOutput = ContextManager.truncateToolResult(result.output)
+          // Use per-tool truncation strategy (middle/tail/head) instead of generic head-truncation
+          const truncatedOutput = truncateToolResult(toolCall.name, result.output)
           this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: truncatedOutput, isError: result.isError, timestamp: Date.now() })
           events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: result.output, isError: result.isError })
           await this.hookRegistry?.emit('post-tool', { toolName: toolCall.name, toolInput: toolCall.input, toolOutput: truncatedOutput, isError: result.isError, conversationId: config.conversationId })
