@@ -9,9 +9,18 @@ interface RelayStatus {
   mobileConnected: boolean; mobileIdentity: string | null
 }
 
+interface UsageDisplay {
+  totalCostUSD: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  model: string
+}
+
 /**
  * StatusBar -- bottom status bar showing workspace path, agent status,
- * terminal info, index status, and relay connection status.
+ * terminal info, index status, relay connection status, and cost (Phase 4.4).
  */
 export default function StatusBar(): JSX.Element {
   const rootPath = useWorkspaceStore((s) => s.rootPath)
@@ -22,6 +31,7 @@ export default function StatusBar(): JSX.Element {
   const indexFileCount = useIndexStore((s) => s.fileCount)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
+  const [usage, setUsage] = useState<UsageDisplay | null>(null)
 
   useEffect(() => {
     // Fetch initial relay status (events may have fired before mount)
@@ -30,11 +40,18 @@ export default function StatusBar(): JSX.Element {
       if (status) setRelayStatus(status)
     }).catch((err) => console.error('[StatusBar] getRelayStatus error:', err))
     // Subscribe to relay status updates
-    const unsub = window.wzxclaw.onRelayStatus((status) => {
+    const unsubRelay = window.wzxclaw.onRelayStatus((status) => {
       console.log('[StatusBar] relay status event:', JSON.stringify(status))
       setRelayStatus(status)
     })
-    return unsub
+    // Subscribe to usage/cost updates (Phase 4.4)
+    const unsubUsage = window.wzxclaw.onUsageUpdate?.((payload) => {
+      setUsage(payload)
+    }) ?? (() => {})
+    return () => {
+      unsubRelay()
+      unsubUsage()
+    }
   }, [])
 
   const displayPath = rootPath ?? 'No folder open'
@@ -42,6 +59,13 @@ export default function StatusBar(): JSX.Element {
   const activeTerminal = panelVisible && activeTerminalId
     ? tabs.find((t) => t.id === activeTerminalId)
     : null
+
+  // Format cost display: "$0.0012 | 4.5K tok"
+  const formatUsage = (u: UsageDisplay): string => {
+    const total = u.inputTokens + u.outputTokens
+    const tokStr = total >= 1000 ? `${(total / 1000).toFixed(1)}K tok` : `${total} tok`
+    return `$${u.totalCostUSD.toFixed(4)} | ${tokStr}`
+  }
 
   return (
     <div className="status-bar">
@@ -70,6 +94,15 @@ export default function StatusBar(): JSX.Element {
             </span>
           )}
         </span>
+        {/* Cost / token usage display (Phase 4.4) */}
+        {usage && (
+          <span
+            className="status-item status-cost"
+            title={`Model: ${usage.model} | Input: ${usage.inputTokens.toLocaleString()} | Output: ${usage.outputTokens.toLocaleString()} | Cache read: ${usage.cacheReadTokens.toLocaleString()} | Cache write: ${usage.cacheWriteTokens.toLocaleString()}`}
+          >
+            {formatUsage(usage)}
+          </span>
+        )}
         <span className="status-item">
           {isStreaming ? 'Agent: Working...' : 'Agent: Ready'}
         </span>

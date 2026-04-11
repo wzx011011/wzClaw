@@ -1169,6 +1169,13 @@ html, body, #root {
   color: var(--accent);
 }
 
+/* Cost / token usage display (Phase 4.4) */
+.status-cost {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
 /* ============================================================
    Welcome Screen
    ============================================================ */

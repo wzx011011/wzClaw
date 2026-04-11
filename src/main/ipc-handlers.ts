@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
+import { CostTracker } from './llm/cost-tracker'
 
 /**
  * Check whether a file path is within the workspace root boundary.
@@ -44,6 +45,9 @@ export function registerIpcHandlers(
 ): void {
   // Mutable reference to IndexingEngine (updated when workspace opens)
   const indexingEngineRef = { current: indexingEngine }
+
+  // Session-scoped cost tracker — resets on each new send (Phase 4.4)
+  const costTracker = new CostTracker()
 
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
@@ -148,6 +152,15 @@ export function registerIpcHandlers(
             break
           case 'agent:done':
             sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+            // Track cost and push usage:update to renderer (Phase 4.4)
+            costTracker.addUsage(
+              agentConfig.model,
+              agentEvent.usage.inputTokens,
+              agentEvent.usage.outputTokens,
+              agentEvent.usage.cacheReadTokens ?? 0,
+              agentEvent.usage.cacheWriteTokens ?? 0
+            )
+            sender.send(IPC_CHANNELS['usage:update'], costTracker.getSession())
             // Auto-save messages after agent turn completes (PERSIST-02)
             try {
               const allMessages = agentLoop.getMessages()
