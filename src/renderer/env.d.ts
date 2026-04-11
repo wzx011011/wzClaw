@@ -83,6 +83,9 @@ declare global {
       onPlanModeEntered: (cb: () => void) => () => void
       onPlanModeExited: (cb: (p: { plan: string }) => void) => () => void
       sendPlanDecision: (request: { approved: boolean }) => Promise<void>
+      // File history / revert
+      getFileHistory: (request: { filePath: string }) => Promise<Array<{ toolCallId: string; timestamp: number; filePath: string }>>
+      revertFile: (request: { toolCallId: string }) => Promise<{ success: boolean; error?: string }>
     }
   }
 }

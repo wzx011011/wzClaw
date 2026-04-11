@@ -17,6 +17,8 @@ import { MemoryManager } from '../memory/memory-manager'
 import { truncateToolResult } from '../context/tool-result-budget'
 import { StreamingToolExecutor } from './streaming-tool-executor'
 import type { ToolExecResult } from './streaming-tool-executor'
+import type { FileHistoryManager } from '../file-history/file-history-manager'
+import path from 'path'
 
 // ============================================================
 // AgentLoop (per D-23, D-35)
@@ -44,7 +46,8 @@ export class AgentLoop {
     private toolRegistry: ToolRegistry,
     private permissionManager: PermissionManager,
     private contextManager: ContextManager,
-    private hookRegistry?: HookRegistry
+    private hookRegistry?: HookRegistry,
+    private historyManager?: FileHistoryManager
   ) {}
 
   /**
@@ -243,6 +246,16 @@ export class AgentLoop {
 
         try {
           await this.hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
+          // Snapshot file content before write/edit so the renderer can offer Revert
+          if (this.historyManager && (toolCall.name === 'FileWrite' || toolCall.name === 'FileEdit')) {
+            const rawPath = String(toolCall.input.path ?? '')
+            if (rawPath) {
+              const absolutePath = path.isAbsolute(rawPath)
+                ? rawPath
+                : path.resolve(config.workingDirectory, rawPath)
+              await this.historyManager.snapshot(absolutePath, toolCall.id)
+            }
+          }
           const result = await tool.execute(toolCall.input, {
             workingDirectory: config.workingDirectory,
             abortSignal: this.abortController!.signal

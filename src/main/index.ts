@@ -50,6 +50,7 @@ import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { BrowserManager } from './browser/browser-manager'
 import { MCPManager } from './mcp/mcp-manager'
 import { PlanModeController, EnterPlanModeTool, ExitPlanModeTool } from './tools/plan-mode'
+import { FileHistoryManager } from './file-history/file-history-manager'
 import {
   BrowserNavigateTool,
   BrowserClickTool,
@@ -248,11 +249,35 @@ app.whenReady().then(() => {
     planModeController.resolveDecision(request.approved)
   })
 
+  // IPC handlers: file history and revert (Phase 3.3)
+  ipcMain.handle(IPC_CHANNELS['file:get-history'], (_event, request: { filePath: string }) => {
+    return historyManager.getEntriesForFile(request.filePath).map((e) => ({
+      toolCallId: e.toolCallId,
+      timestamp: e.timestamp,
+      filePath: e.filePath
+    }))
+  })
+
+  ipcMain.handle(IPC_CHANNELS['file:revert'], async (_event, request: { toolCallId: string }) => {
+    const entry = historyManager.getByToolCallId(request.toolCallId)
+    if (!entry) return { success: false, error: 'No snapshot found for this tool call' }
+    try {
+      const fsp = await import('fs/promises')
+      await fsp.writeFile(entry.filePath, entry.content, 'utf-8')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   // Instantiate Hooks system and register built-in hooks
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
 
-  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry)
+  // File history manager — snapshots files before each AI write for session-scoped revert
+  const historyManager = new FileHistoryManager()
+
+  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
 
   // Instantiate and connect MCP servers (tools auto-register into toolRegistry)
   const mcpManager = new MCPManager(toolRegistry)

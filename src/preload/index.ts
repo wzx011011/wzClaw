@@ -199,6 +199,12 @@ const api = {
   },
   sendPlanDecision: (request: { approved: boolean }) =>
     ipcRenderer.invoke('agent:plan-decision', request),
+
+  // File history / revert (Phase 3.3)
+  getFileHistory: (request: { filePath: string }) =>
+    ipcRenderer.invoke('file:get-history', request),
+  revertFile: (request: { toolCallId: string }) =>
+    ipcRenderer.invoke('file:revert', request),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

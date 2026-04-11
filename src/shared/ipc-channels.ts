@@ -56,6 +56,10 @@ export const IPC_CHANNELS = {
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
 
+  // File history / revert channels (renderer -> main)
+  'file:get-history': 'file:get-history',
+  'file:revert': 'file:revert',
+
   // Plan mode channels (main -> renderer events, renderer -> main decision)
   'agent:plan-mode-entered': 'agent:plan-mode-entered',
   'agent:plan-mode-exited': 'agent:plan-mode-exited',
@@ -162,6 +166,8 @@ export interface IpcRequestPayloads {
   'session:delete': { sessionId: string }
   'session:rename': { sessionId: string; title: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
+  'file:get-history': { filePath: string }
+  'file:revert': { toolCallId: string }
   'agent:compact_context': void
   'agent:plan-decision': { approved: boolean }
   'terminal:create': { cwd: string }
@@ -218,6 +224,8 @@ export interface IpcResponsePayloads {
   'session:delete': { success: boolean }
   'session:rename': { success: boolean }
   'file:apply-hunk': { success: boolean }
+  'file:get-history': Array<{ toolCallId: string; timestamp: number; filePath: string }>
+  'file:revert': { success: boolean; error?: string }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
   'agent:plan-decision': void
   'terminal:create': { terminalId: string }

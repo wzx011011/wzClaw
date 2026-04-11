@@ -264,6 +264,10 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
   const setActiveDiff = useDiffStore((s) => s.setActiveDiff)
   const pendingDiffs = useDiffStore((s) => s.pendingDiffs)
 
+  // Revert state — tracks whether this tool call's write has been undone
+  const [reverted, setReverted] = useState(false)
+  const [revertError, setRevertError] = useState<string | null>(null)
+
   const { name, status, input, output } = toolCall
 
   // Extract file path from input for FileEdit/FileWrite tools (per D-64)
@@ -333,6 +337,21 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
   const reviewStatus = existingDiff
     ? `${existingDiff.hunks.filter(h => h.status === 'pending').length} pending`
     : null
+
+  // Handle "Revert" click: restore file to pre-write snapshot via IPC
+  const handleRevert = async (): Promise<void> => {
+    try {
+      const result = await window.wzxclaw.revertFile({ toolCallId: toolCall.id })
+      if (result.success) {
+        setReverted(true)
+        setRevertError(null)
+      } else {
+        setRevertError(result.error ?? 'Revert failed')
+      }
+    } catch (err) {
+      setRevertError(err instanceof Error ? err.message : 'Revert failed')
+    }
+  }
 
   // Render special input section for web/symbol tools
   const renderSpecialInput = (): JSX.Element | null => {
@@ -459,15 +478,32 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
             </div>
           ) : (
             <>
-              {/* Review Changes button for file-modifying tools */}
-              {isFileModifying && status === 'completed' && !existingDiff && filePath && (
+              {/* Review Changes + Revert buttons for file-modifying tools */}
+              {isFileModifying && status === 'completed' && filePath && (
             <div className="tool-card-section">
-              <button
-                className="tool-card-review-btn"
-                onClick={handleReviewChanges}
-              >
-                Review Changes
-              </button>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {!existingDiff && (
+                  <button
+                    className="tool-card-review-btn"
+                    onClick={handleReviewChanges}
+                  >
+                    Review Changes
+                  </button>
+                )}
+                {!reverted ? (
+                  <button
+                    className="tool-card-revert-btn"
+                    onClick={handleRevert}
+                  >
+                    Revert
+                  </button>
+                ) : (
+                  <span className="tool-card-reverted">Reverted</span>
+                )}
+              </div>
+              {revertError && (
+                <div className="tool-card-revert-error">{revertError}</div>
+              )}
             </div>
           )}
           {/* Special rendering for web/symbol tools */}
