@@ -13,6 +13,7 @@ import type { HookRegistry } from '../hooks/hook-registry'
 import type { AgentEvent, AgentConfig } from './types'
 import { PromptTooLongError } from '../llm/retry'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
+import { MemoryManager } from '../memory/memory-manager'
 
 // ============================================================
 // AgentLoop (per D-23, D-35)
@@ -95,9 +96,19 @@ export class AgentLoop {
       // Instructions unavailable — skip
     }
 
+    // Load MEMORY.md cross-session memory (silent if absent)
+    let memorySection = ''
+    try {
+      const memoryManager = new MemoryManager(config.workingDirectory)
+      memorySection = await memoryManager.buildSystemPromptSection()
+    } catch {
+      // Memory unavailable — skip
+    }
+
     let basePrompt = config.systemPrompt
     if (gitContext) basePrompt += `\n\n${gitContext}`
     if (instructionSection) basePrompt += `\n\n${instructionSection}`
+    if (memorySection) basePrompt += `\n\n${memorySection}`
 
     const systemPrompt = this.messageBuilder.buildSystemPrompt(
       basePrompt,
