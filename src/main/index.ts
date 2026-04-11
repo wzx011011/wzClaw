@@ -51,6 +51,8 @@ import { BrowserManager } from './browser/browser-manager'
 import { MCPManager } from './mcp/mcp-manager'
 import { PlanModeController, EnterPlanModeTool, ExitPlanModeTool } from './tools/plan-mode'
 import { FileHistoryManager } from './file-history/file-history-manager'
+import { AskUserQuestionTool } from './tools/ask-user'
+import type { AskUserAnswer } from './tools/ask-user'
 import {
   BrowserNavigateTool,
   BrowserClickTool,
@@ -243,6 +245,15 @@ app.whenReady().then(() => {
   const planModeController = new PlanModeController()
   toolRegistry.register(new EnterPlanModeTool(permissionManager, getWebContents))
   toolRegistry.register(new ExitPlanModeTool(permissionManager, getWebContents, planModeController))
+
+  // AskUserQuestion tool — interactive question card in chat (Phase 4.2)
+  const askUserTool = new AskUserQuestionTool(getWebContents)
+  toolRegistry.register(askUserTool)
+
+  // IPC handler: renderer sends back the user's answer
+  ipcMain.handle(IPC_CHANNELS['ask-user:answer'], (_event, answer: AskUserAnswer) => {
+    askUserTool.resolveQuestion(answer)
+  })
 
   // IPC handler: renderer sends plan approve/reject decision
   ipcMain.handle(IPC_CHANNELS['agent:plan-decision'], (_event, request: { approved: boolean }) => {

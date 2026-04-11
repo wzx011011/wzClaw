@@ -87,6 +87,11 @@ declare global {
       // File history / revert
       getFileHistory: (request: { filePath: string }) => Promise<Array<{ toolCallId: string; timestamp: number; filePath: string }>>
       revertFile: (request: { toolCallId: string }) => Promise<{ success: boolean; error?: string }>
+      // AskUserQuestion (Phase 4.2)
+      onAskUserQuestion: (cb: (p: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => void) => () => void
+      answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) => Promise<void>
+      // Usage / cost tracking (Phase 4.4)
+      onUsageUpdate: (cb: (p: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => () => void
     }
   }
 }

@@ -2285,3 +2285,194 @@
 .toast-dismiss:hover {
   color: var(--text-primary);
 }
+
+/* ============================================================
+   AskUserQuestion — interactive question card (Phase 4.2)
+   ============================================================ */
+
+.ask-user-question {
+  margin: 8px 0;
+  border: 1px solid #4fc3f7;
+  border-radius: 6px;
+  background: rgba(79, 195, 247, 0.05);
+  overflow: hidden;
+}
+
+.ask-user-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(79, 195, 247, 0.2);
+}
+
+.ask-user-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4fc3f7;
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ask-user-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4fc3f7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ask-user-question-text {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 10px;
+}
+
+/* Single-select: styled as clickable button rows */
+.ask-user-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text-primary);
+}
+
+.ask-user-option-btn:hover:not(:disabled) {
+  border-color: #4fc3f7;
+  background: rgba(79, 195, 247, 0.08);
+}
+
+.ask-user-option-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Multi-select: label rows with checkboxes */
+.ask-user-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text-primary);
+}
+
+.ask-user-option.selected {
+  border-color: #4fc3f7;
+  background: rgba(79, 195, 247, 0.08);
+}
+
+.ask-user-option input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: #4fc3f7;
+}
+
+.ask-user-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ask-user-option-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.ask-user-option-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ask-user-custom {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 10px;
+}
+
+.ask-user-custom-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ask-user-custom-input:focus {
+  border-color: #4fc3f7;
+}
+
+.ask-user-submit-row {
+  padding: 0 12px 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ask-user-submit-btn {
+  padding: 5px 16px;
+  border: 1px solid #4fc3f7;
+  border-radius: 4px;
+  background: rgba(79, 195, 247, 0.15);
+  color: #4fc3f7;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ask-user-submit-btn:hover:not(:disabled) {
+  background: rgba(79, 195, 247, 0.3);
+}
+
+.ask-user-submit-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ask-user-answered-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-color: rgba(79, 195, 247, 0.3);
+}
+
+.ask-user-answered-label {
+  font-size: 11px;
+  color: #4fc3f7;
+  font-weight: 600;
+}
+
+.ask-user-answered-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}

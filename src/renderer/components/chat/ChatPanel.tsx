@@ -13,6 +13,7 @@ import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import TaskPanel from './TaskPanel'
+import AskUserQuestion from './AskUserQuestion'
 import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
@@ -85,6 +86,11 @@ export default function ChatPanel(): JSX.Element {
   const [planModeActive, setPlanModeActive] = useState(false)
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
 
+  // AskUserQuestion state — pending interactive questions from agent (Phase 4.2)
+  const [pendingAskUserQuestions, setPendingAskUserQuestions] = useState<
+    Array<{ questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }>
+  >([])
+
   // Load permission mode from backend on mount
   useEffect(() => {
     window.wzxclaw.getPermissionMode?.().then((result: { mode: string }) => {
@@ -151,6 +157,14 @@ export default function ChatPanel(): JSX.Element {
       unsubEntered()
       unsubExited()
     }
+  }, [])
+
+  // Subscribe to AskUserQuestion events from agent (Phase 4.2)
+  useEffect(() => {
+    const unsub = window.wzxclaw.onAskUserQuestion?.((payload) => {
+      setPendingAskUserQuestions((prev) => [...prev, payload])
+    }) ?? (() => {})
+    return unsub
   }, [])
 
   const handlePlanDecision = (approved: boolean): void => {
@@ -355,6 +369,20 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Permission requests */}
       <PermissionRequest />
+
+      {/* AskUserQuestion panels — rendered above DiffPreview (Phase 4.2) */}
+      {pendingAskUserQuestions.map((q) => (
+        <AskUserQuestion
+          key={q.questionId}
+          questionId={q.questionId}
+          question={q.question}
+          options={q.options}
+          multiSelect={q.multiSelect}
+          onDismiss={(id) =>
+            setPendingAskUserQuestions((prev) => prev.filter((p) => p.questionId !== id))
+          }
+        />
+      ))}
 
       {/* Diff preview for pending file changes */}
       <DiffPreview />

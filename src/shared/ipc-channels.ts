@@ -124,6 +124,13 @@ export const IPC_CHANNELS = {
   'relay:status': 'relay:status',
   'relay:get_status': 'relay:get_status',
   'relay:qrcode': 'relay:qrcode',
+
+  // AskUserQuestion channels (main -> renderer push, renderer -> main invoke)
+  'ask-user:question': 'ask-user:question',
+  'ask-user:answer': 'ask-user:answer',
+
+  // Usage / cost tracking (main -> renderer push)
+  'usage:update': 'usage:update',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -197,6 +204,7 @@ export interface IpcRequestPayloads {
   'relay:disconnect': void
   'relay:get_status': void
   'relay:qrcode': { token?: string }
+  'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -255,6 +263,7 @@ export interface IpcResponsePayloads {
   'relay:disconnect': void
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
+  'ask-user:answer': void
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -288,6 +297,8 @@ export interface IpcStreamPayloads {
   'mobile:status': { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }
   'relay:status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'mobile:qrcode': { qrCode: string }
+  'ask-user:question': { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
+  'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
 }
 
 // ============================================================

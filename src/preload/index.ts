@@ -212,6 +212,22 @@ const api = {
     ipcRenderer.invoke('file:get-history', request),
   revertFile: (request: { toolCallId: string }) =>
     ipcRenderer.invoke('file:revert', request),
+
+  // AskUserQuestion — main pushes question, renderer invokes answer (Phase 4.2)
+  onAskUserQuestion: (callback: (payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => void) => {
+    const handler = (_: unknown, payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => callback(payload)
+    ipcRenderer.on('ask-user:question', handler)
+    return () => ipcRenderer.removeListener('ask-user:question', handler)
+  },
+  answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) =>
+    ipcRenderer.invoke('ask-user:answer', payload),
+
+  // Usage / cost tracking (Phase 4.4) — main pushes updates after each LLM response
+  onUsageUpdate: (callback: (payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => {
+    const handler = (_: unknown, payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => callback(payload)
+    ipcRenderer.on('usage:update', handler)
+    return () => ipcRenderer.removeListener('usage:update', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)
