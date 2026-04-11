@@ -84,6 +84,8 @@ export interface StreamErrorEvent {
 export interface TokenUsage {
   inputTokens: number
   outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export interface StreamDoneEvent {
