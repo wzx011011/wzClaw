@@ -258,6 +258,21 @@ export interface TerminalInstance {
 }
 
 // ============================================================
+// Slash Command Types (SLASH-01)
+// ============================================================
+
+export interface SlashCommand {
+  name: string          // without slash, e.g. "init"
+  description: string
+  args?: string
+  handler: SlashCommandHandler
+}
+
+export type SlashCommandHandler =
+  | { type: 'inject-prompt'; getPrompt: (args: string, workspaceRoot: string) => Promise<string> }
+  | { type: 'action'; execute: (args: string) => void }
+
+// ============================================================
 // Task Management Types (per TASK-01 through TASK-05)
 // ============================================================
 
