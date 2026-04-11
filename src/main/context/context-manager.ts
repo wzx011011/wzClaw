@@ -152,6 +152,19 @@ Provide a concise summary:`
   }
 
   /**
+   * Reactive compaction: triggered when the LLM returns a prompt_too_long error.
+   * More aggressive than proactive compact — keeps only the last 2 messages
+   * (the most recent exchange) to recover as much headroom as possible.
+   *
+   * Returns the compacted message array; does NOT modify internal state.
+   * The caller is responsible for replacing this.messages with the result.
+   */
+  reactiveCompact(messages: Message[]): Message[] {
+    const keptCount = Math.min(2, messages.length)
+    return messages.slice(-keptCount)
+  }
+
+  /**
    * Truncate tool result content to MAX_TOOL_RESULT_CHARS.
    * Returns content unchanged if under limit.
    */

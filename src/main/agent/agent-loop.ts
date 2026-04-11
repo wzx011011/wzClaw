@@ -65,6 +65,10 @@ export class AgentLoop {
     this.abortController = new AbortController()
     this.loopDetector.reset()
 
+    // Reactive compaction circuit breaker: max 2 reactive compacts per session
+    const MAX_REACTIVE_COMPACTS = 2
+    let reactiveCompactCount = 0
+
     // Add user message to internal messages
     this.messages.push({
       role: 'user',
@@ -222,17 +226,32 @@ export class AgentLoop {
           if (hadError) break
         }
       } catch (streamErr) {
-        if (streamErr instanceof PromptTooLongError) {
-          // Phase 2.2 will replace this with reactive compaction.
-          // For now surface a recoverable error so the user knows to /compact.
+        if (streamErr instanceof PromptTooLongError && reactiveCompactCount < MAX_REACTIVE_COMPACTS) {
+          // Reactive compaction: aggressively trim context to recover from prompt_too_long
+          reactiveCompactCount++
+          const beforeTokens = this.contextManager.estimateTokens(this.messages)
+          this.messages = this.contextManager.reactiveCompact(this.messages)
+          const afterTokens = this.contextManager.estimateTokens(this.messages)
+
+          if (sender && !sender.isDestroyed()) {
+            sender.send(IPC_CHANNELS['session:compacted'], {
+              beforeTokens,
+              afterTokens,
+              auto: true
+            })
+          }
+
+          // Retry this turn without consuming a turn slot
+          turn--
+          turnCount--
+          continue
+        } else {
           yield {
             type: 'agent:error',
             error: 'Context too long — use /compact to reduce context size',
             recoverable: true
           }
           hadError = true
-        } else {
-          throw streamErr
         }
       }
 
