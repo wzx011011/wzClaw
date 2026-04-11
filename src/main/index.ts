@@ -639,8 +639,68 @@ app.whenReady().then(() => {
       return
     }
 
+    // -- AskUserQuestion: mobile sends back the user's answer --
+    if (msg.event === 'ask-user:answer') {
+      const answer = msg.data as { questionId: string; selectedLabels: string[]; customText?: string }
+      askUserTool.resolveQuestion(answer)
+      return
+    }
+
     // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
+      // Slash command preprocessing for mobile
+      const trimmed = (msg.data.content as string).trim()
+      if (trimmed.startsWith('/')) {
+        const spaceIdx = trimmed.indexOf(' ')
+        const cmdName = spaceIdx > 0 ? trimmed.substring(1, spaceIdx) : trimmed.substring(1)
+        const _cmdArgs = spaceIdx > 0 ? trimmed.substring(spaceIdx + 1).trim() : ''
+
+        switch (cmdName) {
+          case 'compact': {
+            // Trigger manual context compaction
+            const messages = agentLoop.getMessages()
+            const compactConfig = settingsManager.getCurrentConfig()
+            if (messages.length > 0) {
+              contextManager.compact(
+                messages,
+                gateway,
+                compactConfig.model,
+                compactConfig.provider,
+                compactConfig.systemPrompt
+              ).then((result) => {
+                if (result.summary) {
+                  const summaryMsg = {
+                    role: 'user' as const,
+                    content: `[Context Summary]\n${result.summary}`,
+                    timestamp: Date.now()
+                  }
+                  const recentMessages = messages.slice(-result.keptRecentCount)
+                  agentLoop.replaceMessages([summaryMsg, ...recentMessages])
+                }
+                broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens })
+              }).catch((err: any) => {
+                broadcastToMobile('stream:error', { error: err.message })
+              })
+            } else {
+              broadcastToMobile('stream:agent:done', { usage: null })
+            }
+            return
+          }
+          case 'clear': {
+            // Create new session
+            mobileSessionId = null
+            broadcastToMobile('session:create:response', { success: true })
+            return
+          }
+          case 'init': {
+            // Replace content with the /init prompt, continue to agentLoop.run()
+            msg.data.content = `Please analyze this codebase and create a WZXCLAW.md file in the project root.\n\nFirst, explore the project to understand:\n- Package manager and key scripts\n- README and existing documentation\n- Directory structure and main source directories\n- Test setup and how to run tests\n- Any existing instruction files\n\nThen create WZXCLAW.md with ONLY:\n1. Build & Dev Commands (non-obvious only)\n2. Architecture Overview (3-5 sentences)\n3. Key Conventions (differs from defaults)\n4. Development Notes (gotchas, setup)\n\nKeep it under 100 lines. If WZXCLAW.md exists, suggest improvements.`
+            break
+          }
+          // Other commands pass through as regular text
+        }
+      }
+
       // Use session ID from mobile, or generate one for this mobile conversation
       const sessionId = msg.data.sessionId || mobileSessionId || crypto.randomUUID()
       mobileSessionId = sessionId
@@ -684,6 +744,10 @@ app.whenReady().then(() => {
             if (channel === IPC_CHANNELS['stream:retrying']) {
               mobileServer.broadcast('stream:retrying', args[0] ?? {})
               relayClient.broadcast('stream:retrying', args[0] ?? {})
+            }
+            if (channel === IPC_CHANNELS['ask-user:question']) {
+              mobileServer.broadcast('stream:agent:ask_user_question', args[0])
+              relayClient.broadcast('stream:agent:ask_user_question', args[0])
             }
           }
         } as unknown as Electron.WebContents
