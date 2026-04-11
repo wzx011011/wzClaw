@@ -26,6 +26,7 @@ import { SettingsManager } from './settings-manager'
 import { handleSymbolResult } from './tools/symbol-nav'
 import type { IndexingEngine } from './indexing/indexing-engine'
 import { getGitStatusShort } from './git/git-context'
+import type { MCPManager } from './mcp/mcp-manager'
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -38,6 +39,7 @@ export function registerIpcHandlers(
   taskManager: TaskManager,
   indexingEngine: IndexingEngine | null,
   settingsManager: SettingsManager,
+  mcpManager: MCPManager,
   onWorkspaceOpened?: (rootPath: string) => void
 ): void {
   // Mutable reference to IndexingEngine (updated when workspace opens)
@@ -711,5 +713,39 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['permission:set_mode'], (_event, request) => {
     permissionManager.setMode(request.mode)
+  })
+
+  // ============================================================
+  // MCP: list_servers — returns all configured MCP servers and status
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['mcp:list_servers'], () => {
+    return mcpManager.listServers()
+  })
+
+  // ============================================================
+  // MCP: list_tools — returns all tools from connected MCP servers
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['mcp:list_tools'], async () => {
+    return mcpManager.listAllTools()
+  })
+
+  // ============================================================
+  // MCP: add_server — adds and connects a new MCP server
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['mcp:add_server'], async (_event, request) => {
+    await mcpManager.addServer({
+      name: request.name,
+      transport: request.transport,
+      command: request.command,
+      args: request.args,
+      url: request.url
+    })
+  })
+
+  // ============================================================
+  // MCP: remove_server — disconnects and removes an MCP server
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['mcp:remove_server'], (_event, request) => {
+    mcpManager.removeServer(request.name)
   })
 }

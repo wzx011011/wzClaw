@@ -46,6 +46,7 @@ import { SettingsManager } from './settings-manager'
 import { ToolRegistry } from './tools/tool-registry'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { BrowserManager } from './browser/browser-manager'
+import { MCPManager } from './mcp/mcp-manager'
 import {
   BrowserNavigateTool,
   BrowserClickTool,
@@ -234,6 +235,12 @@ app.whenReady().then(() => {
   const permissionManager = new PermissionManager()
   const contextManager = new ContextManager()
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager)
+
+  // Instantiate and connect MCP servers (tools auto-register into toolRegistry)
+  const mcpManager = new MCPManager(toolRegistry)
+  mcpManager.loadAndConnect().catch((err) =>
+    console.error('[MCP] Failed to load and connect servers:', err)
+  )
 
   // Register AgentTool (sub-agent) — must be after registry + agentLoop deps exist
   toolRegistry.register(
@@ -734,6 +741,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(
     gateway, agentLoop, permissionManager, workspaceManager, () => sessionStore,
     contextManager, terminalManager, taskManager, indexingEngine, settingsManager,
+    mcpManager,
     (rootPath) => {
       handleWorkspaceOpened(rootPath, toolRegistry)
       // Persist last workspace path
