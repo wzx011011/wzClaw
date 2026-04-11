@@ -185,6 +185,20 @@ const api = {
   // Permission mode
   getPermissionMode: () => ipcRenderer.invoke('permission:get_mode'),
   setPermissionMode: (request: { mode: string }) => ipcRenderer.invoke('permission:set_mode', request),
+
+  // Plan mode (main -> renderer events, renderer -> main decision)
+  onPlanModeEntered: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('agent:plan-mode-entered', handler)
+    return () => ipcRenderer.removeListener('agent:plan-mode-entered', handler)
+  },
+  onPlanModeExited: (callback: (payload: { plan: string }) => void) => {
+    const handler = (_: unknown, payload: { plan: string }) => callback(payload)
+    ipcRenderer.on('agent:plan-mode-exited', handler)
+    return () => ipcRenderer.removeListener('agent:plan-mode-exited', handler)
+  },
+  sendPlanDecision: (request: { approved: boolean }) =>
+    ipcRenderer.invoke('agent:plan-decision', request),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

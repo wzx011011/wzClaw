@@ -76,6 +76,13 @@ declare global {
       getRelayStatus: () => Promise<{ connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }>
       // Mobile user message (relay/mobile -> renderer)
       onMobileUserMessage: (cb: (p: { content: string; source: 'mobile' }) => void) => () => void
+      // Permission mode
+      getPermissionMode: () => Promise<{ mode: string }>
+      setPermissionMode: (request: { mode: string }) => Promise<void>
+      // Plan mode
+      onPlanModeEntered: (cb: () => void) => () => void
+      onPlanModeExited: (cb: (p: { plan: string }) => void) => () => void
+      sendPlanDecision: (request: { approved: boolean }) => Promise<void>
     }
   }
 }

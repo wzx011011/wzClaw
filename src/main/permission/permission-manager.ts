@@ -32,6 +32,9 @@ export class PermissionManager {
   private alwaysAllowRules: Set<string> = new Set() // "toolName" or "toolName:prefix"
   private denialRecords: Map<string, DenialRecord> = new Map()
 
+  // Plan mode state (separate from the permission mode setting)
+  private planModeActive = false
+
   // File tools that accept-edits mode auto-allows
   private static readonly FILE_TOOLS = new Set(['FileWrite', 'FileEdit'])
 
@@ -40,6 +43,11 @@ export class PermissionManager {
     'FileRead', 'Grep', 'Glob', 'WebSearch', 'WebFetch',
     'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
     'CreateTask', 'UpdateTask'
+  ])
+
+  // Write tools blocked when plan mode is active
+  private static readonly PLAN_MODE_WRITE_TOOLS = new Set([
+    'FileWrite', 'FileEdit', 'Bash', 'BashCommand'
   ])
 
   getMode(): PermissionMode {
@@ -197,6 +205,36 @@ export class PermissionManager {
 
     const relevant = words.slice(start, start + 2)
     return relevant.join(' ')
+  }
+
+  // ============================================================
+  // Plan mode — activated by EnterPlanMode/ExitPlanMode tools
+  // ============================================================
+
+  /**
+   * Enable or disable plan mode (called by EnterPlanMode/ExitPlanMode tools).
+   */
+  setPlanMode(active: boolean): void {
+    this.planModeActive = active
+  }
+
+  /**
+   * Returns true when plan mode is currently active.
+   */
+  isPlanMode(): boolean {
+    return this.planModeActive
+  }
+
+  /**
+   * If plan mode is active and the tool is a write tool, returns the
+   * rejection message. Returns null if execution should proceed normally.
+   */
+  getPlanModeRejection(toolName: string): string | null {
+    if (!this.planModeActive) return null
+    if (PermissionManager.PLAN_MODE_WRITE_TOOLS.has(toolName)) {
+      return 'Write operations blocked in plan mode. Complete your plan first.'
+    }
+    return null
   }
 
   /**

@@ -81,6 +81,10 @@ export default function ChatPanel(): JSX.Element {
   const thinkingRef = useRef<HTMLDivElement>(null)
   const permissionRef = useRef<HTMLDivElement>(null)
 
+  // Plan mode state
+  const [planModeActive, setPlanModeActive] = useState(false)
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null)
+
   // Load permission mode from backend on mount
   useEffect(() => {
     window.wzxclaw.getPermissionMode?.().then((result: { mode: string }) => {
@@ -131,6 +135,28 @@ export default function ChatPanel(): JSX.Element {
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
   }, [])
+
+  // Listen for plan mode events from main process
+  useEffect(() => {
+    const unsubEntered = window.wzxclaw.onPlanModeEntered?.(() => {
+      setPlanModeActive(true)
+    }) ?? (() => {})
+
+    const unsubExited = window.wzxclaw.onPlanModeExited?.((payload) => {
+      setPlanModeActive(false)
+      setPendingPlan(payload.plan)
+    }) ?? (() => {})
+
+    return () => {
+      unsubEntered()
+      unsubExited()
+    }
+  }, [])
+
+  const handlePlanDecision = (approved: boolean): void => {
+    setPendingPlan(null)
+    window.wzxclaw.sendPlanDecision?.({ approved }).catch(() => {})
+  }
 
   // Listen for "Open Settings" from command palette (per CMD-01)
   useEffect(() => {
@@ -297,6 +323,14 @@ export default function ChatPanel(): JSX.Element {
 
   return (
     <div className="chat-panel">
+      {/* Plan mode active badge */}
+      {planModeActive && (
+        <div className="plan-mode-badge">
+          <span className="plan-mode-icon">&#9998;</span>
+          Planning Mode — write operations blocked
+        </div>
+      )}
+
       {/* Messages */}
       <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
         {messages.length === 0 ? (
@@ -324,6 +358,30 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Diff preview for pending file changes */}
       <DiffPreview />
+
+      {/* Plan approval panel — shown when ExitPlanMode submits a plan */}
+      {pendingPlan && (
+        <div className="plan-approval-panel">
+          <div className="plan-approval-header">
+            <span className="plan-approval-title">&#9998; Agent Plan — Review &amp; Approve</span>
+          </div>
+          <pre className="plan-approval-content">{pendingPlan}</pre>
+          <div className="plan-approval-actions">
+            <button
+              className="plan-approval-btn plan-approval-btn-approve"
+              onClick={() => handlePlanDecision(true)}
+            >
+              Approve — Proceed
+            </button>
+            <button
+              className="plan-approval-btn plan-approval-btn-reject"
+              onClick={() => handlePlanDecision(false)}
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Task panel for agent task tracking */}
       {taskPanelVisible && (

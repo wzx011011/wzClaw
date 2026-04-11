@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useDiffStore } from '../../stores/diff-store'
 import type { PendingDiff } from '../../../shared/types'
 
@@ -178,13 +178,87 @@ function renderSymbolNavOutput(toolName: string, output: string): JSX.Element {
 }
 
 // ============================================================
+// Result Summary — extract one-line summary from tool output
+// ============================================================
+
+function extractResultSummary(toolName: string, output: string, isError?: boolean): string | null {
+  if (!output) return null
+  if (isError) {
+    const firstLine = output.split('\n')[0].trim()
+    return firstLine.length > 60 ? firstLine.slice(0, 57) + '...' : firstLine
+  }
+  switch (toolName) {
+    case 'Read':
+    case 'FileRead':
+      return `${(output.match(/\n/g) || []).length + 1} lines`
+    case 'Bash':
+    case 'Terminal': {
+      const trimmed = output.trim()
+      if (!trimmed) return 'done'
+      const fl = trimmed.split('\n')[0].trim()
+      return fl.length > 50 ? fl.slice(0, 47) + '...' : fl
+    }
+    case 'Grep':
+      return `${(output.match(/\n/g) || []).length + 1} matches`
+    case 'Glob':
+      return `${(output.match(/\n/g) || []).length + 1} files`
+    case 'FileWrite':
+    case 'Write':
+      return 'written'
+    case 'FileEdit':
+    case 'Edit':
+      return 'applied'
+    case 'WebSearch':
+      return `${(output.match(/\n\n/g) || []).length + 1} results`
+    default: {
+      const fl = output.split('\n')[0].trim()
+      return fl.length > 50 ? fl.slice(0, 47) + '...' : (fl || null)
+    }
+  }
+}
+
+// ============================================================
 // Main ToolCard Component
 // ============================================================
 
 export default function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
-  const [expanded, setExpanded] = useState(false)
+  const prevStatusRef = useRef(toolCall.status)
+  const startTimeRef = useRef(Date.now())
+  const [elapsed, setElapsed] = useState(0)
+
+  // Auto-expand running, auto-collapse when done
+  const [expanded, setExpanded] = useState(toolCall.status === 'running')
   const [outputExpanded, setOutputExpanded] = useState(false)
   const [webFetchExpanded, setWebFetchExpanded] = useState(false)
+
+  // Auto-expand/collapse on status change
+  useEffect(() => {
+    const prev = prevStatusRef.current
+    prevStatusRef.current = toolCall.status
+    if (prev === 'running' && toolCall.status === 'completed') {
+      setExpanded(false)
+    } else if (toolCall.status === 'error') {
+      setExpanded(true)
+    }
+  }, [toolCall.status])
+
+  // Timer for running tools
+  useEffect(() => {
+    if (toolCall.status !== 'running') return
+    startTimeRef.current = Date.now()
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startTimeRef.current)
+    }, 100)
+    return () => clearInterval(interval)
+  }, [toolCall.status])
+
+  const formatElapsed = (ms: number): string => {
+    if (ms < 1000) return ''
+    const sec = ms / 1000
+    if (sec >= 60) return `${Math.floor(sec / 60)}m${Math.floor(sec % 60)}s`
+    if (sec >= 10) return `${Math.floor(sec)}s`
+    return `${sec.toFixed(1)}s`
+  }
 
   const addDiff = useDiffStore((s) => s.addDiff)
   const setActiveDiff = useDiffStore((s) => s.setActiveDiff)
@@ -208,6 +282,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
   const isWebFetch = name === 'WebFetch'
   const isSymbolNav =
     name === 'GoToDefinition' || name === 'FindReferences' || name === 'SearchSymbols'
+  const isExitPlanMode = name === 'ExitPlanMode'
   const hasSpecialOutput = isWebSearch || isWebFetch || isSymbolNav
 
   // Check if there is already a pending diff for this tool call
@@ -222,6 +297,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
 
   // Status display
   const statusLabel = status === 'running' ? 'Running' : status === 'completed' ? 'Done' : 'Error'
+  const resultSummary = extractResultSummary(name, outputText, toolCall.isError)
 
   // Handle "Review Changes" click: create a pending diff and open the diff preview
   const handleReviewChanges = (): void => {
@@ -348,11 +424,17 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
         <div className="tool-card-header-left">
           <span className="tool-card-name">{name}</span>
           {filePath && <span className="tool-card-path">{filePath}</span>}
+          {resultSummary && status !== 'running' && !expanded && (
+            <span className="tool-card-summary">— {resultSummary}</span>
+          )}
           {reviewStatus && (
             <span className="diff-status-badge">{reviewStatus}</span>
           )}
         </div>
         <div className="tool-card-header-right">
+          {status === 'running' && elapsed >= 1000 && (
+            <span className="tool-card-timer">{formatElapsed(elapsed)}</span>
+          )}
           <span className={`tool-status tool-status-${status}`}>
             <span className="tool-status-icon" />
             {statusLabel}
@@ -364,8 +446,21 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
       </div>
       {expanded && (
         <div className="tool-card-details">
-          {/* Review Changes button for file-modifying tools */}
-          {isFileModifying && status === 'completed' && !existingDiff && filePath && (
+          {/* ExitPlanMode: plan text is displayed in ChatPanel — suppress here */}
+          {isExitPlanMode ? (
+            <div className="tool-card-section">
+              <div className="tool-card-section-content" style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                {status === 'completed' && !toolCall.isError
+                  ? 'Plan approved — proceeding with changes.'
+                  : status === 'completed' && toolCall.isError
+                    ? 'Plan rejected or cancelled.'
+                    : 'Waiting for user approval…'}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Review Changes button for file-modifying tools */}
+              {isFileModifying && status === 'completed' && !existingDiff && filePath && (
             <div className="tool-card-section">
               <button
                 className="tool-card-review-btn"
@@ -407,6 +502,8 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
                   )}
                 </div>
               )}
+            </>
+          )}
             </>
           )}
         </div>

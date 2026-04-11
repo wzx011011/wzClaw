@@ -56,6 +56,11 @@ export const IPC_CHANNELS = {
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
 
+  // Plan mode channels (main -> renderer events, renderer -> main decision)
+  'agent:plan-mode-entered': 'agent:plan-mode-entered',
+  'agent:plan-mode-exited': 'agent:plan-mode-exited',
+  'agent:plan-decision': 'agent:plan-decision',
+
   // Context channels (renderer -> main)
   'agent:compact_context': 'agent:compact_context',
 
@@ -158,6 +163,7 @@ export interface IpcRequestPayloads {
   'session:rename': { sessionId: string; title: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'agent:compact_context': void
+  'agent:plan-decision': { approved: boolean }
   'terminal:create': { cwd: string }
   'terminal:kill': { terminalId: string }
   'terminal:input': { terminalId: string; data: string }
@@ -213,6 +219,7 @@ export interface IpcResponsePayloads {
   'session:rename': { success: boolean }
   'file:apply-hunk': { success: boolean }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
+  'agent:plan-decision': void
   'terminal:create': { terminalId: string }
   'terminal:kill': void
   'terminal:input': void
@@ -258,6 +265,8 @@ export interface IpcStreamPayloads {
   }
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
+  'agent:plan-mode-entered': Record<string, never>
+  'agent:plan-mode-exited': { plan: string }
   'terminal:data': { terminalId: string; data: string }
   'symbol:query': { queryId: string; operation: string; params: Record<string, unknown> }
   'symbol:result': { queryId: string; result: unknown; isError: boolean }

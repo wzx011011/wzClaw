@@ -49,6 +49,7 @@ import { ToolRegistry } from './tools/tool-registry'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { BrowserManager } from './browser/browser-manager'
 import { MCPManager } from './mcp/mcp-manager'
+import { PlanModeController, EnterPlanModeTool, ExitPlanModeTool } from './tools/plan-mode'
 import {
   BrowserNavigateTool,
   BrowserClickTool,
@@ -236,6 +237,16 @@ app.whenReady().then(() => {
   const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, taskManager, indexingEngine)
   const permissionManager = new PermissionManager()
   const contextManager = new ContextManager()
+
+  // Plan mode controller — shared between tools and IPC handler
+  const planModeController = new PlanModeController()
+  toolRegistry.register(new EnterPlanModeTool(permissionManager, getWebContents))
+  toolRegistry.register(new ExitPlanModeTool(permissionManager, getWebContents, planModeController))
+
+  // IPC handler: renderer sends plan approve/reject decision
+  ipcMain.handle(IPC_CHANNELS['agent:plan-decision'], (_event, request: { approved: boolean }) => {
+    planModeController.resolveDecision(request.approved)
+  })
 
   // Instantiate Hooks system and register built-in hooks
   const hookRegistry = new HookRegistry()

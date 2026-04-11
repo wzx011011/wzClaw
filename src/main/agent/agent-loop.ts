@@ -324,6 +324,15 @@ export class AgentLoop {
           return events
         }
 
+        // Check plan mode — block write tools while planning is active
+        const planModeRejection = this.permissionManager.getPlanModeRejection(toolCall.name)
+        if (planModeRejection) {
+          const output = ContextManager.truncateToolResult(planModeRejection)
+          this.messages.push({ role: 'tool_result', toolCallId: toolCall.id, content: output, isError: true, timestamp: Date.now() })
+          events.push({ type: 'agent:tool_result', toolCallId: toolCall.id, toolName: toolCall.name, output: planModeRejection, isError: true })
+          return events
+        }
+
         if (this.permissionManager.needsApproval(toolCall.name, toolCall.input)) {
           events.push({ type: 'agent:permission_request', toolCallId: toolCall.id, toolName: toolCall.name, input: toolCall.input })
           let approved = false
