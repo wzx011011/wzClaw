@@ -179,6 +179,14 @@ export class VectorStore {
   }
 
   /**
+   * Release the in-memory embedding cache without touching on-disk data.
+   * Call this when switching workspaces to free memory.
+   */
+  releaseCache(): void {
+    this.cache = null
+  }
+
+  /**
    * Clear entire index directory.
    */
   async clear(): Promise<void> {

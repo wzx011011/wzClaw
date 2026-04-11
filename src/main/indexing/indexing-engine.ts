@@ -286,6 +286,7 @@ export class IndexingEngine {
   dispose(): void {
     this.disposed = true
     this.progressCallbacks = []
+    this.vectorStore.releaseCache()
   }
 
   // ============================================================
