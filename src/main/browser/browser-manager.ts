@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page, type BrowserContext } from 'playwright-core'
+import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
 
 export interface BrowserScreenshot {
@@ -12,140 +12,120 @@ export interface BrowserStatus {
   url: string | null
 }
 
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes auto-close
+
 /**
- * BrowserManager — manages a Playwright Chromium browser instance.
+ * BrowserManager — manages an Electron BrowserWindow instance.
  * Provides navigation, DOM interaction, JS evaluation, and auto-screenshots.
  * Emits 'screenshot' and 'status' events for the renderer.
+ * The window is created lazily on first use and auto-closed after 5 minutes idle.
  */
 export class BrowserManager extends EventEmitter {
-  private browser: Browser | null = null
-  private context: BrowserContext | null = null
-  private page: Page | null = null
+  private win: BrowserWindow | null = null
+  private idleTimer: NodeJS.Timeout | null = null
 
-  get isRunning(): boolean {
-    return this.browser !== null && this.page !== null
+  private ensureWin(): BrowserWindow {
+    if (!this.win || this.win.isDestroyed()) {
+      this.win = new BrowserWindow({
+        show: false,
+        width: 1280,
+        height: 800,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+        }
+      })
+      this.win.on('closed', () => { this.win = null })
+      this.emit('status', { running: true, url: null } satisfies BrowserStatus)
+    }
+    return this.win
   }
 
-  get currentUrl(): string | null {
-    return this.page?.url() ?? null
-  }
-
-  /**
-   * Launch a headless Chromium browser.
-   * Uses system-installed Chrome/Chromium or downloads one via playwright.
-   */
-  async launch(): Promise<void> {
-    if (this.browser) return
-
-    // Try to find system Chromium paths
-    const executablePath = this.findChromium()
-
-    this.browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {})
-    })
-    this.context = await this.browser.newContext({
-      viewport: { width: 1280, height: 720 }
-    })
-    this.page = await this.context.newPage()
-    this.emitStatus()
+  private resetIdleTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = setTimeout(() => this.close(), IDLE_TIMEOUT_MS)
   }
 
   async navigate(url: string): Promise<string> {
-    await this.ensurePage()
-    await this.page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-    const title = await this.page!.title()
-    await this.autoScreenshot()
+    const win = this.ensureWin()
+    await win.loadURL(url)
+    const title = win.webContents.getTitle()
+    await this.autoScreenshot(win)
+    this.resetIdleTimer()
     return title
   }
 
   async click(selector: string): Promise<void> {
-    await this.ensurePage()
-    await this.page!.click(selector, { timeout: 10000 })
-    // Wait for potential navigation/re-render
-    await this.page!.waitForTimeout(500)
-    await this.autoScreenshot()
+    const win = this.ensureWin()
+    await win.webContents.executeJavaScript(
+      `document.querySelector(${JSON.stringify(selector)})?.click()`
+    )
+    await new Promise<void>(r => setTimeout(r, 500))
+    await this.autoScreenshot(win)
+    this.resetIdleTimer()
   }
 
   async type(selector: string, text: string): Promise<void> {
-    await this.ensurePage()
-    await this.page!.fill(selector, text, { timeout: 10000 })
-    await this.autoScreenshot()
+    const win = this.ensureWin()
+    await win.webContents.executeJavaScript(`
+      (function() {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (el) {
+          el.value = ${JSON.stringify(text)};
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `)
+    await this.autoScreenshot(win)
+    this.resetIdleTimer()
   }
 
   async screenshot(): Promise<string> {
-    await this.ensurePage()
-    const buffer = await this.page!.screenshot({ type: 'png' })
-    const base64 = buffer.toString('base64')
-    this.emit('screenshot', {
-      url: this.page!.url(),
-      base64,
-      timestamp: Date.now()
-    } satisfies BrowserScreenshot)
-    return base64
+    const win = this.ensureWin()
+    return this.captureBase64(win)
   }
 
   async evaluate(javascript: string): Promise<string> {
-    await this.ensurePage()
-    const result = await this.page!.evaluate(javascript)
-    await this.autoScreenshot()
+    const win = this.ensureWin()
+    const result = await win.webContents.executeJavaScript(javascript)
+    await this.autoScreenshot(win)
+    this.resetIdleTimer()
     return typeof result === 'string' ? result : JSON.stringify(result, null, 2)
   }
 
   async close(): Promise<void> {
-    if (this.context) {
-      await this.context.close().catch(() => {})
-      this.context = null
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null }
+    if (this.win && !this.win.isDestroyed()) {
+      this.win.destroy()
+      this.win = null
     }
-    if (this.browser) {
-      await this.browser.close().catch(() => {})
-      this.browser = null
-    }
-    this.page = null
-    this.emitStatus()
+    this.emit('status', { running: false, url: null } satisfies BrowserStatus)
   }
 
-  private async ensurePage(): Promise<void> {
-    if (!this.page) {
-      await this.launch()
-    }
+  get isRunning(): boolean {
+    return !!(this.win && !this.win.isDestroyed())
   }
 
-  private async autoScreenshot(): Promise<void> {
-    if (!this.page) return
+  get currentUrl(): string | null {
+    if (!this.isRunning) return null
+    return this.win!.webContents.getURL() || null
+  }
+
+  private async captureBase64(win: BrowserWindow): Promise<string> {
+    const image = await win.webContents.capturePage()
+    return image.toPNG().toString('base64')
+  }
+
+  private async autoScreenshot(win: BrowserWindow): Promise<void> {
     try {
-      const buffer = await this.page.screenshot({ type: 'png' })
-      const base64 = buffer.toString('base64')
-      this.emit('screenshot', {
-        url: this.page.url(),
-        base64,
-        timestamp: Date.now()
-      } satisfies BrowserScreenshot)
+      const base64 = await this.captureBase64(win)
+      const url = win.webContents.getURL()
+      this.emit('screenshot', { url, base64, timestamp: Date.now() } satisfies BrowserScreenshot)
+      this.emit('status', { running: true, url } satisfies BrowserStatus)
     } catch {
-      // Screenshot may fail if page is navigating — ignore
+      // ignore screenshot failures (page may still be loading)
     }
-  }
-
-  private emitStatus(): void {
-    this.emit('status', {
-      running: this.isRunning,
-      url: this.currentUrl
-    } satisfies BrowserStatus)
-  }
-
-  private findChromium(): string | undefined {
-    // Common Chromium/Chrome paths on Windows
-    const paths = [
-      process.env.CHROME_PATH,
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`
-    ]
-    const fs = require('fs')
-    for (const p of paths) {
-      if (p && fs.existsSync(p)) return p
-    }
-    return undefined
   }
 }

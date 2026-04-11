@@ -1,38 +1,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// Mock playwright-core — factory must not reference outer variables (hoisting)
-const mockPage = {
-  goto: vi.fn().mockResolvedValue(undefined),
-  title: vi.fn().mockResolvedValue('Test Page'),
-  click: vi.fn().mockResolvedValue(undefined),
-  fill: vi.fn().mockResolvedValue(undefined),
-  screenshot: vi.fn().mockResolvedValue(Buffer.from('fake-png')),
-  evaluate: vi.fn().mockResolvedValue({ result: 'ok' }),
-  url: vi.fn().mockReturnValue('https://example.com'),
-  waitForTimeout: vi.fn().mockResolvedValue(undefined)
+// --- Mock electron ---
+// Capture the 'closed' event handler so tests can trigger it
+let closedHandler: (() => void) | null = null
+
+const mockNativeImage = {
+  toPNG: vi.fn().mockReturnValue(Buffer.from('fake-png'))
 }
 
-const mockContext = {
-  newPage: vi.fn().mockResolvedValue(mockPage),
-  close: vi.fn().mockResolvedValue(undefined)
+const mockWebContents = {
+  getTitle: vi.fn().mockReturnValue('Test Page'),
+  getURL: vi.fn().mockReturnValue('https://example.com'),
+  executeJavaScript: vi.fn().mockResolvedValue(undefined),
+  capturePage: vi.fn().mockResolvedValue(mockNativeImage),
 }
 
-const mockBrowserInstance = {
-  newContext: vi.fn().mockResolvedValue(mockContext),
-  close: vi.fn().mockResolvedValue(undefined)
+const mockWin = {
+  loadURL: vi.fn().mockResolvedValue(undefined),
+  webContents: mockWebContents,
+  isDestroyed: vi.fn().mockReturnValue(false),
+  destroy: vi.fn().mockImplementation(() => {
+    // Simulate Electron firing the 'closed' event after destroy
+    if (closedHandler) closedHandler()
+  }),
+  on: vi.fn().mockImplementation((event: string, cb: () => void) => {
+    if (event === 'closed') closedHandler = cb
+  }),
 }
 
-vi.mock('playwright-core', () => {
-  return {
-    chromium: {
-      launch: vi.fn().mockImplementation(async () => mockBrowserInstance)
-    }
-  }
-})
-
-vi.mock('fs', () => ({
-  default: { existsSync: vi.fn().mockReturnValue(false) },
-  existsSync: vi.fn().mockReturnValue(false)
+vi.mock('electron', () => ({
+  BrowserWindow: vi.fn().mockImplementation(() => {
+    closedHandler = null
+    mockWin.isDestroyed.mockReturnValue(false)
+    return mockWin
+  })
 }))
 
 import { BrowserManager } from '../browser-manager'
@@ -43,6 +44,8 @@ describe('BrowserManager', () => {
   beforeEach(() => {
     manager = new BrowserManager()
     vi.clearAllMocks()
+    closedHandler = null
+    mockWin.isDestroyed.mockReturnValue(false)
   })
 
   afterEach(async () => {
@@ -50,60 +53,32 @@ describe('BrowserManager', () => {
   })
 
   describe('initial state', () => {
-    it('isRunning is false before launch', () => {
+    it('isRunning is false before any operation', () => {
       expect(manager.isRunning).toBe(false)
     })
 
-    it('currentUrl is null before launch', () => {
+    it('currentUrl is null before any operation', () => {
       expect(manager.currentUrl).toBe(null)
     })
   })
 
-  describe('launch', () => {
-    it('launches Chromium and creates page', async () => {
-      const statusSpy = vi.fn()
-      manager.on('status', statusSpy)
-
-      await manager.launch()
-
-      expect(manager.isRunning).toBe(true)
-      expect(mockBrowserInstance.newContext).toHaveBeenCalledWith({
-        viewport: { width: 1280, height: 720 }
-      })
-      expect(mockContext.newPage).toHaveBeenCalled()
-      expect(statusSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ running: true })
-      )
-    })
-
-    it('does not re-launch if already running', async () => {
-      await manager.launch()
-      await manager.launch()
-
-      const { chromium } = await import('playwright-core')
-      expect(chromium.launch).toHaveBeenCalledTimes(1)
-    })
-  })
-
   describe('navigate', () => {
-    it('navigates and returns page title', async () => {
-      await manager.launch()
-      const title = await manager.navigate('https://example.com')
-
-      expect(title).toBe('Test Page')
-      expect(mockPage.goto).toHaveBeenCalledWith('https://example.com', {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000
-      })
+    it('lazily creates BrowserWindow on first call', async () => {
+      const { BrowserWindow } = await import('electron')
+      await manager.navigate('https://example.com')
+      expect(BrowserWindow).toHaveBeenCalled()
+      expect(mockWin.loadURL).toHaveBeenCalledWith('https://example.com')
     })
 
-    it('emits screenshot after navigation', async () => {
+    it('returns the page title', async () => {
+      const title = await manager.navigate('https://example.com')
+      expect(title).toBe('Test Page')
+    })
+
+    it('emits screenshot event after navigation', async () => {
       const screenshotSpy = vi.fn()
       manager.on('screenshot', screenshotSpy)
-
-      await manager.launch()
       await manager.navigate('https://example.com')
-
       expect(screenshotSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           base64: expect.any(String),
@@ -113,83 +88,96 @@ describe('BrowserManager', () => {
       )
     })
 
-    it('auto-launches if not running', async () => {
+    it('emits status running=true when window is created', async () => {
+      const statusSpy = vi.fn()
+      manager.on('status', statusSpy)
       await manager.navigate('https://example.com')
-      expect(manager.isRunning).toBe(true)
+      expect(statusSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ running: true })
+      )
+    })
+
+    it('does not create a second window on repeated calls', async () => {
+      const { BrowserWindow } = await import('electron')
+      await manager.navigate('https://example.com')
+      await manager.navigate('https://example.org')
+      expect(BrowserWindow).toHaveBeenCalledTimes(1)
     })
   })
 
   describe('click', () => {
-    it('clicks element and takes screenshot', async () => {
+    it('calls executeJavaScript with selector-based click code', async () => {
+      await manager.navigate('https://example.com')
+      vi.clearAllMocks()
+      await manager.click('#btn')
+      expect(mockWebContents.executeJavaScript).toHaveBeenCalledWith(
+        expect.stringContaining('#btn')
+      )
+    })
+
+    it('emits screenshot after click', async () => {
+      await manager.navigate('https://example.com')
       const screenshotSpy = vi.fn()
       manager.on('screenshot', screenshotSpy)
-
-      await manager.launch()
       await manager.click('#btn')
-
-      expect(mockPage.click).toHaveBeenCalledWith('#btn', { timeout: 10000 })
-      expect(mockPage.waitForTimeout).toHaveBeenCalledWith(500)
       expect(screenshotSpy).toHaveBeenCalled()
     })
   })
 
   describe('type', () => {
-    it('fills input and takes screenshot', async () => {
-      await manager.launch()
+    it('calls executeJavaScript with selector and text', async () => {
+      await manager.navigate('https://example.com')
+      vi.clearAllMocks()
       await manager.type('#input', 'hello')
-
-      expect(mockPage.fill).toHaveBeenCalledWith('#input', 'hello', { timeout: 10000 })
-    })
-  })
-
-  describe('screenshot', () => {
-    it('returns base64 and emits event', async () => {
-      const screenshotSpy = vi.fn()
-      manager.on('screenshot', screenshotSpy)
-
-      await manager.launch()
-      const base64 = await manager.screenshot()
-
-      expect(typeof base64).toBe('string')
-      expect(screenshotSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ base64 })
+      expect(mockWebContents.executeJavaScript).toHaveBeenCalledWith(
+        expect.stringContaining('#input')
+      )
+      expect(mockWebContents.executeJavaScript).toHaveBeenCalledWith(
+        expect.stringContaining('hello')
       )
     })
   })
 
-  describe('evaluate', () => {
-    it('evaluates JS and returns stringified result', async () => {
-      await manager.launch()
-      const result = await manager.evaluate('document.title')
+  describe('screenshot', () => {
+    it('returns a base64 string via capturePage', async () => {
+      await manager.navigate('https://example.com')
+      const base64 = await manager.screenshot()
+      expect(typeof base64).toBe('string')
+      expect(mockNativeImage.toPNG).toHaveBeenCalled()
+    })
+  })
 
-      expect(mockPage.evaluate).toHaveBeenCalledWith('document.title')
-      expect(result).toContain('result')
+  describe('evaluate', () => {
+    it('executes javascript and returns string result', async () => {
+      mockWebContents.executeJavaScript.mockResolvedValueOnce('title text')
+      await manager.navigate('https://example.com')
+      const result = await manager.evaluate('document.title')
+      expect(mockWebContents.executeJavaScript).toHaveBeenCalledWith('document.title')
+      expect(result).toBe('title text')
     })
 
-    it('returns string result directly', async () => {
-      mockPage.evaluate.mockResolvedValueOnce('plain string')
-      await manager.launch()
+    it('JSON-stringifies non-string results', async () => {
+      mockWebContents.executeJavaScript.mockResolvedValueOnce({ result: 'ok' })
+      await manager.navigate('https://example.com')
       const result = await manager.evaluate('1+1')
-      expect(result).toBe('plain string')
+      expect(result).toContain('result')
     })
   })
 
   describe('close', () => {
-    it('closes context and browser', async () => {
-      await manager.launch()
+    it('destroys the window and sets isRunning to false', async () => {
+      await manager.navigate('https://example.com')
+      expect(manager.isRunning).toBe(true)
       await manager.close()
-
-      expect(mockContext.close).toHaveBeenCalled()
-      expect(mockBrowserInstance.close).toHaveBeenCalled()
+      expect(mockWin.destroy).toHaveBeenCalled()
       expect(manager.isRunning).toBe(false)
     })
 
     it('emits status with running=false', async () => {
-      await manager.launch()
+      await manager.navigate('https://example.com')
       const statusSpy = vi.fn()
       manager.on('status', statusSpy)
       await manager.close()
-
       expect(statusSpy).toHaveBeenCalledWith(
         expect.objectContaining({ running: false, url: null })
       )
@@ -197,6 +185,30 @@ describe('BrowserManager', () => {
 
     it('handles close when not running', async () => {
       await expect(manager.close()).resolves.toBeUndefined()
+    })
+  })
+
+  describe('isRunning', () => {
+    it('returns true after navigate', async () => {
+      await manager.navigate('https://example.com')
+      expect(manager.isRunning).toBe(true)
+    })
+
+    it('returns false after close', async () => {
+      await manager.navigate('https://example.com')
+      await manager.close()
+      expect(manager.isRunning).toBe(false)
+    })
+  })
+
+  describe('currentUrl', () => {
+    it('returns null when not running', () => {
+      expect(manager.currentUrl).toBe(null)
+    })
+
+    it('returns the URL from webContents after navigate', async () => {
+      await manager.navigate('https://example.com')
+      expect(manager.currentUrl).toBe('https://example.com')
     })
   })
 })
