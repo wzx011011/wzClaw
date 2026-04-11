@@ -8,6 +8,7 @@ import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { ContextManager } from '../context/context-manager'
 import { getGitContext } from '../git/git-context'
+import { loadInstructions } from '../context/instruction-loader'
 import type { HookRegistry } from '../hooks/hook-registry'
 import type { AgentEvent, AgentConfig } from './types'
 
@@ -77,9 +78,17 @@ export class AgentLoop {
       // Git not available — skip
     }
 
-    const basePrompt = gitContext
-      ? `${config.systemPrompt}\n\n${gitContext}`
-      : config.systemPrompt
+    // Load WZXCLAW.md project instructions (all sources merged, silent if absent)
+    let instructionSection = ''
+    try {
+      instructionSection = await loadInstructions(config.workingDirectory)
+    } catch {
+      // Instructions unavailable — skip
+    }
+
+    let basePrompt = config.systemPrompt
+    if (gitContext) basePrompt += `\n\n${gitContext}`
+    if (instructionSection) basePrompt += `\n\n${instructionSection}`
 
     const systemPrompt = this.messageBuilder.buildSystemPrompt(
       basePrompt,
