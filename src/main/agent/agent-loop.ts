@@ -2,7 +2,7 @@ import type { LLMGateway } from '../llm/gateway'
 import type { StreamOptions } from '../llm/types'
 import type { ToolRegistry } from '../tools/tool-registry'
 import type { PermissionManager } from '../permission/permission-manager'
-import type { Message, ToolCall, StreamEvent, LLMProvider } from '../../shared/types'
+import type { Message, ToolCall, LLMProvider } from '../../shared/types'
 import { MAX_AGENT_TURNS } from '../../shared/constants'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
@@ -11,6 +11,8 @@ import { getGitContext } from '../git/git-context'
 import { loadInstructions } from '../context/instruction-loader'
 import type { HookRegistry } from '../hooks/hook-registry'
 import type { AgentEvent, AgentConfig } from './types'
+import { PromptTooLongError } from '../llm/retry'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 // ============================================================
 // AgentLoop (per D-23, D-35)
@@ -132,7 +134,15 @@ export class AgentLoop {
           description: t.description,
           input_schema: t.inputSchema
         })),
-        abortSignal: this.abortController.signal
+        abortSignal: this.abortController.signal,
+        // Emit stream:retrying to the renderer before each retry attempt
+        onRetry: sender
+          ? (info) => {
+              if (!sender.isDestroyed()) {
+                sender.send(IPC_CHANNELS['stream:retrying'], info)
+              }
+            }
+          : undefined,
       }
 
       // Context management: check if compaction needed before LLM call
@@ -174,41 +184,56 @@ export class AgentLoop {
       // Track tool names from tool_use_start events (tool_use_end doesn't include name)
       const toolNameMap = new Map<string, string>()
 
-      for await (const event of this.gateway.stream(streamOptions)) {
-        switch (event.type) {
-          case 'text_delta':
-            textContent += event.content
-            yield { type: 'agent:text', content: event.content }
-            break
+      try {
+        for await (const event of this.gateway.stream(streamOptions)) {
+          switch (event.type) {
+            case 'text_delta':
+              textContent += event.content
+              yield { type: 'agent:text', content: event.content }
+              break
 
-          case 'tool_use_start':
-            // Track tool name by id for later use in tool_use_end
-            toolNameMap.set(event.id, event.name)
-            break
+            case 'tool_use_start':
+              // Track tool name by id for later use in tool_use_end
+              toolNameMap.set(event.id, event.name)
+              break
 
-          case 'tool_use_end':
-            toolCalls.push({
-              id: event.id,
-              name: toolNameMap.get(event.id) || '',
-              input: event.parsedInput
-            })
-            break
+            case 'tool_use_end':
+              toolCalls.push({
+                id: event.id,
+                name: toolNameMap.get(event.id) || '',
+                input: event.parsedInput
+              })
+              break
 
-          case 'error':
-            yield {
-              type: 'agent:error',
-              error: event.error,
-              recoverable: false
-            }
-            hadError = true
-            break
+            case 'error':
+              yield {
+                type: 'agent:error',
+                error: event.error,
+                recoverable: false
+              }
+              hadError = true
+              break
 
-          case 'done':
-            streamUsage = event.usage
-            break
+            case 'done':
+              streamUsage = event.usage
+              break
+          }
+
+          if (hadError) break
         }
-
-        if (hadError) break
+      } catch (streamErr) {
+        if (streamErr instanceof PromptTooLongError) {
+          // Phase 2.2 will replace this with reactive compaction.
+          // For now surface a recoverable error so the user knows to /compact.
+          yield {
+            type: 'agent:error',
+            error: 'Context too long — use /compact to reduce context size',
+            recoverable: true
+          }
+          hadError = true
+        } else {
+          throw streamErr
+        }
       }
 
       if (hadError) {

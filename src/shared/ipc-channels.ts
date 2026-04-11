@@ -19,6 +19,7 @@ export const IPC_CHANNELS = {
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
   'stream:mobile_user_message': 'stream:mobile_user_message',
+  'stream:retrying': 'stream:retrying',
 
   // Permission channels (main -> renderer request, renderer -> main response)
   'agent:permission_request': 'agent:permission_request',
@@ -249,6 +250,7 @@ export interface IpcStreamPayloads {
   'stream:error': { error: string }
   'stream:done': { usage: { inputTokens: number; outputTokens: number } }
   'stream:mobile_user_message': { content: string; source: 'mobile' }
+  'stream:retrying': { attempt: number; maxAttempts: number; delayMs: number }
   'agent:permission_request': {
     toolName: string
     toolInput: Record<string, unknown>

@@ -277,6 +277,39 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set({ messages: [...messages, compactMsg] })
     })
 
+    // Retry notifications from the LLM retry wrapper
+    const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
+      const { messages } = get()
+      // Update the last streaming assistant message with a retrying status note,
+      // or append a transient status message if none is streaming yet.
+      const lastStreamingIdx = [...messages]
+        .map((m, i) => ({ m, i }))
+        .reverse()
+        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+
+      const retryNote = `[Retrying ${payload.attempt}/${payload.maxAttempts} — waiting ${(payload.delayMs / 1000).toFixed(1)}s...]`
+
+      if (lastStreamingIdx) {
+        set({
+          messages: messages.map((m, i) =>
+            i === lastStreamingIdx.i
+              ? { ...m, content: m.content ? `${m.content}\n${retryNote}` : retryNote }
+              : m
+          )
+        })
+      } else {
+        const statusMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: retryNote,
+          timestamp: Date.now(),
+          isStreaming: true,
+          toolCalls: []
+        }
+        set({ messages: [...messages, statusMsg] })
+      }
+    }) ?? (() => {})
+
     // Load session list on startup
     get().loadSessionList()
 
@@ -289,6 +322,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubError()
       unsubMobileMsg()
       unsubCompacted()
+      unsubRetrying()
     }
   },
 

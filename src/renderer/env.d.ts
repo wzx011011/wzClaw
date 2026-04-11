@@ -12,6 +12,7 @@ declare global {
       onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean }) => void) => () => void
       onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number } }) => void) => () => void
       onStreamError: (cb: (p: { error: string }) => void) => () => void
+      onStreamRetrying: (cb: (p: { attempt: number; maxAttempts: number; delayMs: number }) => void) => () => void
       // Workspace
       openFolder: () => Promise<{ rootPath: string } | null>
       getDirectoryTree: (request: { dirPath?: string; depth?: number }) => Promise<FileTreeNode[]>

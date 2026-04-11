@@ -1,4 +1,7 @@
 import type { StreamEvent, LLMProvider } from '../../shared/types'
+import type { RetryInfo } from './retry'
+
+export type { RetryInfo }
 
 export interface ProviderConfig {
   provider: LLMProvider
@@ -19,6 +22,10 @@ export interface StreamOptions {
     input_schema: Record<string, unknown>
   }>
   abortSignal?: AbortSignal
+  /** If set, tried once after the primary model exhausts its retries. */
+  fallbackModel?: string
+  /** Invoked before each retry attempt so callers can emit UI notifications. */
+  onRetry?: (info: RetryInfo) => void
 }
 
 export interface LLMAdapter {

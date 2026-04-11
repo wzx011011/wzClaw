@@ -33,6 +33,11 @@ const api = {
     ipcRenderer.on('stream:error', handler)
     return () => ipcRenderer.removeListener('stream:error', handler)
   },
+  onStreamRetrying: (callback: (payload: { attempt: number; maxAttempts: number; delayMs: number }) => void) => {
+    const handler = (_: unknown, payload: { attempt: number; maxAttempts: number; delayMs: number }) => callback(payload)
+    ipcRenderer.on('stream:retrying', handler)
+    return () => ipcRenderer.removeListener('stream:retrying', handler)
+  },
 
   // Workspace
   openFolder: () => ipcRenderer.invoke('workspace:open_folder'),
