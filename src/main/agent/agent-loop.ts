@@ -444,4 +444,49 @@ export class AgentLoop {
   replaceMessages(messages: Message[]): void {
     this.messages = messages
   }
+
+  /**
+   * Restore agent context from persisted messages loaded off disk.
+   * Filters meta lines, casts raw records to Message[], and compacts the
+   * context if it already exceeds the configured threshold.  Called by
+   * the session:load IPC handler so the agent can continue the conversation.
+   *
+   * @returns info about the restored context for the renderer notification
+   */
+  async restoreContext(
+    rawMessages: unknown[],
+    config: Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory'>
+  ): Promise<{ messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }> {
+    // Filter out JSONL meta lines (type:'meta') and cast to internal Message format.
+    // Messages were stored via agentLoop.getMessages() so they match the Message shape.
+    const messages = (rawMessages as Array<Record<string, unknown>>)
+      .filter((m) => m.type !== 'meta' && m.role != null)
+      .map((m) => m as unknown as Message)
+
+    const beforeTokens = this.contextManager.estimateTokens(messages)
+
+    if (this.contextManager.shouldCompact(messages, config.model)) {
+      const result = await this.contextManager.compact(
+        messages,
+        this.gateway,
+        config.model,
+        config.provider as 'openai' | 'anthropic',
+        config.systemPrompt ?? ''
+      )
+      if (result.summary) {
+        const summaryMsg: Message = {
+          role: 'user',
+          content: `[Context Summary]\n${result.summary}`,
+          timestamp: Date.now()
+        }
+        const recentMessages = messages.slice(-result.keptRecentCount)
+        this.messages = [summaryMsg, ...recentMessages]
+        const afterTokens = this.contextManager.estimateTokens(this.messages)
+        return { messageCount: this.messages.length, compacted: true, beforeTokens, afterTokens }
+      }
+    }
+
+    this.messages = messages
+    return { messageCount: messages.length, compacted: false, beforeTokens, afterTokens: beforeTokens }
+  }
 }

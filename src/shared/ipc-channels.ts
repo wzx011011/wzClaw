@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
+  'session:context-restored': 'session:context-restored',
 
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
@@ -273,6 +274,7 @@ export interface IpcStreamPayloads {
   }
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
+  'session:context-restored': { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }
   'agent:plan-mode-entered': Record<string, never>
   'agent:plan-mode-exited': { plan: string }
   'terminal:data': { terminalId: string; data: string }

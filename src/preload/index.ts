@@ -86,6 +86,13 @@ const api = {
     return () => ipcRenderer.removeListener('session:compacted', handler)
   },
 
+  // Session context restored — fires after session:load restores the agent loop (Phase 3.4)
+  onSessionContextRestored: (callback: (payload: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => void) => {
+    const handler = (_: unknown, payload: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => callback(payload)
+    ipcRenderer.on('session:context-restored', handler)
+    return () => ipcRenderer.removeListener('session:context-restored', handler)
+  },
+
   // Compact context (manual trigger via /compact command)
   compactContext: () => ipcRenderer.invoke('agent:compact_context'),
 

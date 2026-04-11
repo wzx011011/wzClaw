@@ -277,6 +277,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set({ messages: [...messages, compactMsg] })
     })
 
+    // Session context restored — fires after session:load restores the agent loop (Phase 3.4)
+    const unsubContextRestored = window.wzxclaw.onSessionContextRestored?.((payload) => {
+      const { messages } = get()
+      let note = `Session context restored (${payload.messageCount} messages)`
+      if (payload.compacted) {
+        note += ` — compacted ${(payload.beforeTokens / 1000).toFixed(1)}K→${(payload.afterTokens / 1000).toFixed(1)}K tokens`
+      }
+      const restoredMsg: ChatMessage = {
+        id: uuidv4(),
+        role: 'assistant',
+        content: note,
+        timestamp: Date.now(),
+        isCompacted: true
+      }
+      set({ messages: [...messages, restoredMsg] })
+    }) ?? (() => {})
+
     // Retry notifications from the LLM retry wrapper
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
       const { messages } = get()
@@ -322,6 +339,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubError()
       unsubMobileMsg()
       unsubCompacted()
+      unsubContextRestored()
       unsubRetrying()
     }
   },

@@ -502,14 +502,41 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Session: load — returns messages for a specific session
+  // Session: load — returns messages and restores agent context (Phase 3.4)
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:load'], async (_event, request) => {
+  ipcMain.handle(IPC_CHANNELS['session:load'], async (event, request) => {
     const result = IpcSchemas['session:load'].request.safeParse(request)
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return getSessionStore().loadSession(result.data.sessionId)
+    const sessionId = result.data.sessionId
+    const rawMessages = await getSessionStore().loadSession(sessionId)
+
+    // Restore agent loop context so subsequent messages continue the conversation.
+    // Run asynchronously after returning messages to the renderer — the renderer
+    // shows the chat immediately while the (potentially slow) compaction runs.
+    const config = settingsManager.getCurrentConfig()
+    agentLoop.restoreContext(rawMessages, {
+      model: config.model,
+      provider: config.provider as 'openai' | 'anthropic',
+      systemPrompt: config.systemPrompt,
+      workingDirectory: workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    }).then((info) => {
+      const sender = event.sender
+      if (!sender.isDestroyed()) {
+        sender.send(IPC_CHANNELS['session:context-restored'], {
+          sessionId,
+          messageCount: info.messageCount,
+          compacted: info.compacted,
+          beforeTokens: info.beforeTokens,
+          afterTokens: info.afterTokens
+        })
+      }
+    }).catch((err) => {
+      console.error('[session:load] restoreContext failed:', err)
+    })
+
+    return rawMessages
   })
 
   // ============================================================

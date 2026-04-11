@@ -36,6 +36,7 @@ declare global {
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
       onSessionCompacted: (cb: (p: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => () => void
+      onSessionContextRestored: (cb: (p: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => void) => () => void
       compactContext: () => Promise<{ beforeTokens: number; afterTokens: number } | null>
       // Diff
       applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) => Promise<{ success: boolean }>
