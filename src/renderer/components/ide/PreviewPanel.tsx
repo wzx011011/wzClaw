@@ -51,13 +51,13 @@ export default function PreviewPanel(): JSX.Element {
     }
   }, [])
 
-  // On mount, request a screenshot in case the browser is already running
-  // (e.g. sidebar was just opened after an agent navigated)
+  // On mount (or when running becomes true), request a screenshot only if the
+  // browser is already active. Skips the call — and avoids a spurious BrowserWindow
+  // launch — when the panel opens while no browser session is running.
   useEffect(() => {
-    window.wzxclaw.screenshotBrowser().catch(() => {
-      // Browser not running — ignore
-    })
-  }, [])
+    if (!browser.running) return
+    window.wzxclaw.screenshotBrowser().catch(() => {})
+  }, [browser.running])
 
   // Sync URL input with browser URL when it changes
   useEffect(() => {
