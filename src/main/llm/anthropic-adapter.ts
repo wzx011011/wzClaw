@@ -7,7 +7,11 @@ export class AnthropicAdapter implements LLMAdapter {
   private client: Anthropic
 
   constructor(config: ProviderConfig) {
-    this.client = new Anthropic({ apiKey: config.apiKey })
+    this.client = new Anthropic({
+      authToken: config.apiKey,
+      apiKey: null as any,
+      ...(config.baseURL && { baseURL: config.baseURL }),
+    })
   }
 
   async *stream(options: StreamOptions): AsyncGenerator<StreamEvent> {

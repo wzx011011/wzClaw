@@ -2,17 +2,35 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
-import { useTaskStore, getTaskActiveCount } from '../../stores/task-store'
+import { useTaskStore } from '../../stores/task-store'
 import ChatMessage from './ChatMessage'
 import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
-import SessionList from './SessionList'
-import SessionTabs from './SessionTabs'
 import TaskPanel from './TaskPanel'
-import TokenIndicator from './TokenIndicator'
 import type { MentionItem } from '../../../shared/types'
+
+// ============================================================
+// Thinking depth + Permission mode definitions
+// ============================================================
+
+type ThinkingDepth = 'none' | 'low' | 'medium' | 'high'
+type PermissionMode = 'always-ask' | 'accept-edits' | 'plan' | 'bypass'
+
+const THINKING_DEPTHS: { id: ThinkingDepth; label: string; desc: string }[] = [
+  { id: 'none', label: '关闭', desc: '不使用扩展思考' },
+  { id: 'low', label: '低', desc: '简单推理' },
+  { id: 'medium', label: '中', desc: '平衡深度与速度' },
+  { id: 'high', label: '高', desc: '深度推理，较慢' },
+]
+
+const PERMISSION_MODES: { id: PermissionMode; label: string; desc: string }[] = [
+  { id: 'always-ask', label: '总是询问', desc: '每次工具调用都需确认' },
+  { id: 'accept-edits', label: '允许编辑', desc: '自动允许文件编辑' },
+  { id: 'plan', label: '规划模式', desc: '所有工具都需审批' },
+  { id: 'bypass', label: '自动批准', desc: '跳过所有权限检查' },
+]
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -26,44 +44,87 @@ export default function ChatPanel(): JSX.Element {
   const error = useChatStore((s) => s.error)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
-  const clearConversation = useChatStore((s) => s.clearConversation)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const hasApiKey = useSettingsStore((s) => s.hasApiKey)
 
   // Local UI state
   const [inputValue, setInputValue] = useState('')
   const [showSettings, setShowSettings] = useState(false)
-  const [showSessions, setShowSessions] = useState(false)
   const [showMentionPicker, setShowMentionPicker] = useState(false)
-  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const moreMenuRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const [userScrolledUp, setUserScrolledUp] = useState(false)
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
   const removeMention = useChatStore((s) => s.removeMention)
   const pendingMentions = useChatStore((s) => s.pendingMentions)
 
-  // Session count for History button badge
-  const sessions = useChatStore((s) => s.sessions)
-
   // Task panel state
   const taskPanelVisible = useTaskStore((s) => s.panelVisible)
-  const toggleTaskPanel = useTaskStore((s) => s.togglePanel)
-  const activeTaskCount = useTaskStore((s) => getTaskActiveCount(s.tasks))
 
-  // Auto-scroll to bottom when messages change — use rAF for smooth scheduling
+  // Thinking depth + Permission mode state
+  const [thinkingDepth, setThinkingDepth] = useState<ThinkingDepth>('none')
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('always-ask')
+  const [showThinkingDropdown, setShowThinkingDropdown] = useState(false)
+  const [showPermissionDropdown, setShowPermissionDropdown] = useState(false)
+  const thinkingRef = useRef<HTMLDivElement>(null)
+  const permissionRef = useRef<HTMLDivElement>(null)
+
+  // Load permission mode from backend on mount
   useEffect(() => {
+    window.wzxclaw.getPermissionMode?.().then((result: { mode: string }) => {
+      if (result?.mode) {
+        setPermissionMode(result.mode as PermissionMode)
+      }
+    }).catch(() => {})
+  }, [])
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    if (!showThinkingDropdown && !showPermissionDropdown) return
+    const handler = (e: MouseEvent) => {
+      if (showThinkingDropdown && thinkingRef.current && !thinkingRef.current.contains(e.target as Node)) {
+        setShowThinkingDropdown(false)
+      }
+      if (showPermissionDropdown && permissionRef.current && !permissionRef.current.contains(e.target as Node)) {
+        setShowPermissionDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showThinkingDropdown, showPermissionDropdown])
+
+  const handlePermissionChange = (mode: PermissionMode) => {
+    setPermissionMode(mode)
+    setShowPermissionDropdown(false)
+    window.wzxclaw.setPermissionMode?.({ mode }).catch(() => {})
+  }
+
+  // Auto-scroll to bottom when messages change — only if user hasn't scrolled up
+  useEffect(() => {
+    if (userScrolledUp) return
     const raf = requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     })
     return () => cancelAnimationFrame(raf)
-  }, [messages])
+  }, [messages, userScrolledUp])
+
+  // Track scroll position to detect user scroll-up
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+    const handleScroll = (): void => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+      setUserScrolledUp(distanceFromBottom > 100)
+    }
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [])
 
   // Listen for "Open Settings" from command palette (per CMD-01)
   useEffect(() => {
@@ -71,18 +132,6 @@ export default function ChatPanel(): JSX.Element {
     window.addEventListener('wzxclaw:open-settings', handler)
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
-
-  // Close more menu on outside click
-  useEffect(() => {
-    if (!showMoreMenu) return
-    const handler = (e: MouseEvent) => {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
-        setShowMoreMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showMoreMenu])
 
   // Initialize task store — subscribe to IPC events for real-time updates
   useEffect(() => {
@@ -168,100 +217,17 @@ export default function ChatPanel(): JSX.Element {
     }
   }
 
+  // Compute context usage percentage
+  const tokenUsage = useChatStore((s) => s.currentTokenUsage)
+  const preset = DEFAULT_MODELS.find((m) => m.id === model)
+  const maxTokens = preset?.contextWindowSize ?? 128000
+  const currentTokens = tokenUsage ? tokenUsage.inputTokens + tokenUsage.outputTokens : 0
+  const contextPercent = Math.min(Math.round((currentTokens / maxTokens) * 100), 100)
+
   return (
     <div className="chat-panel">
-      {/* Header — simplified icon-based design */}
-      <div className="chat-header">
-        <div className="chat-header-left">
-          <select
-            className="chat-model-select"
-            value={model}
-            onChange={(e) => handleModelChange(e.target.value)}
-          >
-            {DEFAULT_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          {!hasApiKey && <span className="chat-no-key-warning" title="No API key configured">!</span>}
-          <TokenIndicator />
-        </div>
-        <div className="chat-header-controls">
-          {isStreaming && (
-            <button className="chat-icon-btn" onClick={stopGeneration} title="Stop generation">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-            </button>
-          )}
-          {/* New conversation */}
-          <button
-            className="chat-icon-btn"
-            onClick={() => useChatStore.getState().createSession()}
-            title="New conversation (Ctrl+T)"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-          {/* More menu */}
-          <div style={{ position: 'relative' }} ref={moreMenuRef}>
-            <button
-              className={`chat-icon-btn${showMoreMenu ? ' active' : ''}`}
-              onClick={() => setShowMoreMenu(!showMoreMenu)}
-              title="More options"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
-              </svg>
-            </button>
-            {showMoreMenu && (
-              <div className="chat-more-menu">
-                <button
-                  className="chat-more-menu-item"
-                  onClick={() => { setShowSessions(!showSessions); setShowMoreMenu(false) }}
-                >
-                  <span className="menu-icon">📋</span>
-                  History{sessions.length > 0 ? ` (${sessions.length})` : ''}
-                </button>
-                {messages.length > 0 && (
-                  <button
-                    className="chat-more-menu-item"
-                    onClick={() => { clearConversation(); setShowMoreMenu(false) }}
-                  >
-                    <span className="menu-icon">🗑</span>
-                    Clear conversation
-                  </button>
-                )}
-                <button
-                  className="chat-more-menu-item"
-                  onClick={() => { toggleTaskPanel(); setShowMoreMenu(false) }}
-                  style={activeTaskCount > 0 && !taskPanelVisible ? { color: 'var(--accent)' } : {}}
-                >
-                  <span className="menu-icon">📌</span>
-                  Tasks{activeTaskCount > 0 ? ` (${activeTaskCount})` : ''}
-                </button>
-                <div className="chat-more-menu-separator" />
-                <button
-                  className="chat-more-menu-item"
-                  onClick={() => { setShowSettings(true); setShowMoreMenu(false) }}
-                >
-                  <span className="menu-icon">⚙</span>
-                  Settings
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Session list */}
-      <SessionList isOpen={showSessions} onToggle={() => setShowSessions(!showSessions)} />
-
-      {/* Session tabs */}
-      <SessionTabs />
-
       {/* Messages */}
-      <div className="chat-messages">
+      <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
         {messages.length === 0 ? (
           <div className="chat-empty">
             Start a conversation with the AI agent
@@ -270,6 +236,16 @@ export default function ChatPanel(): JSX.Element {
           messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)
         )}
         <div ref={messagesEndRef} />
+        <button
+          className={`scroll-to-bottom-btn${userScrolledUp ? ' visible' : ''}`}
+          onClick={() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+            setUserScrolledUp(false)
+          }}
+          title="Scroll to bottom"
+        >
+          ↓
+        </button>
       </div>
 
       {/* Permission requests */}
@@ -290,7 +266,7 @@ export default function ChatPanel(): JSX.Element {
         </div>
       )}
 
-      {/* Input area */}
+      {/* Input area — redesigned per reference image */}
       <div className="chat-input-area-wrapper">
         {/* Pending mention badges */}
         {pendingMentions.length > 0 && (
@@ -315,17 +291,10 @@ export default function ChatPanel(): JSX.Element {
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send, Shift+Enter for newline, @ to mention files)"
+            placeholder="描述后续调整内容"
             rows={1}
             disabled={isStreaming}
           />
-          <button
-            className="chat-send-btn"
-            onClick={handleSend}
-            disabled={(!inputValue.trim() && pendingMentions.length === 0) || isStreaming}
-          >
-            &#9654;
-          </button>
           {/* Mention picker dropdown */}
           <MentionPicker
             visible={showMentionPicker}
@@ -334,9 +303,123 @@ export default function ChatPanel(): JSX.Element {
             onClose={() => { setShowMentionPicker(false); setMentionFilter('') }}
           />
         </div>
+        {/* Bottom toolbar: icons | context% | permission | model | send/stop */}
+        <div className="chat-input-toolbar">
+          <div className="chat-toolbar-left">
+            {/* Attachment */}
+            <button className="chat-toolbar-icon" title="添加附件" onClick={() => { setShowMentionPicker(true); textareaRef.current?.focus() }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            {/* @ mention */}
+            <button className="chat-toolbar-icon" title="@ 提及文件" onClick={() => { setShowMentionPicker(true); textareaRef.current?.focus() }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0V12a10 10 0 1 0-3.92 7.94" />
+              </svg>
+            </button>
+            {/* Thinking depth */}
+            <div ref={thinkingRef} style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                className={`chat-toolbar-icon${thinkingDepth !== 'none' ? ' active' : ''}`}
+                title={`思考深度: ${THINKING_DEPTHS.find(t => t.id === thinkingDepth)?.label}`}
+                onClick={() => { setShowThinkingDropdown(!showThinkingDropdown); setShowPermissionDropdown(false) }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+                  <line x1="9" y1="21" x2="15" y2="21" />
+                </svg>
+              </button>
+              {showThinkingDropdown && (
+                <div className="chat-toolbar-dropdown">
+                  <div className="chat-toolbar-dropdown-title">思考深度</div>
+                  {THINKING_DEPTHS.map((t) => (
+                    <button
+                      key={t.id}
+                      className={`chat-toolbar-dropdown-item${thinkingDepth === t.id ? ' active' : ''}`}
+                      onClick={() => { setThinkingDepth(t.id); setShowThinkingDropdown(false) }}
+                    >
+                      <span>{t.label}</span>
+                      <span className="chat-toolbar-dropdown-desc">{t.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Web search */}
+            <button className="chat-toolbar-icon" title="网络搜索" onClick={() => { setInputValue((v) => v ? v : '搜索网络: '); textareaRef.current?.focus() }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+              </svg>
+            </button>
+            {/* Settings */}
+            <button className="chat-toolbar-icon" title="设置" onClick={() => setShowSettings(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+              </svg>
+            </button>
+          </div>
+          <div className="chat-toolbar-right">
+            {/* Context usage percentage */}
+            <span className={`chat-toolbar-context${contextPercent > 80 ? ' danger' : contextPercent > 60 ? ' warning' : ''}`} title={`${currentTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`}>
+              {contextPercent}%
+            </span>
+            {/* Permission mode selector */}
+            <div ref={permissionRef} style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                className="chat-toolbar-select"
+                onClick={() => { setShowPermissionDropdown(!showPermissionDropdown); setShowThinkingDropdown(false) }}
+              >
+                {PERMISSION_MODES.find(p => p.id === permissionMode)?.label ?? '总是询问'}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6" /></svg>
+              </button>
+              {showPermissionDropdown && (
+                <div className="chat-toolbar-dropdown right">
+                  <div className="chat-toolbar-dropdown-title">权限模式</div>
+                  {PERMISSION_MODES.map((p) => (
+                    <button
+                      key={p.id}
+                      className={`chat-toolbar-dropdown-item${permissionMode === p.id ? ' active' : ''}`}
+                      onClick={() => handlePermissionChange(p.id)}
+                    >
+                      <span>{p.label}</span>
+                      <span className="chat-toolbar-dropdown-desc">{p.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Model quick select */}
+            <select
+              className="chat-toolbar-model-select"
+              value={model}
+              onChange={(e) => handleModelChange(e.target.value)}
+            >
+              {DEFAULT_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+            {/* Send / Stop button */}
+            {isStreaming ? (
+              <button className="chat-stop-btn" onClick={stopGeneration} title="停止生成">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              </button>
+            ) : (
+              <button
+                className="chat-send-btn"
+                onClick={handleSend}
+                disabled={!inputValue.trim() && pendingMentions.length === 0}
+                title="发送 (Enter)"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-
-      {/* Settings modal */}
       <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
     </div>
   )

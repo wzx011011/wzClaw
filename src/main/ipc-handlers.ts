@@ -32,7 +32,7 @@ export function registerIpcHandlers(
   agentLoop: AgentLoop,
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,
-  sessionStore: SessionStore,
+  getSessionStore: () => SessionStore,
   contextManager: ContextManager,
   terminalManager: TerminalManager,
   taskManager: TaskManager,
@@ -149,7 +149,7 @@ export function registerIpcHandlers(
             // Auto-save messages after agent turn completes (PERSIST-02)
             try {
               const allMessages = agentLoop.getMessages()
-              await sessionStore.appendMessages(agentConfig.conversationId, allMessages)
+              await getSessionStore().appendMessages(agentConfig.conversationId, allMessages)
             } catch (saveErr) {
               console.error('Failed to auto-save session:', saveErr)
             }
@@ -444,10 +444,59 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // File: rename — renames/moves a file within workspace boundary
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:rename'], async (_event, request) => {
+    try {
+      const { oldPath, newPath } = request
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot) throw new Error('No workspace open')
+
+      const absOld = path.isAbsolute(oldPath) ? oldPath : path.resolve(workspaceRoot, oldPath)
+      const absNew = path.isAbsolute(newPath) ? newPath : path.resolve(workspaceRoot, newPath)
+
+      if (!isWithinWorkspace(absOld, workspaceRoot) || !isWithinWorkspace(absNew, workspaceRoot)) {
+        throw new Error('Access denied: path is outside the workspace root')
+      }
+
+      const { rename } = await import('fs/promises')
+      await rename(absOld, absNew)
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to rename file:', error)
+      return { success: false }
+    }
+  })
+
+  // ============================================================
+  // File: delete — removes a file/directory within workspace boundary
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:delete'], async (_event, request) => {
+    try {
+      const { filePath } = request
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot) throw new Error('No workspace open')
+
+      const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath)
+
+      if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
+        throw new Error('Access denied: path is outside the workspace root')
+      }
+
+      const { rm } = await import('fs/promises')
+      await rm(absolutePath, { recursive: true })
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to delete file:', error)
+      return { success: false }
+    }
+  })
+
+  // ============================================================
   // Session: list — returns all sessions for current project
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async () => {
-    return sessionStore.listSessions()
+    return getSessionStore().listSessions()
   })
 
   // ============================================================
@@ -458,7 +507,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return sessionStore.loadSession(result.data.sessionId)
+    return getSessionStore().loadSession(result.data.sessionId)
   })
 
   // ============================================================
@@ -469,7 +518,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return { success: await sessionStore.deleteSession(result.data.sessionId) }
+    return { success: await getSessionStore().deleteSession(result.data.sessionId) }
   })
 
   // ============================================================
@@ -480,7 +529,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return { success: await sessionStore.renameSession(result.data.sessionId, result.data.title) }
+    return { success: await getSessionStore().renameSession(result.data.sessionId, result.data.title) }
   })
 
   // ============================================================

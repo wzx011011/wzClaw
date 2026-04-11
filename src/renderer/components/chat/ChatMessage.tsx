@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
 import CodeBlock from './CodeBlock'
+import ThinkingIndicator from './ThinkingIndicator'
 import ToolCard from './ToolCard'
 
 // ============================================================
@@ -83,9 +84,20 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
   // Assistant message
   const streamingClass = isStreaming ? ' chat-message-streaming' : ''
 
+  // Strip <details>...</details> blocks from content — tool outputs are already
+  // shown separately via ToolCard, so these duplicate blocks just create clutter.
+  const displayContent = content
+    ? content.replace(/<details[\s\S]*?<\/details>/g, '').trim()
+    : ''
+
   return (
     <div className={`chat-message chat-message-assistant${streamingClass}`}>
-      {content && (
+      {/* Thinking indicator — shown when streaming with no content yet */}
+      {isStreaming && !displayContent && (
+        <ThinkingIndicator />
+      )}
+
+      {displayContent && (
         <div className="chat-message-content">
           <ReactMarkdown
             rehypePlugins={[rehypeRaw, rehypeHighlight]}
@@ -128,14 +140,14 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
               }
             }}
           >
-            {content}
+            {displayContent}
           </ReactMarkdown>
         </div>
       )}
 
       {/* Streaming cursor */}
-      {isStreaming && (
-        <span className="chat-typing-cursor">|</span>
+      {isStreaming && displayContent && (
+        <span className="chat-typing-cursor" />
       )}
 
       {/* Tool calls */}

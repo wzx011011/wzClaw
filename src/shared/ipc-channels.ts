@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
   'stream:tool_use_end': 'stream:tool_use_end',
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
+  'stream:mobile_user_message': 'stream:mobile_user_message',
 
   // Permission channels (main -> renderer request, renderer -> main response)
   'agent:permission_request': 'agent:permission_request',
@@ -39,6 +40,8 @@ export const IPC_CHANNELS = {
   'file:changed': 'file:changed',
   'file:read-content': 'file:read-content',
   'file:read-folder-tree': 'file:read-folder-tree',
+  'file:rename': 'file:rename',
+  'file:delete': 'file:delete',
 
   // Session channels (renderer -> main)
   'session:list': 'session:list',
@@ -108,6 +111,7 @@ export const IPC_CHANNELS = {
   'relay:connect': 'relay:connect',
   'relay:disconnect': 'relay:disconnect',
   'relay:status': 'relay:status',
+  'relay:get_status': 'relay:get_status',
   'relay:qrcode': 'relay:qrcode',
 } as const
 
@@ -145,6 +149,8 @@ export interface IpcRequestPayloads {
   'file:read-content': { filePath: string }
   'file:read-folder-tree': { dirPath: string }
   'file:save': { filePath: string; content: string }
+  'file:rename': { oldPath: string; newPath: string }
+  'file:delete': { filePath: string }
   'session:list': void
   'session:load': { sessionId: string }
   'session:delete': { sessionId: string }
@@ -175,6 +181,7 @@ export interface IpcRequestPayloads {
   'mobile:stop': void
   'relay:connect': { token: string }
   'relay:disconnect': void
+  'relay:get_status': void
   'relay:qrcode': { token?: string }
 }
 export interface IpcResponsePayloads {
@@ -197,6 +204,8 @@ export interface IpcResponsePayloads {
   'file:read-content': { content: string; size: number; path: string } | { error: string; size: number; limit: number }
   'file:read-folder-tree': { tree: string; fileCount: number; path: string } | { error: string }
   'file:save': void
+  'file:rename': { success: boolean }
+  'file:delete': { success: boolean }
   'session:list': SessionMeta[]
   'session:load': unknown[]
   'session:delete': { success: boolean }
@@ -227,6 +236,7 @@ export interface IpcResponsePayloads {
   'mobile:stop': void
   'relay:connect': void
   'relay:disconnect': void
+  'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
 }
 
@@ -238,6 +248,7 @@ export interface IpcStreamPayloads {
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
   'stream:error': { error: string }
   'stream:done': { usage: { inputTokens: number; outputTokens: number } }
+  'stream:mobile_user_message': { content: string; source: 'mobile' }
   'agent:permission_request': {
     toolName: string
     toolInput: Record<string, unknown>

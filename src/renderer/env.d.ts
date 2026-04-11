@@ -19,6 +19,8 @@ declare global {
       readFileContent: (request: { filePath: string }) => Promise<{ content: string; size: number; path: string } | { error: string; size: number; limit: number }>
       readFolderTree: (request: { dirPath: string }) => Promise<{ tree: string; fileCount: number; path: string } | { error: string }>
       saveFile: (request: { filePath: string; content: string }) => Promise<void>
+      renameFile: (request: { oldPath: string; newPath: string }) => Promise<{ success: boolean }>
+      deleteFile: (request: { filePath: string }) => Promise<{ success: boolean }>
       getWorkspaceStatus: () => Promise<{ rootPath: string | null; isWatching: boolean }>
       onFileChanged: (cb: (p: { filePath: string; changeType: string }) => void) => () => void
       // Permissions
@@ -70,6 +72,9 @@ declare global {
       disconnectRelay: () => Promise<void>
       onRelayStatus: (cb: (p: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => void) => () => void
       getRelayQrCode: (request?: { token: string }) => Promise<{ qrCode: string }>
+      getRelayStatus: () => Promise<{ connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }>
+      // Mobile user message (relay/mobile -> renderer)
+      onMobileUserMessage: (cb: (p: { content: string; source: 'mobile' }) => void) => () => void
     }
   }
 }

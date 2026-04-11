@@ -134,7 +134,7 @@ html, body, #root {
   width: 100%;
 }
 
-/* Drag region for custom titlebar */
+/* Toolbar with drag region for custom titlebar (titleBarStyle: hidden) */
 .ide-titlebar {
   display: flex;
   align-items: center;
@@ -702,6 +702,85 @@ html, body, #root {
   max-width: 140px;
 }
 
+/* Sidebar action toolbar */
+.sidebar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 8px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sidebar-toolbar-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+/* Project name highlight */
+.sidebar-project-name {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f97316;
+  background: rgba(249, 115, 22, 0.08);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* Sidebar sessions tab content */
+.sidebar-sessions {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sidebar-sessions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-new-session-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sidebar-new-session-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
@@ -879,6 +958,17 @@ html, body, #root {
 
 .tree-node:hover .tree-label {
   color: #fff;
+}
+
+.tree-rename-input {
+  background: var(--bg-tertiary, #2a2d2e);
+  color: var(--text-primary);
+  border: 1px solid var(--accent, #007acc);
+  outline: none;
+  font-size: 12px;
+  padding: 1px 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .tree-children {
@@ -1662,4 +1752,213 @@ html, body, #root {
 
 .terminal-container .xterm-screen {
   height: 100% !important;
+}
+
+/* ============================================================
+   Right Sidebar
+   ============================================================ */
+
+.right-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-subtle);
+}
+
+/* ============================================================
+   Hamburger Menu (TitleBar dropdown)
+   ============================================================ */
+
+.titlebar-menu-container {
+  position: relative;
+  -webkit-app-region: no-drag;
+  margin-right: var(--sp-2);
+}
+
+.titlebar-hamburger {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1) 0;
+  z-index: 1000;
+  margin-top: 2px;
+}
+
+.titlebar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 6px var(--sp-3);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.titlebar-menu-item:hover {
+  background: var(--hover-bg);
+}
+
+.titlebar-menu-item.selected {
+  color: var(--accent);
+}
+
+.titlebar-menu-check {
+  display: inline-block;
+  width: 14px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.titlebar-menu-separator {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--sp-1) 0;
+}
+
+.titlebar-menu-label {
+  padding: 4px var(--sp-3);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   Theme Variants
+   ============================================================ */
+
+/* Dark theme (slightly lighter than midnight) */
+[data-theme="dark"] {
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d30;
+  --bg-elevated: #3c3c3c;
+  --bg-input: #1a1a1a;
+  --text-primary: #d4d4d4;
+  --text-secondary: #969696;
+  --text-muted: #6a6a6a;
+  --border: #3e3e3e;
+  --border-subtle: #333333;
+  --hover-bg: #2a2d2e;
+  --accent: #569cd6;
+  --accent-hover: #4a8cc2;
+  --accent-subtle: rgba(86, 156, 214, 0.15);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e8e8e8;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --text-primary: #1e1e1e;
+  --text-secondary: #616161;
+  --text-muted: #999999;
+  --border: #d4d4d4;
+  --border-subtle: #e5e5e5;
+  --hover-bg: #e8e8e8;
+  --accent: #6f42c1;
+  --accent-hover: #5a32a3;
+  --accent-subtle: rgba(111, 66, 193, 0.1);
+  --success: #22863a;
+  --warning: #b08800;
+  --error: #cb2431;
+  --tab-active-bg: #ffffff;
+  --tab-inactive-bg: #ececec;
+}
+
+/* ============================================================
+   Chat Input Enhancements — Thinking Depth + Permission Mode
+   ============================================================ */
+
+.chat-input-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.chat-control-select {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+  position: relative;
+  user-select: none;
+}
+
+.chat-control-select:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.chat-control-select svg {
+  flex-shrink: 0;
+}
+
+.chat-control-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  min-width: 180px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.3);
+  padding: var(--sp-1) 0;
+  z-index: 100;
+  margin-bottom: 4px;
+}
+
+.chat-control-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 6px var(--sp-3);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chat-control-option:hover {
+  background: var(--hover-bg);
+}
+
+.chat-control-option.active {
+  color: var(--accent);
+}
+
+.chat-control-option-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
 }

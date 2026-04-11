@@ -148,7 +148,8 @@ export class RelayClient extends EventEmitter {
       }
     })
 
-    this.ws.on('close', () => {
+    this.ws.on('close', (code: number, reason: Buffer) => {
+      console.log('[RelayClient] close code=%d reason=%s', code, reason?.toString() || '')
       this._stopHeartbeat()
       if (!this.disposed && (this._connected || this._connecting)) {
         this._updateState(false, false)
@@ -156,7 +157,8 @@ export class RelayClient extends EventEmitter {
       }
     })
 
-    this.ws.on('error', () => {
+    this.ws.on('error', (err: Error) => {
+      console.error('[RelayClient] error:', err.message)
       // handled by close
     })
   }

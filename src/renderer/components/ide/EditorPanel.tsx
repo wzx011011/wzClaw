@@ -4,6 +4,7 @@ import type { editor as MonacoEditor } from 'monaco-editor'
 import { useTabStore } from '../../stores/tab-store'
 import { useDiffStore } from '../../stores/diff-store'
 import SymbolService from './SymbolService'
+import WelcomeScreen from './WelcomeScreen'
 
 /**
  * EditorPanel — Monaco Editor wrapper (per D-42).
@@ -150,7 +151,7 @@ export default function EditorPanel(): JSX.Element {
   )
 
   if (!activeTab) {
-    return <div className="editor-panel" />
+    return <div className="editor-panel"><WelcomeScreen /></div>
   }
 
   // Switch editor to read-only when diff is active for this file

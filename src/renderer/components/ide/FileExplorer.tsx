@@ -60,6 +60,9 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
     x: number
     y: number
   } | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   const handleDirectoryClick = useCallback(async () => {
     if (node.isExpanded) {
@@ -74,6 +77,8 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
       const result = await window.wzxclaw.readFile({ filePath: node.path })
       const fileName = node.name
       openTab(node.path, fileName, result.content, result.language)
+      // Notify IDELayout to open the right sidebar with editor
+      window.dispatchEvent(new CustomEvent('wzxclaw:file-opened'))
     } catch (err) {
       console.error('Failed to open file:', err)
     }
@@ -86,6 +91,47 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
       handleFileClick()
     }
   }, [node.isDirectory, handleDirectoryClick, handleFileClick])
+
+  const handleRenameCommit = useCallback(async () => {
+    const trimmed = renameValue.trim()
+    if (!trimmed || trimmed === node.name) {
+      setRenaming(false)
+      return
+    }
+    const dirPath = node.path.substring(0, node.path.length - node.name.length)
+    const newPath = dirPath + trimmed
+    try {
+      const result = await window.wzxclaw.renameFile({ oldPath: node.path, newPath })
+      if (result.success) {
+        // Refresh the parent directory to show updated name
+        const parentDir = dirPath.endsWith('/') || dirPath.endsWith('\\') ? dirPath.slice(0, -1) : dirPath
+        if (parentDir) {
+          useWorkspaceStore.getState().expandNode(parentDir)
+        }
+      }
+    } catch (err) {
+      console.error('Rename failed:', err)
+    }
+    setRenaming(false)
+  }, [renameValue, node.path, node.name])
+
+  const handleDelete = useCallback(async () => {
+    const confirmed = window.confirm(`确定删除 "${node.name}" 吗？此操作不可撤销。`)
+    if (!confirmed) return
+    try {
+      const result = await window.wzxclaw.deleteFile({ filePath: node.path })
+      if (result.success) {
+        // Refresh parent directory
+        const dirPath = node.path.substring(0, node.path.length - node.name.length)
+        const parentDir = dirPath.endsWith('/') || dirPath.endsWith('\\') ? dirPath.slice(0, -1) : dirPath
+        if (parentDir) {
+          useWorkspaceStore.getState().expandNode(parentDir)
+        }
+      }
+    } catch (err) {
+      console.error('Delete failed:', err)
+    }
+  }, [node.path, node.name])
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -102,6 +148,13 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
   }, [contextMenu])
+
+  useEffect(() => {
+    if (renaming && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [renaming])
 
   // Icon rendering
   const dirIcon = node.isExpanded ? '\u25BE' : '\u25B8'  // small triangles
@@ -121,7 +174,22 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
         ) : (
           <span className={`tree-icon file-icon ${fileIcon.className}`} style={{ fontSize: 9, fontWeight: 700 }}>{fileIcon.char}</span>
         )}
-        <span className="tree-label">{node.name}</span>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            className="tree-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={handleRenameCommit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameCommit()
+              if (e.key === 'Escape') setRenaming(false)
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="tree-label">{node.name}</span>
+        )}
       </div>
 
       {/* Render children if expanded directory */}
@@ -155,7 +223,8 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
           <button
             className="context-menu-item"
             onClick={() => {
-              console.log('Rename stub:', node.path)
+              setRenameValue(node.name)
+              setRenaming(true)
               setContextMenu(null)
             }}
           >
@@ -164,7 +233,7 @@ function TreeNodeItem({ node, depth }: TreeNodeProps): JSX.Element {
           <button
             className="context-menu-item"
             onClick={() => {
-              console.log('Delete stub:', node.path)
+              handleDelete()
               setContextMenu(null)
             }}
           >

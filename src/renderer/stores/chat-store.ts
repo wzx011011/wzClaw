@@ -33,6 +33,7 @@ interface ChatState {
   messages: ChatMessage[]
   conversationId: string
   isStreaming: boolean
+  isWaitingForResponse: boolean
   error: string | null
   sessions: SessionMeta[]
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
@@ -108,6 +109,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
   messages: [],
   conversationId: initialId,
   isStreaming: false,
+  isWaitingForResponse: false,
   error: null,
   sessions: [],
   currentTokenUsage: null,
@@ -121,7 +123,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   init: () => {
     const unsubText = window.wzxclaw.onStreamText((payload) => {
-      const { messages } = get()
+      const { messages, isWaitingForResponse } = get()
       // Find the last assistant message that is streaming
       const lastAssistantIdx = [...messages]
         .map((m, i) => ({ m, i }))
@@ -131,6 +133,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (lastAssistantIdx) {
         // Append content to existing streaming assistant message
         set({
+          isWaitingForResponse: false,
           messages: messages.map((m, i) =>
             i === lastAssistantIdx.i
               ? { ...m, content: m.content + payload.content }
@@ -147,7 +150,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: true,
           toolCalls: []
         }
-        set({ messages: [...messages, newMsg] })
+        set({ isWaitingForResponse: false, messages: [...messages, newMsg] })
       }
     })
 
@@ -160,6 +163,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
       if (lastAssistantIdx) {
         set({
+          isWaitingForResponse: false,
           messages: messages.map((m, i) =>
             i === lastAssistantIdx.i
               ? {
@@ -211,6 +215,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (lastStreamingIdx) {
         set({
           isStreaming: false,
+          isWaitingForResponse: false,
           currentTokenUsage: payload.usage,
           messages: messages.map((m, i) =>
             i === lastStreamingIdx.i
@@ -219,7 +224,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           )
         })
       } else {
-        set({ isStreaming: false })
+        set({ isStreaming: false, isWaitingForResponse: false })
       }
     })
 
@@ -234,15 +239,28 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (lastStreamingIdx) {
         set({
           isStreaming: false,
+          isWaitingForResponse: false,
           error: payload.error,
           messages: messages.map((m, i) =>
             i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
           )
         })
       } else {
-        set({ isStreaming: false, error: payload.error })
+        set({ isStreaming: false, isWaitingForResponse: false, error: payload.error })
       }
     })
+
+    // Mobile user messages (from phone via relay)
+    const unsubMobileMsg = window.wzxclaw.onMobileUserMessage?.((payload) => {
+      const userMsg: ChatMessage = {
+        id: uuidv4(),
+        role: 'user',
+        content: payload.content,
+        timestamp: Date.now()
+      }
+      const { messages } = get()
+      set({ messages: [...messages, userMsg] })
+    }) ?? (() => {})
 
     // Session compacted events (per CTX-03, CTX-05)
     const unsubCompacted = window.wzxclaw.onSessionCompacted((payload) => {
@@ -269,6 +287,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubToolResult()
       unsubEnd()
       unsubError()
+      unsubMobileMsg()
       unsubCompacted()
     }
   },
@@ -313,6 +332,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     set({
       messages: [...messages, userMsg, assistantMsg],
       isStreaming: true,
+      isWaitingForResponse: true,
       error: null,
       pendingMentions: []
     })

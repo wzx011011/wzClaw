@@ -63,7 +63,9 @@ const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
 const RATE_LIMIT_DELAY_MS = 100
 const BATCH_SIZE = 50
 const API_TIMEOUT_MS = 10000
-const MAX_VOCAB_SIZE = 50000 // Cap vocabulary to prevent unbounded memory growth
+const MAX_VOCAB_SIZE = 5000 // Cap vocabulary to prevent unbounded memory growth
+const API_FAILURE_COOLDOWN_MS = 5 * 60 * 1000 // 5 min cooldown after consecutive failures
+const MAX_CONSECUTIVE_FAILURES = 3
 
 export class EmbeddingClient {
   private apiKey: string | undefined
@@ -75,6 +77,10 @@ export class EmbeddingClient {
   private vocabPath: string | null = null
   private lastRequestTime = 0
 
+  // API failure tracking
+  private consecutiveFailures = 0
+  private apiCooldownUntil = 0
+
   constructor(config: EmbeddingClientConfig) {
     this.apiKey = config.apiKey
     this.baseURL = config.baseURL
@@ -82,9 +88,20 @@ export class EmbeddingClient {
   }
 
   /**
-   * Returns true if an API key and base URL are configured.
+   * Returns true if an API key and base URL are configured and not in cooldown.
    */
   isAvailable(): boolean {
+    if (!this.apiKey || !this.baseURL) return false
+    if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && Date.now() < this.apiCooldownUntil) {
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Returns true if API credentials are configured (ignores cooldown).
+   */
+  isConfigured(): boolean {
     return !!(this.apiKey && this.baseURL)
   }
 
@@ -103,10 +120,11 @@ export class EmbeddingClient {
   async embed(text: string): Promise<EmbeddingResult> {
     if (this.isAvailable()) {
       try {
-        return await this.embedViaAPI([text])
+        const result = await this.embedViaAPI([text])
+        this.consecutiveFailures = 0
+        return result
       } catch (err) {
-        // Fall back to TF-IDF on API error
-        console.warn('[EmbeddingClient] API call failed, falling back to TF-IDF:', (err as Error).message)
+        this.recordApiFailure(err as Error)
       }
     }
 
@@ -132,15 +150,31 @@ export class EmbeddingClient {
             await this.rateLimitDelay()
           }
         }
+        this.consecutiveFailures = 0
         return results
       } catch (err) {
-        console.warn('[EmbeddingClient] API batch call failed, falling back to TF-IDF:', (err as Error).message)
+        this.recordApiFailure(err as Error)
       }
     }
 
     // Update vocabulary with all texts before embedding
     this.updateVocab(texts)
     return texts.map(text => this.embedViaTfIdf(text))
+  }
+
+  /**
+   * Record an API failure and enter cooldown after consecutive failures.
+   */
+  private recordApiFailure(err: Error): void {
+    this.consecutiveFailures++
+    if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      this.apiCooldownUntil = Date.now() + API_FAILURE_COOLDOWN_MS
+      if (this.consecutiveFailures === MAX_CONSECUTIVE_FAILURES) {
+        console.warn(`[EmbeddingClient] ${MAX_CONSECUTIVE_FAILURES} consecutive API failures, pausing for 5min:`, err.message)
+      }
+    } else {
+      console.warn('[EmbeddingClient] API call failed, falling back to TF-IDF:', err.message)
+    }
   }
 
   /**
@@ -189,6 +223,10 @@ export class EmbeddingClient {
 
       const data = await response.json() as {
         data: Array<{ embedding: number[]; index: number }>
+      }
+
+      if (!Array.isArray(data.data)) {
+        throw new Error(`Unexpected API response shape: ${JSON.stringify(data).slice(0, 200)}`)
       }
 
       // Sort by index to ensure correct ordering

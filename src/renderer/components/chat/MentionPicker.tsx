@@ -121,6 +121,18 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
     el?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
 
+  // Close on outside click
+  useEffect(() => {
+    if (!visible) return
+    const handleMouseDown = (e: MouseEvent) => {
+      if (listRef.current && !listRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [visible, onClose])
+
   // Keyboard navigation
   useEffect(() => {
     if (!visible) return

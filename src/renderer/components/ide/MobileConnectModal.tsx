@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 
 interface MobileConnectModalProps {
   onClose: () => void
@@ -11,6 +11,8 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
   const [relayQrCode, setRelayQrCode] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     window.wzxclaw
@@ -23,6 +25,30 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
         setError(err.message)
         setLoading(false)
       })
+  }, [])
+
+  // Auto-close when mobile connects — use ref to avoid dependency on onClose
+  useEffect(() => {
+    const cleanup = window.wzxclaw.onRelayStatus((status) => {
+      console.log('[MobileConnectModal] relay status event:', JSON.stringify(status))
+      if (status.mobileConnected) {
+        onCloseRef.current()
+      }
+    })
+    return cleanup
+  }, [])
+
+  // Polling fallback: check relay status every 2s in case events are missed
+  useEffect(() => {
+    const interval = setInterval(() => {
+      window.wzxclaw.getRelayStatus().then((status) => {
+        console.log('[MobileConnectModal] poll relay status:', JSON.stringify(status))
+        if (status.mobileConnected) {
+          onCloseRef.current()
+        }
+      }).catch(() => {})
+    }, 2000)
+    return () => clearInterval(interval)
   }, [])
 
   return (

@@ -13,6 +13,10 @@ interface CodeBlockProps {
 export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Element {
   const [copied, setCopied] = useState(false)
   const [applied, setApplied] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
+
+  const lineCount = (code.match(/\n/g) || []).length + 1
+  const isLong = lineCount > 15
 
   const handleCopy = async (): Promise<void> => {
     try {
@@ -48,9 +52,14 @@ export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Eleme
           </button>
         </div>
       </div>
-      <pre>
+      <pre className={isLong ? (collapsed ? 'code-block-collapsed' : 'code-block-expanded') : ''}>
         <code className={language ? `language-${language}` : ''}>{code}</code>
       </pre>
+      {isLong && (
+        <button className="code-block-toggle" onClick={() => setCollapsed(!collapsed)}>
+          {collapsed ? `Show more (${lineCount} lines)` : 'Show less'}
+        </button>
+      )}
     </div>
   )
 }

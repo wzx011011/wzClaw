@@ -3,6 +3,12 @@ import path from 'path'
 import crypto from 'crypto'
 const { join } = path
 import { networkInterfaces } from 'os'
+
+// Ignore EPIPE errors on stdout/stderr — happens when Electron is launched from
+// a pipe (e.g. Claude Code hook) and the parent process exits while async
+// console.warn / console.log are still writing.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err })
+process.stderr.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err })
 // Inline replacements for @electron-toolkit/utils (v4 CJS compat issue)
 const is = { dev: !app.isPackaged }
 const electronApp = {
@@ -74,8 +80,7 @@ function createWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#00000000',
-    transparent: true,
+    backgroundColor: '#181818',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#181818',
@@ -169,8 +174,12 @@ function createIndexingEngineForWorkspace(rootPath: string): IndexingEngine {
     model: 'text-embedding-3-small'
   })
   const engine = new IndexingEngine(rootPath, embeddingClient)
-  // Start full indexing in background
-  engine.indexFull().catch((err) => console.error('[IndexingEngine] Initial indexing failed:', err))
+  // Only auto-index if embedding API is configured
+  if (embeddingClient.isConfigured()) {
+    engine.indexFull().catch((err) => console.error('[IndexingEngine] Initial indexing failed:', err))
+  } else {
+    console.log('[IndexingEngine] Embedding API not configured, skipping auto-index.')
+  }
   return engine
 }
 
@@ -205,6 +214,12 @@ app.whenReady().then(() => {
 
   // Load persisted settings for embedding API config
   settingsManager.load()
+
+  // Restore last workspace if saved
+  const lastWsPath = settingsManager.getLastWorkspacePath()
+  if (lastWsPath && require('fs').existsSync(lastWsPath)) {
+    workspaceManager.setWorkspaceRoot(lastWsPath)
+  }
 
   // Auto-connect to relay if token is saved
   const savedRelayToken = settingsManager.getRelayToken()
@@ -343,6 +358,200 @@ app.whenReady().then(() => {
       return
     }
 
+    // -- Session sync: create session --
+    if (msg.event === 'session:create:request') {
+      const requestId = msg.data?.requestId ?? ''
+      if (!sessionStore) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
+        return
+      }
+      try {
+        const title = msg.data?.title || 'New Session'
+        const sessionId = crypto.randomUUID()
+        // Create the session file with a meta line
+        const metaLine = JSON.stringify({ type: 'meta', title }) + '\n'
+        const fsp = await import('fs/promises')
+        const sessionPath = path.join(
+          (sessionStore as any).sessionsDir,
+          `${sessionId}.jsonl`
+        )
+        await fsp.writeFile(sessionPath, metaLine, 'utf-8')
+        broadcastToMobile('session:create:response', {
+          requestId,
+          session: { id: sessionId, title, createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 }
+        })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- Session sync: delete session --
+    if (msg.event === 'session:delete:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const sessionId = msg.data?.sessionId
+      if (!sessionStore || !sessionId) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace or session ID', code: 'NO_WORKSPACE' })
+        return
+      }
+      try {
+        const success = await sessionStore.deleteSession(sessionId)
+        broadcastToMobile('session:delete:response', { requestId, success })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- Session sync: rename session --
+    if (msg.event === 'session:rename:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const sessionId = msg.data?.sessionId
+      const title = msg.data?.title
+      if (!sessionStore || !sessionId || !title) {
+        broadcastToMobile('session:error', { requestId, error: 'Missing parameters', code: 'BAD_REQUEST' })
+        return
+      }
+      try {
+        const success = await sessionStore.renameSession(sessionId, title)
+        broadcastToMobile('session:rename:response', { requestId, success })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- Workspace: list recent workspaces --
+    if (msg.event === 'workspace:list:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const workspaces = settingsManager.getRecentWorkspaces()
+        const currentRoot = workspaceManager.getWorkspaceRoot()
+        broadcastToMobile('workspace:list:response', {
+          requestId,
+          workspaces: workspaces.map(w => ({
+            path: w,
+            name: path.basename(w),
+            isCurrent: w === currentRoot,
+          })),
+        })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- Workspace: switch to a different workspace --
+    if (msg.event === 'workspace:switch:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const workspacePath = msg.data?.workspacePath
+      if (!workspacePath) {
+        broadcastToMobile('session:error', { requestId, error: 'Missing workspacePath', code: 'BAD_REQUEST' })
+        return
+      }
+      try {
+        const fsSync = await import('fs')
+        if (!fsSync.existsSync(workspacePath)) {
+          broadcastToMobile('workspace:switch:response', { requestId, success: false, error: 'Path does not exist' })
+          return
+        }
+        // Trigger workspace open — reuses the existing onWorkspaceOpened flow
+        workspaceManager.setWorkspaceRoot(workspacePath)
+        handleWorkspaceOpened(workspacePath, toolRegistry)
+        sessionStore = new SessionStore(workspacePath)
+        settingsManager.setLastWorkspacePath(workspacePath)
+        sendWorkspaceInfoToMobile()
+        broadcastToMobile('workspace:switch:response', {
+          requestId,
+          success: true,
+          workspaceName: path.basename(workspacePath),
+        })
+      } catch (err: any) {
+        broadcastToMobile('workspace:switch:response', { requestId, success: false, error: err.message })
+      }
+      return
+    }
+
+    // -- File browsing: get directory tree --
+    if (msg.event === 'file:tree:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
+        return
+      }
+      try {
+        const dirPath = msg.data?.dirPath || workspaceRoot
+        const depth = msg.data?.depth || 2
+        const nodes = await workspaceManager.getDirectoryTree(dirPath, depth)
+        broadcastToMobile('file:tree:response', { requestId, nodes })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
+    // -- File browsing: read file content --
+    if (msg.event === 'file:read:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const filePath = msg.data?.filePath
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot || !filePath) {
+        broadcastToMobile('session:error', { requestId, error: 'No workspace or file path', code: 'BAD_REQUEST' })
+        return
+      }
+      try {
+        const absolutePath = require('path').isAbsolute(filePath) ? filePath : require('path').resolve(workspaceRoot, filePath)
+
+        // Security: verify path is within workspace
+        const normalizedPath = require('path').resolve(absolutePath).toLowerCase()
+        const normalizedRoot = require('path').resolve(workspaceRoot).toLowerCase()
+        if (!normalizedPath.startsWith(normalizedRoot)) {
+          broadcastToMobile('session:error', { requestId, error: 'Access denied: path outside workspace', code: 'ACCESS_DENIED' })
+          return
+        }
+
+        const fs = await import('fs/promises')
+        const stat = await fs.stat(absolutePath)
+
+        // Limit to 500KB for mobile
+        if (stat.size > 512000) {
+          broadcastToMobile('file:read:response', {
+            requestId,
+            error: 'File too large',
+            size: stat.size,
+            filePath
+          })
+          return
+        }
+
+        const content = await fs.readFile(absolutePath, 'utf-8')
+
+        // Detect language from extension
+        const ext = require('path').extname(absolutePath).slice(1).toLowerCase()
+        const langMap: Record<string, string> = {
+          ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+          py: 'python', rs: 'rust', go: 'go', java: 'java', kt: 'kotlin',
+          dart: 'dart', swift: 'swift', c: 'c', cpp: 'cpp', h: 'c',
+          css: 'css', scss: 'scss', html: 'html', xml: 'xml',
+          json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+          md: 'markdown', sh: 'bash', bash: 'bash', sql: 'sql',
+        }
+        const language = langMap[ext] ?? ext
+
+        broadcastToMobile('file:read:response', {
+          requestId,
+          content,
+          language,
+          size: stat.size,
+          filePath: require('path').relative(workspaceRoot, absolutePath).replace(/\\\\/g, '/'),
+        })
+      } catch (err: any) {
+        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      }
+      return
+    }
+
     // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
       // Use session ID from mobile, or generate one for this mobile conversation
@@ -350,6 +559,14 @@ app.whenReady().then(() => {
       mobileSessionId = sessionId
 
       const config = settingsManager.getCurrentConfig()
+      // Ensure LLM adapter is registered (matches ipc-handlers.ts logic)
+      if (config.apiKey) {
+        gateway.addProvider({
+          provider: config.provider as 'openai' | 'anthropic',
+          apiKey: config.apiKey,
+          baseURL: config.baseURL,
+        })
+      }
       const agentConfig: AgentConfig = {
         model: config.model,
         provider: config.provider as 'openai' | 'anthropic',
@@ -360,6 +577,15 @@ app.whenReady().then(() => {
 
       // Broadcast the assigned session ID back to mobile so it can track it
       broadcastToMobile('session:active', { sessionId })
+
+      // Send the mobile user's message to renderer so it appears in the chat
+      const wc0 = BrowserWindow.getAllWindows()[0]?.webContents
+      if (wc0) {
+        wc0.send(IPC_CHANNELS['stream:mobile_user_message'], {
+          content: msg.data.content,
+          source: 'mobile'
+        })
+      }
 
       try {
         for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig)) {
@@ -443,6 +669,10 @@ app.whenReady().then(() => {
     relayClient.disconnect()
   })
 
+  ipcMain.handle(IPC_CHANNELS['relay:get_status'], async () => {
+    return relayClient.getStatus()
+  })
+
   ipcMain.handle(IPC_CHANNELS['relay:qrcode'], async (_e, request?: { token: string }) => {
     const token = request?.token || settingsManager.getRelayToken()
     if (!token) throw new Error('No relay token configured')
@@ -502,9 +732,18 @@ app.whenReady().then(() => {
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
-    gateway, agentLoop, permissionManager, workspaceManager, sessionStore,
+    gateway, agentLoop, permissionManager, workspaceManager, () => sessionStore,
     contextManager, terminalManager, taskManager, indexingEngine, settingsManager,
-    (rootPath) => handleWorkspaceOpened(rootPath, toolRegistry)
+    (rootPath) => {
+      handleWorkspaceOpened(rootPath, toolRegistry)
+      // Persist last workspace path
+      settingsManager.setLastWorkspacePath(rootPath)
+      // Rebuild SessionStore for new workspace
+      sessionStore = new SessionStore(rootPath)
+      // Reset mobile session and notify connected mobile
+      mobileSessionId = null
+      sendWorkspaceInfoToMobile()
+    }
   )
 
   // Listen for file changes to trigger incremental index updates
@@ -521,13 +760,31 @@ app.whenReady().then(() => {
     }
   })
 
-  // Set up Chromium menu bar
-  Menu.setApplicationMenu(buildMenuBar())
+  // Hide native menu bar (using custom titlebar instead)
+  Menu.setApplicationMenu(null)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
-  createWindow()
+  const mainWindow = createWindow()
+
+  // Deferred side-effects after renderer loads
+  mainWindow.webContents.once('did-finish-load', () => {
+    // Restore workspace if saved
+    if (lastWsPath && require('fs').existsSync(lastWsPath)) {
+      handleWorkspaceOpened(lastWsPath, toolRegistry)
+      sessionStore = new SessionStore(lastWsPath)
+      sendWorkspaceInfoToMobile()
+    }
+    // Always push current relay status after renderer loads
+    // (relay may have connected before renderer mounted)
+    setTimeout(() => {
+      const status = relayClient.getStatus()
+      console.log('[main] pushing relay status to renderer after load:', JSON.stringify(status))
+      mainWindow.webContents.send(IPC_CHANNELS['relay:status'], status)
+    }, 500)
+  })
+
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

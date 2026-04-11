@@ -257,6 +257,18 @@ export class WorkspaceManager {
   }
 
   /**
+   * Programmatically set the workspace root (e.g. restoring last session).
+   * Starts file watching on the path.
+   */
+  setWorkspaceRoot(rootPath: string): void {
+    this.workspaceRoot = rootPath
+    this.stopWatching()
+    this.startWatching().catch((err) => {
+      console.error('[WorkspaceManager] Failed to start watching:', err)
+    })
+  }
+
+  /**
    * Returns whether the workspace is currently being watched.
    */
   isWatching(): boolean {

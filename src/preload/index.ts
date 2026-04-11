@@ -45,6 +45,8 @@ const api = {
   readFileContent: (request: { filePath: string }) => ipcRenderer.invoke('file:read-content', request),
   readFolderTree: (request: { dirPath: string }) => ipcRenderer.invoke('file:read-folder-tree', request),
   saveFile: (request: { filePath: string; content: string }) => ipcRenderer.invoke('file:save', request),
+  renameFile: (request: { oldPath: string; newPath: string }) => ipcRenderer.invoke('file:rename', request),
+  deleteFile: (request: { filePath: string }) => ipcRenderer.invoke('file:delete', request),
 
   // File change listener — returns unsubscribe function
   onFileChanged: (callback: (payload: { filePath: string; changeType: string }) => void) => {
@@ -165,6 +167,19 @@ const api = {
   },
   getRelayQrCode: (request?: { token: string }) =>
     ipcRenderer.invoke('relay:qrcode', request ?? {}),
+  getRelayStatus: () =>
+    ipcRenderer.invoke('relay:get_status'),
+
+  // Mobile user message (relay/mobile -> renderer)
+  onMobileUserMessage: (callback: (payload: { content: string; source: 'mobile' }) => void) => {
+    const handler = (_: unknown, payload: { content: string; source: 'mobile' }) => callback(payload)
+    ipcRenderer.on('stream:mobile_user_message', handler)
+    return () => ipcRenderer.removeListener('stream:mobile_user_message', handler)
+  },
+
+  // Permission mode
+  getPermissionMode: () => ipcRenderer.invoke('permission:get_mode'),
+  setPermissionMode: (request: { mode: string }) => ipcRenderer.invoke('permission:set_mode', request),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

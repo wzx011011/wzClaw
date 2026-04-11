@@ -16,6 +16,8 @@ interface StoredSettings {
   baseURL?: string
   systemPrompt?: string
   relayToken?: string
+  lastWorkspacePath?: string
+  recentWorkspaces?: string[]
 }
 
 interface EncryptedKeys {
@@ -67,11 +69,13 @@ export class SettingsManager {
         const raw = fs.readFileSync(this.settingsPath, 'utf-8')
         const parsed = JSON.parse(raw) as StoredSettings
         this.settings = {
-          provider: parsed.provider ?? 'openai',
-          model: parsed.model ?? 'gpt-4o',
+          provider: parsed.provider ?? 'anthropic',
+          model: parsed.model ?? 'glm-5.1',
           baseURL: parsed.baseURL,
           systemPrompt: parsed.systemPrompt,
-          relayToken: parsed.relayToken
+          relayToken: parsed.relayToken,
+          lastWorkspacePath: parsed.lastWorkspacePath,
+          recentWorkspaces: parsed.recentWorkspaces
         }
       } catch (err) {
         console.error('Failed to load settings.json:', err)
@@ -188,6 +192,29 @@ export class SettingsManager {
 
   setRelayToken(token: string): void {
     this.settings.relayToken = token
+    this.save()
+  }
+
+  getLastWorkspacePath(): string | undefined {
+    return this.settings.lastWorkspacePath
+  }
+
+  setLastWorkspacePath(wsPath: string): void {
+    this.settings.lastWorkspacePath = wsPath
+    this.addRecentWorkspace(wsPath)
+  }
+
+  getRecentWorkspaces(): string[] {
+    return this.settings.recentWorkspaces ?? []
+  }
+
+  addRecentWorkspace(wsPath: string): void {
+    const recent = this.settings.recentWorkspaces ?? []
+    // Remove if already exists (will re-add at front)
+    const filtered = recent.filter(p => p !== wsPath)
+    filtered.unshift(wsPath)
+    // Keep at most 10
+    this.settings.recentWorkspaces = filtered.slice(0, 10)
     this.save()
   }
 

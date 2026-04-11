@@ -5,11 +5,12 @@ import TitleBar from './TitleBar'
 import Sidebar from './Sidebar'
 import StatusBar from './StatusBar'
 import TerminalPanel from './TerminalPanel'
+import EditorPanel from './EditorPanel'
+import TabBar from './TabBar'
 import PreviewPanel from './PreviewPanel'
 import MobileConnectModal from './MobileConnectModal'
 import ChatPanel from '../chat/ChatPanel'
 import CommandPalette from '../CommandPalette'
-import TaskPanel from '../chat/TaskPanel'
 import ToastContainer from '../chat/ToastContainer'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useChatStore } from '../../stores/chat-store'
@@ -17,18 +18,14 @@ import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
-import { useTaskStore } from '../../stores/task-store'
-import { useNotificationStore } from '../../stores/notification-store'
 
 /**
- * IDELayout — Chat-centric layout inspired by Z Code ADE.
+ * IDELayout — Chat-centric layout with right sidebar for sessions + editor.
  *
  * Layout:
- *   [Left Sidebar (collapsible: Files/Tasks)] | [Chat Panel (center, primary)]
+ *   [Left Sidebar (file explorer)] | [Chat Panel (center)]
  *   [Terminal Drawer (bottom, toggleable Ctrl+`)]
  *   [StatusBar (fixed bottom)]
- *
- * No code editor panel — chat is the primary interface.
  */
 export default function IDELayout(): JSX.Element {
   const openFolder = useWorkspaceStore((s) => s.openFolder)
@@ -40,13 +37,23 @@ export default function IDELayout(): JSX.Element {
 
   // Sidebar state
   const [sidebarVisible, setSidebarVisible] = useState(true)
-  const [sidebarTab, setSidebarTab] = useState<'files' | 'tasks'>('files')
 
   // Right sidebar state
   const [rightSidebarVisible, setRightSidebarVisible] = useState(false)
+  const [rightSidebarTab, setRightSidebarTab] = useState<'editor' | 'preview'>('editor')
 
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = useState(false)
+
+  // Auto-open right sidebar with editor when file is opened
+  useEffect(() => {
+    const handler = () => {
+      setRightSidebarVisible(true)
+      setRightSidebarTab('editor')
+    }
+    window.addEventListener('wzxclaw:file-opened', handler)
+    return () => window.removeEventListener('wzxclaw:file-opened', handler)
+  }, [])
 
   // Register global keyboard shortcuts
   useEffect(() => {
@@ -140,6 +147,7 @@ export default function IDELayout(): JSX.Element {
   return (
     <div className="ide-container">
       <TitleBar
+        onOpenFolder={() => window.wzxclaw.openFolder()}
         onToggleTerminal={() => useTerminalStore.getState().togglePanel()}
         onToggleRightSidebar={() => setRightSidebarVisible((v) => !v)}
         rightSidebarVisible={rightSidebarVisible}
@@ -148,39 +156,16 @@ export default function IDELayout(): JSX.Element {
         }}
         onOpenBrowser={() => {
           setRightSidebarVisible(true)
+          setRightSidebarTab('preview')
         }}
       />
       <div className="ide-main">
         <div className="ide-content">
           <Allotment>
-            {/* Left Sidebar — collapsible files/tasks panel */}
+            {/* Left Sidebar — file explorer */}
             {sidebarVisible && (
               <Allotment.Pane preferredSize={240} minSize={180} maxSize={400}>
-                <div className="sidebar-container">
-                  {/* Sidebar tab switcher */}
-                  <div className="sidebar-tabs">
-                    <button
-                      className={`sidebar-tab${sidebarTab === 'files' ? ' active' : ''}`}
-                      onClick={() => setSidebarTab('files')}
-                    >
-                      Files
-                    </button>
-                    <button
-                      className={`sidebar-tab${sidebarTab === 'tasks' ? ' active' : ''}`}
-                      onClick={() => setSidebarTab('tasks')}
-                    >
-                      Tasks
-                    </button>
-                  </div>
-                  {/* Sidebar content */}
-                  <div className="sidebar-body">
-                    {sidebarTab === 'files' ? (
-                      <Sidebar />
-                    ) : (
-                      <TaskPanel onClose={() => setSidebarTab('files')} />
-                    )}
-                  </div>
-                </div>
+                <Sidebar />
               </Allotment.Pane>
             )}
 
@@ -198,10 +183,35 @@ export default function IDELayout(): JSX.Element {
               </Allotment>
             </Allotment.Pane>
 
-            {/* Right Sidebar — Preview panel */}
+            {/* Right Sidebar — File Editor */}
             {rightSidebarVisible && (
-              <Allotment.Pane preferredSize={360} minSize={240} maxSize={600}>
-                <PreviewPanel />
+              <Allotment.Pane preferredSize={500} minSize={300} maxSize={800}>
+                <div className="right-sidebar">
+                  <div className="sidebar-tabs">
+                    <button
+                      className={`sidebar-tab${rightSidebarTab === 'editor' ? ' active' : ''}`}
+                      onClick={() => setRightSidebarTab('editor')}
+                    >
+                      文件编辑
+                    </button>
+                    <button
+                      className={`sidebar-tab${rightSidebarTab === 'preview' ? ' active' : ''}`}
+                      onClick={() => setRightSidebarTab('preview')}
+                    >
+                      浏览器
+                    </button>
+                  </div>
+                  <div className="sidebar-body">
+                    {rightSidebarTab === 'editor' ? (
+                      <>
+                        <TabBar />
+                        <EditorPanel />
+                      </>
+                    ) : (
+                      <PreviewPanel />
+                    )}
+                  </div>
+                </div>
               </Allotment.Pane>
             )}
           </Allotment>
