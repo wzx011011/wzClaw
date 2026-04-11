@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { v4 as uuidv4 } from 'uuid'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTaskStore } from '../../stores/task-store'
+import { SLASH_COMMANDS } from '../../commands/slash-commands'
 import ChatMessage from './ChatMessage'
 import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
+import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import TaskPanel from './TaskPanel'
@@ -54,6 +58,8 @@ export default function ChatPanel(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
   const [showMentionPicker, setShowMentionPicker] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
+  const [showSlashPicker, setShowSlashPicker] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -139,7 +145,7 @@ export default function ChatPanel(): JSX.Element {
     return unsub
   }, [])
 
-  // Auto-resize textarea and detect @-mention trigger
+  // Auto-resize textarea and detect @-mention and /-slash triggers
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     const value = e.target.value
     setInputValue(value)
@@ -147,6 +153,19 @@ export default function ChatPanel(): JSX.Element {
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
     }
+
+    // Detect / at the very start of input → slash command picker
+    if (value.startsWith('/')) {
+      const afterSlash = value.slice(1)
+      const spaceIdx = afterSlash.indexOf(' ')
+      const query = spaceIdx === -1 ? afterSlash : afterSlash.slice(0, spaceIdx)
+      setShowSlashPicker(true)
+      setSlashQuery(query)
+      setShowMentionPicker(false)
+      return
+    }
+    setShowSlashPicker(false)
+    setSlashQuery('')
 
     // Detect @ trigger: find the last @ that is at start or preceded by whitespace
     const cursorPos = e.target.selectionStart
@@ -165,6 +184,17 @@ export default function ChatPanel(): JSX.Element {
     setShowMentionPicker(false)
   }
 
+  const handleSlashSelect = useCallback((cmd: import('../../../shared/types').SlashCommand) => {
+    // Preserve any args the user may have typed after the command name
+    const afterSlash = inputValue.slice(1)
+    const spaceIdx = afterSlash.indexOf(' ')
+    const existingArgs = spaceIdx !== -1 ? afterSlash.slice(spaceIdx + 1) : ''
+    setInputValue(`/${cmd.name}${existingArgs ? ' ' + existingArgs : ''}`)
+    setShowSlashPicker(false)
+    setSlashQuery('')
+    textareaRef.current?.focus()
+  }, [inputValue])
+
   const handleMentionSelect = useCallback((mention: MentionItem) => {
     addMention(mention)
     // Remove the @query from the input
@@ -178,33 +208,74 @@ export default function ChatPanel(): JSX.Element {
     textareaRef.current?.focus()
   }, [inputValue, addMention])
 
-  const handleSend = (): void => {
+  const handleSend = async (): Promise<void> => {
     const trimmed = inputValue.trim()
     if ((!trimmed && pendingMentions.length === 0) || isStreaming) return
-    if (trimmed === '/compact') {
-      // Trigger manual compact via IPC
-      window.wzxclaw.compactContext()
+
+    // Handle /help inline — inject a local assistant message listing all commands
+    if (trimmed === '/help') {
+      const lines = SLASH_COMMANDS.map((c) => `  /${c.name} — ${c.description}`)
+      lines.push('  /help — Show this help message')
+      const helpContent = `Available slash commands:\n\n${lines.join('\n')}`
+      const { messages } = useChatStore.getState()
+      useChatStore.setState({
+        messages: [
+          ...messages,
+          {
+            id: uuidv4(),
+            role: 'assistant' as const,
+            content: helpContent,
+            timestamp: Date.now()
+          }
+        ]
+      })
       setInputValue('')
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-      }
+      setShowSlashPicker(false)
+      setSlashQuery('')
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
       return
     }
+
+    // Handle slash commands from the registry
+    if (trimmed.startsWith('/')) {
+      const parts = trimmed.slice(1).split(/\s+/)
+      const cmdName = parts[0].toLowerCase()
+      const args = parts.slice(1).join(' ')
+      const cmd = SLASH_COMMANDS.find((c) => c.name === cmdName)
+      if (cmd) {
+        setInputValue('')
+        setShowSlashPicker(false)
+        setSlashQuery('')
+        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+        if (cmd.handler.type === 'action') {
+          cmd.handler.execute(args)
+        } else {
+          const workspaceRoot = useWorkspaceStore.getState().rootPath ?? ''
+          const prompt = await cmd.handler.getPrompt(args, workspaceRoot)
+          sendMessage(prompt)
+        }
+        return
+      }
+    }
+
+    // Normal message send
     sendMessage(trimmed || 'See the attached files.')
     setInputValue('')
     setShowMentionPicker(false)
     setMentionFilter('')
+    setShowSlashPicker(false)
+    setSlashQuery('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    // If mention picker is visible, let it handle navigation keys
-    if (showMentionPicker && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Escape')) {
-      return // MentionPicker handles these via window keydown
+    // If mention or slash picker is visible, let them handle navigation keys
+    if ((showMentionPicker || showSlashPicker) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Escape')) {
+      return // Pickers handle these via window keydown
     }
-    if (e.key === 'Enter' && !e.shiftKey && !showMentionPicker) {
+    if (e.key === 'Enter' && !e.shiftKey && !showMentionPicker && !showSlashPicker) {
       e.preventDefault()
       handleSend()
     }
@@ -301,6 +372,14 @@ export default function ChatPanel(): JSX.Element {
             filter={mentionFilter}
             onSelect={handleMentionSelect}
             onClose={() => { setShowMentionPicker(false); setMentionFilter('') }}
+          />
+          {/* Slash command picker dropdown */}
+          <SlashCommandPicker
+            visible={showSlashPicker}
+            query={slashQuery}
+            commands={SLASH_COMMANDS}
+            onSelect={handleSlashSelect}
+            onClose={() => { setShowSlashPicker(false); setSlashQuery('') }}
           />
         </div>
         {/* Bottom toolbar: icons | context% | permission | model | send/stop */}

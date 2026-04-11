@@ -477,6 +477,19 @@
   font-family: 'Consolas', 'Courier New', monospace;
 }
 
+.tool-card-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.tool-card-timer {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'Consolas', 'Courier New', monospace;
+  margin-right: 6px;
+}
+
 .tool-card-header-right {
   display: flex;
   align-items: center;
@@ -1351,6 +1364,56 @@
 .chat-tab-context-item-danger:hover {
   background: rgba(244, 135, 113, 0.15);
   color: #f48771;
+}
+
+/* ============================================================
+   Slash Command Picker (SLASH-01)
+   ============================================================ */
+
+.slash-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 40px; /* leave room for send button */
+  max-height: 240px;
+  overflow-y: auto;
+  background: #252526;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  z-index: 100;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+  margin-bottom: 4px;
+}
+
+.slash-picker-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  transition: background 0.1s;
+}
+
+.slash-picker-item:hover,
+.slash-picker-active {
+  background: #2d2d2d;
+}
+
+.slash-picker-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent);
+  font-family: 'Consolas', 'Courier New', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.slash-picker-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ============================================================
