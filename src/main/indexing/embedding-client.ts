@@ -10,7 +10,7 @@ import * as path from 'path'
 // ============================================================
 
 export interface EmbeddingResult {
-  embedding: number[]
+  embedding: Float32Array | number[]
   type: 'api' | 'tfidf'
 }
 
@@ -66,6 +66,7 @@ const API_TIMEOUT_MS = 10000
 const MAX_VOCAB_SIZE = 5000 // Cap vocabulary to prevent unbounded memory growth
 const API_FAILURE_COOLDOWN_MS = 5 * 60 * 1000 // 5 min cooldown after consecutive failures
 const MAX_CONSECUTIVE_FAILURES = 3
+const VOCAB_SAVE_DEBOUNCE_MS = 5000 // 5 seconds — write at most once per 5s during indexing
 
 export class EmbeddingClient {
   private apiKey: string | undefined
@@ -80,6 +81,11 @@ export class EmbeddingClient {
   // API failure tracking
   private consecutiveFailures = 0
   private apiCooldownUntil = 0
+
+  // Async vocab I/O state
+  private _vocabDirty = false
+  private _saveTimer: NodeJS.Timeout | null = null
+  private _vocabLoadPromise: Promise<void> | null = null
 
   constructor(config: EmbeddingClientConfig) {
     this.apiKey = config.apiKey
@@ -107,10 +113,11 @@ export class EmbeddingClient {
 
   /**
    * Set the vocabulary path for TF-IDF persistence.
+   * Initiates async load; callers can rely on embed/embedBatch to await completion.
    */
   setVocabPath(vocabPath: string): void {
     this.vocabPath = vocabPath
-    this.loadVocab()
+    this._vocabLoadPromise = this.loadVocab()
   }
 
   /**
@@ -127,6 +134,9 @@ export class EmbeddingClient {
         this.recordApiFailure(err as Error)
       }
     }
+
+    // Ensure vocab is loaded from disk before TF-IDF path
+    if (this._vocabLoadPromise) await this._vocabLoadPromise
 
     return this.embedViaTfIdf(text)
   }
@@ -157,9 +167,27 @@ export class EmbeddingClient {
       }
     }
 
+    // Ensure vocab is loaded from disk before TF-IDF path
+    if (this._vocabLoadPromise) await this._vocabLoadPromise
+
     // Update vocabulary with all texts before embedding
     this.updateVocab(texts)
     return texts.map(text => this.embedViaTfIdf(text))
+  }
+
+  /**
+   * Cancel any pending debounced vocab save and write immediately.
+   * Call at the end of a full indexing run to ensure the final vocab is persisted.
+   */
+  async flushVocab(): Promise<void> {
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer)
+      this._saveTimer = null
+    }
+    if (this._vocabDirty) {
+      this._vocabDirty = false
+      await this.saveVocab()
+    }
   }
 
   /**
@@ -251,6 +279,26 @@ export class EmbeddingClient {
   }
 
   // ============================================================
+  // Debounced Vocab Save
+  // ============================================================
+
+  /**
+   * Mark vocab dirty and schedule a write 5 seconds from now.
+   * If a write is already scheduled, this is a no-op.
+   */
+  private scheduleSave(): void {
+    this._vocabDirty = true
+    if (this._saveTimer) return  // already scheduled
+    this._saveTimer = setTimeout(async () => {
+      this._saveTimer = null
+      if (this._vocabDirty) {
+        this._vocabDirty = false
+        await this.saveVocab()
+      }
+    }, VOCAB_SAVE_DEBOUNCE_MS)
+  }
+
+  // ============================================================
   // TF-IDF Fallback
   // ============================================================
 
@@ -316,7 +364,8 @@ export class EmbeddingClient {
       this.pruneVocab()
     }
 
-    this.saveVocab()
+    // Schedule debounced write instead of blocking the thread on every batch
+    this.scheduleSave()
   }
 
   /**
@@ -343,6 +392,7 @@ export class EmbeddingClient {
 
   /**
    * Compute TF-IDF vector for a single text.
+   * Returns a Float32Array to reduce memory footprint (~4x vs number[]).
    */
   private embedViaTfIdf(text: string): EmbeddingResult {
     if (!this.vocab || this.vocab.size === 0) {
@@ -357,9 +407,9 @@ export class EmbeddingClient {
       termFreq[token] = (termFreq[token] || 0) + 1
     }
 
-    // Create dense vector from TF-IDF sparse representation
+    // Create dense vector using Float32Array (4 bytes/element vs 8 bytes for number[])
     const dim = this.vocab!.size
-    const vector = new Array(dim).fill(0)
+    const vector = new Float32Array(dim)
     let maxTf = 0
 
     for (const tf of Object.values(termFreq)) {
@@ -379,16 +429,21 @@ export class EmbeddingClient {
   }
 
   /**
-   * Load vocabulary from disk.
+   * Load vocabulary from disk (async, non-blocking).
    */
-  private loadVocab(): void {
+  private async loadVocab(): Promise<void> {
     if (!this.vocabPath) return
 
     try {
-      if (fs.existsSync(this.vocabPath)) {
-        const content = fs.readFileSync(this.vocabPath, 'utf-8')
-        this.vocab = JSON.parse(content) as TfidfVocab
-      }
+      await fs.promises.access(this.vocabPath)
+    } catch {
+      // File doesn't exist — start fresh, no warning needed
+      return
+    }
+
+    try {
+      const content = await fs.promises.readFile(this.vocabPath, 'utf-8')
+      this.vocab = JSON.parse(content) as TfidfVocab
     } catch (err) {
       console.warn('[EmbeddingClient] Failed to load TF-IDF vocabulary:', (err as Error).message)
       this.vocab = null
@@ -396,15 +451,15 @@ export class EmbeddingClient {
   }
 
   /**
-   * Save vocabulary to disk.
+   * Save vocabulary to disk (async, non-blocking).
    */
-  private saveVocab(): void {
+  private async saveVocab(): Promise<void> {
     if (!this.vocabPath || !this.vocab) return
 
     try {
       const dir = path.dirname(this.vocabPath)
-      fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(this.vocabPath, JSON.stringify(this.vocab), 'utf-8')
+      await fs.promises.mkdir(dir, { recursive: true })
+      await fs.promises.writeFile(this.vocabPath, JSON.stringify(this.vocab), 'utf-8')
     } catch (err) {
       console.warn('[EmbeddingClient] Failed to save TF-IDF vocabulary:', (err as Error).message)
     }

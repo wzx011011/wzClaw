@@ -95,7 +95,7 @@ describe('VectorStore', () => {
 
       await store.upsert(entries)
 
-      const results = store.search([1, 0, 0], 10)
+      const results = await store.search([1, 0, 0], 10)
       expect(results.length).toBe(3)
       expect(results[0].score).toBeGreaterThanOrEqual(results[1].score)
       expect(results[1].score).toBeGreaterThanOrEqual(results[2].score)
@@ -107,12 +107,12 @@ describe('VectorStore', () => {
       )
       await store.upsert(entries)
 
-      const results = store.search([1, 0, 0], 5)
+      const results = await store.search([1, 0, 0], 5)
       expect(results.length).toBe(5)
     })
 
-    it('returns empty array when no entries', () => {
-      const results = store.search([1, 0, 0])
+    it('returns empty array when no entries', async () => {
+      const results = await store.search([1, 0, 0])
       expect(results).toEqual([])
     })
   })

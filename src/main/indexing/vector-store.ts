@@ -16,7 +16,7 @@ export interface IndexEntry {
   endLine: number
   content: string         // chunk text
   language: string
-  embedding: number[]     // vector or TF-IDF vector
+  embedding: Float32Array | number[]  // Float32Array in memory, number[] on disk
   mtime: number           // file modification time for invalidation
   embeddingType: 'api' | 'tfidf'  // track which method produced the vector
 }
@@ -63,7 +63,7 @@ export const SKIP_DIRS = new Set([
 // Cosine Similarity
 // ============================================================
 
-export function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: Float32Array | number[], b: Float32Array | number[]): number {
   if (a.length !== b.length) return 0
   let dot = 0, normA = 0, normB = 0
   for (let i = 0; i < a.length; i++) {
@@ -79,6 +79,9 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 // ============================================================
 // VectorStore
 // ============================================================
+
+/** Maximum number of entries to keep in RAM. Prevents unbounded memory growth. */
+const MAX_CACHE_ENTRIES = 5000
 
 /**
  * JSON file-based vector storage with cosine similarity search.
@@ -111,11 +114,58 @@ export class VectorStore {
   }
 
   /**
-   * Merge entries into storage. Appends new entries, rewrites file periodically.
+   * Read all entries directly from disk, bypassing the cache.
+   * Used by upsert and deleteByFile to guarantee correct merge with the full dataset.
+   */
+  private async loadFromDisk(): Promise<IndexEntry[]> {
+    try {
+      await fsp.access(this.vectorsPath)
+    } catch {
+      return []
+    }
+
+    try {
+      const content = await fsp.readFile(this.vectorsPath, 'utf-8')
+      const lines = content.split('\n').filter(line => line.trim().length > 0)
+      return lines.map(line => JSON.parse(line) as IndexEntry)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Convert number[] embeddings to Float32Array in-place for a list of entries.
+   * Float32Array uses 4 bytes/element vs 8 bytes for JS number[], cutting vector RAM by ~half.
+   */
+  private static applyFloat32(entries: IndexEntry[]): void {
+    for (const entry of entries) {
+      if (Array.isArray(entry.embedding)) {
+        entry.embedding = new Float32Array(entry.embedding as number[])
+      }
+    }
+  }
+
+  /**
+   * Apply the cache cap: keep only the most-recently-modified MAX_CACHE_ENTRIES entries.
+   */
+  private static applyCapAndFloat32(entries: IndexEntry[]): IndexEntry[] {
+    let capped: IndexEntry[]
+    if (entries.length > MAX_CACHE_ENTRIES) {
+      capped = entries.slice().sort((a, b) => b.mtime - a.mtime).slice(0, MAX_CACHE_ENTRIES)
+    } else {
+      capped = entries
+    }
+    VectorStore.applyFloat32(capped)
+    return capped
+  }
+
+  /**
+   * Merge entries into storage. Always reads from disk for a correct merge,
+   * then writes the full merged set. Updates cache with a capped view.
    */
   async upsert(entries: IndexEntry[]): Promise<void> {
-    // Load existing entries
-    const existing = await this.loadAll()
+    // Read from disk (not cache) so the merge is always complete
+    const existing = await this.loadFromDisk()
     const existingMap = new Map<string, IndexEntry>()
 
     for (const entry of existing) {
@@ -127,55 +177,74 @@ export class VectorStore {
       existingMap.set(entry.id, entry)
     }
 
-    // Write all entries
-    const allEntries = Array.from(existingMap.values())
-    await this.writeAll(allEntries)
+    // Write all merged entries to disk
+    const merged = Array.from(existingMap.values())
+    await this.writeAll(merged)
 
-    // Update cache with final state
-    this.cache = allEntries
+    // Update in-memory cache with cap applied
+    this.cache = VectorStore.applyCapAndFloat32(merged)
   }
 
   /**
    * Remove all entries for a given file.
    */
   async deleteByFile(filePath: string): Promise<void> {
-    const existing = await this.loadAll()
+    const existing = await this.loadFromDisk()
     const filtered = existing.filter(e => e.filePath !== filePath)
     await this.writeAll(filtered)
-    this.cache = filtered
+    this.cache = VectorStore.applyCapAndFloat32(filtered)
   }
 
   /**
    * Search for entries most similar to the query embedding.
    * Returns top-K results sorted by cosine similarity score descending.
+   * Async: yields to the event loop every 500 entries to avoid blocking the main thread.
    */
-  search(queryEmbedding: number[], topK: number = 10): SearchResult[] {
+  async search(queryEmbedding: Float32Array | number[], topK: number = 10): Promise<SearchResult[]> {
     const entries = this.cache
     if (!entries || entries.length === 0) return []
 
-    const scored: SearchResult[] = []
+    const scored: Array<{ score: number; entry: IndexEntry }> = []
+    const BATCH = 500
 
-    for (const entry of entries) {
-      const score = cosineSimilarity(queryEmbedding, entry.embedding)
-      scored.push({
-        filePath: entry.filePath,
-        startLine: entry.startLine,
-        endLine: entry.endLine,
-        content: entry.content,
-        score,
-      })
+    for (let i = 0; i < entries.length; i += BATCH) {
+      const batch = entries.slice(i, i + BATCH)
+      for (const entry of batch) {
+        scored.push({ score: cosineSimilarity(queryEmbedding, entry.embedding), entry })
+      }
+      if (i + BATCH < entries.length) {
+        await new Promise(r => setImmediate(r))  // yield to event loop between batches
+      }
     }
 
     scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, topK)
+    return scored.slice(0, topK).map(x => ({
+      filePath: x.entry.filePath,
+      startLine: x.entry.startLine,
+      endLine: x.entry.endLine,
+      content: x.entry.content,
+      score: x.score,
+    }))
   }
 
   /**
-   * Get total number of indexed entries.
+   * Get total number of indexed entries (reads from disk for accuracy).
    */
   async getEntryCount(): Promise<number> {
-    const entries = await this.loadAll()
+    const entries = await this.loadFromDisk()
     return entries.length
+  }
+
+  /**
+   * Strip embedding arrays from cached entries to free RAM while keeping metadata.
+   * Call this after a search session when embeddings are no longer needed in memory.
+   * Subsequent searches will return empty results until the cache is refreshed via loadAll().
+   */
+  releaseEmbeddings(): void {
+    if (!this.cache) return
+    for (const entry of this.cache) {
+      entry.embedding = new Float32Array(0)
+    }
   }
 
   /**
@@ -200,35 +269,28 @@ export class VectorStore {
   }
 
   /**
-   * Load all entries from vectors.jsonl.
+   * Load all entries from vectors.jsonl into the search cache.
+   * Caps the in-memory cache at MAX_CACHE_ENTRIES (most-recently-modified entries).
+   * For write operations that need the complete dataset, use loadFromDisk() directly.
    */
   async loadAll(): Promise<IndexEntry[]> {
     if (this.cache) return this.cache
 
-    try {
-      await fsp.access(this.vectorsPath)
-    } catch {
-      this.cache = []
-      return []
-    }
-
-    try {
-      const content = await fsp.readFile(this.vectorsPath, 'utf-8')
-      const lines = content.split('\n').filter(line => line.trim().length > 0)
-      this.cache = lines.map(line => JSON.parse(line) as IndexEntry)
-      return this.cache
-    } catch {
-      this.cache = []
-      return []
-    }
+    const allEntries = await this.loadFromDisk()
+    this.cache = VectorStore.applyCapAndFloat32(allEntries)
+    return this.cache
   }
 
   /**
    * Write all entries to vectors.jsonl and update meta.json.
+   * Serializes Float32Array embeddings as plain number[] for JSON compatibility.
    */
   private async writeAll(entries: IndexEntry[]): Promise<void> {
     await this.ensureDir()
-    const lines = entries.map(e => JSON.stringify(e))
+    const lines = entries.map(e => JSON.stringify({
+      ...e,
+      embedding: Array.from(e.embedding),
+    }))
     await fsp.writeFile(this.vectorsPath, lines.join('\n') + '\n', 'utf-8')
 
     // Update meta.json
