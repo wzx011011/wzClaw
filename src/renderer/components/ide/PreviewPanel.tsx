@@ -136,7 +136,7 @@ export default function PreviewPanel(): JSX.Element {
         </div>
         <div className="preview-browser-viewport">
           <img
-            src={`data:image/png;base64,${browser.screenshot}`}
+            src={`data:image/jpeg;base64,${browser.screenshot}`}
             alt="Browser screenshot"
             className="preview-browser-img"
           />

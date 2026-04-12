@@ -115,7 +115,8 @@ export class BrowserManager extends EventEmitter {
 
   private async captureBase64(win: BrowserWindow): Promise<string> {
     const image = await win.webContents.capturePage()
-    return image.toPNG().toString('base64')
+    // JPEG at 60% quality: ~400-700 KB base64 vs ~5-7 MB for PNG — ~8x smaller
+    return image.toJPEG(60).toString('base64')
   }
 
   private async autoScreenshot(win: BrowserWindow): Promise<void> {
