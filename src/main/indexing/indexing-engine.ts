@@ -26,6 +26,16 @@ export interface IndexingProgress {
 type ProgressCallback = (progress: IndexingProgress) => void
 
 // ============================================================
+// Constants
+// ============================================================
+
+/** Number of files to read, chunk, and embed per batch during full indexing. */
+const FILE_BATCH_SIZE = 20
+
+/** Minimum ms between IPC progress notifications (max ~5 updates/sec). */
+const PROGRESS_THROTTLE_MS = 200
+
+// ============================================================
 // IndexingEngine
 // ============================================================
 
@@ -38,6 +48,9 @@ export class IndexingEngine {
   private progressCallbacks: ProgressCallback[]
   private disposed = false
   private vocabPath: string
+
+  /** Timestamp of last progress notification — used to throttle IPC sends. */
+  private _lastProgressSend = 0
 
   constructor(workspaceRoot: string, embeddingClient: EmbeddingClient) {
     this.workspaceRoot = workspaceRoot
@@ -53,6 +66,7 @@ export class IndexingEngine {
   /**
    * Index the entire workspace. Walks directory, chunks files, embeds, stores.
    * Skips unchanged files based on mtime comparison (incremental).
+   * Processes files in streaming batches of FILE_BATCH_SIZE to bound peak RAM.
    */
   async indexFull(): Promise<void> {
     if (this.disposed) return
@@ -73,9 +87,14 @@ export class IndexingEngine {
         }
       }
 
-      // Collect all chunks first, then batch embed
-      const allChunks: Array<{ filePath: string; startLine: number; endLine: number; content: string; language: string; mtime: number }> = []
-      const filesToIndex: string[] = []
+      // Validate files and filter to those that need re-indexing
+      interface FileToIndex {
+        filePath: string    // relative to workspace root
+        absolutePath: string
+        mtime: number
+      }
+
+      const filesToProcess: FileToIndex[] = []
 
       for (const filePath of files) {
         if (this.disposed) return
@@ -102,50 +121,57 @@ export class IndexingEngine {
           continue
         }
 
-        this.updateProgress({ ...this.progress, currentFile: filePath })
-
-        try {
-          const content = await fsp.readFile(absolutePath, 'utf-8')
-          const language = getLanguageFromPath(absolutePath)
-          const chunks = this.chunker.chunkFile(filePath, content, language)
-
-          for (const chunk of chunks) {
-            allChunks.push({
-              filePath: chunk.filePath,
-              startLine: chunk.startLine,
-              endLine: chunk.endLine,
-              content: chunk.content,
-              language: chunk.language,
-              mtime: stat.mtimeMs,
-            })
-          }
-
-          filesToIndex.push(filePath)
-        } catch {
-          // Skip files we can't read
-          continue
-        }
+        filesToProcess.push({ filePath, absolutePath, mtime: stat.mtimeMs })
       }
 
-      // Batch embed chunks
-      if (allChunks.length > 0) {
-        // Process in batches of 50
-        const BATCH = 50
-        for (let i = 0; i < allChunks.length; i += BATCH) {
-          if (this.disposed) return
+      // Process files in streaming batches to keep peak RAM proportional to FILE_BATCH_SIZE
+      for (let i = 0; i < filesToProcess.length; i += FILE_BATCH_SIZE) {
+        if (this.disposed) return
 
-          const batch = allChunks.slice(i, i + BATCH)
-          const texts = batch.map(c => c.content)
+        const fileBatch = filesToProcess.slice(i, i + FILE_BATCH_SIZE)
+
+        // Chunk all files in this batch
+        const batchChunks: Array<{
+          filePath: string
+          startLine: number
+          endLine: number
+          content: string
+          language: string
+          mtime: number
+        }> = []
+
+        for (const { filePath, absolutePath, mtime } of fileBatch) {
+          try {
+            const content = await fsp.readFile(absolutePath, 'utf-8')
+            const language = getLanguageFromPath(absolutePath)
+            const chunks = this.chunker.chunkFile(filePath, content, language)
+            for (const chunk of chunks) {
+              batchChunks.push({
+                filePath: chunk.filePath,
+                startLine: chunk.startLine,
+                endLine: chunk.endLine,
+                content: chunk.content,
+                language: chunk.language,
+                mtime,
+              })
+            }
+          } catch {
+            // Skip files we can't read
+          }
+        }
+
+        if (batchChunks.length > 0) {
+          const texts = batchChunks.map(c => c.content)
           const embeddings = await this.embeddingClient.embedBatch(texts)
 
-          // Delete old entries for files being re-indexed
-          const batchFiles = new Set(batch.map(c => c.filePath))
+          // Delete old entries for every file in this batch
+          const batchFiles = new Set(fileBatch.map(f => f.filePath))
           for (const f of batchFiles) {
             await this.vectorStore.deleteByFile(f)
           }
 
-          // Create IndexEntries
-          const entries: IndexEntry[] = batch.map((chunk, j) => {
+          // Build IndexEntries
+          const entries: IndexEntry[] = batchChunks.map((chunk, j) => {
             const emb = embeddings[j]
             const id = `${chunk.filePath}:${chunk.startLine}`
             return {
@@ -162,11 +188,23 @@ export class IndexingEngine {
           })
 
           await this.vectorStore.upsert(entries)
-          indexedCount += filesToIndex.length
         }
+
+        indexedCount += fileBatch.length
+        this.updateProgress({
+          status: 'indexing',
+          fileCount: indexedCount,
+          currentFile: fileBatch[fileBatch.length - 1].filePath,
+        })
+
+        // Yield to the event loop between batches so the main thread stays responsive
+        await new Promise(r => setImmediate(r))
       }
 
-      // Count total entries including existing ones
+      // Ensure any debounced vocab save is flushed before reporting done
+      await this.embeddingClient.flushVocab()
+
+      // Count total entries including previously-existing ones
       const totalCount = await this.vectorStore.getEntryCount()
       this.updateProgress({ status: 'ready', fileCount: totalCount, currentFile: '' })
     } catch (err) {
@@ -293,8 +331,20 @@ export class IndexingEngine {
   // Private
   // ============================================================
 
+  /**
+   * Update progress state and notify subscribers.
+   * Throttled to at most PROGRESS_THROTTLE_MS between notifications during indexing
+   * so IPC is not flooded with thousands of per-file updates.
+   * Terminal states ('ready', 'error') always fire immediately.
+   */
   private updateProgress(update: Partial<IndexingProgress>): void {
     this.progress = { ...this.progress, ...update }
+
+    const now = Date.now()
+    const isTerminal = this.progress.status === 'ready' || this.progress.status === 'error'
+    if (!isTerminal && now - this._lastProgressSend < PROGRESS_THROTTLE_MS) return
+    this._lastProgressSend = now
+
     for (const cb of this.progressCallbacks) {
       try {
         cb({ ...this.progress })
