@@ -22,7 +22,8 @@ export async function cleanOldDebugFiles(): Promise<void> {
         .map(async f => {
           const filePath = path.join(debugDir, f)
           try {
-            const stat = await fs.promises.stat(filePath)
+            const stat = await fs.promises.lstat(filePath)
+            if (!stat.isFile()) return // skip symlinks and directories
             if (now - stat.mtimeMs > MAX_DEBUG_AGE_MS) {
               await fs.promises.unlink(filePath)
             }
@@ -46,7 +47,8 @@ export async function cleanOldMediaFiles(): Promise<void> {
         .map(async f => {
           const filePath = path.join(mediaDir, f)
           try {
-            const stat = await fs.promises.stat(filePath)
+            const stat = await fs.promises.lstat(filePath)
+            if (!stat.isFile()) return // skip symlinks and directories
             if (now - stat.mtimeMs > MAX_DEBUG_AGE_MS) {
               await fs.promises.unlink(filePath)
             }
@@ -66,6 +68,11 @@ export class DebugLogger {
   private stream: fs.WriteStream | null = null
 
   constructor(sessionId: string) {
+    // Validate sessionId to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+      console.warn(`[DebugLogger] Invalid sessionId rejected: ${sessionId.slice(0, 50)}`)
+      return
+    }
     this.logPath = path.join(getDebugDir(), `${sessionId}.txt`)
     try {
       fs.mkdirSync(getDebugDir(), { recursive: true })

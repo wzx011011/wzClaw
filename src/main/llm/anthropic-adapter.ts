@@ -11,12 +11,11 @@ export class AnthropicAdapter implements LLMAdapter {
     // Use authToken (Bearer) for third-party Anthropic-compatible endpoints (e.g. ZhipuAI GLM)
     // Use apiKey (X-Api-Key) only for real Anthropic API — detect by baseURL
     const isRealAnthropic = !config.baseURL || config.baseURL.includes('anthropic.com')
-    this.client = new Anthropic({
-      ...(isRealAnthropic
-        ? { apiKey: config.apiKey }
-        : { authToken: config.apiKey, apiKey: null as any }),
-      ...(config.baseURL && { baseURL: config.baseURL }),
-    })
+    const clientOptions: Record<string, unknown> = isRealAnthropic
+      ? { apiKey: config.apiKey }
+      : { authToken: config.apiKey, apiKey: 'placeholder' }
+    if (config.baseURL) clientOptions.baseURL = config.baseURL
+    this.client = new Anthropic(clientOptions as ConstructorParameters<typeof Anthropic>[0])
   }
 
   async *stream(options: StreamOptions): AsyncGenerator<StreamEvent> {

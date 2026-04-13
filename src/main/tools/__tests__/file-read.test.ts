@@ -36,7 +36,7 @@ describe('FileReadTool', () => {
     const filePath = path.join(tempDir, 'test.txt')
     fs.writeFileSync(filePath, 'line1\nline2\nline3')
 
-    const result = await tool.execute({ path: filePath }, defaultContext)
+    const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
     expect(result.output).toContain('1\tline1')
     expect(result.output).toContain('2\tline2')
@@ -46,7 +46,7 @@ describe('FileReadTool', () => {
   it('returns error for non-existent file', async () => {
     const result = await tool.execute(
       { path: path.join(tempDir, 'missing.txt') },
-      defaultContext
+      { workingDirectory: tempDir }
     )
     expect(result.isError).toBe(true)
     expect(result.output).toContain('File not found')
@@ -57,7 +57,7 @@ describe('FileReadTool', () => {
     const filePath = path.join(tempDir, 'test.txt')
     fs.writeFileSync(filePath, 'line1\nline2\nline3\nline4\nline5')
 
-    const result = await tool.execute({ path: filePath, offset: 2 }, defaultContext)
+    const result = await tool.execute({ path: filePath, offset: 2 }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
     expect(result.output).toContain('3\tline3')
     expect(result.output).not.toContain('1\tline1')
@@ -68,7 +68,7 @@ describe('FileReadTool', () => {
     const filePath = path.join(tempDir, 'test.txt')
     fs.writeFileSync(filePath, 'line1\nline2\nline3\nline4\nline5')
 
-    const result = await tool.execute({ path: filePath, limit: 2 }, defaultContext)
+    const result = await tool.execute({ path: filePath, limit: 2 }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
     expect(result.output).toContain('1\tline1')
     expect(result.output).toContain('2\tline2')
@@ -80,7 +80,7 @@ describe('FileReadTool', () => {
     const lines = Array.from({ length: 3000 }, (_, i) => `line${i + 1}`)
     fs.writeFileSync(filePath, lines.join('\n'))
 
-    const result = await tool.execute({ path: filePath }, defaultContext)
+    const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
     const outputLines = result.output.split('\n').filter((l) => l.length > 0)
     expect(outputLines.length).toBeLessThanOrEqual(MAX_FILE_READ_LINES)
@@ -91,7 +91,7 @@ describe('FileReadTool', () => {
     const longLine = 'x'.repeat(50000)
     fs.writeFileSync(filePath, longLine + '\n')
 
-    const result = await tool.execute({ path: filePath }, defaultContext)
+    const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
     expect(result.output.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS)
   })

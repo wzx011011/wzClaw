@@ -66,11 +66,12 @@ Usage:
       ? filePath
       : path.resolve(context.workingDirectory, filePath)
 
-    // Workspace boundary check — log warning for out-of-workspace reads
-    const normalizedWorkspace = path.resolve(context.workingDirectory)
-    const isWithinWorkspace = absolutePath.startsWith(normalizedWorkspace + path.sep) || absolutePath === normalizedWorkspace
+    // Workspace boundary check — block out-of-workspace reads (case-insensitive on Windows)
+    const normalizedWorkspace = path.resolve(context.workingDirectory).toLowerCase()
+    const normalizedPath = absolutePath.toLowerCase()
+    const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
     if (!isWithinWorkspace) {
-      console.warn(`[WorkspaceGuard] FileRead outside workspace: ${absolutePath}`)
+      return { output: `Blocked: FileRead target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
     // Check file exists

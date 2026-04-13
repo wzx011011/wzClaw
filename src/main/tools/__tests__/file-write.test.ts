@@ -10,8 +10,14 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('path', () => ({
   default: {
-    resolve: vi.fn((base: string, p: string) => `${base}/${p}`),
-    dirname: vi.fn((p: string) => p.split('/').slice(0, -1).join('/'))
+    resolve: vi.fn((...args: string[]) => {
+      // Mimic real path.resolve: if last arg is absolute, return it; otherwise join
+      const last = args[args.length - 1]
+      if (last.startsWith('/')) return last
+      return args.slice(0, -1).join('/') + '/' + last
+    }),
+    dirname: vi.fn((p: string) => p.split('/').slice(0, -1).join('/')),
+    sep: '/',
   }
 }))
 

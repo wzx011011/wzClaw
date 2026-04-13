@@ -268,8 +268,8 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['shell:open_path'], async (_event, { path: folderPath }) => {
     // Only allow known extension directories to prevent arbitrary path execution
     const allowed = [getCommandsDir(), getSkillsDir()]
-    const resolved = path.resolve(String(folderPath ?? ''))
-    const isAllowed = allowed.some(d => resolved === d || resolved.startsWith(d + path.sep))
+    const resolved = path.resolve(String(folderPath ?? '')).toLowerCase()
+    const isAllowed = allowed.some(d => resolved === d.toLowerCase() || resolved.startsWith(d.toLowerCase() + path.sep))
     if (!isAllowed) {
       throw new Error('shell:open_path blocked: path not in allowed extension directories')
     }

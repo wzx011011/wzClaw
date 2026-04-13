@@ -46,6 +46,7 @@ export class OpenAIAdapter implements LLMAdapter {
       })
 
       const toolCalls = new Map<number, ToolCallAccumulator>()
+      let lastUsage = { inputTokens: 0, outputTokens: 0 }
 
       for await (const chunk of stream) {
         const choice = chunk.choices[0]
@@ -86,6 +87,11 @@ export class OpenAIAdapter implements LLMAdapter {
               yield { type: 'error', error: `Failed to parse tool call arguments: ${acc.arguments}` }
             }
           }
+          // Capture usage from the tool_calls finish chunk (don't yield done — agent loop continues)
+          const usage = chunk.usage
+          if (usage) {
+            lastUsage = { inputTokens: usage.prompt_tokens ?? 0, outputTokens: usage.completion_tokens ?? 0 }
+          }
         }
 
         // Finish — only yield done for 'stop' (not 'tool_calls')
@@ -102,8 +108,8 @@ export class OpenAIAdapter implements LLMAdapter {
         }
       }
 
-      // If we got here without a done event, yield one
-      yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 } }
+      // If we got here without a done event (e.g. tool_calls finish), yield one with captured usage
+      yield { type: 'done', usage: lastUsage }
     } catch (error) {
       yield {
         type: 'error',

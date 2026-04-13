@@ -108,8 +108,10 @@ export class AgentLoop {
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           yield compacted
-          // Compaction succeeded — context is smaller, re-enable tools if they were degraded
-          toolsDisabled = false
+          // Compaction succeeded — only re-enable tools if context is now below threshold
+          if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
+            toolsDisabled = false
+          }
         }
       }
 

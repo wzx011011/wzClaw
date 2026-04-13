@@ -59,7 +59,7 @@ When NOT to use:
 The todo list is displayed in the UI. The user can see it update in real-time.`
 
   readonly requiresApproval = false
-  readonly isReadOnly = false
+  readonly isReadOnly = true
 
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

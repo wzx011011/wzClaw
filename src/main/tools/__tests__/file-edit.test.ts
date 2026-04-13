@@ -8,6 +8,11 @@ vi.mock('fs/promises', () => ({
   }
 }))
 
+vi.mock('path', async () => {
+  const actual = await vi.importActual<typeof import('path')>('path')
+  return { default: actual, ...actual }
+})
+
 import fs from 'fs/promises'
 
 describe('FileEditTool', () => {

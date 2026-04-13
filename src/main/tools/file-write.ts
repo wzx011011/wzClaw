@@ -50,11 +50,12 @@ Usage:
     const { path: filePath, content } = parsed.data
     const absolutePath = path.resolve(context.workingDirectory, filePath)
 
-    // Workspace boundary check — log warning for out-of-workspace writes
-    const normalizedWorkspace = path.resolve(context.workingDirectory)
-    const isWithinWorkspace = absolutePath.startsWith(normalizedWorkspace + path.sep) || absolutePath === normalizedWorkspace
+    // Workspace boundary check — block out-of-workspace writes (case-insensitive on Windows)
+    const normalizedWorkspace = path.resolve(context.workingDirectory).toLowerCase()
+    const normalizedPath = absolutePath.toLowerCase()
+    const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
     if (!isWithinWorkspace) {
-      console.warn(`[WorkspaceGuard] FileWrite outside workspace: ${absolutePath}`)
+      return { output: `Blocked: FileWrite target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
     try {

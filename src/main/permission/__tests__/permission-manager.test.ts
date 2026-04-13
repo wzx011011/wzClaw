@@ -38,7 +38,7 @@ describe('PermissionManager', () => {
     expect(mockSend).toHaveBeenCalledWith('agent:permission_request', {
       toolName: 'FileWrite',
       toolInput: { path: '/test.ts', content: 'hi' },
-      requestId: expect.stringMatching(/^perm-\d+-[a-z0-9]+$/),
+      requestId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
       reason: expect.any(String)
     })
     expect(capturedHandler).not.toBeNull()

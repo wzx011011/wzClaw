@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import crypto from 'crypto'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   PermissionMode,
@@ -165,7 +166,7 @@ export class PermissionManager {
     this.ensureResponseHandler()
 
     // Generate unique requestId to prevent FIFO race condition
-    const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const requestId = crypto.randomUUID()
 
     return new Promise<boolean>((resolve) => {
       // Register callback BEFORE sending to renderer to avoid any timing gap
