@@ -9,14 +9,23 @@ jobs:
   release:
     name: Build & Release (Windows)
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Python 3.11
+        # node-gyp (for node-pty) needs distutils, removed in Python 3.12+
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # @electron/rebuild requires Node >= 22.12.0
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
