@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { exec } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, appendFile } from 'fs'
 import path from 'path'
 import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { TerminalManager } from '../terminal/terminal-manager'
 import { analyzeBashCommand } from './bash-security'
 import { isReadOnlyBashCommand } from './bash-readonly'
+import { getShellSnapshotsDir } from '../paths'
 
 // ============================================================
 // Bash Tool (per TOOL-04, D-32, D-36)
@@ -108,6 +109,12 @@ Always quote file paths containing spaces with double quotes.`
 
     // Security audit trail: log every executed command for visibility
     console.log(`[BashTool] Executing command: ${command}`)
+
+    // Persist to shell-snapshots (fire-and-forget, daily file)
+    const today = new Date().toISOString().slice(0, 10)
+    const snapshotFile = path.join(getShellSnapshotsDir(), `history-${today}.sh`)
+    const snapshotLine = `# ${new Date().toISOString()} cwd=${context.workingDirectory}\n${command}\n`
+    appendFile(snapshotFile, snapshotLine, 'utf-8', () => {/* ignore */})
 
     // Route through visible terminal when TerminalManager and active terminal exist (per TERM-04)
     if (this.terminalManager) {

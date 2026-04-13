@@ -6,9 +6,10 @@
  * API keys (sensitive) encrypted via safeStorage and stored in userData/keys.enc.
  */
 
-import { app, safeStorage } from 'electron'
+import { safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
+import { getSettingsPath, getKeysPath, getBackupsDir } from './paths'
 
 interface StoredSettings {
   provider: string
@@ -49,9 +50,8 @@ export class SettingsManager {
   private decryptedKeys: Map<string, string> = new Map()
 
   constructor() {
-    const userDataPath = app.getPath('userData')
-    this.settingsPath = path.join(userDataPath, 'settings.json')
-    this.keysPath = path.join(userDataPath, 'keys.enc')
+    this.settingsPath = getSettingsPath()
+    this.keysPath = getKeysPath()
     this.settings = {
       provider: 'anthropic',
       model: 'glm-5.1',
@@ -116,9 +116,36 @@ export class SettingsManager {
   }
 
   /**
+   * Rotate settings backup — keep last 5 copies in backups/.
+   * Called before each save. Failures are silently ignored.
+   */
+  private rotateBackup(): void {
+    try {
+      if (!fs.existsSync(this.settingsPath)) return
+      const backupsDir = getBackupsDir()
+      if (!fs.existsSync(backupsDir)) {
+        fs.mkdirSync(backupsDir, { recursive: true })
+      }
+      const dest = path.join(backupsDir, `settings-${Date.now()}.json`)
+      fs.copyFileSync(this.settingsPath, dest)
+
+      // Prune old backups — keep newest 5
+      const entries = fs.readdirSync(backupsDir)
+        .filter(f => f.startsWith('settings-') && f.endsWith('.json'))
+        .sort()
+      if (entries.length > 5) {
+        for (const old of entries.slice(0, entries.length - 5)) {
+          try { fs.unlinkSync(path.join(backupsDir, old)) } catch { /* ignore */ }
+        }
+      }
+    } catch { /* ignore backup errors */ }
+  }
+
+  /**
    * Save current settings and encrypted keys to disk.
    */
   save(): void {
+    this.rotateBackup()
     // Save non-sensitive settings
     try {
       fs.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8')

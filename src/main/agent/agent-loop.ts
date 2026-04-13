@@ -19,6 +19,7 @@ import type { FileHistoryManager } from '../file-history/file-history-manager'
 import { buildSystemPrompt } from './system-prompt-builder'
 import { TurnManager } from './turn-manager'
 import { ConversationManager } from './conversation-manager'
+import { DebugLogger, cleanOldDebugFiles } from '../utils/debug-logger'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -44,6 +45,10 @@ export class AgentLoop {
     sender?: Electron.WebContents
   ): AsyncGenerator<AgentEvent> {
     await this.hookRegistry?.emit('session-start', { conversationId: config.conversationId })
+
+    // 每次 run() 创建新的调试日志（session 级别），并清理旧文件
+    const debugLogger = new DebugLogger(config.conversationId)
+    cleanOldDebugFiles().catch(() => {/* ignore */})
 
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
     this.abortController = new AbortController()
@@ -87,8 +92,13 @@ export class AgentLoop {
       // 上下文压缩检查（LLM 调用前）
       if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
         const compacted = await this.doCompaction(config)
-        if (compacted) yield compacted
+        if (compacted) {
+          debugLogger.log('COMPACT', 'auto compaction triggered')
+          yield compacted
+        }
       }
+
+      debugLogger.log('TURN', `start turn ${turn + 1}/${maxTurns}`)
 
       // 执行一轮 turn（委托给 TurnManager）
       let turnResult
@@ -147,6 +157,8 @@ export class AgentLoop {
       }
 
       if (turnResult.hadError) {
+        debugLogger.log('ERROR', 'turn had error, stopping')
+        debugLogger.close()
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
@@ -158,6 +170,8 @@ export class AgentLoop {
 
       // 无工具调用 → 正常结束
       if (turnResult.shouldStop) {
+        debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
+        debugLogger.close()
         yield { type: 'agent:done', usage: totalUsage, turnCount }
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -165,6 +179,8 @@ export class AgentLoop {
     }
 
     // 超过最大轮次
+    debugLogger.log('ERROR', `max turns exceeded (${turnCount})`)
+    debugLogger.close()
     yield { type: 'agent:error', error: `Max agent turns exceeded (${turnCount})`, recoverable: true }
     yield { type: 'agent:done', usage: totalUsage, turnCount }
     await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })

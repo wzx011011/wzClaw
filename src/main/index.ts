@@ -65,6 +65,7 @@ import { MobileServer } from './mobile/mobile-server'
 import { TunnelManager } from './mobile/tunnel-manager'
 import { generateQRCode } from './mobile/qr-generator'
 import { RelayClient } from './mobile/relay-client'
+import { ensureAppDirs } from './paths'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -219,8 +220,11 @@ function handleWorkspaceOpened(rootPath: string, toolRegistry: ToolRegistry): vo
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.wzxclaw')
+
+  // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups）
+  await ensureAppDirs()
 
   // Load persisted settings for embedding API config
   settingsManager.load()

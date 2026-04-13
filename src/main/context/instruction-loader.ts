@@ -4,7 +4,7 @@
 
 import fs from 'fs'
 import path from 'path'
-import os from 'os'
+import { getUserDir, getCommandsDir, getSkillsDir } from '../paths'
 
 /**
  * Silently reads a file. Returns null if the file does not exist or
@@ -78,11 +78,10 @@ async function resolveIncludes(
  * @returns Formatted instructions string, or empty string if no files found.
  */
 export async function loadInstructions(workspaceRoot: string): Promise<string> {
-  const homeDir = os.homedir()
   const parts: string[] = []
 
   // --- 1. Global user instructions ---
-  const globalPath = path.join(homeDir, '.wzxclaw', 'WZXCLAW.md')
+  const globalPath = path.join(getUserDir(), 'WZXCLAW.md')
   const globalContent = await readFileSilent(globalPath)
   if (globalContent) {
     const resolved = await resolveIncludes(globalContent, path.dirname(globalPath))
@@ -151,6 +150,34 @@ export async function loadInstructions(workspaceRoot: string): Promise<string> {
     const resolved = await resolveIncludes(localContent, workspaceRoot)
     const trimmed = resolved.trim()
     if (trimmed) parts.push(trimmed)
+  }
+
+  // --- 7. User custom commands (~/.wzxclaw/commands/*.md) ---
+  const commandParts: string[] = []
+  try {
+    const cmdEntries = await fs.promises.readdir(getCommandsDir())
+    const cmdFiles = cmdEntries.filter(f => f.endsWith('.md')).sort()
+    for (const file of cmdFiles) {
+      const cmdContent = await readFileSilent(path.join(getCommandsDir(), file))
+      if (cmdContent?.trim()) commandParts.push(cmdContent.trim())
+    }
+  } catch { /* commands dir missing — skip silently */ }
+  if (commandParts.length > 0) {
+    parts.push(`## Available Commands\n\n${commandParts.join('\n\n---\n\n')}`)
+  }
+
+  // --- 8. User custom skills (~/.wzxclaw/skills/*.md) ---
+  const skillParts: string[] = []
+  try {
+    const skillEntries = await fs.promises.readdir(getSkillsDir())
+    const skillFiles = skillEntries.filter(f => f.endsWith('.md')).sort()
+    for (const file of skillFiles) {
+      const skillContent = await readFileSilent(path.join(getSkillsDir(), file))
+      if (skillContent?.trim()) skillParts.push(skillContent.trim())
+    }
+  } catch { /* skills dir missing — skip silently */ }
+  if (skillParts.length > 0) {
+    parts.push(`## Additional Skills\n\n${skillParts.join('\n\n---\n\n')}`)
   }
 
   if (parts.length === 0) return ''

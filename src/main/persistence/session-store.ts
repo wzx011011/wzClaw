@@ -2,8 +2,7 @@ import fs from 'fs'
 import fsp from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
-import os from 'os'
-import { app } from 'electron'
+import { getSessionsDir } from '../paths'
 
 // ============================================================
 // SessionStore — JSONL-based session persistence (per PERSIST-01 through PERSIST-06)
@@ -55,7 +54,7 @@ export class SessionStore {
 
   constructor(workspaceRoot: string) {
     const projectHash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)
-    this.sessionsDir = path.join(app.getPath('userData'), 'sessions', projectHash)
+    this.sessionsDir = getSessionsDir(projectHash)
     fs.mkdirSync(this.sessionsDir, { recursive: true })
   }
 

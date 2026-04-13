@@ -13,7 +13,6 @@ import {
 import { isReadOnlyBashCommand } from '../tools/bash-readonly'
 
 type PermResponseData = { approved: boolean; sessionCache: boolean; alwaysAllow?: boolean }
-let permHandlerRegistered = false
 
 // ============================================================
 // PermissionManager — Advanced 4-mode permission system
@@ -38,6 +37,7 @@ export class PermissionManager {
 
   // Queue of pending approval callbacks — responses dispatched FIFO
   private pendingApprovals: Array<(data: PermResponseData) => void> = []
+  private handlerRegistered = false
 
   // File tools that accept-edits mode auto-allows
   private static readonly FILE_TOOLS = new Set(['FileWrite', 'FileEdit'])
@@ -119,8 +119,10 @@ export class PermissionManager {
    * Called lazily on first requestApproval so ipcMain is ready.
    */
   private ensureResponseHandler(): void {
-    if (permHandlerRegistered) return
-    permHandlerRegistered = true
+    if (this.handlerRegistered) return
+    this.handlerRegistered = true
+    // Remove any previously registered handler (e.g. from a prior instance in tests)
+    try { ipcMain.removeHandler(IPC_CHANNELS['agent:permission_response']) } catch { /* ignore */ }
     ipcMain.handle(
       IPC_CHANNELS['agent:permission_response'],
       async (_event, data: PermResponseData) => {

@@ -2,12 +2,12 @@
 // MCP Manager — Manages MCP server lifecycle and tool registration
 // ============================================================
 
-import { app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { MCPClient, type MCPServerConfig } from './mcp-client'
 import { MCPToolWrapper } from './mcp-tool-wrapper'
 import type { ToolRegistry } from '../tools/tool-registry'
+import { getMcpConfigPath } from '../paths'
 
 interface MCPConfigFile {
   mcpServers?: Record<string, {
@@ -24,13 +24,7 @@ export class MCPManager {
   private configPath: string
 
   constructor(private toolRegistry: ToolRegistry) {
-    // Config at ~/.wzxclaw/mcp.json
-    const homeDir = app.getPath('home')
-    const wzxDir = path.join(homeDir, '.wzxclaw')
-    if (!fs.existsSync(wzxDir)) {
-      fs.mkdirSync(wzxDir, { recursive: true })
-    }
-    this.configPath = path.join(wzxDir, 'mcp.json')
+    this.configPath = getMcpConfigPath()
   }
 
   /**

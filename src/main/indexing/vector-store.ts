@@ -4,6 +4,7 @@
 
 import * as path from 'path'
 import { createHash } from 'crypto'
+import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 
 /**
@@ -97,6 +98,7 @@ export class VectorStore {
     this.indexDir = path.join(workspaceRoot, '.wzxclaw', 'index')
     this.vectorsPath = path.join(this.indexDir, 'vectors.jsonl')
     this.metaPath = path.join(this.indexDir, 'meta.json')
+    fs.mkdirSync(this.indexDir, { recursive: true })
   }
 
   /**

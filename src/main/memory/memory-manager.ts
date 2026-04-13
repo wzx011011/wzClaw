@@ -1,7 +1,6 @@
 import path from 'path'
-import os from 'os'
 import fs from 'fs'
-import crypto from 'crypto'
+import { getProjectMemoryDir } from '../paths'
 
 // ============================================================
 // MemoryManager — Cross-session MEMORY.md persistence
@@ -21,13 +20,7 @@ export class MemoryManager {
   private memoryPath: string
 
   constructor(workspaceRoot: string) {
-    const hash = crypto
-      .createHash('md5')
-      .update(workspaceRoot)
-      .digest('hex')
-      .slice(0, 12)
-
-    this.memoryDir = path.join(os.homedir(), '.wzxclaw', 'projects', hash, 'memory')
+    this.memoryDir = getProjectMemoryDir(workspaceRoot)
     this.memoryPath = path.join(this.memoryDir, 'MEMORY.md')
   }
 
