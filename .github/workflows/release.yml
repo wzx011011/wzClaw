@@ -32,7 +32,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run build:win
+        run: npx electron-vite build && npx electron-builder --win --publish never
         env:
           CI: true
 
