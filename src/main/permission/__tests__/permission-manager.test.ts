@@ -38,11 +38,14 @@ describe('PermissionManager', () => {
     expect(mockSend).toHaveBeenCalledWith('agent:permission_request', {
       toolName: 'FileWrite',
       toolInput: { path: '/test.ts', content: 'hi' },
+      requestId: expect.stringMatching(/^perm-\d+-[a-z0-9]+$/),
       reason: expect.any(String)
     })
     expect(capturedHandler).not.toBeNull()
 
-    await capturedHandler!({}, { approved: true, sessionCache: true })
+    // Capture requestId from the mock call to pass it in the response
+    const sentPayload = mockSend.mock.calls[0][1] as { requestId: string }
+    await capturedHandler!({}, { approved: true, sessionCache: true, requestId: sentPayload.requestId })
     const approved = await approvalPromise
     expect(approved).toBe(true)
     expect(manager.isApproved('conv-1', 'FileWrite')).toBe(true)
