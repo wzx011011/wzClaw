@@ -19,7 +19,7 @@ import type { FileHistoryManager } from '../file-history/file-history-manager'
 import { buildSystemPrompt } from './system-prompt-builder'
 import { TurnManager } from './turn-manager'
 import { ConversationManager } from './conversation-manager'
-import { DebugLogger, cleanOldDebugFiles, cleanOldMediaFiles } from '../utils/debug-logger'
+import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 
 export class AgentLoop {
@@ -47,10 +47,8 @@ export class AgentLoop {
   ): AsyncGenerator<AgentEvent> {
     await this.hookRegistry?.emit('session-start', { conversationId: config.conversationId })
 
-    // 每次 run() 创建新的调试日志（session 级别），并清理旧文件
+    // 每次 run() 创建新的调试日志（session 级别）
     const debugLogger = new DebugLogger(config.conversationId)
-    cleanOldDebugFiles().catch(() => {/* ignore */})
-    cleanOldMediaFiles().catch(() => {/* ignore */})
 
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
     this.abortController = new AbortController()
@@ -60,7 +58,13 @@ export class AgentLoop {
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
     if (todoTool && config.workingDirectory) {
       const saved = await TodoWriteTool.loadFromDir(config.workingDirectory)
-      if (saved.length > 0) todoTool.setCurrentTodos(saved)
+      if (saved.length > 0) {
+        todoTool.setCurrentTodos(saved)
+        // Notify renderer so the todo panel shows restored state immediately
+        if (sender && !sender.isDestroyed()) {
+          sender.send(IPC_CHANNELS['todo:updated'], { todos: saved })
+        }
+      }
     }
 
     // 反应式压缩熔断器
@@ -104,6 +108,8 @@ export class AgentLoop {
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           yield compacted
+          // Compaction succeeded — context is smaller, re-enable tools if they were degraded
+          toolsDisabled = false
         }
       }
 
@@ -154,6 +160,8 @@ export class AgentLoop {
           turnCount--
           continue
         } else {
+          debugLogger.log('ERROR', 'context too long, all recovery exhausted')
+          debugLogger.close()
           yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
           await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
           return

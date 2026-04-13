@@ -52,6 +52,11 @@ export class BrowserManager extends EventEmitter {
   }
 
   async navigate(url: string): Promise<string> {
+    // Block non-http(s) schemes to prevent local file access via file://
+    const parsed = new URL(url)
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error(`Blocked URL scheme: ${parsed.protocol}`)
+    }
     const win = this.ensureWin()
     await win.loadURL(url)
     const title = win.webContents.getTitle()

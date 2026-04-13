@@ -66,6 +66,7 @@ import { TunnelManager } from './mobile/tunnel-manager'
 import { generateQRCode } from './mobile/qr-generator'
 import { RelayClient } from './mobile/relay-client'
 import { ensureAppDirs } from './paths'
+import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -225,6 +226,9 @@ app.whenReady().then(async () => {
 
   // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups）
   await ensureAppDirs()
+  // 清理 7 天以上的旧文件（一次性，非热路径）
+  cleanOldDebugFiles().catch(() => {})
+  cleanOldMediaFiles().catch(() => {})
 
   // Load persisted settings for embedding API config
   settingsManager.load()

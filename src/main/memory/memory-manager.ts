@@ -90,7 +90,8 @@ export class MemoryManager {
 
     let globalBlock = ''
     if (globalRaw.trim()) {
-      const projectLineCount = projectLines.length
+      // Count actual text lines in the project block (not JS array entries)
+      const projectLineCount = projectBlock ? projectBlock.split('\n').length : 0
       const remaining = Math.max(0, MAX_LINES - projectLineCount)
       const truncated = globalRaw.split('\n').slice(0, remaining).join('\n')
       globalBlock = truncated.trim()

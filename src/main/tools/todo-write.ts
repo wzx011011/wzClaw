@@ -59,7 +59,7 @@ When NOT to use:
 The todo list is displayed in the UI. The user can see it update in real-time.`
 
   readonly requiresApproval = false
-  readonly isReadOnly = true
+  readonly isReadOnly = false
 
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
@@ -134,7 +134,7 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
   async execute(
     input: Record<string, unknown>,
-    _context: ToolExecutionContext
+    context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const parsed = TodoWriteSchema.safeParse(input)
     if (!parsed.success) {
