@@ -132,6 +132,9 @@ export const IPC_CHANNELS = {
 
   // Usage / cost tracking (main -> renderer push)
   'usage:update': 'usage:update',
+
+  // Todo panel (main -> renderer push)
+  'todo:updated': 'todo:updated',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -301,6 +304,7 @@ export interface IpcStreamPayloads {
   'mobile:qrcode': { qrCode: string }
   'ask-user:question': { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
   'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
+  'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }> }
 }
 
 // ============================================================

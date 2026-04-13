@@ -12,13 +12,21 @@ import { app } from 'electron'
 /**
  * Lightweight message type for persistence.
  * Stores enough data to reconstruct ChatMessage in the renderer.
+ * 字段需覆盖 UserMessage / AssistantMessage / ToolResultMessage 的全部属性。
  */
 export interface ChatMessageLike {
+  type?: string           // 'meta' 元数据行（非消息）
   role: string
   content: string
   timestamp: number
   id?: string
+  // AssistantMessage 字段
   toolCalls?: unknown[]
+  contentBlocks?: unknown[]
+  // ToolResultMessage 字段
+  toolCallId?: string
+  isError?: boolean
+  // 其他
   usage?: { inputTokens: number; outputTokens: number }
 }
 

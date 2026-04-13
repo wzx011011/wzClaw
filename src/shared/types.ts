@@ -23,12 +23,15 @@ export type ContentBlock = TextContentBlock | ToolUseContentBlock
 // ============================================================
 
 export interface UserMessage {
+  /** 唯一消息 ID（新消息自动生成，旧消息反序列化时可能为 undefined） */
+  id?: string
   role: 'user'
   content: string
   timestamp: number
 }
 
 export interface AssistantMessage {
+  id?: string
   role: 'assistant'
   content: string
   toolCalls: ToolCall[]
@@ -39,6 +42,7 @@ export interface AssistantMessage {
 }
 
 export interface ToolResultMessage {
+  id?: string
   role: 'tool_result'
   toolCallId: string
   content: string

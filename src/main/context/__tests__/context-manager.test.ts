@@ -140,7 +140,7 @@ describe('ContextManager', () => {
     })
 
     it('summarizes older messages and keeps last 4 messages intact', async () => {
-      const cm = new ContextManager()
+      const cm = new ContextManager({ compactKeepMax: 4 })
       const messages: Message[] = Array.from({ length: 10 }, (_, i) => ({
         role: 'user' as const,
         content: `Message ${i} with enough content to test`,

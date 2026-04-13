@@ -21,7 +21,7 @@ describe('FileEditTool', () => {
   it('has correct metadata', () => {
     expect(tool.name).toBe('FileEdit')
     expect(tool.requiresApproval).toBe(true)
-    expect(tool.description).toContain('replace')
+    expect(tool.description).toContain('replacing')
     expect(tool.inputSchema).toBeDefined()
   })
 

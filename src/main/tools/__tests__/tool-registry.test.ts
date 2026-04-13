@@ -78,7 +78,7 @@ describe('createDefaultTools', () => {
   it('creates a registry with 12 tools when getWebContents is provided', () => {
     const registry = createDefaultTools('/test/project', undefined, () => null)
     const tools = registry.getAll()
-    expect(tools.length).toBe(12)
+    expect(tools.length).toBe(13)
   })
 
   it('registers FileRead tool', () => {

@@ -12,6 +12,9 @@ import {
 } from './types'
 import { isReadOnlyBashCommand } from '../tools/bash-readonly'
 
+type PermResponseData = { approved: boolean; sessionCache: boolean; alwaysAllow?: boolean }
+let permHandlerRegistered = false
+
 // ============================================================
 // PermissionManager — Advanced 4-mode permission system
 // ============================================================
@@ -29,11 +32,12 @@ import { isReadOnlyBashCommand } from '../tools/bash-readonly'
 export class PermissionManager {
   private mode: PermissionMode = 'always-ask'
   private sessionApprovals: Map<string, Set<string>> = new Map()
-  private alwaysAllowRules: Set<string> = new Set() // "toolName" or "toolName:prefix"
+  private alwaysAllowRules: Set<string> = new Set()
   private denialRecords: Map<string, DenialRecord> = new Map()
-
-  // Plan mode state (separate from the permission mode setting)
   private planModeActive = false
+
+  // Queue of pending approval callbacks — responses dispatched FIFO
+  private pendingApprovals: Array<(data: PermResponseData) => void> = []
 
   // File tools that accept-edits mode auto-allows
   private static readonly FILE_TOOLS = new Set(['FileWrite', 'FileEdit'])
@@ -110,9 +114,27 @@ export class PermissionManager {
   }
 
   /**
+   * Register a single persistent ipcMain.handle for permission responses.
+   * Dispatches responses to the oldest pending approval in FIFO order.
+   * Called lazily on first requestApproval so ipcMain is ready.
+   */
+  private ensureResponseHandler(): void {
+    if (permHandlerRegistered) return
+    permHandlerRegistered = true
+    ipcMain.handle(
+      IPC_CHANNELS['agent:permission_response'],
+      async (_event, data: PermResponseData) => {
+        const callback = this.pendingApprovals.shift()
+        if (callback) callback(data)
+        return data.approved
+      }
+    )
+  }
+
+  /**
    * Request approval from the user for a tool execution.
-   * Returns { approved, alwaysAllow } — when alwaysAllow is true,
-   * the rule is persisted for the session.
+   * Concurrent calls are serialised via a FIFO queue so only one dialog
+   * is shown at a time and no Promise is lost.
    */
   async requestApproval(
     conversationId: string,
@@ -120,69 +142,52 @@ export class PermissionManager {
     toolInput: Record<string, unknown>,
     sender: Electron.WebContents
   ): Promise<boolean> {
-    // Check mode first
-    if (!this.needsApproval(toolName, toolInput)) {
-      return true
-    }
+    if (!this.needsApproval(toolName, toolInput)) return true
+    if (this.isApproved(conversationId, toolName)) return true
 
-    // Check session cache
-    if (this.isApproved(conversationId, toolName)) {
-      return true
-    }
-
-    // Check denial threshold
+    // Auto-reject when denial threshold exceeded — do not show any more dialogs
     const denialKey = conversationId
     const denial = this.denialRecords.get(denialKey) ?? { consecutive: 0, total: 0 }
     if (denial.consecutive >= MAX_CONSECUTIVE_DENIALS || denial.total >= MAX_TOTAL_DENIALS) {
-      // Force back to always-ask and notify
-      this.mode = 'always-ask'
+      return false
     }
 
-    // Send permission request to renderer
-    sender.send(IPC_CHANNELS['agent:permission_request'], {
-      toolName,
-      toolInput,
-      reason: `Tool "${toolName}" requires approval.`
-    })
+    this.ensureResponseHandler()
 
-    // Wait for renderer response
     return new Promise<boolean>((resolve) => {
-      ipcMain.handleOnce(
-        IPC_CHANNELS['agent:permission_response'],
-        async (_event, data: { approved: boolean; sessionCache: boolean; alwaysAllow?: boolean }) => {
-          if (data.approved) {
-            // Reset consecutive denial count
-            denial.consecutive = 0
-            this.denialRecords.set(denialKey, denial)
-
-            if (data.alwaysAllow) {
-              // Add always-allow rule
-              if (toolName === 'Bash' && toolInput.command) {
-                const prefix = this.extractCommandPrefix(String(toolInput.command))
-                if (prefix) {
-                  this.alwaysAllowRules.add(`Bash:${prefix}`)
-                }
-              } else {
-                this.alwaysAllowRules.add(toolName)
-              }
-            } else if (data.sessionCache) {
-              let approved = this.sessionApprovals.get(conversationId)
-              if (!approved) {
-                approved = new Set()
-                this.sessionApprovals.set(conversationId, approved)
-              }
-              approved.add(toolName)
+      // Register callback BEFORE sending to renderer to avoid any timing gap
+      this.pendingApprovals.push((data) => {
+        if (data.approved) {
+          denial.consecutive = 0
+          this.denialRecords.set(denialKey, denial)
+          if (data.alwaysAllow) {
+            if (toolName === 'Bash' && toolInput.command) {
+              const prefix = this.extractCommandPrefix(String(toolInput.command))
+              if (prefix) this.alwaysAllowRules.add(`Bash:${prefix}`)
+            } else {
+              this.alwaysAllowRules.add(toolName)
             }
-          } else {
-            // Track denial
-            denial.consecutive++
-            denial.total++
-            this.denialRecords.set(denialKey, denial)
+          } else if (data.sessionCache) {
+            let approved = this.sessionApprovals.get(conversationId)
+            if (!approved) {
+              approved = new Set()
+              this.sessionApprovals.set(conversationId, approved)
+            }
+            approved.add(toolName)
           }
-          resolve(data.approved)
-          return data.approved
+        } else {
+          denial.consecutive++
+          denial.total++
+          this.denialRecords.set(denialKey, denial)
         }
-      )
+        resolve(data.approved)
+      })
+
+      sender.send(IPC_CHANNELS['agent:permission_request'], {
+        toolName,
+        toolInput,
+        reason: `Tool "${toolName}" requires approval.`
+      })
     })
   }
 

@@ -68,7 +68,7 @@ export class MessageBuilder {
             content: msg.content
           }
 
-          if (msg.toolCalls.length > 0) {
+          if ((msg.toolCalls?.length ?? 0) > 0) {
             openaiMsg.tool_calls = msg.toolCalls.map(tc => ({
               id: tc.id,
               type: 'function' as const,
@@ -133,7 +133,7 @@ export class MessageBuilder {
           }
 
           // Add tool_use blocks
-          for (const tc of msg.toolCalls) {
+          for (const tc of (msg.toolCalls ?? [])) {
             contentBlocks.push({
               type: 'tool_use',
               id: tc.id,

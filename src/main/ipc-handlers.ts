@@ -289,7 +289,15 @@ export function registerIpcHandlers(
   // File: read
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['file:read'], async (_event, request) => {
-    return workspaceManager.readFile(request.filePath)
+    const workspaceRoot = workspaceManager.getWorkspaceRoot()
+    if (!workspaceRoot) throw new Error('No workspace open')
+    const filePath = request?.filePath
+    if (typeof filePath !== 'string' || !filePath) throw new Error('Invalid filePath')
+    const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath)
+    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
+      throw new Error('Access denied: file path is outside the workspace root')
+    }
+    return workspaceManager.readFile(absolutePath)
   })
 
   // ============================================================

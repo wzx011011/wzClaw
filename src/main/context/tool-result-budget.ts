@@ -1,9 +1,9 @@
 // ============================================================
 // Tool Result Budget — Per-tool truncation with smart strategies
+// 所有阈值从 AgentRuntimeConfig 获取，消除重复定义
 // ============================================================
 
-const MAX_CHARS_PER_RESULT = 30_000
-const MAX_TOTAL_CHARS = 200_000
+import { DEFAULT_RUNTIME_CONFIG } from '../agent/runtime-config'
 
 type TruncationStrategy = 'head' | 'tail' | 'middle'
 
@@ -11,18 +11,9 @@ type TruncationStrategy = 'head' | 'tail' | 'middle'
  * Per-tool truncation strategies:
  *
  *  FileRead  → 'middle': keep file head + tail, cut the middle.
- *               This preserves imports/declarations (head) and the end of
- *               the file (tail) — the most useful parts when exploring code.
- *
  *  Bash      → 'tail': keep the last N chars.
- *               Terminal output is most useful at the end (final result,
- *               error messages, prompt) so we drop old scroll-back.
- *
  *  Grep/Glob → 'head': keep the first N matches.
- *               Match lists are most useful at the top; excess matches are
- *               less relevant and can be re-queried with more specific params.
- *
- *  default   → 'tail': conservative fallback — recent output is most useful.
+ *  default   → 'tail': conservative fallback.
  */
 function strategyForTool(toolName: string): TruncationStrategy {
   switch (toolName) {
@@ -40,21 +31,11 @@ function strategyForTool(toolName: string): TruncationStrategy {
 
 /**
  * Truncate a single tool result string using the tool-specific strategy.
- *
- * If the result fits within `maxChars` (default: MAX_CHARS_PER_RESULT),
- * it is returned unchanged. Otherwise:
- *
- *  'head'   — keeps the first maxChars characters
- *  'tail'   — keeps the last maxChars characters
- *  'middle' — keeps the first half + last half (equal split), skipping
- *             the middle section of the result
- *
- * A truncation notice is always appended so the LLM knows data was cut.
  */
 export function truncateToolResult(
   toolName: string,
   result: string,
-  maxChars: number = MAX_CHARS_PER_RESULT
+  maxChars: number = DEFAULT_RUNTIME_CONFIG.maxToolResultChars
 ): string {
   if (result.length <= maxChars) return result
 
@@ -72,7 +53,6 @@ export function truncateToolResult(
       break
     }
     case 'middle': {
-      // Keep equal halves from head and tail
       const half = Math.floor(maxChars / 2)
       const head = result.slice(0, half)
       const tail = result.slice(total - half)
@@ -97,31 +77,25 @@ export interface ToolResultEntry {
 
 /**
  * Enforce a total character budget across all accumulated tool results.
- *
- * If the combined size exceeds MAX_TOTAL_CHARS, oldest results (lowest
- * turnIndex) are compacted first. Compacted results are replaced with a
- * placeholder that notes how many characters were removed, preserving
- * the structural shape of the message history.
- *
- * Returns a new array (does not mutate input).
+ * Oldest results (lowest turnIndex) are compacted first.
  */
 export function enforceContextBudget(
-  toolResults: ToolResultEntry[]
+  toolResults: ToolResultEntry[],
+  maxTotalChars: number = DEFAULT_RUNTIME_CONFIG.maxTotalToolResultChars,
+  maxPerResult: number = DEFAULT_RUNTIME_CONFIG.maxToolResultChars,
 ): ToolResultEntry[] {
   const total = toolResults.reduce((sum, r) => sum + r.result.length, 0)
-  if (total <= MAX_TOTAL_CHARS) return toolResults
+  if (total <= maxTotalChars) return toolResults
 
-  // Work on a shallow copy sorted oldest-first for compaction priority
   const sorted = [...toolResults].sort((a, b) => a.turnIndex - b.turnIndex)
-  let excess = total - MAX_TOTAL_CHARS
+  let excess = total - maxTotalChars
 
   const compacted = sorted.map((entry) => {
     if (excess <= 0) return entry
     if (entry.result.startsWith('[Result compacted')) return entry
 
     const chars = entry.result.length
-    if (chars > MAX_CHARS_PER_RESULT / 2) {
-      // Compact this entry
+    if (chars > maxPerResult / 2) {
       excess -= chars
       return {
         ...entry,
@@ -131,6 +105,5 @@ export function enforceContextBudget(
     return entry
   })
 
-  // Restore original order (by turnIndex)
   return compacted.sort((a, b) => a.turnIndex - b.turnIndex)
 }

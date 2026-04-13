@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 // ============================================================
 // TodoWrite Tool — Session task list management
@@ -126,7 +127,7 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
     // Notify renderer
     const wc = this.getWebContents()
     if (wc && !wc.isDestroyed()) {
-      wc.send('todo:updated', { todos })
+      wc.send(IPC_CHANNELS['todo:updated'], { todos })
     }
 
     const counts = {

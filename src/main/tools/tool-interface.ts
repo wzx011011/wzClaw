@@ -5,28 +5,54 @@ import type { ToolDefinition } from '../../shared/types'
 // ============================================================
 
 /**
+ * 工具结果的单个内容块。
+ * 支持文本、图片、错误三种类型，未来可扩展。
+ */
+export interface ToolResultContent {
+  type: 'text' | 'image' | 'error'
+  text?: string
+  image?: { url: string; mimeType: string }
+}
+
+/**
  * Context passed to every tool execution.
  * Provides the working directory and optional abort signal.
  */
 export interface ToolExecutionContext {
   workingDirectory: string
   abortSignal?: AbortSignal
+  /** 工具进度回调（可选） */
+  onProgress?: (message: string) => void
 }
 
 /**
  * The result returned by every tool execution.
- * output contains the text result (or error message).
- * isError indicates whether the tool encountered an error.
+ *
+ * 支持 `output` 为 string 或 ToolResultContent[]：
+ * - string: 传统纯文本结果（向后兼容）
+ * - ToolResultContent[]: 多块内容（文本 + 图片 + 错误混合）
+ *
+ * 工具可以按需返回任意一种格式。
  */
 export interface ToolExecutionResult {
-  output: string
+  output: string | ToolResultContent[]
   isError: boolean
 }
 
 /**
+ * 将工具结果规范化为纯文本字符串。
+ * string 直接返回；ToolResultContent[] 拼接所有 text/error 块。
+ */
+export function flattenToolOutput(output: string | ToolResultContent[]): string {
+  if (typeof output === 'string') return output
+  return output
+    .filter(block => block.type === 'text' || block.type === 'error')
+    .map(block => block.text ?? '')
+    .join('\n')
+}
+
+/**
  * The interface every tool must implement.
- * Read-only tools have requiresApproval = false.
- * Destructive tools have requiresApproval = true.
  */
 export interface Tool {
   readonly name: string
@@ -42,7 +68,6 @@ export interface Tool {
 
 /**
  * Helper to extract ToolDefinition from a Tool instance.
- * Used to build the tools array for LLM Gateway StreamOptions.
  */
 export function toDefinition(tool: Tool): ToolDefinition {
   return {

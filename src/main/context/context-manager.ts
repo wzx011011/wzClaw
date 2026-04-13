@@ -1,8 +1,10 @@
 import { countMessagesTokens } from './token-counter'
 import type { Message } from '../../shared/types'
-import { DEFAULT_MODELS, MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
+import { DEFAULT_MODELS } from '../../shared/constants'
 import type { LLMGateway } from '../llm/gateway'
 import type { StreamOptions } from '../llm/types'
+import type { AgentRuntimeConfig } from '../agent/runtime-config'
+import { DEFAULT_RUNTIME_CONFIG } from '../agent/runtime-config'
 
 export interface CompactResult {
   summary: string
@@ -15,15 +17,21 @@ export interface CompactResult {
  * ContextManager handles token counting, auto-compact triggers,
  * and context compaction for the agent loop.
  *
- * Key behaviors:
- * - shouldCompact checks if messages exceed 80% of model context window
- * - Circuit breaker prevents compaction during active compaction (CTX-04)
- * - compact() summarizes older messages via LLM, keeps last 4 intact
- * - truncateToolResult caps tool output to MAX_TOOL_RESULT_CHARS
+ * 所有阈值从 runtimeConfig 读取，不再硬编码魔法数字。
  */
 export class ContextManager {
   private isCompacting = false
   private accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
+  private config: AgentRuntimeConfig
+
+  constructor(config?: Partial<AgentRuntimeConfig>) {
+    this.config = { ...DEFAULT_RUNTIME_CONFIG, ...config }
+  }
+
+  /** 获取当前运行时配置 */
+  getConfig(): AgentRuntimeConfig {
+    return this.config
+  }
 
   /**
    * Get the context window size for a model from DEFAULT_MODELS presets.
@@ -35,22 +43,20 @@ export class ContextManager {
   }
 
   /**
-   * Check if messages exceed the compaction threshold (80% of context window).
-   * Returns false if already compacting (circuit breaker per CTX-04).
+   * Check if messages exceed the compaction threshold.
+   * Returns false if already compacting (circuit breaker).
    */
   shouldCompact(messages: Message[], modelId: string): boolean {
-    if (this.isCompacting) return false // Circuit breaker (CTX-04)
+    if (this.isCompacting) return false
     const tokens = countMessagesTokens(messages, modelId)
     const limit = this.getContextWindowForModel(modelId)
-    // 80% threshold with 15% safety margin for tokenizer discrepancy
-    return tokens > limit * 0.8
+    return tokens > limit * this.config.compactThreshold
   }
 
   /**
    * Compact conversation by summarizing older messages via LLM.
-   * Dynamic strategy: keeps enough recent messages to fill ~25% of the context window,
-   * rather than a hardcoded count (min 2 messages, max 10).
-   * Sets isCompacting flag during execution (circuit breaker).
+   * Dynamic strategy: keeps enough recent messages to fill compactKeepRatio of the context window,
+   * bounded by compactKeepMin and compactKeepMax.
    */
   async compact(
     messages: Message[],
@@ -63,32 +69,26 @@ export class ContextManager {
     this.isCompacting = true
 
     try {
-      // Dynamic recent count: keep ~25% of context window worth of recent messages
       const contextLimit = this.getContextWindowForModel(model)
-      const targetRecentTokens = contextLimit * 0.25
+      const targetRecentTokens = contextLimit * this.config.compactKeepRatio
       let recentCount = 0
       let recentTokens = 0
-      for (let i = messages.length - 1; i >= 0 && recentCount < 10; i--) {
+      for (let i = messages.length - 1; i >= 0 && recentCount < this.config.compactKeepMax; i--) {
         const msgTokens = countMessagesTokens([messages[i]], model)
-        if (recentTokens + msgTokens > targetRecentTokens && recentCount >= 2) break
+        if (recentTokens + msgTokens > targetRecentTokens && recentCount >= this.config.compactKeepMin) break
         recentTokens += msgTokens
         recentCount++
       }
-      recentCount = Math.max(2, recentCount) // At least 2 messages (1 exchange)
+      recentCount = Math.max(this.config.compactKeepMin, recentCount)
       const toSummarize = messages.slice(0, -recentCount)
       const toKeep = messages.slice(-recentCount)
 
       if (toSummarize.length === 0) {
-        // Nothing to summarize
-        return {
-          summary: '',
-          keptRecentCount: recentCount,
-          beforeTokens,
-          afterTokens: beforeTokens
-        }
+        return { summary: '', keptRecentCount: recentCount, beforeTokens, afterTokens: beforeTokens }
       }
 
-      // Build summarization prompt
+      // 构建摘要 prompt
+      const maxChars = this.config.compactSummaryMaxChars
       const summaryPrompt = `Summarize the following conversation, preserving:
 1. What files were read or modified (include file paths)
 2. What errors were encountered (include error messages)
@@ -96,11 +96,10 @@ export class ContextManager {
 4. The user's original intent
 
 Conversation to summarize:
-${toSummarize.map(m => `[${m.role}]: ${m.content.substring(0, 500)}`).join('\n')}
+${toSummarize.map(m => `[${m.role}]: ${m.content.substring(0, maxChars)}`).join('\n')}
 
 Provide a concise summary:`
 
-      // Call LLM for summarization
       const summaryMessages = [
         { role: 'user' as const, content: summaryPrompt, timestamp: Date.now() }
       ]
@@ -119,7 +118,6 @@ Provide a concise summary:`
         }
       }
 
-      // Build compacted messages: summary as system-like user message + recent messages
       const summaryMessage: Message = {
         role: 'user',
         content: `[Context Summary]\n${summary}`,
@@ -129,65 +127,42 @@ Provide a concise summary:`
       const compactedMessages = [summaryMessage, ...toKeep]
       const afterTokens = countMessagesTokens(compactedMessages, model)
 
-      return {
-        summary,
-        keptRecentCount: recentCount,
-        beforeTokens,
-        afterTokens
-      }
+      return { summary, keptRecentCount: recentCount, beforeTokens, afterTokens }
     } finally {
       this.isCompacting = false
     }
   }
 
-  /**
-   * Track token usage from LLM API responses.
-   */
   trackTokenUsage(inputTokens: number, outputTokens: number): void {
     this.accumulatedUsage.inputTokens += inputTokens
     this.accumulatedUsage.outputTokens += outputTokens
   }
 
-  /**
-   * Get accumulated token usage totals.
-   */
   getTotalUsage(): { inputTokens: number; outputTokens: number } {
     return { ...this.accumulatedUsage }
   }
 
-  /**
-   * Reset accumulated usage counters.
-   */
   resetUsage(): void {
     this.accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
   }
 
   /**
-   * Reactive compaction: triggered when the LLM returns a prompt_too_long error.
-   * More aggressive than proactive compact — keeps only the last 2 messages
-   * (the most recent exchange) to recover as much headroom as possible.
-   *
-   * Returns the compacted message array; does NOT modify internal state.
-   * The caller is responsible for replacing this.messages with the result.
+   * Reactive compaction: keeps only the last reactiveCompactKeepCount messages.
    */
   reactiveCompact(messages: Message[]): Message[] {
-    const keptCount = Math.min(2, messages.length)
+    const keptCount = Math.min(this.config.reactiveCompactKeepCount, messages.length)
     return messages.slice(-keptCount)
   }
 
   /**
-   * Truncate tool result content to MAX_TOOL_RESULT_CHARS.
-   * Returns content unchanged if under limit.
+   * Truncate tool result content to maxToolResultChars.
    */
-  static truncateToolResult(content: string): string {
-    if (content.length <= MAX_TOOL_RESULT_CHARS) return content
-    return content.substring(0, MAX_TOOL_RESULT_CHARS) +
-      `\n[truncated ${content.length} -> ${MAX_TOOL_RESULT_CHARS} chars]`
+  static truncateToolResult(content: string, maxChars?: number): string {
+    const limit = maxChars ?? DEFAULT_RUNTIME_CONFIG.maxToolResultChars
+    if (content.length <= limit) return content
+    return content.substring(0, limit) + `\n[truncated ${content.length} -> ${limit} chars]`
   }
 
-  /**
-   * Estimate token count for a message array.
-   */
   estimateTokens(messages: Message[], modelId?: string): number {
     return countMessagesTokens(messages, modelId)
   }
