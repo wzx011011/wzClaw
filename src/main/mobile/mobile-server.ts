@@ -133,8 +133,23 @@ export class MobileServer extends EventEmitter {
   }
 
   private handleConnection(ws: WebSocket, req: http.IncomingMessage): void {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
-    const token = url.searchParams.get('token')
+    // Extract token from Sec-WebSocket-Protocol header first, fall back to URL query
+    const protoHeader = req.headers['sec-websocket-protocol'] ?? ''
+    let token: string | null = null
+    if (protoHeader) {
+      // Protocol format: "wzxclaw-{token}" or just the token itself
+      const parts = protoHeader.split(',').map(s => s.trim())
+      for (const part of parts) {
+        if (part.startsWith('wzxclaw-')) {
+          token = part.slice('wzxclaw-'.length)
+          break
+        }
+      }
+    }
+    if (!token) {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
+      token = url.searchParams.get('token')
+    }
 
     // Validate auth token
     if (token !== this.authToken) {

@@ -66,6 +66,13 @@ Usage:
       ? filePath
       : path.resolve(context.workingDirectory, filePath)
 
+    // Workspace boundary check — log warning for out-of-workspace reads
+    const normalizedWorkspace = path.resolve(context.workingDirectory)
+    const isWithinWorkspace = absolutePath.startsWith(normalizedWorkspace + path.sep) || absolutePath === normalizedWorkspace
+    if (!isWithinWorkspace) {
+      console.warn(`[WorkspaceGuard] FileRead outside workspace: ${absolutePath}`)
+    }
+
     // Check file exists
     if (!fs.existsSync(absolutePath)) {
       return {

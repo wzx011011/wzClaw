@@ -62,7 +62,14 @@ export class SessionStore {
    * Append a single message to a session's JSONL file.
    * Uses async file I/O to avoid blocking the main process event loop.
    */
+  private validateSessionId(sessionId: string): void {
+    if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) {
+      throw new Error('Invalid session ID format')
+    }
+  }
+
   async appendMessage(sessionId: string, message: ChatMessageLike): Promise<void> {
+    this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     const line = JSON.stringify(message) + '\n'
     await fsp.appendFile(filePath, line, 'utf-8')
@@ -75,6 +82,7 @@ export class SessionStore {
    */
   async appendMessages(sessionId: string, messages: ChatMessageLike[]): Promise<void> {
     if (messages.length === 0) return
+    this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     const content = messages.map(msg => JSON.stringify(msg)).join('\n') + '\n'
     await fsp.appendFile(filePath, content, 'utf-8')
@@ -86,6 +94,7 @@ export class SessionStore {
    * Returns empty array if the session file does not exist.
    */
   async loadSession(sessionId: string): Promise<ChatMessageLike[]> {
+    this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     try {
       const content = await fsp.readFile(filePath, 'utf-8')
@@ -185,6 +194,7 @@ export class SessionStore {
    * Returns true if the file existed and was deleted, false otherwise.
    */
   async deleteSession(sessionId: string): Promise<boolean> {
+    this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     try {
       await fsp.unlink(filePath)
@@ -207,6 +217,7 @@ export class SessionStore {
    * then renames it over the original. This prevents data loss on crash.
    */
   async renameSession(sessionId: string, title: string): Promise<boolean> {
+    this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     try {
       const content = await fsp.readFile(filePath, 'utf-8')

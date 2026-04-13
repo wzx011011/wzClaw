@@ -12,7 +12,7 @@ import {
 } from './types'
 import { isReadOnlyBashCommand } from '../tools/bash-readonly'
 
-type PermResponseData = { approved: boolean; sessionCache: boolean; alwaysAllow?: boolean }
+type PermResponseData = { approved: boolean; sessionCache: boolean; alwaysAllow?: boolean; requestId?: string }
 
 // ============================================================
 // PermissionManager — Advanced 4-mode permission system
@@ -35,8 +35,8 @@ export class PermissionManager {
   private denialRecords: Map<string, DenialRecord> = new Map()
   private planModeActive = false
 
-  // Queue of pending approval callbacks — responses dispatched FIFO
-  private pendingApprovals: Array<(data: PermResponseData) => void> = []
+  // Map of pending approval callbacks keyed by requestId — prevents FIFO race condition
+  private pendingApprovals: Map<string, (data: PermResponseData) => void> = new Map()
   private handlerRegistered = false
 
   // File tools that accept-edits mode auto-allows
@@ -115,7 +115,7 @@ export class PermissionManager {
 
   /**
    * Register a single persistent ipcMain.handle for permission responses.
-   * Dispatches responses to the oldest pending approval in FIFO order.
+   * Matches responses by requestId to prevent race conditions with concurrent dialogs.
    * Called lazily on first requestApproval so ipcMain is ready.
    */
   private ensureResponseHandler(): void {
@@ -126,7 +126,15 @@ export class PermissionManager {
     ipcMain.handle(
       IPC_CHANNELS['agent:permission_response'],
       async (_event, data: PermResponseData) => {
-        const callback = this.pendingApprovals.shift()
+        const requestId = data.requestId
+        const callback = requestId ? this.pendingApprovals.get(requestId) : this.pendingApprovals.values().next().value
+        if (requestId && callback) {
+          this.pendingApprovals.delete(requestId)
+        } else if (callback) {
+          // Fallback: remove first entry for backwards compatibility
+          const firstKey = this.pendingApprovals.keys().next().value
+          if (firstKey !== undefined) this.pendingApprovals.delete(firstKey)
+        }
         if (callback) callback(data)
         return data.approved
       }
@@ -156,9 +164,12 @@ export class PermissionManager {
 
     this.ensureResponseHandler()
 
+    // Generate unique requestId to prevent FIFO race condition
+    const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
     return new Promise<boolean>((resolve) => {
       // Register callback BEFORE sending to renderer to avoid any timing gap
-      this.pendingApprovals.push((data) => {
+      this.pendingApprovals.set(requestId, (data) => {
         if (data.approved) {
           denial.consecutive = 0
           this.denialRecords.set(denialKey, denial)
@@ -188,6 +199,7 @@ export class PermissionManager {
       sender.send(IPC_CHANNELS['agent:permission_request'], {
         toolName,
         toolInput,
+        requestId,
         reason: `Tool "${toolName}" requires approval.`
       })
     })

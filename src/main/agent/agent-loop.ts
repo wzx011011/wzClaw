@@ -149,15 +149,15 @@ export class AgentLoop {
           }
 
           // 不消耗 turn 槽位，重试
-          turn--
-          turnCount--
+          if (turn > 0) turn--
+          if (turnCount > 0) turnCount--
           continue
         } else if (streamErr instanceof PromptTooLongError && !toolsDisabled) {
           // 层级 2：降级到纯对话模式（不修改原数组，用标志位，压缩成功后可自动恢复）
           toolsDisabled = true
           yield { type: 'agent:error', error: 'Context too long — retrying in text-only mode (tools disabled)', recoverable: true }
-          turn--
-          turnCount--
+          if (turn > 0) turn--
+          if (turnCount > 0) turnCount--
           continue
         } else {
           debugLogger.log('ERROR', 'context too long, all recovery exhausted')

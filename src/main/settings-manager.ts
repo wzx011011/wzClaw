@@ -57,8 +57,7 @@ export class SettingsManager {
       model: 'glm-5.1',
       baseURL: 'https://open.bigmodel.cn/api/anthropic'
     }
-    // Default API key for GLM (智谱AI)
-    this.decryptedKeys.set('anthropic', 'a5c6c077b8734c9b986adda81528bbb5.MJVBpZUiqrQfEiga')
+    // No default API key — users must configure their own via the Settings UI
   }
 
   /**

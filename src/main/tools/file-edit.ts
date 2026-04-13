@@ -59,6 +59,13 @@ Usage:
     const { path: filePath, old_string, new_string } = parsed.data
     const absolutePath = path.resolve(context.workingDirectory, filePath)
 
+    // Workspace boundary check — log warning for out-of-workspace edits
+    const normalizedWorkspace = path.resolve(context.workingDirectory)
+    const isWithinWorkspace = absolutePath.startsWith(normalizedWorkspace + path.sep) || absolutePath === normalizedWorkspace
+    if (!isWithinWorkspace) {
+      console.warn(`[WorkspaceGuard] FileEdit outside workspace: ${absolutePath}`)
+    }
+
     try {
       const content = await fs.readFile(absolutePath, 'utf-8')
 

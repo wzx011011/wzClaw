@@ -88,8 +88,8 @@ export class OpenAIAdapter implements LLMAdapter {
           }
         }
 
-        // Finish — stop or any finish reason
-        if (choice.finish_reason === 'stop' || choice.finish_reason != null) {
+        // Finish — only yield done for 'stop' (not 'tool_calls')
+        if (choice.finish_reason === 'stop') {
           const usage = chunk.usage
           yield {
             type: 'done',

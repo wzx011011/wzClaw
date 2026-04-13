@@ -9,8 +9,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
   constructor(config: ProviderConfig) {
     this.client = new Anthropic({
-      authToken: config.apiKey,
-      apiKey: null as any,
+      apiKey: config.apiKey,
       ...(config.baseURL && { baseURL: config.baseURL }),
     })
   }

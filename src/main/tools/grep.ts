@@ -63,6 +63,11 @@ Usage:
     const { pattern, path: searchPath, include } = parsed.data
     const dir = searchPath || context.workingDirectory
 
+    // Prevent ReDoS: limit pattern length
+    if (pattern.length > 500) {
+      return { output: 'Pattern too long (max 500 chars)', isError: true }
+    }
+
     // Validate regex pattern
     let regex: RegExp
     try {
