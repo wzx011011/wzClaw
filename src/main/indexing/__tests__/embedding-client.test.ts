@@ -80,6 +80,7 @@ describe('EmbeddingClient', () => {
       client.setVocabPath(vocabPath)
 
       await client.embed('function hello world')
+      await client.flushVocab()
 
       expect(fs.existsSync(vocabPath)).toBe(true)
       const vocab = JSON.parse(fs.readFileSync(vocabPath, 'utf-8'))
@@ -95,6 +96,7 @@ describe('EmbeddingClient', () => {
       const client1 = new EmbeddingClient({})
       client1.setVocabPath(vocabPath)
       const r1 = await client1.embed('function hello world')
+      await client1.flushVocab()
       const dim1 = r1.embedding.length
 
       // New client loads same vocab
