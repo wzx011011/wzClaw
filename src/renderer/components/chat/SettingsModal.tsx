@@ -30,6 +30,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const [relayConnected, setRelayConnected] = useState(false)
   const [relayConnecting, setRelayConnecting] = useState(false)
   const [relayError, setRelayError] = useState<string | null>(null)
+  const [extensionPaths, setExtensionPaths] = useState<{ commandsDir: string; skillsDir: string } | null>(null)
 
   // Subscribe to relay status
   useEffect(() => {
@@ -39,6 +40,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       if (status.connected) setRelayError(null)
     })
     return unsub
+  }, [])
+
+  // Load extension directory paths once
+  useEffect(() => {
+    window.wzxclaw.getExtensionPaths().then(setExtensionPaths).catch(() => {})
   }, [])
 
   // Sync local state when settings store changes or modal opens
@@ -193,6 +199,39 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
               <span style={{ color: '#666', fontSize: 12 }}>Used for mobile app pairing via relay server</span>
             )}
           </div>
+
+          {/* User Extensions section */}
+          {extensionPaths && (
+            <>
+              <label className="settings-label" style={{ marginTop: 8 }}>User Extensions</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: '#aaa', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    Commands: {extensionPaths.commandsDir}
+                  </span>
+                  <button
+                    className="settings-save-btn"
+                    style={{ padding: '2px 10px', fontSize: 12, width: 'auto' }}
+                    onClick={() => window.wzxclaw.openInExplorer(extensionPaths.commandsDir)}
+                  >
+                    Open
+                  </button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: '#aaa', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    Skills: {extensionPaths.skillsDir}
+                  </span>
+                  <button
+                    className="settings-save-btn"
+                    style={{ padding: '2px 10px', fontSize: 12, width: 'auto' }}
+                    onClick={() => window.wzxclaw.openInExplorer(extensionPaths.skillsDir)}
+                  >
+                    Open
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Save button */}
           <button

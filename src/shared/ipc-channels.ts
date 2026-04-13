@@ -135,6 +135,10 @@ export const IPC_CHANNELS = {
 
   // Todo panel (main -> renderer push)
   'todo:updated': 'todo:updated',
+
+  // Shell utility (renderer -> main)
+  'shell:open_path': 'shell:open_path',
+  'shell:get_extension_paths': 'shell:get_extension_paths',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -209,6 +213,8 @@ export interface IpcRequestPayloads {
   'relay:get_status': void
   'relay:qrcode': { token?: string }
   'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
+  'shell:open_path': { path: string }
+  'shell:get_extension_paths': void
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -268,6 +274,8 @@ export interface IpcResponsePayloads {
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
   'ask-user:answer': void
+  'shell:open_path': void
+  'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)

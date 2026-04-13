@@ -29,6 +29,11 @@ export function getProjectMemoryDir(workspaceRoot: string): string {
   return path.join(getUserDir(), 'projects', hash, 'memory')
 }
 
+/** 全局记忆文件：~/.wzxclaw/MEMORY.md（跨项目共享的个人偏好） */
+export function getGlobalMemoryPath(): string {
+  return path.join(getUserDir(), 'MEMORY.md')
+}
+
 /** MCP 配置文件：~/.wzxclaw/mcp.json */
 export function getMcpConfigPath(): string {
   return path.join(getUserDir(), 'mcp.json')
@@ -67,6 +72,12 @@ export function getPasteCacheDir(): string {
 /** Shell 环境快照目录：~/.wzxclaw/shell-snapshots/ */
 export function getShellSnapshotsDir(): string {
   return path.join(getUserDir(), 'shell-snapshots')
+}
+
+/** 任务持久化目录：~/.wzxclaw/tasks/{hash}/ */
+export function getTasksDir(workspaceRoot: string): string {
+  const hash = sanitizePath(workspaceRoot)
+  return path.join(getUserDir(), 'tasks', hash)
 }
 
 // ---- AppData 级子目录（%APPDATA%/wzxclaw/） ----
@@ -113,7 +124,7 @@ export function sanitizePath(p: string): string {
 
 /**
  * 启动时批量创建所有固定目录（幂等）。
- * commands/skills/agents 不自动创建，用户手动建立后才生效。
+ * 首次运行时在 commands/ 和 skills/ 下写入 README.md 引导文件。
  */
 export async function ensureAppDirs(): Promise<void> {
   const dirs = [
@@ -122,8 +133,72 @@ export async function ensureAppDirs(): Promise<void> {
     getDebugDir(),
     getPasteCacheDir(),
     getShellSnapshotsDir(),
+    getCommandsDir(),
+    getSkillsDir(),
     // AppData 级
     getBackupsDir(),
   ]
   await Promise.all(dirs.map(d => fs.mkdir(d, { recursive: true })))
+
+  // 首次创建时写入引导 README（已存在不覆盖）
+  await ensureReadme(
+    path.join(getCommandsDir(), 'README.md'),
+    `# 自定义指令 (Commands)
+
+在此目录下放置 .md 文件，每次对话时会自动注入到 AI 上下文中。
+
+## 示例
+
+创建 \`git-commit-helper.md\`：
+
+\`\`\`
+当我请求提交代码时，始终使用 Conventional Commits 格式：
+feat/fix/docs/style/refactor/test/chore(<scope>): <description>
+\`\`\`
+
+## 规则
+
+- 文件名无限制，扩展名必须是 .md
+- 所有文件内容会拼接后注入 system prompt
+- 修改后重启对话即可生效
+`
+  )
+
+  await ensureReadme(
+    path.join(getSkillsDir(), 'README.md'),
+    `# 自定义技能 (Skills)
+
+在此目录下放置 .md 文件，定义可用斜杠命令调用的技能。
+
+## 示例
+
+创建 \`explain-regex.md\`：
+
+\`\`\`
+---
+name: explain-regex
+description: 解释正则表达式的含义
+---
+
+请逐步解释以下正则表达式的每个部分，并给出匹配示例。
+\`\`\`
+
+调用方式：在对话中输入 \`/explain-regex\` 即可触发。
+
+## 规则
+
+- 文件名无限制，扩展名必须是 .md
+- 修改后重启对话即可生效
+`
+  )
+}
+
+/** 目标文件不存在时才写入（幂等首次引导） */
+async function ensureReadme(filePath: string, content: string): Promise<void> {
+  try {
+    await fs.access(filePath)
+    // 已存在，跳过
+  } catch {
+    await fs.writeFile(filePath, content, 'utf-8').catch(() => { /* ignore */ })
+  }
 }

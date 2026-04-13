@@ -1,6 +1,9 @@
 import { z } from 'zod'
+import * as fsp from 'fs/promises'
+import * as path from 'path'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
+import { getTasksDir } from '../paths'
 
 // ============================================================
 // TodoWrite Tool — Session task list management
@@ -99,6 +102,36 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
     return this.currentTodos
   }
 
+  /** Inject persisted todos at session start (called by AgentLoop). */
+  setCurrentTodos(todos: TodoItem[]): void {
+    this.currentTodos = todos
+  }
+
+  /**
+   * Load persisted todos for a workspace from disk.
+   * Returns empty array if no file exists or the file is corrupt.
+   */
+  static async loadFromDir(workingDirectory: string): Promise<TodoItem[]> {
+    const file = path.join(getTasksDir(workingDirectory), 'todos.json')
+    try {
+      const raw = await fsp.readFile(file, 'utf-8')
+      const parsed = z.array(TodoItemSchema).safeParse(JSON.parse(raw))
+      return parsed.success ? parsed.data : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Atomically write todos to disk (tmp + rename). Silently fails. */
+  private async persistTodos(workingDirectory: string, todos: TodoItem[]): Promise<void> {
+    const tasksDir = getTasksDir(workingDirectory)
+    await fsp.mkdir(tasksDir, { recursive: true })
+    const file = path.join(tasksDir, 'todos.json')
+    const tmp = `${file}.tmp`
+    await fsp.writeFile(tmp, JSON.stringify(todos, null, 2), 'utf-8')
+    await fsp.rename(tmp, file)
+  }
+
   async execute(
     input: Record<string, unknown>,
     _context: ToolExecutionContext
@@ -123,6 +156,9 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
     }
 
     this.currentTodos = todos
+
+    // Persist to disk (fire-and-forget, atomic write)
+    this.persistTodos(context.workingDirectory, todos).catch(() => { /* ignore */ })
 
     // Notify renderer
     const wc = this.getWebContents()

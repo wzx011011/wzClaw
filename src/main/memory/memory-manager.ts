@@ -1,6 +1,6 @@
 import path from 'path'
 import fs from 'fs'
-import { getProjectMemoryDir } from '../paths'
+import { getProjectMemoryDir, getGlobalMemoryPath } from '../paths'
 
 // ============================================================
 // MemoryManager — Cross-session MEMORY.md persistence
@@ -71,18 +71,40 @@ export class MemoryManager {
 
   /**
    * Build the memory section string for injection into the system prompt.
-   * Loads all *.md files from the memory directory (multi-topic support).
-   * Always returns the section even when empty, so the LLM knows where to write.
+   * Loads global MEMORY.md (~/.wzxclaw/MEMORY.md) and all project *.md files.
+   * Global memory is loaded first; project memory takes priority (shown last).
+   * Combined lines capped at 200 — global is truncated first when over limit.
    */
   async buildSystemPromptSection(): Promise<string> {
-    const files = await this.readAllMemoryFiles()
+    const [globalRaw, projectFiles] = await Promise.all([
+      this.readGlobalMemory(),
+      this.readAllMemoryFiles(),
+    ])
+
+    const MAX_LINES = 200
+    const projectLines: string[] = []
+    for (const [fname, content] of projectFiles) {
+      projectLines.push(`### ${fname}`, content.trim(), '')
+    }
+    const projectBlock = projectLines.join('\n')
+
+    let globalBlock = ''
+    if (globalRaw.trim()) {
+      const projectLineCount = projectLines.length
+      const remaining = Math.max(0, MAX_LINES - projectLineCount)
+      const truncated = globalRaw.split('\n').slice(0, remaining).join('\n')
+      globalBlock = truncated.trim()
+    }
 
     let filesContent = ''
-    if (files.size === 0) {
+    if (!globalBlock && projectFiles.size === 0) {
       filesContent = 'MEMORY.md: (empty — write important findings here)'
     } else {
-      for (const [fname, content] of files) {
-        filesContent += `\n### ${fname}\n${content.trim()}\n`
+      if (globalBlock) {
+        filesContent += `### [Global MEMORY.md]\n${globalBlock}\n\n`
+      }
+      if (projectFiles.size > 0) {
+        filesContent += `### [Project Memory]\n${projectBlock}`
       }
     }
 
@@ -90,15 +112,26 @@ export class MemoryManager {
 
 Your persistent memory directory is at: ${this.memoryDir}
 Primary file: ${this.memoryPath}
+Global memory file: ${getGlobalMemoryPath()}
 
 ${filesContent}
 
 Instructions:
 - When the user asks you to "remember" something, write it to MEMORY.md using FileWrite
+- For cross-project preferences, write to the global memory file: ${getGlobalMemoryPath()}
 - Organize by topic: create separate files (e.g. patterns.md, debugging.md) for distinct subjects
 - Keep each file under 200 lines; condense when it grows large
 - Write stable facts: architecture decisions, debugging findings, user preferences
 - Do NOT write session-specific or temporary information
 - Lines after 200 in MEMORY.md will be truncated in future sessions`
+  }
+
+  /** Read global MEMORY.md. Returns empty string if it doesn't exist. */
+  private async readGlobalMemory(): Promise<string> {
+    try {
+      return await fs.promises.readFile(getGlobalMemoryPath(), 'utf-8')
+    } catch {
+      return ''
+    }
   }
 }

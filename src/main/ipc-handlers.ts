@@ -1,7 +1,8 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, shell } from 'electron'
 import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
+import { getCommandsDir, getSkillsDir } from './paths'
 
 /**
  * Check whether a file path is within the workspace root boundary.
@@ -259,6 +260,20 @@ export function registerIpcHandlers(
       return { rootPath }
     }
     return null
+  })
+
+  // ============================================================
+  // Shell: open path in OS file manager
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['shell:open_path'], async (_event, { path: folderPath }) => {
+    await shell.openPath(folderPath)
+  })
+
+  // ============================================================
+  // Shell: get extension directory paths (commands + skills)
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['shell:get_extension_paths'], () => {
+    return { commandsDir: getCommandsDir(), skillsDir: getSkillsDir() }
   })
 
   // ============================================================

@@ -20,6 +20,7 @@ import { buildSystemPrompt } from './system-prompt-builder'
 import { TurnManager } from './turn-manager'
 import { ConversationManager } from './conversation-manager'
 import { DebugLogger, cleanOldDebugFiles } from '../utils/debug-logger'
+import { TodoWriteTool } from '../tools/todo-write'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -53,6 +54,13 @@ export class AgentLoop {
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
     this.abortController = new AbortController()
     this.turnManager.reset()
+
+    // 恢复上次会话的 todos（如有持久化文件）
+    const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
+    if (todoTool && config.workingDirectory) {
+      const saved = await TodoWriteTool.loadFromDir(config.workingDirectory)
+      if (saved.length > 0) todoTool.setCurrentTodos(saved)
+    }
 
     // 反应式压缩熔断器
     const MAX_REACTIVE_COMPACTS = 2

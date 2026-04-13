@@ -92,6 +92,11 @@ declare global {
       answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) => Promise<void>
       // Usage / cost tracking (Phase 4.4)
       onUsageUpdate: (cb: (p: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => () => void
+      // Todo panel
+      onTodoUpdated: (cb: (p: { todos: Array<{ content: string; status: string; activeForm: string }> }) => void) => () => void
+      // Shell utilities
+      openInExplorer: (folderPath: string) => Promise<void>
+      getExtensionPaths: () => Promise<{ commandsDir: string; skillsDir: string }>
     }
   }
 }

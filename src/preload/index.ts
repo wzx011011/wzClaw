@@ -245,6 +245,12 @@ const api = {
     return () => ipcRenderer.removeListener('todo:updated', handler)
   },
 
+  // Shell utility — open a directory in the OS file manager
+  openInExplorer: (folderPath: string) =>
+    ipcRenderer.invoke('shell:open_path', { path: folderPath }),
+  getExtensionPaths: (): Promise<{ commandsDir: string; skillsDir: string }> =>
+    ipcRenderer.invoke('shell:get_extension_paths'),
+
   // Usage / cost tracking (Phase 4.4) — main pushes updates after each LLM response
   onUsageUpdate: (callback: (payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => {
     const handler = (_: unknown, payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => callback(payload)
