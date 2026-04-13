@@ -4,7 +4,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { getDebugDir } from '../paths'
+import { getDebugDir, getMediaDir } from '../paths'
 
 const MAX_DEBUG_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7天
 
@@ -21,6 +21,30 @@ export async function cleanOldDebugFiles(): Promise<void> {
         .filter(f => f.endsWith('.txt'))
         .map(async f => {
           const filePath = path.join(debugDir, f)
+          try {
+            const stat = await fs.promises.stat(filePath)
+            if (now - stat.mtimeMs > MAX_DEBUG_AGE_MS) {
+              await fs.promises.unlink(filePath)
+            }
+          } catch { /* ignore */ }
+        })
+    )
+  } catch { /* dir might not exist yet */ }
+}
+
+/**
+ * 启动时清理超过 7 天的 media 截图文件（异步，静默失败）。
+ */
+export async function cleanOldMediaFiles(): Promise<void> {
+  const mediaDir = getMediaDir()
+  try {
+    const entries = await fs.promises.readdir(mediaDir)
+    const now = Date.now()
+    await Promise.all(
+      entries
+        .filter(f => f.endsWith('.jpg'))
+        .map(async f => {
+          const filePath = path.join(mediaDir, f)
           try {
             const stat = await fs.promises.stat(filePath)
             if (now - stat.mtimeMs > MAX_DEBUG_AGE_MS) {

@@ -1,5 +1,9 @@
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import * as crypto from 'crypto'
+import { getMediaDir } from '../paths'
 
 export interface BrowserScreenshot {
   url: string
@@ -116,7 +120,23 @@ export class BrowserManager extends EventEmitter {
   private async captureBase64(win: BrowserWindow): Promise<string> {
     const image = await win.webContents.capturePage()
     // JPEG at 60% quality: ~400-700 KB base64 vs ~5-7 MB for PNG — ~8x smaller
-    return image.toJPEG(60).toString('base64')
+    const jpeg = image.toJPEG(60)
+    const base64 = jpeg.toString('base64')
+
+    // Persist to ~/.wzxclaw/media/ (fire-and-forget, silent failure)
+    this.saveMediaFile(jpeg).catch(() => { /* ignore */ })
+
+    return base64
+  }
+
+  /** Atomically write a screenshot JPEG to the media directory. */
+  private async saveMediaFile(jpeg: Buffer): Promise<void> {
+    const mediaDir = getMediaDir()
+    await fs.mkdir(mediaDir, { recursive: true })
+    const sha = crypto.createHash('sha256').update(jpeg).digest('hex').slice(0, 8)
+    const ts = Date.now()
+    const file = path.join(mediaDir, `${ts}-${sha}.jpg`)
+    await fs.writeFile(file, jpeg)
   }
 
   private async autoScreenshot(win: BrowserWindow): Promise<void> {

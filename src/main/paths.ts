@@ -74,6 +74,11 @@ export function getShellSnapshotsDir(): string {
   return path.join(getUserDir(), 'shell-snapshots')
 }
 
+/** 截图媒体目录：~/.wzxclaw/media/（Browser 工具截图持久化，7 天自动清理） */
+export function getMediaDir(): string {
+  return path.join(getUserDir(), 'media')
+}
+
 /** 任务持久化目录：~/.wzxclaw/tasks/{hash}/ */
 export function getTasksDir(workspaceRoot: string): string {
   const hash = sanitizePath(workspaceRoot)
@@ -135,6 +140,7 @@ export async function ensureAppDirs(): Promise<void> {
     getShellSnapshotsDir(),
     getCommandsDir(),
     getSkillsDir(),
+    getMediaDir(),
     // AppData 级
     getBackupsDir(),
   ]

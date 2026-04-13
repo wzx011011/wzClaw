@@ -5,7 +5,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 let closedHandler: (() => void) | null = null
 
 const mockNativeImage = {
-  toPNG: vi.fn().mockReturnValue(Buffer.from('fake-png'))
+  toPNG: vi.fn().mockReturnValue(Buffer.from('fake-png')),
+  toJPEG: vi.fn().mockReturnValue(Buffer.from('fake-jpeg')),
 }
 
 const mockWebContents = {
@@ -143,7 +144,7 @@ describe('BrowserManager', () => {
       await manager.navigate('https://example.com')
       const base64 = await manager.screenshot()
       expect(typeof base64).toBe('string')
-      expect(mockNativeImage.toPNG).toHaveBeenCalled()
+      expect(mockNativeImage.toJPEG).toHaveBeenCalledWith(60)
     })
   })
 

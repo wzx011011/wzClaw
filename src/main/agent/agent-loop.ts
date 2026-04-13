@@ -19,7 +19,7 @@ import type { FileHistoryManager } from '../file-history/file-history-manager'
 import { buildSystemPrompt } from './system-prompt-builder'
 import { TurnManager } from './turn-manager'
 import { ConversationManager } from './conversation-manager'
-import { DebugLogger, cleanOldDebugFiles } from '../utils/debug-logger'
+import { DebugLogger, cleanOldDebugFiles, cleanOldMediaFiles } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 
 export class AgentLoop {
@@ -50,6 +50,7 @@ export class AgentLoop {
     // 每次 run() 创建新的调试日志（session 级别），并清理旧文件
     const debugLogger = new DebugLogger(config.conversationId)
     cleanOldDebugFiles().catch(() => {/* ignore */})
+    cleanOldMediaFiles().catch(() => {/* ignore */})
 
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
     this.abortController = new AbortController()
