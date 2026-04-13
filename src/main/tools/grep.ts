@@ -20,7 +20,13 @@ const GrepInputSchema = z.object({
 
 export class GrepTool implements Tool {
   readonly name = 'Grep'
-  readonly description = 'Search file contents by regex pattern. Returns matching lines with file path and line number.'
+  readonly description = `Search file contents by regex pattern. Returns matching lines with file path and line number.
+
+Usage:
+- Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+").
+- Use the include parameter to filter by file type (e.g. "*.ts", "*.py").
+- Skips hidden files/directories and node_modules automatically.
+- Use this instead of Bash with grep/rg — this tool is optimized for the workspace.`
   readonly requiresApproval = false
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

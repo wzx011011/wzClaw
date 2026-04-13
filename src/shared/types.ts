@@ -1,6 +1,24 @@
 import { z } from 'zod'
 
 // ============================================================
+// Content Block Types (preserves interleaved text/tool ordering)
+// ============================================================
+
+export interface TextContentBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ToolUseContentBlock {
+  type: 'tool_use'
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export type ContentBlock = TextContentBlock | ToolUseContentBlock
+
+// ============================================================
 // Message Types
 // ============================================================
 
@@ -14,6 +32,9 @@ export interface AssistantMessage {
   role: 'assistant'
   content: string
   toolCalls: ToolCall[]
+  /** Interleaved content blocks preserving original text/tool ordering.
+   *  When present, message-builder uses this instead of content+toolCalls. */
+  contentBlocks?: ContentBlock[]
   timestamp: number
 }
 

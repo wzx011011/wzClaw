@@ -107,7 +107,8 @@ export class AgentTool implements Tool {
     private contextManager: ContextManager,
     private hookRegistry: HookRegistry | undefined,
     private baseConfig: Omit<AgentConfig, 'conversationId' | 'maxTurns'>,
-    depth = 0
+    depth = 0,
+    private getLatestConfig?: () => Omit<AgentConfig, 'conversationId' | 'maxTurns'>
   ) {
     this.depth = depth
   }
@@ -128,6 +129,9 @@ export class AgentTool implements Tool {
 
     const { description, prompt, maxTurns, subagent_type = 'general' } = parsed.data
     const typeConfig = AGENT_TYPES[subagent_type]
+
+    // Use latest config (model/provider may change after construction)
+    const currentBase = this.getLatestConfig ? this.getLatestConfig() : this.baseConfig
 
     // Build child tool registry: apply allowedTools filter if specified,
     // always exclude Agent itself to prevent unbounded recursion.
@@ -154,7 +158,7 @@ export class AgentTool implements Tool {
     )
 
     const subConfig: AgentConfig = {
-      ...this.baseConfig,
+      ...currentBase,
       systemPrompt: resolvedSystemPrompt,
       conversationId: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       maxTurns: maxTurns ?? DEFAULT_MAX_SUB_AGENT_TURNS,

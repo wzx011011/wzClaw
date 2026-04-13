@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { exec } from 'child_process'
+import { existsSync } from 'fs'
+import path from 'path'
 import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { TerminalManager } from '../terminal/terminal-manager'
@@ -12,6 +14,22 @@ import { isReadOnlyBashCommand } from './bash-readonly'
 
 const DEFAULT_TIMEOUT = 30000 // 30 seconds per D-36
 
+// Detect Git Bash on Windows for better Unix command compatibility
+let detectedShell: string | undefined
+if (process.platform === 'win32') {
+  const gitBashPaths = [
+    path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+    path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
+    path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
+  ]
+  for (const p of gitBashPaths) {
+    if (p && existsSync(p)) {
+      detectedShell = p
+      break
+    }
+  }
+}
+
 const BashSchema = z.object({
   command: z.string().min(1),
   timeout: z.number().positive().optional()
@@ -19,8 +37,23 @@ const BashSchema = z.object({
 
 export class BashTool implements Tool {
   readonly name = 'Bash'
-  readonly description =
-    'Execute a shell command and return stdout and stderr output. Commands run in the working directory.'
+  readonly description = `Execute a shell command and return stdout and stderr output. Commands run in the working directory.
+
+IMPORTANT: Do NOT use Bash when a dedicated tool exists:
+- To read files: use FileRead (not cat/head/tail)
+- To edit files: use FileEdit (not sed/awk)
+- To search files by name: use Glob (not find/ls)
+- To search file contents: use Grep (not grep/rg)
+Reserve Bash for system commands: git, npm, build tools, process management, etc.
+
+When running git commands:
+- Never use --no-verify or skip hooks unless explicitly asked.
+- Never force push to main/master.
+- Never use interactive flags (-i) as they require terminal input.
+- Prefer creating new commits over amending existing ones.
+- Before destructive operations (reset --hard, push --force), confirm with the user.
+
+Always quote file paths containing spaces with double quotes.`
   readonly requiresApproval = true
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
@@ -94,12 +127,25 @@ export class BashTool implements Tool {
     }
 
     return new Promise<ToolExecutionResult>((resolve) => {
+      // On Windows with Git Bash: use bash directly for Unix command compatibility.
+      // Without Git Bash: force UTF-8 codepage so cmd.exe error messages aren't GBK-garbled.
+      let commandToRun = command
+      const useGitBash = process.platform === 'win32' && detectedShell
+      if (process.platform === 'win32' && !useGitBash) {
+        commandToRun = `chcp 65001 > nul 2>&1 && ${command}`
+      }
+
       const child = exec(
-        command,
+        commandToRun,
         {
           cwd: context.workingDirectory,
           timeout: effectiveTimeout,
-          maxBuffer: 1024 * 1024
+          maxBuffer: 1024 * 1024,
+          encoding: 'utf8',
+          shell: useGitBash ? detectedShell : undefined,
+          env: process.platform === 'win32'
+            ? { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
+            : process.env
         },
         (error, stdout, stderr) => {
           if (context.abortSignal?.aborted) {

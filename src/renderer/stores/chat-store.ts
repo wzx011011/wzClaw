@@ -40,11 +40,14 @@ interface ChatState {
   activeSessionId: string
   sessionsCache: Record<string, ChatMessage[]>
   pendingMentions: MentionItem[]
+  streamJustEnded: boolean
+  currentTodos: Array<{ content: string; status: string; activeForm: string }>
+  todoCollapsed: boolean
 }
 
 interface ChatActions {
   init: () => () => void
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (displayContent: string, agentContent?: string) => Promise<void>
   stopGeneration: () => Promise<void>
   clearConversation: () => void
   loadSessionList: () => Promise<void>
@@ -116,6 +119,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
   activeSessionId: initialId,
   sessionsCache: {},
   pendingMentions: [],
+  streamJustEnded: false,
+  currentTodos: [],
+  todoCollapsed: false,
 
   /**
    * Subscribe to all 5 stream IPC events. Returns unsubscribe function.
@@ -159,7 +165,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const lastAssistantIdx = [...messages]
         .map((m, i) => ({ m, i }))
         .reverse()
-        .find(({ m }) => m.role === 'assistant')
+        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
       if (lastAssistantIdx) {
         set({
@@ -206,8 +212,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
       const { messages } = get()
+      // Remove any trailing empty assistant message (created by turn_end as a
+      // placeholder for ThinkingIndicator) before finalizing.
+      let cleaned = messages
+      const last = cleaned[cleaned.length - 1]
+      if (last && last.role === 'assistant' && last.isStreaming && !last.content && (!last.toolCalls || last.toolCalls.length === 0)) {
+        cleaned = cleaned.slice(0, -1)
+      }
       // Mark last streaming assistant as complete
-      const lastStreamingIdx = [...messages]
+      const lastStreamingIdx = [...cleaned]
         .map((m, i) => ({ m, i }))
         .reverse()
         .find(({ m }) => m.role === 'assistant' && m.isStreaming)
@@ -217,14 +230,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: false,
           isWaitingForResponse: false,
           currentTokenUsage: payload.usage,
-          messages: messages.map((m, i) =>
+          streamJustEnded: true,
+          messages: cleaned.map((m, i) =>
             i === lastStreamingIdx.i
               ? { ...m, isStreaming: false, usage: payload.usage }
               : m
           )
         })
       } else {
-        set({ isStreaming: false, isWaitingForResponse: false })
+        set({ isStreaming: false, isWaitingForResponse: false, streamJustEnded: true, messages: cleaned })
       }
     })
 
@@ -249,6 +263,39 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set({ isStreaming: false, isWaitingForResponse: false, error: payload.error })
       }
     })
+
+    // Turn-end: finalize current assistant bubble so the next turn starts a new one.
+    // Global isStreaming stays true since the agent loop is still running.
+    // Also set isWaitingForTurn so a ThinkingIndicator shows while the
+    // next LLM call is in flight.
+    const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.(() => {
+      const { messages } = get()
+      const lastStreamingIdx = [...messages]
+        .map((m, i) => ({ m, i }))
+        .reverse()
+        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+
+      if (lastStreamingIdx) {
+        // Create a new empty assistant message for the upcoming turn so that
+        // ThinkingIndicator is visible immediately between turns.
+        const nextMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          toolCalls: []
+        }
+        set({
+          messages: [
+            ...messages.map((m, i) =>
+              i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
+            ),
+            nextMsg
+          ]
+        })
+      }
+    }) ?? (() => {})
 
     // Mobile user messages (from phone via relay)
     const unsubMobileMsg = window.wzxclaw.onMobileUserMessage?.((payload) => {
@@ -330,6 +377,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Load session list on startup
     get().loadSessionList()
 
+    // Restore last active session from previous app run.
+    // Use pull (getLastSession) instead of relying on the push (session:restore)
+    // event which fires before React mounts and would be missed.
+    window.wzxclaw.getLastSession?.().then((result) => {
+      if (result?.sessionId) {
+        get().switchSession(result.sessionId)
+      }
+    }).catch(() => {})
+
+    // Keep the push listener as a fallback (e.g. if main delays the send)
+    const unsubRestore = window.wzxclaw.onSessionRestore?.((payload) => {
+      if (payload?.sessionId) {
+        // Only restore if we haven't already loaded a non-empty session
+        if (get().messages.length === 0) {
+          get().switchSession(payload.sessionId)
+        }
+      }
+    }) ?? (() => {})
+
+    // TodoWrite updates
+    const unsubTodo = window.wzxclaw.onTodoUpdated?.((payload) => {
+      set({ currentTodos: payload.todos })
+    }) ?? (() => {})
+
     // Return combined unsubscribe
     return () => {
       unsubText()
@@ -337,10 +408,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubToolResult()
       unsubEnd()
       unsubError()
+      unsubTurnEnd()
       unsubMobileMsg()
       unsubCompacted()
       unsubContextRestored()
       unsubRetrying()
+      unsubRestore()
+      unsubTodo()
     }
   },
 
@@ -349,11 +423,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * Creates a user ChatMessage + empty streaming assistant ChatMessage.
    * If pendingMentions exist, formats file content into the message.
    */
-  sendMessage: async (content: string) => {
+  sendMessage: async (displayContent: string, agentContent?: string) => {
     const { conversationId, messages, pendingMentions } = get()
 
     // Format mentions into message content for LLM context
-    let formattedContent = content
+    let formattedAgentContent = agentContent ?? displayContent
     if (pendingMentions.length > 0) {
       const contextBlocks = pendingMentions.map((m) => {
         if (m.type === 'folder_mention') {
@@ -361,13 +435,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
         }
         return `[Context from ${m.path}]:\n${m.content}\n---`
       }).join('\n')
-      formattedContent = `${contextBlocks}\n\n${content}`
+      formattedAgentContent = `${contextBlocks}\n\n${formattedAgentContent}`
     }
 
     const userMsg: ChatMessage = {
       id: uuidv4(),
       role: 'user',
-      content: formattedContent,
+      content: displayContent,
       timestamp: Date.now(),
       mentions: pendingMentions.length > 0 ? [...pendingMentions] : undefined
     }
@@ -390,7 +464,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedContent })
+      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent })
     } catch (err) {
       set({
         isStreaming: false,
@@ -420,7 +494,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       messages: [],
       conversationId: newId,
       activeSessionId: newId,
-      error: null
+      error: null,
+      currentTodos: []
     })
   },
 
@@ -500,7 +575,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       conversationId: newId,
       activeSessionId: newId,
       error: null,
-      sessionsCache: newCache
+      sessionsCache: newCache,
+      currentTodos: []
     })
   },
 
@@ -544,6 +620,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
         })
       }
     }
+
+    // Persist last session so it can be restored on next app launch
+    window.wzxclaw.saveLastSession?.({ sessionId }).catch(() => {})
   },
 
   /**

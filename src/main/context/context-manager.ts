@@ -40,7 +40,7 @@ export class ContextManager {
    */
   shouldCompact(messages: Message[], modelId: string): boolean {
     if (this.isCompacting) return false // Circuit breaker (CTX-04)
-    const tokens = countMessagesTokens(messages)
+    const tokens = countMessagesTokens(messages, modelId)
     const limit = this.getContextWindowForModel(modelId)
     // 80% threshold with 15% safety margin for tokenizer discrepancy
     return tokens > limit * 0.8
@@ -48,7 +48,8 @@ export class ContextManager {
 
   /**
    * Compact conversation by summarizing older messages via LLM.
-   * Keeps last 4 messages (2 exchanges) intact.
+   * Dynamic strategy: keeps enough recent messages to fill ~25% of the context window,
+   * rather than a hardcoded count (min 2 messages, max 10).
    * Sets isCompacting flag during execution (circuit breaker).
    */
   async compact(
@@ -58,12 +59,22 @@ export class ContextManager {
     provider: string,
     systemPrompt?: string
   ): Promise<CompactResult> {
-    const beforeTokens = countMessagesTokens(messages)
+    const beforeTokens = countMessagesTokens(messages, model)
     this.isCompacting = true
 
     try {
-      // Keep last 4 messages (2 exchanges) intact
-      const recentCount = 4
+      // Dynamic recent count: keep ~25% of context window worth of recent messages
+      const contextLimit = this.getContextWindowForModel(model)
+      const targetRecentTokens = contextLimit * 0.25
+      let recentCount = 0
+      let recentTokens = 0
+      for (let i = messages.length - 1; i >= 0 && recentCount < 10; i--) {
+        const msgTokens = countMessagesTokens([messages[i]], model)
+        if (recentTokens + msgTokens > targetRecentTokens && recentCount >= 2) break
+        recentTokens += msgTokens
+        recentCount++
+      }
+      recentCount = Math.max(2, recentCount) // At least 2 messages (1 exchange)
       const toSummarize = messages.slice(0, -recentCount)
       const toKeep = messages.slice(-recentCount)
 
@@ -116,7 +127,7 @@ Provide a concise summary:`
       }
 
       const compactedMessages = [summaryMessage, ...toKeep]
-      const afterTokens = countMessagesTokens(compactedMessages)
+      const afterTokens = countMessagesTokens(compactedMessages, model)
 
       return {
         summary,
@@ -177,7 +188,7 @@ Provide a concise summary:`
   /**
    * Estimate token count for a message array.
    */
-  estimateTokens(messages: Message[]): number {
-    return countMessagesTokens(messages)
+  estimateTokens(messages: Message[], modelId?: string): number {
+    return countMessagesTokens(messages, modelId)
   }
 }

@@ -19,7 +19,13 @@ const GlobInputSchema = z.object({
 
 export class GlobTool implements Tool {
   readonly name = 'Glob'
-  readonly description = 'Find files matching a glob pattern. Returns matching file paths.'
+  readonly description = `Find files matching a glob pattern. Returns matching file paths sorted by directory traversal order.
+
+Usage:
+- Supports patterns like "**/*.ts", "src/**/*.tsx", "*.json".
+- Skips hidden files/directories and node_modules automatically.
+- Use this instead of Bash with find/ls — this tool is optimized for the workspace.
+- You can call multiple Glob tools in parallel to search for different patterns.`
   readonly requiresApproval = false
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

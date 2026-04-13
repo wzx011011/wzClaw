@@ -27,6 +27,9 @@
   --border: #2e2e2e;
   --border-subtle: #252525;
   --border-focus: var(--accent);
+  --table-border: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.15);
 
   /* Tabs */
   --tab-active-bg: #181818;
@@ -111,12 +114,12 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--scrollbar-thumb-hover);
 }
 
 ::-webkit-scrollbar-corner {
@@ -1103,7 +1106,7 @@ html, body, #root {
 }
 
 .tab-close:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
@@ -1863,6 +1866,7 @@ html, body, #root {
   --border: #3e3e3e;
   --border-subtle: #333333;
   --hover-bg: #2a2d2e;
+  --table-border: rgba(255, 255, 255, 0.18);
   --accent: #569cd6;
   --accent-hover: #4a8cc2;
   --accent-subtle: rgba(86, 156, 214, 0.15);
@@ -1881,6 +1885,9 @@ html, body, #root {
   --border: #d4d4d4;
   --border-subtle: #e5e5e5;
   --hover-bg: #e8e8e8;
+  --table-border: #c0c0c0;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
   --accent: #6f42c1;
   --accent-hover: #5a32a3;
   --accent-subtle: rgba(111, 66, 193, 0.1);

@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { v4 as uuidv4 } from 'uuid'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
@@ -49,6 +51,7 @@ export default function ChatPanel(): JSX.Element {
   const error = useChatStore((s) => s.error)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
+  const streamJustEnded = useChatStore((s) => s.streamJustEnded)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)
@@ -73,6 +76,10 @@ export default function ChatPanel(): JSX.Element {
 
   // Task panel state
   const taskPanelVisible = useTaskStore((s) => s.panelVisible)
+
+  // Todo list (from TodoWrite tool)
+  const currentTodos = useChatStore((s) => s.currentTodos)
+  const todoCollapsed = useChatStore((s) => s.todoCollapsed)
 
   // Thinking depth + Permission mode state
   const [thinkingDepth, setThinkingDepth] = useState<ThinkingDepth>('none')
@@ -129,6 +136,17 @@ export default function ChatPanel(): JSX.Element {
     })
     return () => cancelAnimationFrame(raf)
   }, [messages, userScrolledUp])
+
+  // Force scroll to bottom when stream ends so final results are visible
+  useEffect(() => {
+    if (streamJustEnded) {
+      setUserScrolledUp(false)
+      useChatStore.setState({ streamJustEnded: false })
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      })
+    }
+  }, [streamJustEnded])
 
   // Track scroll position to detect user scroll-up
   useEffect(() => {
@@ -292,7 +310,8 @@ export default function ChatPanel(): JSX.Element {
         } else {
           const workspaceRoot = useWorkspaceStore.getState().rootPath ?? ''
           const prompt = await cmd.handler.getPrompt(args, workspaceRoot)
-          sendMessage(prompt)
+          // Show just the command name in the user bubble; send the full prompt to the agent
+          sendMessage(`/${cmdName}`, prompt)
         }
         return
       }
@@ -393,7 +412,9 @@ export default function ChatPanel(): JSX.Element {
           <div className="plan-approval-header">
             <span className="plan-approval-title">&#9998; Agent Plan — Review &amp; Approve</span>
           </div>
-          <pre className="plan-approval-content">{pendingPlan}</pre>
+          <div className="plan-approval-content">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{pendingPlan}</ReactMarkdown>
+          </div>
           <div className="plan-approval-actions">
             <button
               className="plan-approval-btn plan-approval-btn-approve"
@@ -414,6 +435,51 @@ export default function ChatPanel(): JSX.Element {
       {/* Task panel for agent task tracking */}
       {taskPanelVisible && (
         <TaskPanel onClose={() => useTaskStore.getState().togglePanel()} />
+      )}
+
+      {/* TodoWrite panel — shows active session task list (Copilot style) */}
+      {currentTodos.length > 0 && (
+        <div className="todo-panel">
+          <div className="todo-panel-header" onClick={() => useChatStore.setState((s) => ({ todoCollapsed: !s.todoCollapsed }))}>
+            <span className={`todo-panel-collapse${todoCollapsed ? ' collapsed' : ''}`}>&#9660;</span>
+            <span className="todo-panel-title">Todos ({currentTodos.filter(t => t.status === 'completed').length}/{currentTodos.length})</span>
+            <button
+              className="todo-panel-clear"
+              title="清空列表"
+              onClick={(e) => {
+                e.stopPropagation()
+                useChatStore.setState({ currentTodos: [] })
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          {!todoCollapsed && (
+            <ul className="todo-panel-list">
+              {currentTodos.map((todo, i) => (
+                <li key={i} className={`todo-item todo-item--${todo.status}`}>
+                  <button
+                    className={`todo-check-btn todo-check-btn--${todo.status}`}
+                    title={todo.status === 'completed' ? '标记为待办' : '标记为完成'}
+                    onClick={() => {
+                      const newTodos = [...currentTodos]
+                      newTodos[i] = {
+                        ...newTodos[i],
+                        status: newTodos[i].status === 'completed' ? 'pending' : 'completed'
+                      }
+                      useChatStore.setState({ currentTodos: newTodos })
+                    }}
+                  >
+                    {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '⟳' : '○'}
+                  </button>
+                  <span className="todo-content">
+                    {todo.status === 'in_progress' ? todo.activeForm : todo.content}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {/* Error banner */}

@@ -49,7 +49,7 @@ describe('AnthropicAdapter', () => {
     const doneEvents = events.filter(e => e.type === 'done')
     expect(doneEvents).toHaveLength(1)
     if (doneEvents[0].type === 'done') {
-      expect(doneEvents[0].usage).toEqual({ inputTokens: 20, outputTokens: 10 })
+      expect(doneEvents[0].usage).toEqual({ inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
     }
   })
 
@@ -142,7 +142,10 @@ describe('AnthropicAdapter', () => {
     }
 
     const callArgs = mockStream.mock.calls[0][0]
-    expect(callArgs.system).toBe('You are a coding assistant.')
+    // System prompt is now sent as an array of text blocks with cache_control
+    expect(callArgs.system).toEqual([
+      { type: 'text', text: 'You are a coding assistant.', cache_control: { type: 'ephemeral' } }
+    ])
     // System messages should NOT be in the messages array
     expect(callArgs.messages.every(m => m.role !== 'system')).toBe(true)
   })

@@ -119,6 +119,16 @@ html, body {
   margin: 4px 4px 4px 0;
 }
 
+.message .tool-badge.done {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+}
+
+.message .tool-badge.error {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+}
+
 /* Input bar */
 .input-bar {
   display: flex;
@@ -182,3 +192,81 @@ html, body {
 .messages::-webkit-scrollbar { width: 4px; }
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Todo Panel */
+.todo-panel {
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.todo-header {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.todo-list li:last-child { border-bottom: none; }
+
+.todo-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.todo-completed .todo-icon { color: #4ade80; }
+.todo-in_progress .todo-icon { color: var(--accent); }
+.todo-pending .todo-icon { color: var(--text-secondary); }
+.todo-completed { opacity: 0.7; }
+
+/* Thinking indicator */
+.thinking-msg .msg-body {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.thinking-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0s; }
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.5); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}

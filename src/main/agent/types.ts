@@ -1,4 +1,4 @@
-import type { LLMProvider } from '../../shared/types'
+import type { LLMProvider, TokenUsage } from '../../shared/types'
 import { MAX_AGENT_TURNS } from '../../shared/constants'
 
 // ============================================================
@@ -25,13 +25,6 @@ export interface AgentToolResultEvent {
   isError: boolean
 }
 
-export interface AgentPermissionRequestEvent {
-  type: 'agent:permission_request'
-  toolCallId: string
-  toolName: string
-  input: Record<string, unknown>
-}
-
 export interface AgentErrorEvent {
   type: 'agent:error'
   error: string
@@ -40,7 +33,7 @@ export interface AgentErrorEvent {
 
 export interface AgentDoneEvent {
   type: 'agent:done'
-  usage: { inputTokens: number; outputTokens: number }
+  usage: TokenUsage
   turnCount: number
 }
 
@@ -51,14 +44,18 @@ export interface AgentCompactedEvent {
   auto: boolean
 }
 
+export interface AgentTurnEndEvent {
+  type: 'agent:turn_end'
+}
+
 export type AgentEvent =
   | AgentTextEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
-  | AgentPermissionRequestEvent
   | AgentErrorEvent
   | AgentDoneEvent
   | AgentCompactedEvent
+  | AgentTurnEndEvent
 
 // ============================================================
 // Agent Configuration

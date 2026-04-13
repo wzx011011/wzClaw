@@ -20,7 +20,15 @@ const FileReadInputSchema = z.object({
 
 export class FileReadTool implements Tool {
   readonly name = 'FileRead'
-  readonly description = 'Read the contents of a file. Returns file content with line numbers.'
+  readonly description = `Read the contents of a file. Returns file content with line numbers.
+
+Usage:
+- The path can be absolute or relative to the working directory.
+- By default reads up to 2000 lines from the beginning of the file.
+- Use offset and limit for large files to read specific sections.
+- Results include line numbers starting at 1.
+- Always read a file before editing it with FileEdit. FileEdit requires exact string matches — reading first ensures accuracy.
+- You can call multiple FileRead tools in parallel to read several files at once.`
   readonly requiresApproval = false
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

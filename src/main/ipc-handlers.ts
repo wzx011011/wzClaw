@@ -49,6 +49,9 @@ export function registerIpcHandlers(
   // Session-scoped cost tracker — resets on each new send (Phase 4.4)
   const costTracker = new CostTracker()
 
+  // Track how many messages were already persisted so we only append new ones
+  let persistedMessageCount = 0
+
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
   // events to the renderer via webContents.send
@@ -60,6 +63,9 @@ export function registerIpcHandlers(
     }
 
     const sender = event.sender
+
+    // Reset persisted message counter for new conversation turn
+    persistedMessageCount = agentLoop.getMessages().length
 
     // Ensure the LLM gateway has the current provider configured with up-to-date settings
     const config = settingsManager.getCurrentConfig()
@@ -133,15 +139,11 @@ export function registerIpcHandlers(
             toolCallInputs.delete(agentEvent.toolCallId)
             break
           }
-          case 'agent:permission_request':
-            sender.send(IPC_CHANNELS['agent:permission_request'], {
-              toolName: agentEvent.toolName,
-              toolInput: agentEvent.input,
-              reason: 'This tool can modify your files. Approve?',
-            })
-            break
           case 'agent:error':
             sender.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
+            break
+          case 'agent:turn_end':
+            sender.send(IPC_CHANNELS['stream:turn_end'], {})
             break
           case 'agent:compacted':
             sender.send(IPC_CHANNELS['session:compacted'], {
@@ -161,10 +163,14 @@ export function registerIpcHandlers(
               agentEvent.usage.cacheWriteTokens ?? 0
             )
             sender.send(IPC_CHANNELS['usage:update'], costTracker.getSession())
-            // Auto-save messages after agent turn completes (PERSIST-02)
+            // Auto-save only NEW messages since last persist (fixes log duplication P0)
             try {
               const allMessages = agentLoop.getMessages()
-              await getSessionStore().appendMessages(agentConfig.conversationId, allMessages)
+              const newMessages = allMessages.slice(persistedMessageCount)
+              if (newMessages.length > 0) {
+                await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
+                persistedMessageCount = allMessages.length
+              }
             } catch (saveErr) {
               console.error('Failed to auto-save session:', saveErr)
             }
@@ -203,6 +209,15 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['settings:update'], (_event, request) => {
     settingsManager.updateSettings(request)
+  })
+
+  // Save and get last active session ID (for restoring on next app launch)
+  ipcMain.handle('session:save-last', (_event, request: { sessionId: string }) => {
+    settingsManager.setLastSessionId(request.sessionId)
+  })
+
+  ipcMain.handle('session:get-last', () => {
+    return { sessionId: settingsManager.getLastSessionId() ?? null }
   })
 
   // ============================================================
@@ -525,6 +540,9 @@ export function registerIpcHandlers(
     const sessionId = result.data.sessionId
     const rawMessages = await getSessionStore().loadSession(sessionId)
 
+    // Reset persisted counter to match loaded message count
+    persistedMessageCount = rawMessages.length
+
     // Restore agent loop context so subsequent messages continue the conversation.
     // Run asynchronously after returning messages to the renderer — the renderer
     // shows the chat immediately while the (potentially slow) compaction runs.
@@ -612,7 +630,7 @@ export function registerIpcHandlers(
   // ============================================================
   // Agent: compact context — manual /compact command
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async () => {
+  ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async (event) => {
     const messages = agentLoop.getMessages()
     const config = settingsManager.getCurrentConfig()
     if (messages.length === 0) return null
@@ -634,6 +652,12 @@ export function registerIpcHandlers(
       const recentMessages = messages.slice(-result.keptRecentCount)
       agentLoop.replaceMessages([summaryMsg, ...recentMessages])
     }
+    // Notify renderer so the compacted banner appears in chat
+    event.sender.send(IPC_CHANNELS['session:compacted'], {
+      beforeTokens: result.beforeTokens,
+      afterTokens: result.afterTokens,
+      auto: false
+    })
     return { beforeTokens: result.beforeTokens, afterTokens: result.afterTokens }
   })
 

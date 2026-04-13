@@ -14,6 +14,7 @@ interface WorkspaceState {
 
 interface WorkspaceActions {
   openFolder: () => Promise<void>
+  initWorkspace: () => Promise<void>
   loadTree: (dirPath?: string, depth?: number) => Promise<void>
   expandNode: (dirPath: string) => Promise<void>
   collapseNode: (dirPath: string) => void
@@ -98,6 +99,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set({ error: err instanceof Error ? err.message : String(err) })
     } finally {
       set({ isLoading: false })
+    }
+  },
+
+  // Restore last workspace on app startup — pulls from main process state
+  initWorkspace: async () => {
+    try {
+      const status = await window.wzxclaw.getWorkspaceStatus()
+      if (status?.rootPath) {
+        set({ rootPath: status.rootPath })
+        await get().loadTree(undefined, 1)
+      }
+    } catch {
+      // silently skip — workspace may not be set
     }
   },
 

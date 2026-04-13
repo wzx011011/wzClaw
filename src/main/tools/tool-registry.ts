@@ -14,6 +14,7 @@ import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './sym
 import { CreateTaskTool } from './create-task'
 import { UpdateTaskTool } from './update-task'
 import { SemanticSearchTool } from './semantic-search'
+import { TodoWriteTool } from './todo-write'
 import type { TaskManager } from '../tasks/task-manager'
 import type { IndexingEngine } from '../indexing/indexing-engine'
 
@@ -97,6 +98,11 @@ export function createDefaultTools(
   if (taskManager && getWebContents) {
     registry.register(new CreateTaskTool(taskManager, getWebContents))
     registry.register(new UpdateTaskTool(taskManager, getWebContents))
+  }
+
+  // TodoWrite — session task list manager (no approval required)
+  if (getWebContents) {
+    registry.register(new TodoWriteTool(getWebContents))
   }
 
   // Destructive tools (requires approval per D-32)

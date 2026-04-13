@@ -182,13 +182,13 @@
 
 .chat-message-assistant .chat-message-content th,
 .chat-message-assistant .chat-message-content td {
-  border: 1px solid var(--border);
+  border: 1px solid var(--table-border);
   padding: 4px 8px;
   text-align: left;
 }
 
 .chat-message-assistant .chat-message-content th {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   font-weight: 600;
 }
 
@@ -2474,5 +2474,298 @@
 
 .ask-user-answered-text {
   font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   Plan Mode Badge & Plan Approval Panel
+   ============================================================ */
+
+.plan-mode-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(187, 134, 252, 0.1);
+  border: 1px solid rgba(187, 134, 252, 0.3);
+  border-radius: 6px;
+  color: #bb86fc;
+  font-size: 12px;
+  font-weight: 500;
+  margin: 8px 16px;
+  flex-shrink: 0;
+}
+
+.plan-mode-icon {
+  font-size: 14px;
+}
+
+.plan-approval-panel {
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-approval-header {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: rgba(187, 134, 252, 0.08);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.plan-approval-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #bb86fc;
+  letter-spacing: 0.3px;
+}
+
+.plan-approval-content {
+  padding: 12px 16px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Markdown inside plan approval */
+.plan-approval-content h2,
+.plan-approval-content h3,
+.plan-approval-content h4 {
+  margin: 12px 0 6px 0;
+  color: var(--text-primary);
+}
+
+.plan-approval-content h2 { font-size: 15px; }
+.plan-approval-content h3 { font-size: 14px; }
+
+.plan-approval-content ul,
+.plan-approval-content ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.plan-approval-content li {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.plan-approval-content p {
+  margin: 6px 0;
+}
+
+.plan-approval-content code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.plan-approval-content pre {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.plan-approval-content strong {
+  color: #e0e0e0;
+}
+
+.plan-approval-actions {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.plan-approval-btn {
+  padding: 6px 20px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.plan-approval-btn-approve {
+  background: rgba(137, 209, 133, 0.15);
+  color: #89d185;
+  border-color: #89d185;
+}
+
+.plan-approval-btn-approve:hover {
+  background: rgba(137, 209, 133, 0.3);
+}
+
+.plan-approval-btn-reject {
+  background: rgba(244, 135, 113, 0.15);
+  color: #f48771;
+  border-color: #f48771;
+}
+
+.plan-approval-btn-reject:hover {
+  background: rgba(244, 135, 113, 0.3);
+}
+
+/* ============================================================
+   Todo Panel — TodoWrite tool session task list (Copilot style)
+   ============================================================ */
+
+.todo-panel {
+  border-top: 1px solid var(--border);
+  background: #1e1e1e;
+  flex-shrink: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.todo-panel-header {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  background: #252526;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.todo-panel-collapse {
+  font-size: 9px;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.todo-panel-collapse.collapsed {
+  transform: rotate(-90deg);
+}
+
+.todo-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.todo-panel-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.todo-panel-clear:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.todo-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.todo-item:last-child {
+  border-bottom: none;
+}
+
+.todo-item--completed {
+  opacity: 0.65;
+}
+
+.todo-item--in_progress {
+  background: rgba(0, 122, 204, 0.06);
+}
+
+/* Interactive check button */
+.todo-check-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.todo-check-btn:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.todo-check-btn--completed {
+  background: #89d185;
+  border-color: #89d185;
+  color: #1e1e1e;
+}
+
+.todo-check-btn--completed:hover {
+  background: #6bc063;
+  border-color: #6bc063;
+  color: #1e1e1e;
+}
+
+.todo-check-btn--in_progress {
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: tool-spin 1s linear infinite;
+}
+
+.todo-content {
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-item--completed .todo-content {
   color: var(--text-secondary);
 }

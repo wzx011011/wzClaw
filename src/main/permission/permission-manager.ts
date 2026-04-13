@@ -42,7 +42,7 @@ export class PermissionManager {
   private static readonly READ_ONLY_TOOLS = new Set([
     'FileRead', 'Grep', 'Glob', 'WebSearch', 'WebFetch',
     'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
-    'CreateTask', 'UpdateTask'
+    'CreateTask', 'UpdateTask', 'TodoWrite'
   ])
 
   // Write tools blocked when plan mode is active
@@ -73,7 +73,10 @@ export class PermissionManager {
     // Bypass mode: never ask
     if (this.mode === 'bypass') return false
 
-    // Plan mode: everything needs approval
+    // Read-only tools never need approval regardless of mode
+    if (PermissionManager.READ_ONLY_TOOLS.has(toolName)) return false
+
+    // Plan mode: everything else needs approval
     if (this.mode === 'plan') return true
 
     // Accept-edits mode: auto-allow file tools
@@ -86,9 +89,6 @@ export class PermissionManager {
     }
 
     // Always-ask mode (or accept-edits for non-file tools):
-    // Read-only tools never need approval
-    if (PermissionManager.READ_ONLY_TOOLS.has(toolName)) return false
-
     // Check always-allow rules
     if (this.alwaysAllowRules.has(toolName)) return false
     if (toolName === 'Bash' && toolInput?.command) {
@@ -243,6 +243,22 @@ export class PermissionManager {
   clearSession(conversationId: string): void {
     this.sessionApprovals.delete(conversationId)
     this.denialRecords.delete(conversationId)
+  }
+
+  /**
+   * Get all current always-allow rules (for persistence).
+   */
+  getAlwaysAllowRules(): string[] {
+    return Array.from(this.alwaysAllowRules)
+  }
+
+  /**
+   * Load always-allow rules from persisted state (call at startup).
+   */
+  loadAlwaysAllowRules(rules: string[]): void {
+    for (const rule of rules) {
+      this.alwaysAllowRules.add(rule)
+    }
   }
 
   isRendererConnected(): boolean {

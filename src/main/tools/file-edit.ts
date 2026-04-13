@@ -15,8 +15,14 @@ const FileEditSchema = z.object({
 
 export class FileEditTool implements Tool {
   readonly name = 'FileEdit'
-  readonly description =
-    'Edit a file by replacing an exact string match. Use old_string to specify the text to find and new_string for the replacement. The old_string must match exactly (including whitespace/indentation) and must be unique in the file.'
+  readonly description = `Edit a file by replacing an exact string match.
+
+Usage:
+- You MUST read the file with FileRead first before editing. The old_string must match exactly including whitespace and indentation.
+- The old_string must be unique in the file. If it matches multiple times, provide more surrounding context to make it unique.
+- ALWAYS prefer editing existing files over creating new ones.
+- When editing text from FileRead output, preserve the exact indentation. The line number prefix format is: number + tab. Everything after the tab is the actual content to match.
+- The edit will FAIL if old_string is not found or not unique.`
   readonly requiresApproval = true
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

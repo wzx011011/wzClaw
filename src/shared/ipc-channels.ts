@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
   'stream:tool_use_end': 'stream:tool_use_end',
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
+  'stream:turn_end': 'stream:turn_end',
   'stream:mobile_user_message': 'stream:mobile_user_message',
   'stream:retrying': 'stream:retrying',
 
@@ -274,6 +275,7 @@ export interface IpcStreamPayloads {
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
   'stream:error': { error: string }
   'stream:done': { usage: { inputTokens: number; outputTokens: number } }
+  'stream:turn_end': Record<string, never>
   'stream:mobile_user_message': { content: string; source: 'mobile' }
   'stream:retrying': { attempt: number; maxAttempts: number; delayMs: number }
   'agent:permission_request': {

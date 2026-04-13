@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { StreamEvent } from '../../shared/types'
 import type { LLMAdapter, ProviderConfig, StreamOptions } from './types'
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 
 export class AnthropicAdapter implements LLMAdapter {
   readonly provider = 'anthropic' as const
@@ -16,12 +17,26 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async *stream(options: StreamOptions): AsyncGenerator<StreamEvent> {
     try {
-      // Build system prompt as array with cache_control on the last block
-      // so that long system prompts are cached across turns.
-      const systemContent: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> | undefined =
-        options.systemPrompt
-          ? [{ type: 'text', text: options.systemPrompt, cache_control: { type: 'ephemeral' } }]
-          : undefined
+      // Build system prompt as array with cache_control on the static block.
+      // If the prompt contains SYSTEM_PROMPT_CACHE_BOUNDARY, split into two blocks:
+      //   Block 1 (static): tool defs + base prompt — cached across turns
+      //   Block 2 (dynamic): env info, git, instructions, memory — not cached
+      let systemContent: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> | undefined
+      if (options.systemPrompt) {
+        const boundaryIdx = options.systemPrompt.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY)
+        if (boundaryIdx !== -1) {
+          const staticPart = options.systemPrompt.slice(0, boundaryIdx)
+          const dynamicPart = options.systemPrompt.slice(boundaryIdx + SYSTEM_PROMPT_CACHE_BOUNDARY.length)
+          systemContent = [
+            { type: 'text', text: staticPart, cache_control: { type: 'ephemeral' } },
+          ]
+          if (dynamicPart.trim()) {
+            systemContent.push({ type: 'text', text: dynamicPart })
+          }
+        } else {
+          systemContent = [{ type: 'text', text: options.systemPrompt, cache_control: { type: 'ephemeral' } }]
+        }
+      }
 
       // Clone messages (excluding system) and mark the second-to-last user
       // message with cache_control so multi-turn history is cached.
@@ -47,20 +62,35 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
 
+      // Normalize tool schemas: ensure every tool has a valid input_schema
+      // with type:"object" and properties:{} — Anthropic API rejects bare {} schemas.
+      // Mark the last tool with cache_control for a 3rd cache breakpoint:
+      //   BP1: static system prompt, BP2: tool definitions, BP3: conversation history
+      const normalizedTools = options.tools?.map((t, i, arr) => ({
+        ...t,
+        input_schema: {
+          type: 'object' as const,
+          ...t.input_schema,
+          properties: (t.input_schema?.properties as Record<string, unknown>) ?? {},
+        },
+        ...(i === arr.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
+      }))
+
       const params: any = {
         model: options.model,
         max_tokens: options.maxTokens ?? 8192,
         messages,
         ...(systemContent && { system: systemContent }),
         ...(options.temperature !== undefined && { temperature: options.temperature }),
-        ...(options.tools && options.tools.length > 0 && {
-          tools: options.tools as Anthropic.Tool[],
+        ...(normalizedTools && normalizedTools.length > 0 && {
+          tools: normalizedTools as Anthropic.Tool[],
         }),
       }
 
-      // Enable prompt caching beta
+      // Enable prompt caching beta — pass abort signal so stop button kills the HTTP request
       const stream = this.client.messages.stream(params, {
         headers: { 'anthropic-beta': 'prompt-caching-2024-07-31' },
+        signal: options.abortSignal,
       } as any)
 
       // Track tool call accumulators: contentBlockIndex -> accumulated JSON
@@ -99,9 +129,9 @@ export class AnthropicAdapter implements LLMAdapter {
 
           case 'content_block_stop': {
             const acc = toolAccumulators.get(event.index)
-            if (acc && acc.json) {
+            if (acc && acc.json != null) {
               try {
-                const parsedInput = JSON.parse(acc.json)
+                const parsedInput = JSON.parse(acc.json || '{}')
                 yield { type: 'tool_use_end', id: acc.id, parsedInput }
               } catch {
                 yield { type: 'error', error: `Failed to parse tool input JSON: ${acc.json.slice(0, 100)}` }
@@ -125,6 +155,10 @@ export class AnthropicAdapter implements LLMAdapter {
         },
       }
     } catch (error) {
+      // AbortError is a clean stop — don't emit an error event
+      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
+        return
+      }
       yield {
         type: 'error',
         error: error instanceof Error ? error.message : String(error),

@@ -46,7 +46,11 @@ function createMockRegistry(tools: Array<ReturnType<typeof createMockTool>>) {
     ),
     getApprovalRequired: vi.fn().mockReturnValue(
       tools.filter(t => t.requiresApproval).map(t => t.name)
-    )
+    ),
+    isReadOnly: vi.fn().mockImplementation((name: string) => {
+      const tool = tools.find(t => t.name === name)
+      return tool ? !tool.requiresApproval : true
+    })
   }
 }
 
@@ -54,6 +58,12 @@ function createMockPermissionManager(approved: boolean = true) {
   return {
     requestApproval: vi.fn().mockResolvedValue(approved),
     isApproved: vi.fn().mockReturnValue(false),
+    // Read-only tools (requiresApproval=false) don't need approval
+    needsApproval: vi.fn().mockImplementation((name: string) => {
+      // Tools named file_read or similar read-only tools → no approval
+      return name.includes('write') || name.includes('delete')
+    }),
+    getPlanModeRejection: vi.fn().mockReturnValue(null),
     clearSession: vi.fn(),
     isRendererConnected: vi.fn().mockReturnValue(true)
   }
@@ -108,6 +118,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-1'
@@ -150,6 +161,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-2'
@@ -204,6 +216,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-3'
@@ -246,6 +259,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-4',
@@ -280,6 +294,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-5'
@@ -321,6 +336,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-6'
@@ -359,6 +375,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-7'
@@ -366,11 +383,9 @@ describe('AgentLoop', () => {
 
     const events = await collectEvents(loop.run('Write to file', config, mockSender as any))
 
-    // Should have a permission_request event
-    expect(events.some(e => e.type === 'agent:permission_request')).toBe(true)
-    // Permission manager should have been called
+    // Permission manager should have been called for write tool
     expect(permissionMgr.requestApproval).toHaveBeenCalled()
-    // Tool should have been executed
+    // Tool should have been executed (approved)
     expect(fileWriteTool.execute).toHaveBeenCalled()
     // Should complete successfully
     expect(events.some(e => e.type === 'agent:done')).toBe(true)
@@ -399,6 +414,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-8'
@@ -406,8 +422,8 @@ describe('AgentLoop', () => {
 
     const events = await collectEvents(loop.run('Write to file', config, mockSender as any))
 
-    // Should have permission request event
-    expect(events.some(e => e.type === 'agent:permission_request')).toBe(true)
+    // Permission manager should have been called for write tool
+    expect(permissionMgr.requestApproval).toHaveBeenCalled()
     // Tool result should have error
     const toolResultEvent = events.find(e => e.type === 'agent:tool_result') as any
     expect(toolResultEvent.isError).toBe(true)
@@ -441,6 +457,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-9'
@@ -472,6 +489,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(gateway as any, registry as any, permissionMgr as any, createMockContextManager() as any)
     const config = {
       model: 'gpt-4o',
+      provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
       conversationId: 'conv-10'

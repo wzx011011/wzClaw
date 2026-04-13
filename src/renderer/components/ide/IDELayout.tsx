@@ -29,6 +29,7 @@ import { useIndexStore } from '../../stores/index-store'
  */
 export default function IDELayout(): JSX.Element {
   const openFolder = useWorkspaceStore((s) => s.openFolder)
+  const initWorkspace = useWorkspaceStore((s) => s.initWorkspace)
   const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
   const initChat = useChatStore((s) => s.init)
   const openPalette = useCommandStore((s) => s.openPalette)
@@ -122,6 +123,11 @@ export default function IDELayout(): JSX.Element {
     const unsubscribe = initChat()
     return unsubscribe
   }, [initChat])
+
+  // Restore last workspace on startup
+  useEffect(() => {
+    initWorkspace()
+  }, [initWorkspace])
 
   // Subscribe to index progress events
   useEffect(() => {

@@ -28,6 +28,11 @@ const api = {
     ipcRenderer.on('stream:done', handler)
     return () => ipcRenderer.removeListener('stream:done', handler)
   },
+  onStreamTurnEnd: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('stream:turn_end', handler)
+    return () => ipcRenderer.removeListener('stream:turn_end', handler)
+  },
   onStreamError: (callback: (payload: { error: string }) => void) => {
     const handler = (_: unknown, payload: { error: string }) => callback(payload)
     ipcRenderer.on('stream:error', handler)
@@ -78,6 +83,13 @@ const api = {
   loadSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:load', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
+  saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
+  getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
+  onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { sessionId: string }) => callback(payload)
+    ipcRenderer.on('session:restore', handler)
+    return () => ipcRenderer.removeListener('session:restore', handler)
+  },
 
   // Session compacted stream listener
   onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => {
@@ -193,6 +205,10 @@ const api = {
   getPermissionMode: () => ipcRenderer.invoke('permission:get_mode'),
   setPermissionMode: (request: { mode: string }) => ipcRenderer.invoke('permission:set_mode', request),
 
+  // Theme: update native titlebar overlay colors
+  setTitleBarOverlay: (request: { color: string; symbolColor: string }) =>
+    ipcRenderer.invoke('theme:set-titlebar-overlay', request),
+
   // Plan mode (main -> renderer events, renderer -> main decision)
   onPlanModeEntered: (callback: () => void) => {
     const handler = () => callback()
@@ -221,6 +237,13 @@ const api = {
   },
   answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) =>
     ipcRenderer.invoke('ask-user:answer', payload),
+
+  // TodoWrite — session task list updates (main -> renderer)
+  onTodoUpdated: (callback: (payload: { todos: Array<{ content: string; status: string; activeForm: string }> }) => void) => {
+    const handler = (_: unknown, payload: { todos: Array<{ content: string; status: string; activeForm: string }> }) => callback(payload)
+    ipcRenderer.on('todo:updated', handler)
+    return () => ipcRenderer.removeListener('todo:updated', handler)
+  },
 
   // Usage / cost tracking (Phase 4.4) — main pushes updates after each LLM response
   onUsageUpdate: (callback: (payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => {

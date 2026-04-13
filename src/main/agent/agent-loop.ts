@@ -2,22 +2,24 @@ import type { LLMGateway } from '../llm/gateway'
 import type { StreamOptions } from '../llm/types'
 import type { ToolRegistry } from '../tools/tool-registry'
 import type { PermissionManager } from '../permission/permission-manager'
-import type { Message, ToolCall, LLMProvider } from '../../shared/types'
-import { MAX_AGENT_TURNS } from '../../shared/constants'
+import type { Message, ToolCall, LLMProvider, ContentBlock } from '../../shared/types'
+import { MAX_AGENT_TURNS, SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { ContextManager } from '../context/context-manager'
 import { getGitContext } from '../git/git-context'
 import { loadInstructions } from '../context/instruction-loader'
+import { buildEnvInfo } from '../context/env-info'
 import type { HookRegistry } from '../hooks/hook-registry'
 import type { AgentEvent, AgentConfig } from './types'
 import { PromptTooLongError } from '../llm/retry'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { MemoryManager } from '../memory/memory-manager'
-import { truncateToolResult } from '../context/tool-result-budget'
+import { truncateToolResult, enforceContextBudget, ToolResultEntry } from '../context/tool-result-budget'
 import { StreamingToolExecutor } from './streaming-tool-executor'
 import type { ToolExecResult } from './streaming-tool-executor'
 import type { FileHistoryManager } from '../file-history/file-history-manager'
+import { FileChangeTracker, buildTurnAttachments, wrapSystemReminder } from '../context/turn-attachments'
 import path from 'path'
 
 // ============================================================
@@ -40,6 +42,7 @@ export class AgentLoop {
   private loopDetector = new LoopDetector()
   private messageBuilder = new MessageBuilder()
   private abortController: AbortController | null = null
+  private fileTracker = new FileChangeTracker()
 
   constructor(
     private gateway: LLMGateway,
@@ -111,15 +114,26 @@ export class AgentLoop {
       // Memory unavailable — skip
     }
 
-    let basePrompt = config.systemPrompt
-    if (gitContext) basePrompt += `\n\n${gitContext}`
-    if (instructionSection) basePrompt += `\n\n${instructionSection}`
-    if (memorySection) basePrompt += `\n\n${memorySection}`
+    // Build environment info (model identity, platform, CWD, date)
+    const envInfo = buildEnvInfo({
+      model: config.model,
+      provider: config.provider,
+      workingDirectory: config.workingDirectory
+    })
 
-    const systemPrompt = this.messageBuilder.buildSystemPrompt(
-      basePrompt,
-      toolDefinitions
-    )
+    // Assemble system prompt with cache boundary:
+    // STATIC part (before boundary): base prompt — cacheable across turns
+    // DYNAMIC part (after boundary): env info, git, instructions, memory — per-session
+    // System prompt: no longer embed tool descriptions in the text —
+    // tools are passed via the structured `tools` parameter to avoid duplication.
+    const staticPrompt = config.systemPrompt
+
+    const dynamicParts: string[] = [envInfo]
+    if (gitContext) dynamicParts.push(gitContext)
+    if (instructionSection) dynamicParts.push(instructionSection)
+    if (memorySection) dynamicParts.push(memorySection)
+
+    const systemPrompt = staticPrompt + SYSTEM_PROMPT_CACHE_BOUNDARY + dynamicParts.join('\n\n')
 
     // Use provider from config (set by settings manager, not guessed from model name)
     const provider: LLMProvider = config.provider
@@ -129,6 +143,8 @@ export class AgentLoop {
 
     // Main agent loop
     for (let turn = 0; turn < maxTurns; turn++) {
+      // Advance file change tracker
+      this.fileTracker.advanceTurn()
       // Check for cancellation
       if (this.abortController.signal.aborted) {
         yield {
@@ -141,6 +157,21 @@ export class AgentLoop {
       }
 
       turnCount++
+
+      // Inject per-turn attachments (changed files, active tasks) for non-first turns
+      if (turn > 0) {
+        const attachmentText = buildTurnAttachments({
+          ...this.fileTracker.getContext(),
+          activeTasks: undefined // TODO: wire in task manager when available
+        })
+        if (attachmentText) {
+          this.messages.push({
+            role: 'user',
+            content: attachmentText,
+            timestamp: Date.now()
+          })
+        }
+      }
 
       // Build provider-specific messages
       const providerMessages = this.messageBuilder.buildMessages(this.messages, provider)
@@ -199,6 +230,7 @@ export class AgentLoop {
       // Stream from LLM — start tool executions eagerly via StreamingToolExecutor
       let textContent = ''
       const toolCalls: ToolCall[] = []
+      const contentBlocks: ContentBlock[] = []  // Preserves interleaved text/tool order
       let streamUsage = { inputTokens: 0, outputTokens: 0 }
       let hadError = false
 
@@ -274,6 +306,12 @@ export class AgentLoop {
           switch (event.type) {
             case 'text_delta':
               textContent += event.content
+              // Append to current text block or create a new one
+              if (contentBlocks.length > 0 && contentBlocks[contentBlocks.length - 1].type === 'text') {
+                (contentBlocks[contentBlocks.length - 1] as { type: 'text'; text: string }).text += event.content
+              } else {
+                contentBlocks.push({ type: 'text', text: event.content })
+              }
               yield { type: 'agent:text', content: event.content }
               break
 
@@ -286,6 +324,7 @@ export class AgentLoop {
               const toolName = toolNameMap.get(event.id) || ''
               const toolCall: ToolCall = { id: event.id, name: toolName, input: event.parsedInput }
               toolCalls.push(toolCall)
+              contentBlocks.push({ type: 'tool_use', id: event.id, name: toolName, input: event.parsedInput })
               // Emit tool_call event immediately so the UI shows the tool starting
               yield { type: 'agent:tool_call', toolCallId: event.id, toolName, input: event.parsedInput }
               // Start execution now — read-only tools run in parallel with the remaining
@@ -351,11 +390,12 @@ export class AgentLoop {
       // Track usage in ContextManager for token indicator
       this.contextManager.trackTokenUsage(streamUsage.inputTokens, streamUsage.outputTokens)
 
-      // Record assistant message
+      // Record assistant message with interleaved content blocks
       this.messages.push({
         role: 'assistant',
         content: textContent,
         toolCalls,
+        contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
         timestamp: Date.now()
       })
 
@@ -381,6 +421,24 @@ export class AgentLoop {
             loopDetected = true
             break
           }
+
+          // Track file reads/writes for per-turn attachment system
+          if (result.toolName === 'FileRead' && !result.isError) {
+            const tc = toolCalls.find(t => t.id === result.toolCallId)
+            if (tc?.input?.path) {
+              const rawPath = String(tc.input.path)
+              const absPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(config.workingDirectory, rawPath)
+              this.fileTracker.recordRead(absPath)
+            }
+          } else if ((result.toolName === 'FileWrite' || result.toolName === 'FileEdit') && !result.isError) {
+            const tc = toolCalls.find(t => t.id === result.toolCallId)
+            if (tc?.input?.path) {
+              const rawPath = String(tc.input.path)
+              const absPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(config.workingDirectory, rawPath)
+              this.fileTracker.recordWrite(absPath)
+            }
+          }
+
           this.messages.push({
             role: 'tool_result',
             toolCallId: result.toolCallId,
@@ -396,6 +454,29 @@ export class AgentLoop {
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
+
+      // Enforce global tool result budget: compact oldest, largest results
+      // when total tool result chars exceed the budget (200K default).
+      const toolResultEntries: ToolResultEntry[] = this.messages
+        .map((m, i) => ({ msg: m, idx: i }))
+        .filter(({ msg }) => msg.role === 'tool_result')
+        .map(({ msg, idx }) => ({
+          toolName: 'tool_result',
+          result: msg.content,
+          turnIndex: idx
+        }))
+      const budgeted = enforceContextBudget(toolResultEntries)
+      // Apply any compacted results back to messages
+      for (const entry of budgeted) {
+        const msg = this.messages[entry.turnIndex]
+        if (msg && msg.role === 'tool_result' && msg.content !== entry.result) {
+          msg.content = entry.result
+        }
+      }
+
+      // Signal end of this turn so the renderer can finalize the current
+      // assistant message bubble before the next LLM call starts a new one.
+      yield { type: 'agent:turn_end' as const }
 
       // Continue loop — feed tool results back to LLM
     }
@@ -428,6 +509,7 @@ export class AgentLoop {
   reset(): void {
     this.messages = []
     this.loopDetector.reset()
+    this.fileTracker.reset()
     this.abortController = null
   }
 

@@ -28,8 +28,8 @@ export interface ToolExecResult {
 type ExecuteFn = () => Promise<ToolExecResult>
 
 export class StreamingToolExecutor {
-  /** Ordered list of (id, promise) pairs — insertion order = LLM emission order */
-  private pending: Array<{ id: string; promise: Promise<ToolExecResult> }> = []
+  /** Ordered list of (id, name, promise) pairs — insertion order = LLM emission order */
+  private pending: Array<{ id: string; name: string; promise: Promise<ToolExecResult> }> = []
 
   /** Sequential chain for write tools — each write tool waits for the previous one */
   private writeChain: Promise<unknown> = Promise.resolve()
@@ -51,7 +51,7 @@ export class StreamingToolExecutor {
     if (this.isReadOnly(name)) {
       // Fire immediately — overlaps with remaining LLM streaming
       const promise = execute()
-      this.pending.push({ id, promise })
+      this.pending.push({ id, name, promise })
     } else {
       // Chain onto sequential write chain
       // Use .then() with a second arg so a failed prior write doesn't skip this one
@@ -64,7 +64,7 @@ export class StreamingToolExecutor {
         () => {},
         () => {}
       )
-      this.pending.push({ id, promise })
+      this.pending.push({ id, name, promise })
     }
   }
 
@@ -74,9 +74,22 @@ export class StreamingToolExecutor {
    */
   async waitAll(): Promise<ToolExecResult[]> {
     const results: ToolExecResult[] = []
-    for (const { promise } of this.pending) {
-      // Await each in order — read-only ones are likely already resolved
-      results.push(await promise)
+    for (const { id, name, promise } of this.pending) {
+      try {
+        // Await each in order — read-only ones are likely already resolved
+        results.push(await promise)
+      } catch (err) {
+        // If a tool promise rejects unexpectedly, wrap it as an error result
+        // so remaining tools are not lost
+        results.push({
+          toolCallId: id,
+          toolName: name,
+          output: err instanceof Error ? err.message : String(err),
+          truncatedOutput: err instanceof Error ? err.message : String(err),
+          isError: true,
+          loopDetected: false
+        })
+      }
     }
     return results
   }

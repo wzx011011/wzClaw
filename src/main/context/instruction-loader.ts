@@ -66,10 +66,11 @@ async function resolveIncludes(
  *
  * Priority order:
  * 1. `~/.wzxclaw/WZXCLAW.md`                  (global user instructions)
- * 2. `{workspace}/WZXCLAW.md`                  (project root)
- * 3. `{workspace}/.wzxclaw/WZXCLAW.md`         (hidden project dir)
- * 4. `{workspace}/.wzxclaw/rules/*.md`          (split rule files, alphabetical)
- * 5. `{workspace}/WZXCLAW.local.md`             (local overrides, gitignored)
+ * 2. Parent directories above workspace root   (org/monorepo level, low → high toward workspace)
+ * 3. `{workspace}/WZXCLAW.md`                  (project root)
+ * 4. `{workspace}/.wzxclaw/WZXCLAW.md`         (hidden project dir)
+ * 5. `{workspace}/.wzxclaw/rules/*.md`          (split rule files, alphabetical)
+ * 6. `{workspace}/WZXCLAW.local.md`             (local overrides, gitignored)
  *
  * Supports `@include ./relative/path` directives for file composition.
  *
@@ -89,7 +90,26 @@ export async function loadInstructions(workspaceRoot: string): Promise<string> {
     if (trimmed) parts.push(trimmed)
   }
 
-  // --- 2. Project root instructions ---
+  // --- 2. Parent directories (walk up from workspace root to fs root) ---
+  // Collect ancestor dirs (from root down toward workspace, so higher-level = lower priority)
+  const ancestors: string[] = []
+  let current = path.dirname(workspaceRoot)
+  const fsRoot = path.parse(workspaceRoot).root
+  while (current !== fsRoot && current !== path.dirname(current)) {
+    ancestors.unshift(current) // prepend so index 0 = closest to fs root
+    current = path.dirname(current)
+  }
+  for (const ancestor of ancestors) {
+    const ancestorPath = path.join(ancestor, 'WZXCLAW.md')
+    const ancestorContent = await readFileSilent(ancestorPath)
+    if (ancestorContent) {
+      const resolved = await resolveIncludes(ancestorContent, ancestor)
+      const trimmed = resolved.trim()
+      if (trimmed) parts.push(trimmed)
+    }
+  }
+
+  // --- 3. Project root instructions ---
   const projectPath = path.join(workspaceRoot, 'WZXCLAW.md')
   const projectContent = await readFileSilent(projectPath)
   if (projectContent) {
@@ -98,7 +118,7 @@ export async function loadInstructions(workspaceRoot: string): Promise<string> {
     if (trimmed) parts.push(trimmed)
   }
 
-  // --- 3. Hidden project-dir instructions ---
+  // --- 4. Hidden project-dir instructions ---
   const hiddenPath = path.join(workspaceRoot, '.wzxclaw', 'WZXCLAW.md')
   const hiddenContent = await readFileSilent(hiddenPath)
   if (hiddenContent) {
@@ -107,7 +127,7 @@ export async function loadInstructions(workspaceRoot: string): Promise<string> {
     if (trimmed) parts.push(trimmed)
   }
 
-  // --- 4. Split rule files (alphabetical) ---
+  // --- 5. Split rule files (alphabetical) ---
   const rulesDir = path.join(workspaceRoot, '.wzxclaw', 'rules')
   try {
     const entries = await fs.promises.readdir(rulesDir)
@@ -124,7 +144,7 @@ export async function loadInstructions(workspaceRoot: string): Promise<string> {
     // Rules directory does not exist — skip silently
   }
 
-  // --- 5. Local overrides (gitignored) ---
+  // --- 6. Local overrides (gitignored) ---
   const localPath = path.join(workspaceRoot, 'WZXCLAW.local.md')
   const localContent = await readFileSilent(localPath)
   if (localContent) {

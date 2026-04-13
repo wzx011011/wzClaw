@@ -93,7 +93,7 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
   return (
     <div className={`chat-message chat-message-assistant${streamingClass}`}>
       {/* Thinking indicator — shown when streaming with no content yet */}
-      {isStreaming && !displayContent && (
+      {isStreaming && !displayContent && (!toolCalls || toolCalls.length === 0) && (
         <ThinkingIndicator />
       )}
 
@@ -103,41 +103,45 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
             rehypePlugins={[rehypeRaw, rehypeHighlight]}
             remarkPlugins={[remarkGfm]}
             components={{
-              code({ className, children, node, ...props }) {
-                // A code block (inside <pre>) has a parent <pre> element in the AST.
-                // Inline code does not. This is the reliable way to distinguish them.
-                const isBlock = node?.position?.start.line !== node?.position?.end.line
-                  || className?.includes('language-')
-                const match = /language-(\w+)/.exec(className || '')
-
-                // rehype-highlight transforms children into React elements (spans),
-                // so we must extract text recursively instead of using String()
+              // <pre> is ALWAYS a code block — handle it here reliably.
+              // rehype-highlight transforms code children into <span> elements,
+              // so extract raw text recursively then pass to CodeBlock.
+              pre({ children }) {
                 const extractText = (nodes: React.ReactNode): string => {
                   if (typeof nodes === 'string') return nodes
                   if (typeof nodes === 'number') return String(nodes)
                   if (Array.isArray(nodes)) return nodes.map(extractText).join('')
-                  if (React.isValidElement(nodes) && nodes.props.children) {
-                    return extractText(nodes.props.children)
+                  if (React.isValidElement(nodes) && (nodes.props as { children?: React.ReactNode }).children) {
+                    return extractText((nodes.props as { children?: React.ReactNode }).children)
                   }
                   return ''
                 }
-                const codeString = extractText(children).replace(/\n$/, '')
-
-                if (isBlock) {
-                  return <CodeBlock code={codeString} language={match ? match[1] : 'text'} />
+                // Find the inner <code> element to get its language class
+                const findCode = (nodes: React.ReactNode): React.ReactElement | null => {
+                  const arr = React.Children.toArray(nodes)
+                  for (const child of arr) {
+                    if (React.isValidElement(child)) {
+                      if (child.type === 'code') return child as React.ReactElement
+                      const nested = findCode((child.props as { children?: React.ReactNode }).children)
+                      if (nested) return nested
+                    }
+                  }
+                  return null
                 }
-
-                // Inline code — render as <code>
+                const codeEl = findCode(children)
+                const className = codeEl ? (codeEl.props as { className?: string }).className ?? '' : ''
+                const match = /language-(\w+)/.exec(className)
+                const codeString = extractText(children).replace(/\n$/, '')
+                return <CodeBlock code={codeString} language={match ? match[1] : undefined} />
+              },
+              // <code> here is ONLY inline code — <pre> cases are handled above
+              code({ className, children, ...props }) {
                 return (
                   <code className={className} {...props}>
                     {children}
                   </code>
                 )
               },
-              // Override pre to just pass through children (CodeBlock handles its own pre)
-              pre({ children }) {
-                return <>{children}</>
-              }
             }}
           >
             {displayContent}

@@ -14,8 +14,13 @@ const FileWriteSchema = z.object({
 
 export class FileWriteTool implements Tool {
   readonly name = 'FileWrite'
-  readonly description =
-    'Create or overwrite a file with the given content. Creates parent directories if they do not exist.'
+  readonly description = `Create or overwrite a file with the given content. Creates parent directories if they do not exist.
+
+Usage:
+- This tool overwrites the entire file. Prefer FileEdit for modifying existing files — it only changes the diff.
+- Use this tool to create new files or for complete rewrites.
+- NEVER create documentation files (*.md) or README files unless explicitly requested.
+- Do not write files that contain secrets (.env, credentials, API keys).`
   readonly requiresApproval = true
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',

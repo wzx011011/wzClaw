@@ -1,4 +1,4 @@
-import type { Message, LLMProvider, ToolDefinition } from '../../shared/types'
+import type { Message, LLMProvider, ToolDefinition, ContentBlock } from '../../shared/types'
 
 // ============================================================
 // MessageBuilder (per D-25, D-26)
@@ -108,10 +108,27 @@ export class MessageBuilder {
           break
 
         case 'assistant': {
+          // Use contentBlocks if available (preserves interleaved text/tool ordering)
+          if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+            const blocks = msg.contentBlocks.map((block: ContentBlock) => {
+              if (block.type === 'text') {
+                return { type: 'text', text: block.text }
+              }
+              return { type: 'tool_use', id: block.id, name: block.name, input: block.input ?? {} }
+            })
+            // Anthropic API rejects empty content arrays
+            if (blocks.length === 0) {
+              blocks.push({ type: 'text', text: ' ' })
+            }
+            result.push({ role: 'assistant', content: blocks })
+            break
+          }
+
+          // Fallback: reconstruct from content + toolCalls (legacy messages)
           const contentBlocks: Array<Record<string, unknown>> = []
 
-          // Add text block if there's text content
-          if (msg.content) {
+          // Add text block only if there's non-empty text content
+          if (msg.content && msg.content.trim()) {
             contentBlocks.push({ type: 'text', text: msg.content })
           }
 
@@ -121,8 +138,13 @@ export class MessageBuilder {
               type: 'tool_use',
               id: tc.id,
               name: tc.name,
-              input: tc.input
+              input: tc.input ?? {}
             })
+          }
+
+          // Anthropic API rejects empty content arrays — ensure at least one block
+          if (contentBlocks.length === 0) {
+            contentBlocks.push({ type: 'text', text: ' ' })
           }
 
           result.push({
@@ -132,19 +154,27 @@ export class MessageBuilder {
           break
         }
 
-        case 'tool_result':
-          result.push({
-            role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: msg.toolCallId,
-                content: msg.content,
-                is_error: msg.isError
-              }
-            ]
-          })
+        case 'tool_result': {
+          // Anthropic requires alternating roles. Merge consecutive tool_result
+          // messages into a single 'user' message with multiple tool_result blocks.
+          const toolBlock = {
+            type: 'tool_result',
+            tool_use_id: msg.toolCallId,
+            content: msg.content,
+            is_error: msg.isError
+          }
+          const prev = result[result.length - 1]
+          if (prev && prev.role === 'user' && Array.isArray(prev.content)) {
+            // Append to existing user message's content array
+            ;(prev.content as Array<Record<string, unknown>>).push(toolBlock)
+          } else {
+            result.push({
+              role: 'user',
+              content: [toolBlock]
+            })
+          }
           break
+        }
       }
     }
 

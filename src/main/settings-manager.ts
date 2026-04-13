@@ -18,6 +18,8 @@ interface StoredSettings {
   relayToken?: string
   lastWorkspacePath?: string
   recentWorkspaces?: string[]
+  lastSessionId?: string
+  alwaysAllowRules?: string[]
 }
 
 interface EncryptedKeys {
@@ -75,7 +77,9 @@ export class SettingsManager {
           systemPrompt: parsed.systemPrompt,
           relayToken: parsed.relayToken,
           lastWorkspacePath: parsed.lastWorkspacePath,
-          recentWorkspaces: parsed.recentWorkspaces
+          recentWorkspaces: parsed.recentWorkspaces,
+          lastSessionId: parsed.lastSessionId,
+          alwaysAllowRules: parsed.alwaysAllowRules
         }
       } catch (err) {
         console.error('Failed to load settings.json:', err)
@@ -204,6 +208,15 @@ export class SettingsManager {
     this.addRecentWorkspace(wsPath)
   }
 
+  getLastSessionId(): string | undefined {
+    return this.settings.lastSessionId
+  }
+
+  setLastSessionId(sessionId: string): void {
+    this.settings.lastSessionId = sessionId
+    this.save()
+  }
+
   getRecentWorkspaces(): string[] {
     return this.settings.recentWorkspaces ?? []
   }
@@ -215,6 +228,15 @@ export class SettingsManager {
     filtered.unshift(wsPath)
     // Keep at most 10
     this.settings.recentWorkspaces = filtered.slice(0, 10)
+    this.save()
+  }
+
+  getAlwaysAllowRules(): string[] {
+    return this.settings.alwaysAllowRules ?? []
+  }
+
+  saveAlwaysAllowRules(rules: string[]): void {
+    this.settings.alwaysAllowRules = rules
     this.save()
   }
 

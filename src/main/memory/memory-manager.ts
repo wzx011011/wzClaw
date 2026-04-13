@@ -54,29 +54,58 @@ export class MemoryManager {
   }
 
   /**
-   * Build the memory section string for injection into the system prompt.
-   * Always returns the section even when MEMORY.md is empty, so the LLM
-   * knows where to write memories.
+   * Read all *.md files from the memory directory.
+   * Returns a map of filename → content for all files found.
    */
-  buildSystemPromptSection(): Promise<string> {
-    return this.readMemory().then((content) => {
-      const displayContent = content.trim()
-        ? content.trim()
-        : '(empty — write important findings here)'
+  async readAllMemoryFiles(): Promise<Map<string, string>> {
+    const result = new Map<string, string>()
+    try {
+      const entries = await fs.promises.readdir(this.memoryDir)
+      const mdFiles = entries.filter((f) => f.endsWith('.md')).sort()
+      for (const file of mdFiles) {
+        try {
+          const content = await fs.promises.readFile(path.join(this.memoryDir, file), 'utf-8')
+          if (content.trim()) result.set(file, content)
+        } catch {
+          // skip unreadable files
+        }
+      }
+    } catch {
+      // directory doesn't exist yet
+    }
+    return result
+  }
 
-      return `## Auto Memory
+  /**
+   * Build the memory section string for injection into the system prompt.
+   * Loads all *.md files from the memory directory (multi-topic support).
+   * Always returns the section even when empty, so the LLM knows where to write.
+   */
+  async buildSystemPromptSection(): Promise<string> {
+    const files = await this.readAllMemoryFiles()
+
+    let filesContent = ''
+    if (files.size === 0) {
+      filesContent = 'MEMORY.md: (empty — write important findings here)'
+    } else {
+      for (const [fname, content] of files) {
+        filesContent += `\n### ${fname}\n${content.trim()}\n`
+      }
+    }
+
+    return `## Auto Memory
 
 Your persistent memory directory is at: ${this.memoryDir}
-The file MEMORY.md at ${this.memoryPath} persists across sessions.
+Primary file: ${this.memoryPath}
 
-Contents of MEMORY.md:
-${displayContent}
+${filesContent}
 
 Instructions:
-- When the user asks you to "remember" something, write it to MEMORY.md using the FileWrite tool
-- Keep MEMORY.md under 200 lines; condense when it grows large
+- When the user asks you to "remember" something, write it to MEMORY.md using FileWrite
+- Organize by topic: create separate files (e.g. patterns.md, debugging.md) for distinct subjects
+- Keep each file under 200 lines; condense when it grows large
 - Write stable facts: architecture decisions, debugging findings, user preferences
-- Do NOT write session-specific or temporary information`
-    })
+- Do NOT write session-specific or temporary information
+- Lines after 200 in MEMORY.md will be truncated in future sessions`
   }
 }

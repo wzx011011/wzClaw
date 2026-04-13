@@ -78,6 +78,9 @@ const relayClient = new RelayClient()
 // Module-level IndexingEngine reference (created when workspace opens)
 let indexingEngine: IndexingEngine | null = null
 
+// Module-level PermissionManager (needed in before-quit handler)
+let permissionManager: PermissionManager | null = null
+
 // Persistent settings for embedding API configuration
 const settingsManager = new SettingsManager()
 
@@ -238,7 +241,9 @@ app.whenReady().then(() => {
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
   const getWebContents = () => BrowserWindow.getAllWindows()[0]?.webContents ?? null
   const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, taskManager, indexingEngine)
-  const permissionManager = new PermissionManager()
+  permissionManager = new PermissionManager()
+  // Load persisted alwaysAllow rules from previous sessions
+  permissionManager.loadAlwaysAllowRules(settingsManager.getAlwaysAllowRules())
   const contextManager = new ContextManager()
 
   // Plan mode controller — shared between tools and IPC handler
@@ -317,11 +322,20 @@ app.whenReady().then(() => {
   )
 
   // Register AgentTool (sub-agent) — must be after registry + agentLoop deps exist
+  // Pass a getLatestConfig getter so sub-agents always use the current model/provider
   toolRegistry.register(
     new AgentTool(gateway, toolRegistry, permissionManager, contextManager, undefined, {
       provider: 'anthropic' as any,
       model: '',
       workingDirectory
+    }, 0, () => {
+      const cfg = settingsManager.getCurrentConfig()
+      return {
+        provider: cfg.provider as 'openai' | 'anthropic',
+        model: cfg.model,
+        systemPrompt: cfg.systemPrompt,
+        workingDirectory: workspaceManager.getWorkspaceRoot() ?? workingDirectory
+      }
     })
   )
 
@@ -539,6 +553,7 @@ app.whenReady().then(() => {
         // Trigger workspace open — reuses the existing onWorkspaceOpened flow
         workspaceManager.setWorkspaceRoot(workspacePath)
         handleWorkspaceOpened(workspacePath, toolRegistry)
+        agentLoop.reset()
         sessionStore = new SessionStore(workspacePath)
         settingsManager.setLastWorkspacePath(workspacePath)
         sendWorkspaceInfoToMobile()
@@ -687,8 +702,9 @@ app.whenReady().then(() => {
             return
           }
           case 'clear': {
-            // Create new session
+            // Create new session and reset agent loop
             mobileSessionId = null
+            agentLoop.reset()
             broadcastToMobile('session:create:response', { success: true })
             return
           }
@@ -724,6 +740,16 @@ app.whenReady().then(() => {
 
       // Broadcast the assigned session ID back to mobile so it can track it
       broadcastToMobile('session:active', { sessionId })
+
+      // If resuming an existing mobile session, restore chat history into agentLoop
+      if (msg.data.sessionId && sessionStore && agentLoop.getMessages().length === 0) {
+        try {
+          const rawMessages = await sessionStore.loadSession(msg.data.sessionId)
+          if (rawMessages.length > 0) {
+            await agentLoop.restoreContext(rawMessages, agentConfig)
+          }
+        } catch { /* session not found — start fresh */ }
+      }
 
       // Send the mobile user's message to renderer so it appears in the chat
       const wc0 = BrowserWindow.getAllWindows()[0]?.webContents
@@ -764,17 +790,43 @@ app.whenReady().then(() => {
                 break
               case 'agent:tool_result':
                 wc.send(IPC_CHANNELS['stream:tool_use_end'], { id: agentEvent.toolCallId, output: agentEvent.output, isError: agentEvent.isError, toolName: agentEvent.toolName })
+                // Forward file changes for write tools (same as ipc-handlers path)
+                if (!agentEvent.isError && (agentEvent.toolName === 'FileWrite' || agentEvent.toolName === 'FileEdit')) {
+                  const tc = (agentEvent as any).input
+                  const filePath = tc?.path as string | undefined
+                  if (filePath) {
+                    const absolutePath = require('path').isAbsolute(filePath) ? filePath : require('path').resolve(agentConfig.workingDirectory, filePath)
+                    wc.send(IPC_CHANNELS['file:changed'], { filePath: absolutePath, changeType: 'modified' })
+                  }
+                }
                 break
               case 'agent:error':
                 wc.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
                 break
+              case 'agent:turn_end':
+                wc.send(IPC_CHANNELS['stream:turn_end'], {})
+                break
               case 'agent:done':
                 wc.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+                break
+              case 'agent:compacted':
+                wc.send(IPC_CHANNELS['session:compacted'], {
+                  beforeTokens: agentEvent.beforeTokens,
+                  afterTokens: agentEvent.afterTokens,
+                  auto: agentEvent.auto
+                })
                 break
             }
           }
           mobileServer.broadcast(`stream:${agentEvent.type}`, agentEvent)
           relayClient.broadcast(`stream:${agentEvent.type}`, agentEvent)
+          // Forward TodoWrite structured todo list to mobile
+          if (agentEvent.type === 'agent:tool_result' && agentEvent.toolName === 'TodoWrite' && !agentEvent.isError) {
+            const todoTool = toolRegistry.get('TodoWrite') as { getCurrentTodos?: () => unknown[] } | undefined
+            if (todoTool?.getCurrentTodos) {
+              broadcastToMobile('todo:updated', { todos: todoTool.getCurrentTodos() })
+            }
+          }
         }
       } catch (err: any) {
         mobileServer.broadcast('stream:error', { error: err.message })
@@ -927,6 +979,18 @@ app.whenReady().then(() => {
   // Hide native menu bar (using custom titlebar instead)
   Menu.setApplicationMenu(null)
 
+  // IPC: update native titlebar overlay colors when theme changes
+  ipcMain.handle('theme:set-titlebar-overlay', (_event, payload: { color: string; symbolColor: string }) => {
+    const wins = BrowserWindow.getAllWindows()
+    for (const win of wins) {
+      try {
+        win.setTitleBarOverlay({ color: payload.color, symbolColor: payload.symbolColor, height: 38 })
+      } catch (_) {
+        // setTitleBarOverlay may not be available on all platforms
+      }
+    }
+  })
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -939,6 +1003,11 @@ app.whenReady().then(() => {
       handleWorkspaceOpened(lastWsPath, toolRegistry)
       sessionStore = new SessionStore(lastWsPath)
       sendWorkspaceInfoToMobile()
+    }
+    // Restore last active session into renderer
+    const lastSessionId = settingsManager.getLastSessionId()
+    if (lastSessionId) {
+      mainWindow.webContents.send('session:restore', { sessionId: lastSessionId })
     }
     // Always push current relay status after renderer loads
     // (relay may have connected before renderer mounted)
@@ -961,6 +1030,10 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // Persist alwaysAllow permission rules for next session
+  if (permissionManager) {
+    settingsManager.saveAlwaysAllowRules(permissionManager.getAlwaysAllowRules())
+  }
   // Dispose indexing engine
   if (indexingEngine) {
     indexingEngine.dispose()
