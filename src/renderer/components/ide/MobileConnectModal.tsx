@@ -9,6 +9,7 @@ interface MobileConnectModalProps {
  */
 export default function MobileConnectModal({ onClose }: MobileConnectModalProps): JSX.Element {
   const [relayQrCode, setRelayQrCode] = useState<string | null>(null)
+  const [relayToken, setRelayToken] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const onCloseRef = useRef(onClose)
@@ -19,6 +20,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
       .getRelayQrCode()
       .then((result) => {
         setRelayQrCode(result.qrCode)
+        if ((result as any).token) setRelayToken((result as any).token)
         setLoading(false)
       })
       .catch((err: Error) => {
@@ -82,6 +84,9 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
               </div>
 
               <p className="mobile-hint">用 wzxClaw 手机端扫码连接 Relay 服务器</p>
+              {relayToken && (
+                <p style={{ fontSize: 12, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>Token: <code style={{ color: '#aaa' }}>{relayToken}</code></p>
+              )}
             </>
           )}
         </div>

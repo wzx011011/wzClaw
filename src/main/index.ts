@@ -910,12 +910,16 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle(IPC_CHANNELS['relay:qrcode'], async (_e, request?: { token: string }) => {
-    const token = request?.token || settingsManager.getRelayToken()
-    if (!token) throw new Error('No relay token configured')
+    let token = request?.token || settingsManager.getRelayToken()
+    // Auto-generate a random token if none configured — user just needs to scan
+    if (!token) {
+      token = crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+      settingsManager.setRelayToken(token)
+    }
     const { generateQRCode } = await import('./mobile/qr-generator')
     const relayUrl = `wss://relay.5945.top/?role=mobile&token=${encodeURIComponent(token)}`
     const qrCode = await generateQRCode(relayUrl)
-    return { qrCode }
+    return { qrCode, token }
   })
 
   // Mobile handlers

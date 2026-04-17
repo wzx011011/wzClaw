@@ -70,6 +70,8 @@ export class RelayClient extends EventEmitter {
 
   private _doConnect(): void {
     if (this.disposed || !this.token) return
+    // Guard against concurrent connection attempts
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) return
 
     this._clearTimers()
     this._closeWs()
@@ -199,7 +201,11 @@ export class RelayClient extends EventEmitter {
 
   private _scheduleReconnect(): void {
     if (this.disposed) return
-    this.reconnectTimer?.clearTimeout?.()
+    // Correctly cancel any pending reconnect timer before scheduling a new one
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     const baseMs = Math.min(RECONNECT_BASE * Math.pow(2, this.reconnectAttempt), RECONNECT_MAX)
     const jitter = Math.floor(Math.random() * JITTER_MAX)
     this.reconnectAttempt++
