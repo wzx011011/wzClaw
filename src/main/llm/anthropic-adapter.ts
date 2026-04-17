@@ -8,13 +8,15 @@ export class AnthropicAdapter implements LLMAdapter {
   private client: Anthropic
 
   constructor(config: ProviderConfig) {
-    // Use authToken (Bearer) for third-party Anthropic-compatible endpoints
-    // that don't accept x-api-key. Most endpoints (ZhipuAI, etc.) accept x-api-key.
     const isRealAnthropic = !config.baseURL || config.baseURL.includes('anthropic.com')
-    const clientOptions: Record<string, unknown> = { apiKey: config.apiKey }
-    if (!isRealAnthropic) {
-      // Third-party: suppress default auth header to avoid conflicts
-      clientOptions.authToken = undefined
+    const clientOptions: Record<string, unknown> = {}
+    if (isRealAnthropic) {
+      // Real Anthropic: use x-api-key header
+      clientOptions.apiKey = config.apiKey
+    } else {
+      // Third-party Anthropic-compatible (e.g. bigmodel.cn): use Authorization: Bearer
+      clientOptions.apiKey = 'dummy'  // SDK requires non-empty apiKey but we override auth
+      clientOptions.authToken = config.apiKey
     }
     if (config.baseURL) clientOptions.baseURL = config.baseURL
     this.client = new Anthropic(clientOptions as ConstructorParameters<typeof Anthropic>[0])
@@ -110,16 +112,20 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
 
-      // Enable prompt caching beta — pass abort signal so stop button kills the HTTP request
-      const betas = ['prompt-caching-2024-07-31']
-      if (depth && depth !== 'none' && isRealAnthropic) {
-        betas.push('interleaved-thinking-2025-05-14')
-        betas.push('effort-2025-11-24')
+      // Enable prompt caching beta — only for real Anthropic, third-party endpoints reject this header
+      const betas: string[] = []
+      if (isRealAnthropic) {
+        betas.push('prompt-caching-2024-07-31')
+        if (depth && depth !== 'none') {
+          betas.push('interleaved-thinking-2025-05-14')
+          betas.push('effort-2025-11-24')
+        }
       }
-      const stream = this.client.messages.stream(params, {
-        headers: { 'anthropic-beta': betas.join(',') },
-        signal: options.abortSignal,
-      } as any)
+      const streamOptions: any = { signal: options.abortSignal }
+      if (betas.length > 0) {
+        streamOptions.headers = { 'anthropic-beta': betas.join(',') }
+      }
+      const stream = this.client.messages.stream(params, streamOptions)
 
       // Track tool call accumulators: contentBlockIndex -> accumulated JSON
       const toolAccumulators = new Map<number, { id: string; name: string; json: string }>()

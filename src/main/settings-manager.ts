@@ -288,7 +288,7 @@ export class SettingsManager {
   getCurrentConfig(): FullConfig {
     const provider = this.settings.provider
     const baseURL = this.settings.baseURL
-      ?? (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
+      || (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
     return {
       provider,
       model: this.settings.model,
