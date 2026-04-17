@@ -10,6 +10,11 @@ export interface AgentTextEvent {
   content: string
 }
 
+export interface AgentThinkingEvent {
+  type: 'agent:thinking'
+  content: string
+}
+
 export interface AgentToolCallEvent {
   type: 'agent:tool_call'
   toolCallId: string
@@ -50,6 +55,7 @@ export interface AgentTurnEndEvent {
 
 export type AgentEvent =
   | AgentTextEvent
+  | AgentThinkingEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
   | AgentErrorEvent
@@ -68,4 +74,5 @@ export interface AgentConfig {
   workingDirectory: string
   conversationId: string
   maxTurns?: number // defaults to MAX_AGENT_TURNS
+  thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
 }

@@ -33,13 +33,36 @@ export function buildEnvInfo(options: {
   // Current date
   const date = new Date().toISOString().slice(0, 10)
 
+  // Determine the actual shell so the model uses correct syntax and commands.
+  // On Windows we check for Git Bash first; without it the shell is cmd.exe.
+  let shellInfo: string
+  if (platform === 'win32') {
+    const gitBashCandidates = [
+      path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+      path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
+      path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
+    ]
+    const hasGitBash = gitBashCandidates.some((p) => p && fs.existsSync(p))
+    if (hasGitBash) {
+      shellInfo =
+        'Git Bash — Unix commands (find, grep, head, tail, etc.) are available. Use forward-slash paths.'
+    } else {
+      shellInfo =
+        'cmd.exe (Windows) — Unix commands such as find, head, grep, ls are NOT available. ' +
+        'Use Windows-compatible paths (e.g. E:\\path or E:/path, NOT /e/path). ' +
+        'Prefer the Glob/Grep/FileRead tools over shell commands whenever possible.'
+    }
+  } else {
+    shellInfo = os.userInfo().shell || '/bin/sh'
+  }
+
   const lines = [
     '## Environment',
     ` - Working directory: ${workingDirectory}`,
     ` - Is git repo: ${isGitRepo}`,
     ` - Platform: ${platform}`,
     ` - OS: ${osVersion}`,
-    ` - Shell: ${platform === 'win32' ? 'bash (use Unix shell syntax, not Windows — e.g., forward slashes in paths)' : os.userInfo().shell || '/bin/sh'}`,
+    ` - Shell: ${shellInfo}`,
     ` - You are powered by the model ${modelName} (model ID: ${model}, provider: ${provider}).`,
     ` - Current date: ${date}`,
   ]

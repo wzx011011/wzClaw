@@ -39,6 +39,9 @@ export class OpenAIAdapter implements LLMAdapter {
             function: { name: t.name, description: t.description, parameters: t.input_schema },
           })),
         }),
+        ...(options.thinkingDepth && options.thinkingDepth !== 'none'
+          && (options.model.startsWith('o1') || options.model.startsWith('o3') || options.model.startsWith('o4'))
+          && { reasoning_effort: options.thinkingDepth }),
       }
 
       const stream = await this.client.chat.completions.create(params, {

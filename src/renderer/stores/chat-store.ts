@@ -160,6 +160,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     })
 
+    const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
+      const { messages, isWaitingForResponse } = get()
+      const lastAssistantIdx = [...messages]
+        .map((m, i) => ({ m, i }))
+        .reverse()
+        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+
+      if (lastAssistantIdx) {
+        set({
+          isWaitingForResponse: false,
+          messages: messages.map((m, i) =>
+            i === lastAssistantIdx.i
+              ? { ...m, content: m.content + payload.content }
+              : m
+          )
+        })
+      }
+    }) ?? (() => {})
+
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
       const { messages } = get()
       const lastAssistantIdx = [...messages]
@@ -404,6 +423,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Return combined unsubscribe
     return () => {
       unsubText()
+      unsubThinking()
       unsubToolStart()
       unsubToolResult()
       unsubEnd()
@@ -518,15 +538,64 @@ export const useChatStore = create<ChatStore>((set, get) => {
   loadSession: async (sessionId: string) => {
     try {
       const rawMessages = await window.wzxclaw.loadSession({ sessionId })
-      const loadedMessages: ChatMessage[] = (rawMessages as Array<Record<string, unknown>>).map((msg) => ({
+
+      // Phase 1: Convert all raw messages to a lookup-friendly format
+      const parsed = (rawMessages as Array<Record<string, unknown>>).map((msg) => ({
         id: (msg.id as string) || uuidv4(),
         role: msg.role as 'user' | 'assistant' | 'tool_result',
         content: msg.content as string,
         timestamp: msg.timestamp as number,
-        toolCalls: msg.toolCalls as ToolCallInfo[] | undefined,
+        toolCalls: msg.toolCalls as Array<{ id: string; name: string; input?: Record<string, unknown> }> | undefined,
+        toolCallId: msg.toolCallId as string | undefined,
+        isError: msg.isError as boolean | undefined,
         usage: msg.usage as { inputTokens: number; outputTokens: number } | undefined,
         isCompacted: msg.isCompacted as boolean | undefined
       }))
+
+      // Phase 2: Build a map of toolCallId -> tool_result data for merging
+      const toolResultMap = new Map<string, { output: string; isError: boolean }>()
+      for (const msg of parsed) {
+        if (msg.role === 'tool_result' && msg.toolCallId) {
+          toolResultMap.set(msg.toolCallId, {
+            output: (msg.content || '').slice(0, 2000), // truncate long outputs
+            isError: !!msg.isError
+          })
+        }
+      }
+
+      // Phase 3: Build ChatMessage[], merging tool_results into assistant toolCalls
+      const loadedMessages: ChatMessage[] = []
+      for (const msg of parsed) {
+        // Skip tool_result messages — they're merged into assistant messages
+        if (msg.role === 'tool_result') continue
+
+        const chatMsg: ChatMessage = {
+          id: msg.id,
+          role: msg.role,
+          content: msg.content || '',
+          timestamp: msg.timestamp,
+          usage: msg.usage,
+          isCompacted: msg.isCompacted
+        }
+
+        // For assistant messages: merge tool result data into toolCalls
+        if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+          chatMsg.toolCalls = msg.toolCalls.map((tc) => {
+            const result = toolResultMap.get(tc.id)
+            return {
+              id: tc.id,
+              name: tc.name,
+              status: result ? (result.isError ? 'error' as const : 'completed' as const) : 'completed' as const,
+              input: tc.input,
+              output: result?.output,
+              isError: result?.isError
+            }
+          })
+        }
+
+        loadedMessages.push(chatMsg)
+      }
+
       set({
         messages: loadedMessages,
         conversationId: sessionId,

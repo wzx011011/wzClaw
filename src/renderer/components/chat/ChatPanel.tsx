@@ -22,10 +22,9 @@ import type { MentionItem } from '../../../shared/types'
 // Thinking depth + Permission mode definitions
 // ============================================================
 
-type ThinkingDepth = 'none' | 'low' | 'medium' | 'high'
 type PermissionMode = 'always-ask' | 'accept-edits' | 'plan' | 'bypass'
 
-const THINKING_DEPTHS: { id: ThinkingDepth; label: string; desc: string }[] = [
+const THINKING_DEPTHS: { id: 'none' | 'low' | 'medium' | 'high'; label: string; desc: string }[] = [
   { id: 'none', label: '关闭', desc: '不使用扩展思考' },
   { id: 'low', label: '低', desc: '简单推理' },
   { id: 'medium', label: '中', desc: '平衡深度与速度' },
@@ -81,8 +80,8 @@ export default function ChatPanel(): JSX.Element {
   const currentTodos = useChatStore((s) => s.currentTodos)
   const todoCollapsed = useChatStore((s) => s.todoCollapsed)
 
-  // Thinking depth + Permission mode state
-  const [thinkingDepth, setThinkingDepth] = useState<ThinkingDepth>('none')
+  // Thinking depth — read from persisted settings store
+  const thinkingDepth = useSettingsStore((s) => s.thinkingDepth ?? 'none')
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('always-ask')
   const [showThinkingDropdown, setShowThinkingDropdown] = useState(false)
   const [showPermissionDropdown, setShowPermissionDropdown] = useState(false)
@@ -568,7 +567,7 @@ export default function ChatPanel(): JSX.Element {
                     <button
                       key={t.id}
                       className={`chat-toolbar-dropdown-item${thinkingDepth === t.id ? ' active' : ''}`}
-                      onClick={() => { setThinkingDepth(t.id); setShowThinkingDropdown(false) }}
+                      onClick={() => { updateSettings({ thinkingDepth: t.id }); setShowThinkingDropdown(false) }}
                     >
                       <span>{t.label}</span>
                       <span className="chat-toolbar-dropdown-desc">{t.desc}</span>

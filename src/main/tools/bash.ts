@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { exec } from 'child_process'
 import { existsSync, appendFile } from 'fs'
 import path from 'path'
+import iconv from 'iconv-lite'
 import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { TerminalManager } from '../terminal/terminal-manager'
@@ -38,7 +39,15 @@ const BashSchema = z.object({
 
 export class BashTool implements Tool {
   readonly name = 'Bash'
-  readonly description = `Execute a shell command and return stdout and stderr output. Commands run in the working directory.
+
+  get description(): string {
+    const shellNote =
+      process.platform === 'win32'
+        ? detectedShell
+          ? '\n\nRunning via Git Bash — Unix commands (find, grep, head, tail, etc.) ARE available. Use forward-slash paths.'
+          : '\n\nWARNING — Running via Windows cmd.exe: Unix commands (find, head, grep, ls, cat, etc.) are NOT available. Use Windows-compatible paths (E:\\path or E:/path, NOT /e/path). Prefer the Glob, Grep, and FileRead tools over shell commands whenever possible.'
+        : ''
+    return `Execute a shell command and return stdout and stderr output. Commands run in the working directory.${shellNote}
 
 IMPORTANT: Do NOT use Bash when a dedicated tool exists:
 - To read files: use FileRead (not cat/head/tail)
@@ -55,6 +64,7 @@ When running git commands:
 - Before destructive operations (reset --hard, push --force), confirm with the user.
 
 Always quote file paths containing spaces with double quotes.`
+  }
   readonly requiresApproval = true
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
@@ -94,7 +104,8 @@ Always quote file paths containing spaces with double quotes.`
     const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT
 
     // Security analysis — block dangerous commands before execution
-    const security = analyzeBashCommand(command)
+    const shellIsUnix = process.platform !== 'win32' || !!detectedShell
+    const security = analyzeBashCommand(command, shellIsUnix)
     if (security.blocked) {
       return {
         output: `Command blocked: ${security.reason}`,
@@ -142,13 +153,16 @@ Always quote file paths containing spaces with double quotes.`
         commandToRun = `chcp 65001 > nul 2>&1 && ${command}`
       }
 
+      // On Windows cmd.exe: use buffer encoding + iconv-lite to avoid GBK mojibake.
+      // Git Bash outputs UTF-8 natively, so 'utf8' is fine there.
+      const isWindowsCmd = process.platform === 'win32' && !useGitBash
       const child = exec(
         commandToRun,
         {
           cwd: context.workingDirectory,
           timeout: effectiveTimeout,
           maxBuffer: 1024 * 1024,
-          encoding: 'utf8',
+          encoding: isWindowsCmd ? 'buffer' : 'utf8',
           shell: useGitBash ? detectedShell : undefined,
           env: process.platform === 'win32'
             ? { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
@@ -163,9 +177,19 @@ Always quote file paths containing spaces with double quotes.`
             return
           }
 
-          let output = stdout || ''
-          if (stderr) {
-            output += (output ? '\nSTDERR:\n' : 'STDERR:\n') + stderr
+          // Decode from GBK on Windows cmd.exe, UTF-8 elsewhere
+          const decode = (buf: Buffer | string): string => {
+            if (typeof buf === 'string') return buf
+            // Try UTF-8 first, fall back to GBK if it contains replacement chars
+            const utf8 = buf.toString('utf8')
+            if (buf.length < 2 || !utf8.includes('\ufffd')) return utf8
+            return iconv.decode(buf, 'gbk')
+          }
+
+          let output = decode(stdout as Buffer | string) || ''
+          const stderrText = decode(stderr as Buffer | string)
+          if (stderrText) {
+            output += (output ? '\nSTDERR:\n' : 'STDERR:\n') + stderrText
           }
 
           // Truncate at MAX_TOOL_RESULT_CHARS

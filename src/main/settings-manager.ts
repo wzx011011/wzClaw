@@ -21,6 +21,7 @@ interface StoredSettings {
   recentWorkspaces?: string[]
   lastSessionId?: string
   alwaysAllowRules?: string[]
+  thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
 }
 
 interface EncryptedKeys {
@@ -33,6 +34,7 @@ export interface SettingsResponse {
   hasApiKey: boolean
   baseURL?: string
   systemPrompt?: string
+  thinkingDepth?: string
 }
 
 export interface FullConfig {
@@ -41,6 +43,7 @@ export interface FullConfig {
   apiKey: string | undefined
   baseURL?: string
   systemPrompt?: string
+  thinkingDepth?: string
 }
 
 export class SettingsManager {
@@ -78,7 +81,8 @@ export class SettingsManager {
           lastWorkspacePath: parsed.lastWorkspacePath,
           recentWorkspaces: parsed.recentWorkspaces,
           lastSessionId: parsed.lastSessionId,
-          alwaysAllowRules: parsed.alwaysAllowRules
+          alwaysAllowRules: parsed.alwaysAllowRules,
+          thinkingDepth: parsed.thinkingDepth
         }
       } catch (err) {
         console.error('Failed to load settings.json:', err)
@@ -178,10 +182,11 @@ export class SettingsManager {
     return {
       provider: this.settings.provider,
       model: this.settings.model,
-      hasApiKey: this.decryptedKeys.has(this.settings.provider),
+      hasApiKey: !!this.getApiKey(this.settings.provider),
       baseURL: this.settings.baseURL,
       systemPrompt: this.settings.systemPrompt,
-      relayToken: this.settings.relayToken
+      relayToken: this.settings.relayToken,
+      thinkingDepth: this.settings.thinkingDepth
     }
   }
 
@@ -195,12 +200,14 @@ export class SettingsManager {
     baseURL?: string
     systemPrompt?: string
     relayToken?: string
+    thinkingDepth?: string
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
     if (request.baseURL !== undefined) this.settings.baseURL = request.baseURL
     if (request.systemPrompt !== undefined) this.settings.systemPrompt = request.systemPrompt
     if (request.relayToken !== undefined) this.setRelayToken(request.relayToken)
+    if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)
@@ -211,9 +218,18 @@ export class SettingsManager {
 
   /**
    * Get decrypted API key for a specific provider.
+   * Falls back to environment variables when no key is stored:
+   *   anthropic: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY
+   *   openai:    OPENAI_API_KEY
    */
   getApiKey(provider: string): string | undefined {
-    return this.decryptedKeys.get(provider)
+    const stored = this.decryptedKeys.get(provider)
+    if (stored) return stored
+    // Env var fallback
+    if (provider === 'anthropic') {
+      return process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY
+    }
+    return process.env.OPENAI_API_KEY
   }
 
   getRelayToken(): string | undefined {
@@ -270,12 +286,16 @@ export class SettingsManager {
    * Get full configuration for LLM gateway (includes API key).
    */
   getCurrentConfig(): FullConfig {
+    const provider = this.settings.provider
+    const baseURL = this.settings.baseURL
+      ?? (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
     return {
-      provider: this.settings.provider,
+      provider,
       model: this.settings.model,
-      apiKey: this.getApiKey(this.settings.provider),
-      baseURL: this.settings.baseURL,
-      systemPrompt: this.settings.systemPrompt
+      apiKey: this.getApiKey(provider),
+      baseURL,
+      systemPrompt: this.settings.systemPrompt,
+      thinkingDepth: this.settings.thinkingDepth
     }
   }
 }

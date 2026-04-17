@@ -86,6 +86,7 @@ export function registerIpcHandlers(
       systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       workingDirectory,
       conversationId: result.data.conversationId,
+      thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
     }
 
     // Cleanup on window close
@@ -104,6 +105,9 @@ export function registerIpcHandlers(
         switch (agentEvent.type) {
           case 'agent:text':
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
+            break
+          case 'agent:thinking':
+            sender.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
             break
           case 'agent:tool_call':
             // Store tool input so we can extract file path on tool_result (per D-52)

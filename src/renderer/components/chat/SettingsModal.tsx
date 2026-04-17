@@ -17,6 +17,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const settingsBaseURL = useSettingsStore((s) => s.baseURL)
   const settingsSystemPrompt = useSettingsStore((s) => s.systemPrompt)
   const settingsRelayToken = useSettingsStore((s) => s.relayToken)
+  const hasApiKey = useSettingsStore((s) => s.hasApiKey)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
 
   // Local form state initialized from settings store
@@ -141,8 +142,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
+            placeholder={hasApiKey && !apiKey ? '已设置 · 留空保持不变' : 'sk-...'}
           />
+          {hasApiKey && !apiKey && (
+            <div style={{ fontSize: 11, color: '#4ade80', marginTop: 4, marginBottom: 2 }}>✓ API Key 已配置</div>
+          )}
 
           {/* Base URL section (only for openai provider) */}
           {provider === 'openai' && (

@@ -210,13 +210,18 @@ export class RelayClient extends EventEmitter {
 
   private _closeWs(): void {
     if (this.ws) {
+      const ws = this.ws
+      this.ws = null
+      ws.removeAllListeners()
+      // Add noop error handler AFTER removeAllListeners to prevent
+      // 'WebSocket closed before connection established' from becoming
+      // an unhandled error event that crashes the main process.
+      ws.on('error', () => {})
       try {
-        this.ws.removeAllListeners()
-        this.ws.close()
+        ws.close()
       } catch {
         // ignore
       }
-      this.ws = null
     }
   }
 

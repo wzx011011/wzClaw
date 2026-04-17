@@ -49,8 +49,12 @@ const SENSITIVE_PATHS = [
 /**
  * Analyze a bash command for security risks.
  * Returns blocked=true for dangerous commands, warnings for suspicious ones.
+ *
+ * @param command     The shell command to analyze.
+ * @param shellIsUnix Pass false when running on Windows cmd.exe (no Git Bash) so that
+ *                    Unix-only commands generate an actionable warning before execution.
  */
-export function analyzeBashCommand(command: string): SecurityResult {
+export function analyzeBashCommand(command: string, shellIsUnix = true): SecurityResult {
   const warnings: string[] = []
 
   // Check blocked patterns first
@@ -71,6 +75,22 @@ export function analyzeBashCommand(command: string): SecurityResult {
   for (const pathPattern of SENSITIVE_PATHS) {
     if (pathPattern.test(command)) {
       warnings.push(`Accesses sensitive path: ${pathPattern.source}`)
+    }
+  }
+
+  // On Windows cmd.exe (no Git Bash), warn when Unix-only commands are used.
+  // This gives the model an early signal to switch to PowerShell/Glob/Grep tools.
+  if (!shellIsUnix && process.platform === 'win32') {
+    const UNIX_ONLY_COMMANDS = new Set([
+      'find', 'grep', 'head', 'tail', 'which', 'ls', 'cat', 'touch',
+      'chmod', 'chown', 'ln', 'wc', 'sort', 'uniq', 'awk', 'sed',
+    ])
+    const firstWord = command.trim().split(/\s+/)[0].toLowerCase()
+    if (UNIX_ONLY_COMMANDS.has(firstWord)) {
+      warnings.push(
+        `'${firstWord}' is a Unix-only command not available in Windows cmd.exe. ` +
+        `Use a PowerShell equivalent or a dedicated tool (Glob/Grep/FileRead) instead.`
+      )
     }
   }
 

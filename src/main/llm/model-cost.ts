@@ -26,9 +26,12 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'deepseek-chat':     { inputPerMToken: 0.27, outputPerMToken: 1.10 },
   'deepseek-reasoner': { inputPerMToken: 0.55, outputPerMToken: 2.19 },
 
-  // GLM (ZhipuAI) — approximate
-  'glm-5':   { inputPerMToken: 0.5, outputPerMToken: 1.5 },
-  'glm-4':   { inputPerMToken: 0.1, outputPerMToken: 0.1 },
+  // GLM (ZhipuAI) — bigmodel.cn/pricing
+  'glm-5.1':       { inputPerMToken: 0.82, outputPerMToken: 3.29 },  // ¥6/¥24 per 1M tokens
+  'glm-5-turbo':   { inputPerMToken: 1.20, outputPerMToken: 4.00 },
+  'glm-5':         { inputPerMToken: 1.00, outputPerMToken: 3.20 },
+  'glm-4-plus':    { inputPerMToken: 0.50, outputPerMToken: 0.50 },
+  'glm-4-flash':   { inputPerMToken: 0.01, outputPerMToken: 0.01 },
 }
 
 /**

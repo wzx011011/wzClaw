@@ -12,6 +12,7 @@ interface SettingsState {
   baseURL?: string
   systemPrompt?: string
   relayToken?: string
+  thinkingDepth?: string
   isLoading: boolean
 }
 
@@ -29,6 +30,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   hasApiKey: false,
   baseURL: undefined,
   systemPrompt: undefined,
+  thinkingDepth: undefined,
   isLoading: false,
 
   /**
@@ -45,6 +47,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         baseURL: settings.baseURL,
         systemPrompt: settings.systemPrompt,
         relayToken: settings.relayToken,
+        thinkingDepth: settings.thinkingDepth,
         isLoading: false
       })
     } catch (err) {

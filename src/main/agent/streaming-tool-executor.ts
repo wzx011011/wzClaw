@@ -98,4 +98,13 @@ export class StreamingToolExecutor {
   get size(): number {
     return this.pending.length
   }
+
+  /**
+   * Get a snapshot of pending tool executions for incremental iteration.
+   * Used by stream-phase when yielding tool results as they complete,
+   * instead of batching everything via waitAll().
+   */
+  getPending(): ReadonlyArray<{ id: string; name: string; promise: Promise<ToolExecResult> }> {
+    return [...this.pending]
+  }
 }

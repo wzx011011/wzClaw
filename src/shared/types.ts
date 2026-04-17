@@ -83,6 +83,11 @@ export interface TextDeltaEvent {
   content: string
 }
 
+export interface ThinkingDeltaEvent {
+  type: 'thinking_delta'
+  content: string
+}
+
 export interface ToolUseStartEvent {
   type: 'tool_use_start'
   id: string
@@ -120,6 +125,7 @@ export interface StreamDoneEvent {
 
 export type StreamEvent =
   | TextDeltaEvent
+  | ThinkingDeltaEvent
   | ToolUseStartEvent
   | ToolUseDeltaEvent
   | ToolUseEndEvent
@@ -179,6 +185,9 @@ export interface SessionMeta {
 // ============================================================
 
 export type LLMProvider = 'openai' | 'anthropic'
+
+/** Thinking depth controls extended reasoning effort */
+export type ThinkingDepth = 'none' | 'low' | 'medium' | 'high'
 
 // Permission modes matching Z Code's 4-mode system
 export type PermissionMode = 'always-ask' | 'accept-edits' | 'plan' | 'bypass'
@@ -253,6 +262,7 @@ export const TokenUsageSchema = z.object({
 
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text_delta'), content: z.string() }),
+  z.object({ type: z.literal('thinking_delta'), content: z.string() }),
   z.object({ type: z.literal('tool_use_start'), id: z.string(), name: z.string() }),
   z.object({ type: z.literal('tool_use_delta'), id: z.string(), partialJson: z.string() }),
   z.object({ type: z.literal('tool_use_end'), id: z.string(), parsedInput: z.record(z.unknown()) }),

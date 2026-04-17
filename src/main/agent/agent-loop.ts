@@ -3,6 +3,8 @@
 // 职责：循环控制 + 上下文压缩 + 事件分发
 // 具体工作委托给 SystemPromptBuilder / TurnManager / StreamPhase
 // 消息管理委托给 ConversationManager
+//
+// v2: 事件通过 yield* 从 TurnManager 逐条穿透到消费者
 // ============================================================
 
 import type { LLMGateway } from '../llm/gateway'
@@ -21,6 +23,7 @@ import { TurnManager } from './turn-manager'
 import { ConversationManager } from './conversation-manager'
 import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
+import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -49,6 +52,9 @@ export class AgentLoop {
 
     // 每次 run() 创建新的调试日志（session 级别）
     const debugLogger = new DebugLogger(config.conversationId)
+
+    // Langfuse：每次 run() 开启一条 trace
+    startTrace(config.conversationId, config.model, config.workingDirectory)
 
     const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
     this.abortController = new AbortController()
@@ -107,6 +113,7 @@ export class AgentLoop {
         const compacted = await this.doCompaction(config)
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
+          getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           yield compacted
           // Compaction succeeded — only re-enable tools if context is now below threshold
           if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
@@ -115,12 +122,20 @@ export class AgentLoop {
         }
       }
 
+      // Eval: 记录上下文压力
+      const _eval = getActiveTrace(config.conversationId)?.evalCollector
+      if (_eval) {
+        const estTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+        const ctxWindow = this.contextManager.getContextWindowForModel(config.model)
+        _eval.recordContextPressure(estTokens, ctxWindow)
+      }
+
       debugLogger.log('TURN', `start turn ${turn + 1}/${maxTurns}`)
 
-      // 执行一轮 turn（委托给 TurnManager）
+      // 执行一轮 turn（事件通过 yield* 逐条穿透）
       let turnResult
       try {
-        turnResult = await this.turnManager.executeTurn(
+        turnResult = yield* this.turnManager.executeTurn(
           {
             turnIndex: turn,
             conversation: this.conversation,
@@ -141,6 +156,8 @@ export class AgentLoop {
         //   3. 最终失败
         if (streamErr instanceof PromptTooLongError && reactiveCompactCount < MAX_REACTIVE_COMPACTS) {
           reactiveCompactCount++
+          getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('reactive_compact')
+          getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
           const compacted = this.contextManager.reactiveCompact(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
@@ -156,6 +173,7 @@ export class AgentLoop {
           continue
         } else if (streamErr instanceof PromptTooLongError && !toolsDisabled) {
           // 层级 2：降级到纯对话模式（不修改原数组，用标志位，压缩成功后可自动恢复）
+          getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('tools_disabled')
           toolsDisabled = true
           yield { type: 'agent:error', error: 'Context too long — retrying in text-only mode (tools disabled)', recoverable: true }
           if (turn > 0) turn--
@@ -164,20 +182,18 @@ export class AgentLoop {
         } else {
           debugLogger.log('ERROR', 'context too long, all recovery exhausted')
           debugLogger.close()
+          getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('fatal')
           yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
+          endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
           await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
           return
         }
       }
 
-      // 转发 turn 事件
-      for (const event of turnResult.events) {
-        yield event
-      }
-
       if (turnResult.hadError) {
         debugLogger.log('ERROR', 'turn had error, stopping')
         debugLogger.close()
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
@@ -187,11 +203,15 @@ export class AgentLoop {
       totalUsage.outputTokens += turnResult.usage.outputTokens
       this.contextManager.trackTokenUsage(turnResult.usage.inputTokens, turnResult.usage.outputTokens)
 
+      // Eval: 记录 turn 输出 token
+      getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
+
       // 无工具调用 → 正常结束
       if (turnResult.shouldStop) {
         debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
         debugLogger.close()
         yield { type: 'agent:done', usage: totalUsage, turnCount }
+        endTrace(config.conversationId, totalUsage, turnCount, false, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
@@ -202,6 +222,7 @@ export class AgentLoop {
     debugLogger.close()
     yield { type: 'agent:error', error: `Max agent turns exceeded (${turnCount})`, recoverable: true }
     yield { type: 'agent:done', usage: totalUsage, turnCount }
+    endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
     await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
   }
 

@@ -13,6 +13,11 @@ const api = {
     ipcRenderer.on('stream:text_delta', handler)
     return () => ipcRenderer.removeListener('stream:text_delta', handler)
   },
+  onStreamThinking: (callback: (payload: { content: string }) => void) => {
+    const handler = (_: unknown, payload: { content: string }) => callback(payload)
+    ipcRenderer.on('stream:thinking_delta', handler)
+    return () => ipcRenderer.removeListener('stream:thinking_delta', handler)
+  },
   onStreamToolStart: (callback: (payload: { id: string; name: string }) => void) => {
     const handler = (_: unknown, payload: { id: string; name: string }) => callback(payload)
     ipcRenderer.on('stream:tool_use_start', handler)

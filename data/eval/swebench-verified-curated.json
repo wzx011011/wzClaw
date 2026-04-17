@@ -1,0 +1,875 @@
+[
+  {
+    "id": "swebench-001",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Fix a bug where django.core.validators.URLValidator incorrectly rejects URLs with usernames that contain special characters. The regex pattern should allow characters like '-' and '_' in the userinfo component of the URL.",
+    "startingFiles": {
+      "validators.py": "# Simplified URLValidator for testing\nimport re\n\nclass URLValidator:\n    ul = '\\u00a1-\\uffff'  # Unicode letters\n    ip_middle_octet = '(?:\\\\.(?:0{0,2}[0-9]|0?[0-9]{2,3}))'\n\n    # BUG: The userinfo pattern does not allow '-' or '_' characters\n    # in the username part of the URL\n    userinfo = '[a-zA-Z0-9]+(?:\\\\:[a-zA-Z0-9]+)?'\n    domain = f'[a-zA-Z0-9](?:[a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?(?:\\\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?)*'\n\n    regex = re.compile(\n        f'^(?:[a-z0-9.+-]*)://'  # scheme\n        f'(?:{userinfo}@)?'  # userinfo\n        f'(?:{domain})'  # domain\n        f'(?::[0-9]+)?'  # port\n        f'(?:[/?#][^\\s]*)?'  # path\n        f'$', re.IGNORECASE\n    )\n\n    def __call__(self, value):\n        if not self.regex.match(value):\n            raise ValueError(f'Enter a valid URL: {value}')\n        return value\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_validators.py -v",
+    "metadata": {
+      "category": "bug-fix",
+      "repo": "django/django",
+      "instanceId": "django__django-12345",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-002",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Fix the off-by-one error in the binary search implementation. The function should return the index of the target element in a sorted array, or -1 if not found. Currently it fails to find the last element in the array.",
+    "startingFiles": {
+      "search.py": "def binary_search(arr: list, target: int) -> int:\n    \"\"\"Return index of target in sorted arr, or -1 if not found.\"\"\"\n    left, right = 0, len(arr) - 1\n\n    while left < right:  # BUG: should be <=\n        mid = (left + right) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n\n    return -1  # BUG: doesn't check arr[left] == target when left == right\n",
+      "test_search.py": "import pytest\nfrom search import binary_search\n\ndef test_found_first():\n    assert binary_search([1, 2, 3, 4, 5], 1) == 0\n\ndef test_found_middle():\n    assert binary_search([1, 2, 3, 4, 5], 3) == 2\n\ndef test_found_last():\n    assert binary_search([1, 2, 3, 4, 5], 5) == 4\n\ndef test_not_found():\n    assert binary_search([1, 2, 3, 4, 5], 6) == -1\n\ndef test_single_element():\n    assert binary_search([1], 1) == 0\n\ndef test_single_not_found():\n    assert binary_search([1], 2) == -1\n\ndef test_empty():\n    assert binary_search([], 1) == -1\n\ndef test_even_length():\n    assert binary_search([1, 2, 3, 4], 4) == 3\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_search.py -v",
+    "metadata": {
+      "category": "bug-fix",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-003",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Fix the race condition in the ThreadSafeCounter class. The increment() method sometimes loses counts under concurrent access. The get_value() method should also be thread-safe.",
+    "startingFiles": {
+      "counter.py": "import threading\n\nclass ThreadSafeCounter:\n    \"\"\"A thread-safe counter that supports increment and get_value.\"\"\"\n\n    def __init__(self, initial=0):\n        self._value = initial\n        self._lock = threading.Lock()\n\n    def increment(self) -> None:\n        # BUG: reads _value outside the lock\n        current = self._value\n        with self._lock:\n            self._value = current + 1\n\n    def get_value(self) -> int:\n        # BUG: not thread-safe, should use lock\n        return self._value\n",
+      "test_counter.py": "import pytest\nimport threading\nfrom counter import ThreadSafeCounter\n\ndef test_basic_increment():\n    counter = ThreadSafeCounter()\n    for _ in range(100):\n        counter.increment()\n    assert counter.get_value() == 100\n\ndef test_concurrent_increment():\n    counter = ThreadSafeCounter()\n    threads = []\n    for _ in range(10):\n        t = threading.Thread(target=lambda: [counter.increment() for _ in range(100)])\n        threads.append(t)\n        t.start()\n    for t in threads:\n        t.join()\n    assert counter.get_value() == 1000  # Must be exactly 1000\n\ndef test_initial_value():\n    counter = ThreadSafeCounter(42)\n    assert counter.get_value() == 42\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_counter.py -v",
+    "metadata": {
+      "category": "concurrency",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-004",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "easy",
+    "description": "Fix the JSON parser to correctly handle nested objects and arrays. Currently it fails on nested structures like '{\"a\": {\"b\": [1, 2]}}' and returns incorrect results for escaped strings.",
+    "startingFiles": {
+      "json_parser.py": "def parse_json(text: str):\n    \"\"\"Simple JSON parser. Handles objects, arrays, strings, numbers, bool, null.\"\"\"\n    # BUG: This is a stub that only handles flat objects\n    import json\n    try:\n        return json.loads(text)\n    except json.JSONDecodeError:\n        # BUG: returns empty dict instead of raising\n        return {}\n",
+      "test_json_parser.py": "import pytest\nfrom json_parser import parse_json\n\ndef test_flat_object():\n    assert parse_json('{\"key\": \"value\"}') == {'key': 'value'}\n\ndef test_nested_object():\n    assert parse_json('{\"a\": {\"b\": 1}}') == {'a': {'b': 1}}\n\ndef test_array():\n    assert parse_json('[1, 2, 3]') == [1, 2, 3]\n\ndef test_nested_array():\n    assert parse_json('{\"a\": {\"b\": [1, 2]}}') == {'a': {'b': [1, 2]}}\n\ndef test_escaped_string():\n    assert parse_json('{\"key\": \"value with \\\\\"quotes\\\\\"\"}') == {'key': 'value with \"quotes\"'}\n\ndef test_invalid():\n    with pytest.raises(Exception):\n        parse_json('{invalid}')\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_json_parser.py -v",
+    "metadata": {
+      "category": "bug-fix",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-005",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Fix the CSV writer to properly handle fields that contain commas, quotes, or newlines. These fields should be quoted and internal quotes should be escaped by doubling them.",
+    "startingFiles": {
+      "csv_writer.py": "def write_csv_row(fields: list) -> str:\n    \"\"\"Format a list of fields as a CSV row string.\"\"\"\n    # BUG: doesn't handle commas, quotes, or newlines in fields\n    return ','.join(str(f) for f in fields)\n",
+      "test_csv_writer.py": "import pytest\nfrom csv_writer import write_csv_row\n\ndef test_simple():\n    assert write_csv_row(['a', 'b', 'c']) == 'a,b,c'\n\ndef test_with_comma():\n    assert write_csv_row(['a,b', 'c']) == '\"a,b\",c'\n\ndef test_with_quote():\n    assert write_csv_row(['he said \"hello\"', 'world']) == '\"he said \"\"hello\"\"\",world'\n\ndef test_with_newline():\n    assert write_csv_row(['line1\\nline2', 'x']) == '\"line1\\nline2\",x'\n\ndef test_numbers():\n    assert write_csv_row([1, 2.5, 3]) == '1,2.5,3'\n\ndef test_empty():\n    assert write_csv_row([]) == ''\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_csv_writer.py -v",
+    "metadata": {
+      "category": "bug-fix",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-006",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Apps.clear_cache() does not clear get_swappable_settings_name cache.\nDescription\n\t\nWe use apps.clear_cache() in django-stubs to be able to reset the previous state on consequential mypy runs.\nCode: ​https://github.com/typeddjango/django-stubs/pull/1601/files#diff-c49d8fe2cd0a58fad3c36ab3a88c7745e9622f3098e60cd512953eb17b8a1994R63-R64\nBut, looks like we don't clear all the object's cache this way, because get_swappable_settings_name (which is a functools._lru_cache_wrapper) is not cleared.\nI thin",
+    "startingFiles": {
+      "registry.py": "a/django/apps/registry.py b/django/apps/registry.py\n\n        This is mostly used in tests.\n        \"\"\"\n        # Call expire cache on each model. This will purge\n        # the relation tree and the fields cache.\n        self.get_models.cache_clear()",
+      "tests.py": "a/tests/apps/tests.py b/tests/apps/tests.py\n        with self.assertRaises(ValueError):\n            apps.get_model(\"admin_LogEntry\")\n\n    @override_settings(INSTALLED_APPS=SOME_INSTALLED_APPS)\n    def test_clear_cache(self):\n        # Set cache.\n        self.assertIsNone(apps.get_swappable_settings_name(\"admin.LogEntry\"))\n        apps.get_models()\n\n        apps.clear_cache()\n\n        self.assertEqual(apps.get_swappable_settings_name.cache_info().currsize, 0)\n        self.assertEqual(apps.get_models.cache_info().currsize, 0)\n\n    @override_settings(INSTALLED_APPS=[\"apps.apps.RelabeledAppsConfig\"])\n    def test_relabeling(self):\n        self.assertEqual(apps.get_app_config(\"relabeled\").name, \"apps\")"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest tests.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "django/django",
+      "instanceId": "django__django-17029",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-007",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Composed queries cannot change the list of columns with values()/values_list().\nDescription\n\t\nComposed queries cannot change the list of columns when values()/values_list() is evaluated multiple times, e.g.\n>>> ReservedName.objects.create(name='a', order=2)\n>>> qs1 = ReservedName.objects.all()\n>>> print(qs1.union(qs1).values_list('name', 'order').get())\n('a', 2)\n>>> print(qs1.union(qs1).values_list('order').get())\n('a', 2)\n(see ​compiler.py#L428-L433).",
+    "startingFiles": {
+      "compiler.py": "a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py\n                # must have the same columns list. Set the selects defined on\n                # the query on all combined queries, if not already set.\n                if not compiler.query.values_select and self.query.values_select:\n                    compiler.query.set_values((\n                        *self.query.extra_select,\n                        *self.query.values_select,",
+      "test_qs_combinators.py": "a/tests/queries/test_qs_combinators.py b/tests/queries/test_qs_combinators.py\n        self.assertEqual(reserved_name['order'], 2)\n        reserved_name = qs1.union(qs1).values_list('name', 'order', 'id').get()\n        self.assertEqual(reserved_name[:2], ('a', 2))\n        # List of columns can be changed.\n        reserved_name = qs1.union(qs1).values_list('order').get()\n        self.assertEqual(reserved_name, (2,))\n\n    def test_union_with_two_annotated_values_list(self):\n        qs1 = Number.objects.filter(num=1).annotate("
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_qs_combinators.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "django/django",
+      "instanceId": "django__django-11490",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-008",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "`--recursive=y` ignores `ignore-paths`\n### Bug description\r\n\r\nWhen running recursively, it seems `ignore-paths` in my settings in pyproject.toml is completely ignored\r\n\r\n### Configuration\r\n\r\n```ini\r\n[tool.pylint.MASTER]\r\nignore-paths = [\r\n  # Auto generated\r\n  \"^src/gen/.*$\",\r\n]\r\n```\r\n\r\n\r\n### Command used\r\n\r\n```shell\r\npylint --recursive=y src/\r\n```\r\n\r\n\r\n### Pylint output\r\n\r\n```shell\r\n************* Module region_selection\r\nsrc\\region_selection.py:170:0: R0914: Too many local variables (17/15) (to",
+    "startingFiles": {
+      "expand_modules.py": "a/pylint/lint/expand_modules.py b/pylint/lint/expand_modules.py\n    ignore_list_re: list[Pattern[str]],\n    ignore_list_paths_re: list[Pattern[str]],\n) -> bool:\n    basename = os.path.basename(element)\n    return (\n        basename in ignore_list",
+      "test_self.py": "a/tests/test_self.py b/tests/test_self.py\n                    code=0,\n                )\n\n    def test_ignore_path_recursive_current_dir(self) -> None:\n        \"\"\"Tests that path is normalized before checked that is ignored. GitHub issue #6964\"\"\"\n        with _test_sys_path():\n            # pytest is including directory HERE/regrtest_data to sys.path which causes\n            # astroid to believe that directory is a package.\n            sys.path = [\n                path\n                for path in sys.path\n                if not os.path.basename(path) == \"regrtest_data\"\n            ]\n            with _test_cwd():\n                os.chdir(join(HERE, \"regrtest_data\", \"directory\"))\n                self._runtest(\n                    [\n                        \".\",\n                        \"--recursive=y\",\n                        \"--ignore-paths=^ignored_subdirectory/.*\",\n                    ],\n                    code=0,\n                )\n\n    def test_regression_recursive_current_dir(self):\n        with _test_sys_path():\n            # pytest is including directory HERE/regrtest_data to sys.path which causes"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_self.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "pylint-dev/pylint",
+      "instanceId": "pylint-dev__pylint-7080",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-009",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "pytest 6.0.0rc1: capfd.readouterr() converts \\r to \\n\nI am testing pytest 6.0.0rc1 with Fedora packages. This is the first failure I get, from borgbackup 1.1.13.\r\n\r\n```\r\n______________________ test_progress_percentage_sameline _______________________\r\n\r\ncapfd = <_pytest.capture.CaptureFixture object at 0x7f9bd55e4d00>\r\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9bcbbced60>\r\n\r\n    def test_progress_percentage_sameline(capfd, monkeypatch):\r\n        # run the test as if it was in",
+    "startingFiles": {
+      "capture.py": "a/src/_pytest/capture.py b/src/_pytest/capture.py\n                TemporaryFile(buffering=0),  # type: ignore[arg-type]\n                encoding=\"utf-8\",\n                errors=\"replace\",\n                write_through=True,\n            )\n            if targetfd in patchsysdict:",
+      "test_capture.py": "a/testing/test_capture.py b/testing/test_capture.py\n        )\n        reprec.assertoutcome(passed=1)\n\n    @pytest.mark.parametrize(\"nl\", (\"\\n\", \"\\r\\n\", \"\\r\"))\n    def test_cafd_preserves_newlines(self, capfd, nl):\n        print(\"test\", end=nl)\n        out, err = capfd.readouterr()\n        assert out.endswith(nl)\n\n    def test_capfdbinary(self, testdir):\n        reprec = testdir.inline_runsource(\n            \"\"\"\\"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_capture.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "pytest-dev/pytest",
+      "instanceId": "pytest-dev__pytest-7521",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-010",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "delete() on instances of models without any dependencies doesn't clear PKs.\nDescription\n\t\nDeleting any model with no dependencies not updates the PK on the model. It should be set to None after .delete() call.\nSee Django.db.models.deletion:276-281. Should update the model line 280.",
+    "startingFiles": {
+      "deletion.py": "a/django/db/models/deletion.py b/django/db/models/deletion.py\n            if self.can_fast_delete(instance):\n                with transaction.mark_for_rollback_on_error():\n                    count = sql.DeleteQuery(model).delete_batch([instance.pk], self.using)\n                return count, {model._meta.label: count}\n\n        with transaction.atomic(using=self.using, savepoint=False):",
+      "tests.py": "a/tests/delete/tests.py b/tests/delete/tests.py\nfrom math import ceil\n\nfrom django.db import IntegrityError, connection, models\nfrom django.db.models.deletion import Collector\nfrom django.db.models.sql.constants import GET_ITERATOR_CHUNK_SIZE\nfrom django.test import TestCase, skipIfDBFeature, skipUnlessDBFeature\n\n        self.assertEqual(User.objects.count(), 1)\n        self.assertTrue(User.objects.filter(pk=u2.pk).exists())\n\n    def test_fast_delete_instance_set_pk_none(self):\n        u = User.objects.create()\n        # User can be fast-deleted.\n        collector = Collector(using='default')\n        self.assertTrue(collector.can_fast_delete(u))\n        u.delete()\n        self.assertIsNone(u.pk)\n\n    def test_fast_delete_joined_qs(self):\n        a = Avatar.objects.create(desc='a')\n        User.objects.create(avatar=a)"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest tests.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "django/django",
+      "instanceId": "django__django-11179",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-011",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Add joblib in show_versions\njoblib should be added to the dependencies listed in show_versions or added to the issue template when sklearn version is > 0.20.",
+    "startingFiles": {
+      "_show_versions.py": "a/sklearn/utils/_show_versions.py b/sklearn/utils/_show_versions.py\n        \"Cython\",\n        \"pandas\",\n        \"matplotlib\",\n    ]\n\n    def get_version(module):",
+      "test_show_versions.py": "a/sklearn/utils/tests/test_show_versions.py b/sklearn/utils/tests/test_show_versions.py\n    assert 'Cython' in deps_info\n    assert 'pandas' in deps_info\n    assert 'matplotlib' in deps_info\n    assert 'joblib' in deps_info\n\n\ndef test_show_versions_with_blas(capsys):"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_show_versions.py -v",
+    "metadata": {
+      "category": "logic-error",
+      "repo": "scikit-learn/scikit-learn",
+      "instanceId": "scikit-learn__scikit-learn-14141",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-012",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Linkcheck should report HTTP errors instead of Anchor not found\n**Describe the bug**\r\nThe `linkcheck` command always reports that it was unable to find the anchor when [`linkcheck_anchors`](https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-linkcheck_workers) is `True`, even when the server replied with an error status code (e.g. 404, 500).\r\n\r\nWhile it is indeed unable to find the anchor, the real issue is that the server encountered an error.\r\n\r\n**To Reproduce**\r\n```console",
+    "startingFiles": {
+      "linkcheck.py": "a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py\n                    # Read the whole document and see if #anchor exists\n                    response = requests.get(req_url, stream=True, config=self.app.config,\n                                            auth=auth_info, **kwargs)\n                    found = check_anchor(response, unquote(anchor))\n\n                    if not found:",
+      "conf.py": "a/tests/roots/test-linkcheck-localserver/conf.py b/tests/roots/test-linkcheck-localserver/conf.py\nexclude_patterns = ['_build']\nlinkcheck_anchors = True"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest conf.py -v",
+    "metadata": {
+      "category": "edge-case",
+      "repo": "sphinx-doc/sphinx",
+      "instanceId": "sphinx-doc__sphinx-8269",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-013",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Form Field’s __deepcopy__ does not (deep)copy the error messages.\nDescription\n\t\nThe __deepcopy__ method defined for the formfields (​https://github.com/django/django/blob/146086f219d01dbb1cd8c089b5a5667e396e1cc4/django/forms/fields.py#L200) performs a shallow copy of self and does not include additional treatment for the error_messages dictionary. As a result, all copies of the same field share the same dictionary and any modification of either the dictionary or the error message itself for one",
+    "startingFiles": {
+      "fields.py": "a/django/forms/fields.py b/django/forms/fields.py\n        result = copy.copy(self)\n        memo[id(self)] = result\n        result.widget = copy.deepcopy(self.widget, memo)\n        result.validators = self.validators[:]\n        return result\n",
+      "test_forms.py": "a/tests/forms_tests/tests/test_forms.py b/tests/forms_tests/tests/test_forms.py\n        self.assertIsInstance(p.data, MultiValueDict)\n        self.assertIsInstance(p.files, MultiValueDict)\n\n    def test_field_deep_copy_error_messages(self):\n        class CustomCharField(CharField):\n            def __init__(self, **kwargs):\n                kwargs['error_messages'] = {'invalid': 'Form custom error message.'}\n                super().__init__(**kwargs)\n\n        field = CustomCharField()\n        field_copy = copy.deepcopy(field)\n        self.assertIsInstance(field_copy, CustomCharField)\n        self.assertIsNot(field_copy.error_messages, field.error_messages)\n\n\nclass CustomRenderer(DjangoTemplates):\n    pass"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_forms.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "django/django",
+      "instanceId": "django__django-11880",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-014",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "timesince() raises TypeError with USE_TZ=True and >1 month interval.\nDescription\n\t \n\t\t(last modified by Sage Abdullah)\n\t \nAs of 8d67e16493c903adc9d049141028bc0fff43f8c8, calling timesince() with a datetime object that's one month (or more) in the past and the USE_TZ setting is set to True results in the following crash:\nTypeError: can't subtract offset-naive and offset-aware datetimes\nTest:\n...\nclass TimesinceTests(TestCase):\n\t...\n\t@requires_tz_support\n\t@override_settings(USE_TZ=True)\n\tdef test_",
+    "startingFiles": {
+      "timesince.py": "a/django/utils/timesince.py b/django/utils/timesince.py\n            d.hour,\n            d.minute,\n            d.second,\n        )\n    else:\n        pivot = d",
+      "test_timesince.py": "a/tests/utils_tests/test_timesince.py b/tests/utils_tests/test_timesince.py\nimport datetime\n\nfrom django.test import TestCase\nfrom django.test.utils import override_settings, requires_tz_support\nfrom django.utils import timezone, translation\nfrom django.utils.timesince import timesince, timeuntil\nfrom django.utils.translation import npgettext_lazy\n        self.assertEqual(timeuntil(past), \"0\\xa0minutes\")\n\n    def test_thousand_years_ago(self):\n        t = self.t.replace(year=self.t.year - 1000)\n        self.assertEqual(timesince(t, self.t), \"1000\\xa0years\")\n        self.assertEqual(timeuntil(self.t, t), \"1000\\xa0years\")\n\n        msg = \"depth must be greater than 0.\"\n        with self.assertRaisesMessage(ValueError, msg):\n            timesince(self.t, self.t, depth=0)\n\n\n@requires_tz_support\n@override_settings(USE_TZ=True)\nclass TZAwareTimesinceTests(TimesinceTests):\n    def setUp(self):\n        super().setUp()\n        self.t = timezone.make_aware(self.t, timezone.get_default_timezone())"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_timesince.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "django/django",
+      "instanceId": "django__django-16429",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-015",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Merging dataArray into dataset using dataset method fails\nWhile it's possible to merge a dataset and a dataarray object using the top-level `merge()` function, if you try the same thing with the `ds.merge()` method it fails.\r\n\r\n```python\r\nimport xarray as xr\r\n\r\nds = xr.Dataset({'a': 0})\r\nda = xr.DataArray(1, name='b')\r\n\r\nexpected = xr.merge([ds, da])  # works fine\r\nprint(expected)\r\n\r\nds.merge(da)  # fails\r\n```\r\n\r\nOutput:\r\n```\r\n<xarray.Dataset>\r\nDimensions:  ()\r\nData variables:\r\n    a        int6",
+    "startingFiles": {
+      "dataset.py": "a/xarray/core/dataset.py b/xarray/core/dataset.py\n            If any variables conflict (see ``compat``).\n        \"\"\"\n        _check_inplace(inplace)\n        merge_result = dataset_merge_method(\n            self,\n            other,",
+      "test_merge.py": "a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py\n\nimport xarray as xr\nfrom xarray.core import dtypes, merge\nfrom xarray.testing import assert_identical\n\nfrom . import raises_regex\nfrom .test_dataset import create_test_data\n        with pytest.raises(xr.MergeError):\n            ds3 = xr.Dataset({\"a\": (\"y\", [2, 3]), \"y\": [1, 2]})\n            ds1.merge(ds3, compat=\"no_conflicts\")\n\n    def test_merge_dataarray(self):\n        ds = xr.Dataset({\"a\": 0})\n        da = xr.DataArray(data=1, name=\"b\")\n\n        assert_identical(ds.merge(da), xr.merge([ds, da]))"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_merge.py -v",
+    "metadata": {
+      "category": "concurrency",
+      "repo": "pydata/xarray",
+      "instanceId": "pydata__xarray-3677",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-016",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Multiplying an expression by a Poly does not evaluate when the expression is on the left side of the multiplication\nTested in Python 3.4 64-bit and 3.6 64-bit\r\nVersion: 1.1.2.dev0\r\n```\r\n>>> Poly(x)*x\r\nPoly(x**2, x, domain='ZZ')\r\n\r\n>>> x*Poly(x)\r\nx*Poly(x, x, domain='ZZ')\r\n\r\n>>> -2*Poly(x)\r\nPoly(-2*x, x, domain='ZZ')\r\n\r\n>>> S(-2)*Poly(x)\r\n-2*Poly(x, x, domain='ZZ')\r\n\r\n>>> Poly(x)*S(-2)\r\nPoly(-2*x, x, domain='ZZ')\r\n```",
+    "startingFiles": {
+      "polytools.py": "a/sympy/polys/polytools.py b/sympy/polys/polytools.py\n\n    is_commutative = True\n    is_Poly = True\n\n    def __new__(cls, rep, *gens, **args):\n        \"\"\"Create a new polynomial instance out of something useful. \"\"\"",
+      "test_match.py": "a/sympy/core/tests/test_match.py b/sympy/core/tests/test_match.py\n    assert e.match(x**p*exp(x*q)) == {p: 0, q: 1}\n\n    e = I*Poly(x, x)\n    assert e.match(I*p) == {p: x}\n\n\ndef test_mul_noncommutative():"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_match.py -v",
+    "metadata": {
+      "category": "logic-error",
+      "repo": "sympy/sympy",
+      "instanceId": "sympy__sympy-13757",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-017",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "hist() no longer respects range=... when density=True\n<!--To help us understand and resolve your issue, please fill out the form to the best of your ability.-->\r\n<!--You can feel free to delete the sections that do not apply.-->\r\n\r\n### Bug report\r\n\r\n**Bug summary**\r\n\r\n<!--A short 1-2 sentences that succinctly describes the bug-->\r\n\r\n**Code for reproduction**\r\n\r\n<!--A minimum code snippet required to reproduce the bug.\r\nPlease make sure to minimize the number of dependencies required, and provide",
+    "startingFiles": {
+      "_axes.py": "a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py\n\n        density = bool(density) or bool(normed)\n        if density and not stacked:\n            hist_kwargs = dict(density=density)\n\n        # List to store all the top coordinates of the histograms\n        tops = []",
+      "test_axes.py": "a/lib/matplotlib/tests/test_axes.py b/lib/matplotlib/tests/test_axes.py\n\n    assert np.allclose(bins, nanbins)\n    assert np.allclose(edges, nanedges)\n\n\ndef test_hist_range_and_density():\n    _, bins, _ = plt.hist(np.random.rand(10), \"auto\",\n                          range=(0, 1), density=True)\n    assert bins[0] == 0\n    assert bins[-1] == 1"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_axes.py -v",
+    "metadata": {
+      "category": "concurrency",
+      "repo": "matplotlib/matplotlib",
+      "instanceId": "matplotlib__matplotlib-13989",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-018",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "[Bug]: set_visible() not working for 3d projection \n### Bug summary\r\n\r\nin the subplot projection=\"3d\" the set_visible function doesn't work even if the value is set to False\r\n\r\n### Code for reproduction\r\n\r\n```python\r\nimport matplotlib.pyplot as plt\r\nfrom matplotlib.gridspec import GridSpec\r\n\r\nfig, (ax1, ax2) = plt.subplots(1, 2, subplot_kw={'projection': '3d'})\r\nax1.scatter(1,1,1)\r\nax2.scatter(1,1,1, c='r')\r\nax1.set_visible(False)\r\n\r\nplt.show()\r\n# Thanks Tim for your help! \r\n```\r\n\r\n\r\n### Actual",
+    "startingFiles": {
+      "axes3d.py": "a/lib/mpl_toolkits/mplot3d/axes3d.py b/lib/mpl_toolkits/mplot3d/axes3d.py\n\n    @martist.allow_rasterization\n    def draw(self, renderer):\n        self._unstale_viewLim()\n\n        # draw the background patch",
+      "test_axes.py": "a/lib/matplotlib/tests/test_axes.py b/lib/matplotlib/tests/test_axes.py\n#       the tests with multiple threads.\n\n\n@check_figures_equal(extensions=[\"png\"])\ndef test_invisible_axes(fig_test, fig_ref):\n    ax = fig_test.subplots()\n    ax.set_visible(False)\n\n\ndef test_get_labels():\n    fig, ax = plt.subplots()\n    ax.set_xlabel('x label')\n    ax.redraw_in_frame()\n\n\ndef test_invisible_axes_events():\n    # invisible axes should not respond to events...\n    fig, ax = plt.subplots()\n    assert fig.canvas.inaxes((200, 200)) is not None"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_axes.py -v",
+    "metadata": {
+      "category": "logic-error",
+      "repo": "matplotlib/matplotlib",
+      "instanceId": "matplotlib__matplotlib-23314",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-019",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "[Bug]: ax.hist density not auto-scaled when using histtype='step'\n### Bug summary\r\n\r\nI need to plot a histogram of some data (generated by `numpy.save` in binary format) from my work using the `matplotlib.axes.Axes.hist` function. I noted that the histogram's density axis (when setting `density=True`) is not automatically adjusted to fit the whole histogram.  \r\n\r\nI played with different combinations of parameters, and noted that the densities changes if you rescale the whole data array, which is",
+    "startingFiles": {
+      "_base.py": "a/lib/matplotlib/axes/_base.py b/lib/matplotlib/axes/_base.py\n        # Get all vertices on the path\n        # Loop through each segment to get extrema for Bezier curve sections\n        vertices = []\n        for curve, code in p.iter_bezier():\n            # Get distance along the curve of any extrema\n            _, dzeros = curve.axis_aligned_extrema()\n            # Calculate vertices of start, end and any extrema in between",
+      "test_axes.py": "a/lib/matplotlib/tests/test_axes.py b/lib/matplotlib/tests/test_axes.py\n    assert ax.get_ylim()[0] == -0.5\n\n\ndef test_small_autoscale():\n    # Check that paths with small values autoscale correctly #24097.\n    verts = np.array([\n        [-5.45, 0.00], [-5.45, 0.00], [-5.29, 0.00], [-5.29, 0.00],\n        [-5.13, 0.00], [-5.13, 0.00], [-4.97, 0.00], [-4.97, 0.00],\n        [-4.81, 0.00], [-4.81, 0.00], [-4.65, 0.00], [-4.65, 0.00],\n        [-4.49, 0.00], [-4.49, 0.00], [-4.33, 0.00], [-4.33, 0.00],\n        [-4.17, 0.00], [-4.17, 0.00], [-4.01, 0.00], [-4.01, 0.00],\n        [-3.85, 0.00], [-3.85, 0.00], [-3.69, 0.00], [-3.69, 0.00],\n        [-3.53, 0.00], [-3.53, 0.00], [-3.37, 0.00], [-3.37, 0.00],\n        [-3.21, 0.00], [-3.21, 0.01], [-3.05, 0.01], [-3.05, 0.01],\n        [-2.89, 0.01], [-2.89, 0.01], [-2.73, 0.01], [-2.73, 0.02],\n        [-2.57, 0.02], [-2.57, 0.04], [-2.41, 0.04], [-2.41, 0.04],\n        [-2.25, 0.04], [-2.25, 0.06], [-2.09, 0.06], [-2.09, 0.08],\n        [-1.93, 0.08], [-1.93, 0.10], [-1.77, 0.10], [-1.77, 0.12],\n        [-1.61, 0.12], [-1.61, 0.14], [-1.45, 0.14], [-1.45, 0.17],\n        [-1.30, 0.17], [-1.30, 0.19], [-1.14, 0.19], [-1.14, 0.22],\n        [-0.98, 0.22], [-0.98, 0.25], [-0.82, 0.25], [-0.82, 0.27],\n        [-0.66, 0.27], [-0.66, 0.29], [-0.50, 0.29], [-0.50, 0.30],\n        [-0.34, 0.30], [-0.34, 0.32], [-0.18, 0.32], [-0.18, 0.33],\n        [-0.02, 0.33], [-0.02, 0.32], [0.13, 0.32], [0.13, 0.33], [0.29, 0.33],\n        [0.29, 0.31], [0.45, 0.31], [0.45, 0.30], [0.61, 0.30], [0.61, 0.28],\n        [0.77, 0.28], [0.77, 0.25], [0.93, 0.25], [0.93, 0.22], [1.09, 0.22],\n        [1.09, 0.19], [1.25, 0.19], [1.25, 0.17], [1.41, 0.17], [1.41, 0.15],\n        [1.57, 0.15], [1.57, 0.12], [1.73, 0.12], [1.73, 0.10], [1.89, 0.10],\n        [1.89, 0.08], [2.05, 0.08], [2.05, 0.07], [2.21, 0.07], [2.21, 0.05],\n        [2.37, 0.05], [2.37, 0.04], [2.53, 0.04], [2.53, 0.02], [2.69, 0.02],\n        [2.69, 0.02], [2.85, 0.02], [2.85, 0.01], [3.01, 0.01], [3.01, 0.01],\n        [3.17, 0.01], [3.17, 0.00], [3.33, 0.00], [3.33, 0.00], [3.49, 0.00],\n        [3.49, 0.00], [3.65, 0.00], [3.65, 0.00], [3.81, 0.00], [3.81, 0.00],\n        [3.97, 0.00], [3.97, 0.00], [4.13, 0.00], [4.13, 0.00], [4.29, 0.00],\n        [4.29, 0.00], [4.45, 0.00], [4.45, 0.00], [4.61, 0.00], [4.61, 0.00],\n        [4.77, 0.00], [4.77, 0.00], [4.93, 0.00], [4.93, 0.00],\n    ])\n\n    minx = np.min(verts[:, 0])\n    miny = np.min(verts[:, 1])\n    maxx = np.max(verts[:, 0])\n    maxy = np.max(verts[:, 1])\n\n    p = mpath.Path(verts)\n\n    fig, ax = plt.subplots()\n    ax.add_patch(mpatches.PathPatch(p))\n    ax.autoscale()\n\n    assert ax.get_xlim()[0] <= minx\n    assert ax.get_xlim()[1] >= maxx\n    assert ax.get_ylim()[0] <= miny\n    assert ax.get_ylim()[1] >= maxy\n\n\ndef test_get_xticklabel():\n    fig, ax = plt.subplots()\n    ax.plot(np.arange(10))"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_axes.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "matplotlib/matplotlib",
+      "instanceId": "matplotlib__matplotlib-24177",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-020",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "AnnotationBbox gid not passed to renderer\nHi,\r\n\r\nI'm creating matplotlib figures that contain images using AnnotationBbox (following the examples here https://matplotlib.org/stable/gallery/text_labels_and_annotations/demo_annotation_box.html) and my aim is to set the artist gid associated with each image so I can access them later when saved to an svg. I can use set_gid but when I save to an svg, the gid label for the images are not included. \r\n\r\nA similar issue has been discussed here  https://",
+    "startingFiles": {
+      "offsetbox.py": "a/lib/matplotlib/offsetbox.py b/lib/matplotlib/offsetbox.py\n            self._renderer = renderer\n        if not self.get_visible() or not self._check_xy(renderer):\n            return\n        self.update_positions(renderer)\n        if self.arrow_patch is not None:\n            if self.arrow_patch.figure is None and self.figure is not None:\n            self.arrow_patch.draw(renderer)\n        self.patch.draw(renderer)\n        self.offsetbox.draw(renderer)\n        self.stale = False\n\n",
+      "test_backend_svg.py": "a/lib/matplotlib/tests/test_backend_svg.py b/lib/matplotlib/tests/test_backend_svg.py\nfrom matplotlib.testing.decorators import check_figures_equal, image_comparison\nfrom matplotlib.testing._markers import needs_usetex\nfrom matplotlib import font_manager as fm\nfrom matplotlib.offsetbox import (OffsetImage, AnnotationBbox)\n\n\ndef test_visibility():\n\n        assert font_info == f\"{size}px {font_str}\"\n    assert text_count == len(ax.texts)\n\n\ndef test_annotationbbox_gid():\n    # Test that object gid appears in the AnnotationBbox\n    # in output svg.\n    fig = plt.figure()\n    ax = fig.add_subplot()\n    arr_img = np.ones((32, 32))\n    xy = (0.3, 0.55)\n\n    imagebox = OffsetImage(arr_img, zoom=0.1)\n    imagebox.image.axes = ax\n\n    ab = AnnotationBbox(imagebox, xy,\n                        xybox=(120., -80.),\n                        xycoords='data',\n                        boxcoords=\"offset points\",\n                        pad=0.5,\n                        arrowprops=dict(\n                            arrowstyle=\"->\",\n                            connectionstyle=\"angle,angleA=0,angleB=90,rad=3\")\n                        )\n    ab.set_gid(\"a test for issue 20044\")\n    ax.add_artist(ab)\n\n    with BytesIO() as fd:\n        fig.savefig(fd, format='svg')\n        buf = fd.getvalue().decode('utf-8')\n\n    expected = '<g id=\"a test for issue 20044\">'\n    assert expected in buf"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_backend_svg.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "matplotlib/matplotlib",
+      "instanceId": "matplotlib__matplotlib-24637",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-021",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Inconsistent behavior of hexbins mincnt parameter, depending on C parameter\n<!--To help us understand and resolve your issue, please fill out the form to the best of your ability.-->\r\n<!--You can feel free to delete the sections that do not apply.-->\r\n\r\n### Bug report\r\n\r\n**Bug summary**\r\n\r\nDifferent behavior of `hexbin`s `mincnt` parameter, depending on whether the `C` parameter is supplied.\r\n\r\n**Code for reproduction**\r\n\r\nSee below for a full snippet.\r\n\r\n```python\r\nfrom matplotlib import pyplot",
+    "startingFiles": {
+      "_axes.py": "a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py\n            if mincnt is None:\n                mincnt = 0\n            accum = np.array(\n                [reduce_C_function(acc) if len(acc) > mincnt else np.nan\n                 for Cs_at_i in [Cs_at_i1, Cs_at_i2]\n                 for acc in Cs_at_i[1:]],  # [1:] drops out-of-range points.\n                float)",
+      "test_axes.py": "a/lib/matplotlib/tests/test_axes.py b/lib/matplotlib/tests/test_axes.py\n    assert h.get_clim() == (2, 100)\n\n\n@check_figures_equal(extensions=['png'])\ndef test_hexbin_mincnt_behavior_upon_C_parameter(fig_test, fig_ref):\n    # see: gh:12926\n    datapoints = [\n        # list of (x, y)\n        (0, 0),\n        (0, 0),\n        (6, 0),\n        (0, 6),\n    ]\n    X, Y = zip(*datapoints)\n    C = [1] * len(X)\n    extent = [-10., 10, -10., 10]\n    gridsize = (7, 7)\n\n    ax_test = fig_test.subplots()\n    ax_ref = fig_ref.subplots()\n\n    # without C parameter\n    ax_ref.hexbin(\n        X, Y,\n        extent=extent,\n        gridsize=gridsize,\n        mincnt=1,\n    )\n    ax_ref.set_facecolor(\"green\")  # for contrast of background\n\n    # with C parameter\n    ax_test.hexbin(\n        X, Y,\n        C=[1] * len(X),\n        reduce_C_function=lambda v: sum(v),\n        mincnt=1,\n        extent=extent,\n        gridsize=gridsize,\n    )\n    ax_test.set_facecolor(\"green\")\n\n\ndef test_inverted_limits():\n    # Test gh:1553\n    # Calling invert_xaxis prior to plotting should not disable autoscaling"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_axes.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "matplotlib/matplotlib",
+      "instanceId": "matplotlib__matplotlib-26113",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-022",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "to_unstacked_dataset broken for single-dim variables\n<!-- A short summary of the issue, if appropriate -->\r\n\r\n\r\n#### MCVE Code Sample\r\n\r\n```python\r\narr = xr.DataArray(\r\n     np.arange(3),\r\n     coords=[(\"x\", [0, 1, 2])],\r\n )\r\ndata = xr.Dataset({\"a\": arr, \"b\": arr})\r\nstacked = data.to_stacked_array('y', sample_dims=['x'])\r\nunstacked = stacked.to_unstacked_dataset('y')\r\n# MergeError: conflicting values for variable 'y' on objects to be combined. You can skip this check by specifying compat='overri",
+    "startingFiles": {
+      "dataarray.py": "a/xarray/core/dataarray.py b/xarray/core/dataarray.py\n        # pull variables out of datarray\n        data_dict = {}\n        for k in variables:\n            data_dict[k] = self.sel({variable_dim: k}).squeeze(drop=True)\n\n        # unstacked dataset\n        return Dataset(data_dict)",
+      "test_dataset.py": "a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py\n        assert y.dims == (\"x\", \"features\")\n\n    def test_to_stacked_array_to_unstacked_dataset(self):\n\n        # single dimension: regression test for GH4049\n        arr = xr.DataArray(np.arange(3), coords=[(\"x\", [0, 1, 2])])\n        data = xr.Dataset({\"a\": arr, \"b\": arr})\n        stacked = data.to_stacked_array(\"y\", sample_dims=[\"x\"])\n        unstacked = stacked.to_unstacked_dataset(\"y\")\n        assert_identical(unstacked, data)\n\n        # make a two dimensional dataset\n        a, b = create_test_stacked_array()\n        D = xr.Dataset({\"a\": a, \"b\": b})"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_dataset.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "pydata/xarray",
+      "instanceId": "pydata__xarray-4094",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-023",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Getting http://.example.com raises UnicodeError\nAttempting to get e.g. `http://.example.com` results in a `UnicodeError`. It seems like the intention so far has been to raise `InvalidUrl` instead (see e.g. [this line](https://github.com/psf/requests/blob/ca6f9af5dba09591007b15a7368bc0f006b7cc50/requests/models.py#L401)).\r\n\r\nI see there was some hesitation in fixing a similar issue (#4168) and would like to add that even catching the error just to rethrow as a requests exception would be benefici",
+    "startingFiles": {
+      "models.py": "a/requests/models.py b/requests/models.py\n                host = self._get_idna_encoded_host(host)\n            except UnicodeError:\n                raise InvalidURL('URL has an invalid label.')\n        elif host.startswith(u'*'):\n            raise InvalidURL('URL has an invalid label.')\n\n        # Carefully reconstruct the network location",
+      "test_requests.py": "a/tests/test_requests.py b/tests/test_requests.py\n            (InvalidSchema, 'localhost.localdomain:3128/'),\n            (InvalidSchema, '10.122.1.1:3128/'),\n            (InvalidURL, 'http://'),\n            (InvalidURL, 'http://*example.com'),\n            (InvalidURL, 'http://.example.com'),\n        ))\n    def test_invalid_url(self, exception, url):\n        with pytest.raises(exception):"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_requests.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "psf/requests",
+      "instanceId": "psf__requests-5414",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-024",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Incorrect result with Quaterniont.to_rotation_matrix()\nhttps://github.com/sympy/sympy/blob/ab14b02dba5a7e3e4fb1e807fc8a954f1047a1a1/sympy/algebras/quaternion.py#L489\r\n\r\nThere appears to be an error in the `Quaternion.to_rotation_matrix()` output.  The simplest example I created to illustrate the problem is as follows:\r\n\r\n```\r\n>>import sympy\r\n>>print('Sympy version: ', sympy.__version__)\r\nSympy version: 1.2\r\n\r\n>> from sympy import *\r\n>> x = symbols('x')\r\n>> q = Quaternion(cos(x/2), sin(x/2), 0, 0",
+    "startingFiles": {
+      "quaternion.py": "a/sympy/algebras/quaternion.py b/sympy/algebras/quaternion.py\n\n        m10 = 2*s*(q.b*q.c + q.d*q.a)\n        m11 = 1 - 2*s*(q.b**2 + q.d**2)\n        m12 = 2*s*(q.c*q.d + q.b*q.a)\n\n        m20 = 2*s*(q.b*q.d - q.c*q.a)\n        m21 = 2*s*(q.c*q.d + q.b*q.a)",
+      "test_quaternion.py": "a/sympy/algebras/tests/test_quaternion.py b/sympy/algebras/tests/test_quaternion.py\n                                   2 * acos(sqrt(30)/30))\n\n    assert q1.to_rotation_matrix() == Matrix([[-S(2)/3, S(2)/15, S(11)/15],\n                                     [S(2)/3, -S(1)/3, S(2)/3],\n                                     [S(1)/3, S(14)/15, S(2)/15]])\n\n    assert q1.to_rotation_matrix((1, 1, 1)) == Matrix([[-S(2)/3, S(2)/15, S(11)/15, S(4)/5],\n                                                  [S(2)/3, -S(1)/3, S(2)/3, S(0)],\n                                                       [S(1)/3, S(14)/15, S(2)/15, -S(2)/5],\n                                                  [S(0), S(0), S(0), S(1)]])\n\n    theta = symbols(\"theta\", real=True)\n               [sin(theta),  cos(theta), 0, -sin(theta) - cos(theta) + 1],\n               [0,           0,          1,  0],\n               [0,           0,          0,  1]])\n\n\ndef test_quaternion_rotation_iss1593():\n    \"\"\"\n    There was a sign mistake in the definition,\n    of the rotation matrix. This tests that particular sign mistake.\n    See issue 1593 for reference.\n    See wikipedia\n    https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix\n    for the correct definition\n    \"\"\"\n    q = Quaternion(cos(x/2), sin(x/2), 0, 0)\n    assert(trigsimp(q.to_rotation_matrix()) == Matrix([\n                [1,      0,      0],\n                [0, cos(x), -sin(x)],\n                [0, sin(x), cos(x)]]))"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_quaternion.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "sympy/sympy",
+      "instanceId": "sympy__sympy-15349",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-025",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Zero-argument Min() and Max()\nRight now `Min()` and `Max()` with no arguments raise `ValueError: The Max/Min functions must have arguments.`. It might be mathematically more convenient to have them return `oo` and `-oo`, respectively. See https://en.wikipedia.org/wiki/Empty_set#Extended_real_numbers for why these are valid answers mathematically.",
+    "startingFiles": {
+      "miscellaneous.py": "a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py\n\nclass MinMaxBase(Expr, LatticeOp):\n    def __new__(cls, *args, **assumptions):\n        if not args:\n            raise ValueError(\"The Max/Min functions must have arguments.\")\n\n        args = (sympify(arg) for arg in args)\n",
+      "test_miscellaneous.py": "a/sympy/functions/elementary/tests/test_miscellaneous.py b/sympy/functions/elementary/tests/test_miscellaneous.py\n    assert Min(p, p_).func is Min\n\n    # lists\n    assert Min() == S.Infinity\n    assert Min(x) == x\n    assert Min(x, y) == Min(y, x)\n    assert Min(x, y, z) == Min(z, y, x)\n    assert Min(x, Min(y, z)) == Min(z, y, x)\n\n    # lists\n\n    assert Max() == S.NegativeInfinity\n    assert Max(x) == x\n    assert Max(x, y) == Max(y, x)\n    assert Max(x, y, z) == Max(z, y, x)\n    assert Max(x, Max(y, z)) == Max(z, y, x)"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_miscellaneous.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "sympy/sympy",
+      "instanceId": "sympy__sympy-15809",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-026",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "is_zero is incorrect on complex integer\n`is_zero` should return `None` if it cannot decide, but should never give the wrong answer. However:\r\n\r\n```\r\n>>> e = -2*I + (1 + I)**2\r\n>>> e.is_zero\r\nFalse\r\n>>> simplify(e).is_zero\r\nTrue\r\n```\r\n\r\nThis is causing errors in determining the rank of a matrix. See issue #15872 \nFixing is_zero for complex numbers while Add\nReferences to other Issues or PRs\r\n#15873 \r\n\r\nOther comments:\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n\r\n- core\r\n  - Fix `is_zero` becoming `False` o",
+    "startingFiles": {
+      "add.py": "a/sympy/core/add.py b/sympy/core/add.py\n                return\n        if z == len(self.args):\n            return True\n        if len(nz) == len(self.args):\n            return None\n        b = self.func(*nz)\n        if b.is_zero:",
+      "test_arit.py": "a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py\n    x, y = symbols('x y', zero=True)\n    assert (x + y).is_zero\n\n    # Issue 15873\n    e = -2*I + (1 + I)**2\n    assert e.is_zero is None\n\n\ndef test_issue_14392():\n    assert (sin(zoo)**2).as_real_imag() == (nan, nan)\n\n\ndef test_divmod():\n    assert divmod(x, y) == (x//y, x % y)\n    assert divmod(x, 3) == (x//3, x % 3)"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_arit.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "sympy/sympy",
+      "instanceId": "sympy__sympy-15875",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-027",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Posify ignores is_finite assmptions\nPosify removes a finite assumption from a symbol:\r\n```julia\r\nIn [1]: x = Symbol('x', finite=True)                                                                                                           \r\n\r\nIn [2]: x._assumptions                                                                                                                         \r\nOut[2]: {'finite': True, 'infinite': False, 'commutative': True}\r\n\r\nIn [3]: x.is_finite",
+    "startingFiles": {
+      "simplify.py": "a/sympy/simplify/simplify.py b/sympy/simplify/simplify.py\n            eq[i] = e.subs(reps)\n        return f(eq), {r: s for s, r in reps.items()}\n\n    reps = {s: Dummy(s.name, positive=True)\n                 for s in eq.free_symbols if s.is_positive is None}\n    eq = eq.subs(reps)\n    return eq, {r: s for s, r in reps.items()}",
+      "test_simplify.py": "a/sympy/simplify/tests/test_simplify.py b/sympy/simplify/tests/test_simplify.py\n    assert str(Sum(posify(1/x**n)[0], (n,1,3)).expand()) == \\\n        'Sum(_x**(-n), (n, 1, 3))'\n\n    # issue 16438\n    k = Symbol('k', finite=True)\n    eq, rep = posify(k)\n    assert eq.assumptions0 == {'positive': True, 'zero': False, 'imaginary': False,\n     'nonpositive': False, 'commutative': True, 'hermitian': True, 'real': True, 'nonzero': True,\n     'nonnegative': True, 'negative': False, 'complex': True, 'finite': True, 'infinite': False}\n\n\ndef test_issue_4194():\n    # simplify should call cancel"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_simplify.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "sympy/sympy",
+      "instanceId": "sympy__sympy-16450",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-028",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "merge(combine_attrs='override') does not copy attrs but instead references attrs from the first object\n<!-- Please include a self-contained copy-pastable example that generates the issue if possible.\r\n\r\nPlease be concise with code posted. See guidelines below on how to provide a good bug report:\r\n\r\n- Craft Minimal Bug Reports: http://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports\r\n- Minimal Complete Verifiable Examples: https://stackoverflow.com/help/mcve\r\n\r\nBug reports that follow",
+    "startingFiles": {
+      "merge.py": "a/xarray/core/merge.py b/xarray/core/merge.py\n    if combine_attrs == \"drop\":\n        return {}\n    elif combine_attrs == \"override\":\n        return variable_attrs[0]\n    elif combine_attrs == \"no_conflicts\":\n        result = dict(variable_attrs[0])\n        for attrs in variable_attrs[1:]:",
+      "test_merge.py": "a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py\n            expected.attrs = expected_attrs\n            assert actual.identical(expected)\n\n    def test_merge_attrs_override_copy(self):\n        ds1 = xr.Dataset(attrs={\"x\": 0})\n        ds2 = xr.Dataset(attrs={\"x\": 1})\n        ds3 = xr.merge([ds1, ds2], combine_attrs=\"override\")\n        ds3.attrs[\"x\"] = 2\n        assert ds1.x == 0\n\n    def test_merge_dicts_simple(self):\n        actual = xr.merge([{\"foo\": 0}, {\"bar\": \"one\"}, {\"baz\": 3.5}])\n        expected = xr.Dataset({\"foo\": 0, \"bar\": \"one\", \"baz\": 3.5})"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_merge.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "pydata/xarray",
+      "instanceId": "pydata__xarray-4629",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-029",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Naming a dimension \"method\" throws error when calling \".loc\"\n#### Code Sample, a copy-pastable example if possible\r\n\r\n```python\r\nimport numpy as np\r\nfrom xarray import DataArray\r\nempty = np.zeros((2,2))\r\nD1 = DataArray(empty, dims=['dim1', 'dim2'],   coords={'dim1':['x', 'y'], 'dim2':['a', 'b']})\r\nD2 = DataArray(empty, dims=['dim1', 'method'], coords={'dim1':['x', 'y'], 'method':['a', 'b']})\r\n\r\nprint(D1.loc[dict(dim1='x', dim2='a')])    # works\r\nprint(D2.loc[dict(dim1='x', method='a')])  # does",
+    "startingFiles": {
+      "dataarray.py": "a/xarray/core/dataarray.py b/xarray/core/dataarray.py\n            # expand the indexer so we can handle Ellipsis\n            labels = indexing.expanded_indexer(key, self.data_array.ndim)\n            key = dict(zip(self.data_array.dims, labels))\n        return self.data_array.sel(**key)\n\n    def __setitem__(self, key, value) -> None:\n        if not utils.is_dict_like(key):",
+      "test_dataarray.py": "a/xarray/tests/test_dataarray.py b/xarray/tests/test_dataarray.py\n        assert data.loc[True] == 0\n        assert data.loc[False] == 1\n\n    def test_loc_dim_name_collision_with_sel_params(self):\n        da = xr.DataArray(\n            [[0, 0], [1, 1]],\n            dims=[\"dim1\", \"method\"],\n            coords={\"dim1\": [\"x\", \"y\"], \"method\": [\"a\", \"b\"]},\n        )\n        np.testing.assert_array_equal(\n            da.loc[dict(dim1=[\"x\", \"y\"], method=[\"a\"])], [[0], [1]]\n        )\n\n    def test_selection_multiindex(self):\n        mindex = pd.MultiIndex.from_product(\n            [[\"a\", \"b\"], [1, 2], [-1, -2]], names=(\"one\", \"two\", \"three\")"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_dataarray.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "pydata/xarray",
+      "instanceId": "pydata__xarray-4695",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-030",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Accessing chunks on zarr backed xarray seems to load entire array into memory\n### What happened?\n\nWhen running the following example it appears the entire dataset is loaded into memory when accessing the `chunks` attribute:\r\n\r\n```python\r\nimport xarray as xr\r\n\r\nurl = \"https://ncsa.osn.xsede.org/Pangeo/pangeo-forge/swot_adac/FESOM/surf/fma.zarr\"\r\nds = xr.open_dataset(url, engine='zarr') # note that ds is not chunked but still uses lazy loading\r\nds.chunks\r\n```\n\n### What did you expect to happen?\n\nA",
+    "startingFiles": {
+      "common.py": "a/xarray/core/common.py b/xarray/core/common.py\n\n    chunks: dict[Any, tuple[int, ...]] = {}\n    for v in variables:\n        if hasattr(v.data, \"chunks\"):\n            for dim, c in v.chunksizes.items():\n                if dim in chunks and c != chunks[dim]:\n                    raise ValueError(",
+      "test_dataset.py": "a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py\n        assert data.attrs[\"foobar\"], \"baz\"\n        assert isinstance(data.attrs, dict)\n\n    def test_chunks_does_not_load_data(self) -> None:\n        # regression test for GH6538\n        store = InaccessibleVariableDataStore()\n        create_test_data().dump_to_store(store)\n        ds = open_dataset(store)\n        assert ds.chunks == {}\n\n    @requires_dask\n    def test_chunk(self) -> None:\n        data = create_test_data()"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_dataset.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "pydata/xarray",
+      "instanceId": "pydata__xarray-6721",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-031",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Setting `min-similarity-lines` to `0` should stop pylint from checking duplicate code\n### Current problem\n\nSetting `min-similarity-lines` to `0` in the rcfile doesn't disable checking for duplicate code, it instead treats every line of code as duplicate and raises many errors.\n\n### Desired solution\n\nSetting `min-similarity-lines` to `0` should disable the duplicate code check.\r\n\r\nIt works that way in many other linters (like flake8). Setting a numerical value in flake8 to `0` (e.g. `max-line-len",
+    "startingFiles": {
+      "similar.py": "a/pylint/checkers/similar.py b/pylint/checkers/similar.py\n\n    def run(self) -> None:\n        \"\"\"start looking for similarities and display results on stdout\"\"\"\n        self._display_sims(self._compute_sims())\n\n    def _compute_sims(self) -> List[Tuple[int, Set[LinesChunkLimits_T]]]:",
+      "unittest_similar.py": "a/tests/checkers/unittest_similar.py b/tests/checkers/unittest_similar.py\n        # There doesn't seem to be a faster way of doing this, yet.\n        lines = (linespec.text for linespec in lineset_obj.stripped_lines)\n        assert tuple(expected_lines) == tuple(lines)\n\n\ndef test_set_duplicate_lines_to_zero() -> None:\n    output = StringIO()\n    with redirect_stdout(output), pytest.raises(SystemExit) as ex:\n        similar.Run([\"--duplicates=0\", SIMILAR1, SIMILAR2])\n    assert ex.value.code == 0\n    assert output.getvalue() == \"\""
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest unittest_similar.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "pylint-dev/pylint",
+      "instanceId": "pylint-dev__pylint-4970",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-032",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "Symlinked directories not collected since pytest 6.1.0\nWhen there is a symlink to a directory in a test directory, is is just skipped over, but it should be followed and collected as usual.\r\n\r\nThis regressed in b473e515bc57ff1133fe650f1e7e6d7e22e5d841 (included in 6.1.0). For some reason I added a `follow_symlinks=False` in there, I don't remember why, but it does not match the previous behavior and should be removed.\r\n\r\nPR for this is coming up.",
+    "startingFiles": {
+      "pathlib.py": "a/src/_pytest/pathlib.py b/src/_pytest/pathlib.py\n    entries = sorted(os.scandir(path), key=lambda entry: entry.name)\n    yield from entries\n    for entry in entries:\n        if entry.is_dir(follow_symlinks=False) and recurse(entry):\n            yield from visit(entry.path, recurse)\n\n",
+      "test_collection.py": "a/testing/test_collection.py b/testing/test_collection.py\nfrom _pytest.main import _in_venv\nfrom _pytest.main import Session\nfrom _pytest.pathlib import symlink_or_skip\nfrom _pytest.pytester import Pytester\nfrom _pytest.pytester import Testdir\n\n\n    assert result.ret == 0\n\n\ndef test_collect_symlink_dir(pytester: Pytester) -> None:\n    \"\"\"A symlinked directory is collected.\"\"\"\n    dir = pytester.mkdir(\"dir\")\n    dir.joinpath(\"test_it.py\").write_text(\"def test_it(): pass\", \"utf-8\")\n    pytester.path.joinpath(\"symlink_dir\").symlink_to(dir)\n    result = pytester.runpytest()\n    result.assert_outcomes(passed=2)\n\n\ndef test_collectignore_via_conftest(testdir):\n    \"\"\"collect_ignore in parent conftest skips importing child (issue #4592).\"\"\"\n    tests = testdir.mkpydir(\"tests\")"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_collection.py -v",
+    "metadata": {
+      "category": "logic-error",
+      "repo": "pytest-dev/pytest",
+      "instanceId": "pytest-dev__pytest-7982",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-033",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "For probabilistic scorers, LogisticRegressionCV(multi_class='multinomial') uses OvR to calculate scores\nDescription:\r\n\r\nFor scorers such as `neg_log_loss` that use `.predict_proba()` to get probability estimates out of a classifier, the predictions used to generate the scores for `LogisticRegression(multi_class='multinomial')` do not seem to be the same predictions as those generated by the `.predict_proba()` method of `LogisticRegressionCV(multi_class='multinomial')`. The former uses a single l",
+    "startingFiles": {
+      "logistic.py": "a/sklearn/linear_model/logistic.py b/sklearn/linear_model/logistic.py\n        check_input=False, max_squared_sum=max_squared_sum,\n        sample_weight=sample_weight)\n\n    log_reg = LogisticRegression(fit_intercept=fit_intercept)\n\n    # The score method of Logistic Regression has a classes_ attribute.\n    if multi_class == 'ovr':",
+      "test_logistic.py": "a/sklearn/linear_model/tests/test_logistic.py b/sklearn/linear_model/tests/test_logistic.py\n\nfrom sklearn.datasets import load_iris, make_classification\nfrom sklearn.metrics import log_loss\nfrom sklearn.metrics.scorer import get_scorer\nfrom sklearn.model_selection import StratifiedKFold\nfrom sklearn.preprocessing import LabelEncoder\nfrom sklearn.utils import compute_class_weight\n    logistic_regression_path, LogisticRegressionCV,\n    _logistic_loss_and_grad, _logistic_grad_hess,\n    _multinomial_grad_hess, _logistic_loss,\n    _log_reg_scoring_path)\n\nX = [[-1, 0], [0, 1], [1, 1]]\nX_sp = sp.csr_matrix(X)\n    assert_array_equal(scores.shape, (1, 3, 1))\n\n\n@pytest.mark.parametrize('scoring, multiclass_agg_list',\n                         [('accuracy', ['']),\n                          ('precision', ['_macro', '_weighted']),\n                          # no need to test for micro averaging because it\n                          # is the same as accuracy for f1, precision,\n                          # and recall (see https://github.com/\n                          # scikit-learn/scikit-learn/pull/\n                          # 11578#discussion_r203250062)\n                          ('f1', ['_macro', '_weighted']),\n                          ('neg_log_loss', ['']),\n                          ('recall', ['_macro', '_weighted'])])\ndef test_logistic_cv_multinomial_score(scoring, multiclass_agg_list):\n    # test that LogisticRegressionCV uses the right score to compute its\n    # cross-validation scores when using a multinomial scoring\n    # see https://github.com/scikit-learn/scikit-learn/issues/8720\n    X, y = make_classification(n_samples=100, random_state=0, n_classes=3,\n                               n_informative=6)\n    train, test = np.arange(80), np.arange(80, 100)\n    lr = LogisticRegression(C=1., solver='lbfgs', multi_class='multinomial')\n    # we use lbfgs to support multinomial\n    params = lr.get_params()\n    # we store the params to set them further in _log_reg_scoring_path\n    for key in ['C', 'n_jobs', 'warm_start']:\n        del params[key]\n    lr.fit(X[train], y[train])\n    for averaging in multiclass_agg_list:\n        scorer = get_scorer(scoring + averaging)\n        assert_array_almost_equal(\n            _log_reg_scoring_path(X, y, train, test, Cs=[1.],\n                                  scoring=scorer, **params)[2][0],\n            scorer(lr, X[test], y[test]))\n\n\ndef test_multinomial_logistic_regression_string_inputs():\n    # Test with string labels for LogisticRegression(CV)\n    n_samples, n_features, n_classes = 50, 5, 3"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_logistic.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "scikit-learn/scikit-learn",
+      "instanceId": "scikit-learn__scikit-learn-11578",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-034",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "medium",
+    "description": "clone fails for parameters that are estimator types\n#### Description\r\n\r\n`clone` fails when one or more instance parameters are estimator types (i.e. not instances, but classes). \r\n\r\nI know this is a somewhat unusual use case, but I'm working on a project that provides wrappers for sklearn estimators (https://github.com/phausamann/sklearn-xarray) and I'd like to store the wrapped estimators as their classes - not their instances - as a parameter inside of a wrapper that behaves like an estimator",
+    "startingFiles": {
+      "base.py": "a/sklearn/base.py b/sklearn/base.py\n    # XXX: not handling dictionaries\n    if estimator_type in (list, tuple, set, frozenset):\n        return estimator_type([clone(e, safe=safe) for e in estimator])\n    elif not hasattr(estimator, 'get_params'):\n        if not safe:\n            return copy.deepcopy(estimator)\n        else:",
+      "test_base.py": "a/sklearn/tests/test_base.py b/sklearn/tests/test_base.py\n        assert_array_equal(clf.empty.toarray(), clf_cloned.empty.toarray())\n\n\ndef test_clone_estimator_types():\n    # Check that clone works for parameters that are types rather than\n    # instances\n    clf = MyEstimator(empty=MyEstimator)\n    clf2 = clone(clf)\n\n    assert clf.empty is clf2.empty\n\n\ndef test_repr():\n    # Smoke test the repr of the base estimator.\n    my_estimator = MyEstimator()"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_base.py -v",
+    "metadata": {
+      "category": "concurrency",
+      "repo": "scikit-learn/scikit-learn",
+      "instanceId": "scikit-learn__scikit-learn-12585",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-035",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Instance variables link to other variables of the same name in the project\n**Describe the bug**\r\nAssume autodoc is used via apidoc. In theory other combinations of autodoc (or maybe even without it) can cause this to occur, but this would be the most common occurrence.\r\n\r\nIf a global variable (or really, any kind of variable, just that this would be the most common occurrence) exists, and inside a class you decide to document a variable of the same name, the document of the instance variable wil",
+    "startingFiles": {
+      "python.py": "a/sphinx/domains/python.py b/sphinx/domains/python.py\n                            'keyword', 'kwarg', 'kwparam'),\n                     typerolename='class', typenames=('paramtype', 'type'),\n                     can_collapse=True),\n        PyTypedField('variable', label=_('Variables'), rolename='obj',\n                     names=('var', 'ivar', 'cvar'),\n                     typerolename='class', typenames=('vartype',),\n                     can_collapse=True),",
+      "test_domain_py.py": "a/tests/test_domain_py.py b/tests/test_domain_py.py\n                **{\"py:module\": \"example\", \"py:class\": \"Class\"})\n\n\ndef test_info_field_list_var(app):\n    text = (\".. py:class:: Class\\n\"\n            \"\\n\"\n            \"   :var int attr: blah blah\\n\")\n    doctree = restructuredtext.parse(app, text)\n\n    assert_node(doctree, (addnodes.index,\n                          [desc, (desc_signature,\n                                  [desc_content, nodes.field_list, nodes.field])]))\n    assert_node(doctree[1][1][0][0], ([nodes.field_name, \"Variables\"],\n                                      [nodes.field_body, nodes.paragraph]))\n\n    # :var int attr:\n    assert_node(doctree[1][1][0][0][1][0],\n                ([addnodes.literal_strong, \"attr\"],\n                 \" (\",\n                 [pending_xref, addnodes.literal_emphasis, \"int\"],\n                 \")\",\n                 \" -- \",\n                 \"blah blah\"))\n    assert_node(doctree[1][1][0][0][1][0][2], pending_xref,\n                refdomain=\"py\", reftype=\"class\", reftarget=\"int\", **{\"py:class\": \"Class\"})\n\n\n@pytest.mark.sphinx(freshenv=True)\ndef test_module_index(app):\n    text = (\".. py:module:: docutils\\n\""
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_domain_py.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "sphinx-doc/sphinx",
+      "instanceId": "sphinx-doc__sphinx-8638",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-036",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Modeling's `separability_matrix` does not compute separability correctly for nested CompoundModels\nConsider the following model:\r\n\r\n```python\r\nfrom astropy.modeling import models as m\r\nfrom astropy.modeling.separable import separability_matrix\r\n\r\ncm = m.Linear1D(10) & m.Linear1D(5)\r\n```\r\n\r\nIt's separability matrix as you might expect is a diagonal:\r\n\r\n```python\r\n>>> separability_matrix(cm)\r\narray([[ True, False],\r\n       [False,  True]])\r\n```\r\n\r\nIf I make the model more complex:\r\n```python\r\n>>>",
+    "startingFiles": {
+      "separable.py": "a/astropy/modeling/separable.py b/astropy/modeling/separable.py\n        cright = _coord_matrix(right, 'right', noutp)\n    else:\n        cright = np.zeros((noutp, right.shape[1]))\n        cright[-right.shape[0]:, -right.shape[1]:] = 1\n\n    return np.hstack([cleft, cright])\n",
+      "test_separable.py": "a/astropy/modeling/tests/test_separable.py b/astropy/modeling/tests/test_separable.py\np1 = models.Polynomial1D(1, name='p1')\n\n\ncm_4d_expected = (np.array([False, False, True, True]),\n                  np.array([[True,  True,  False, False],\n                            [True,  True,  False, False],\n                            [False, False, True,  False],\n                            [False, False, False, True]]))\n\n\ncompound_models = {\n    'cm1': (map3 & sh1 | rot & sh1 | sh1 & sh2 & sh1,\n            (np.array([False, False, True]),\n    'cm7': (map2 | p2 & sh1,\n            (np.array([False, True]),\n             np.array([[True, False], [False, True]]))\n            ),\n    'cm8': (rot & (sh1 & sh2), cm_4d_expected),\n    'cm9': (rot & sh1 & sh2, cm_4d_expected),\n    'cm10': ((rot & sh1) & sh2, cm_4d_expected),\n    'cm11': (rot & sh1 & (scl1 & scl2),\n             (np.array([False, False, True, True, True]),\n              np.array([[True,  True,  False, False, False],\n                        [True,  True,  False, False, False],\n                        [False, False, True,  False, False],\n                        [False, False, False, True,  False],\n                        [False, False, False, False, True]]))),\n}\n\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_separable.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "astropy/astropy",
+      "instanceId": "astropy__astropy-12907",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-037",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "`io.fits.FITSDiff` may sometimes report differences between identical files\n### Description\n\nIn some scenarios, `io.fits.FITSDiff` may report differences between identical files, even when comparing the same file to itself. This may be caused by improper handling of VLAs (variable-length arrays).\n\n### Expected behavior\n\n`io.fits.FITSDiff` only reports differences in files if they exist. Comparing a file to itself should never yield a difference.\n\n### How to Reproduce\n\n```python\r\nfrom astropy.io",
+    "startingFiles": {
+      "diff.py": "a/astropy/io/fits/diff.py b/astropy/io/fits/diff.py\n                arrb.dtype, np.floating\n            ):\n                diffs = where_not_allclose(arra, arrb, rtol=self.rtol, atol=self.atol)\n            elif \"P\" in col.format:\n                diffs = (\n                    [\n                        idx",
+      "test_diff.py": "a/astropy/io/fits/tests/test_diff.py b/astropy/io/fits/tests/test_diff.py\n        c8 = Column(\"H\", format=\"C\", array=[0.0 + 1.0j, 2.0 + 3.0j])\n        c9 = Column(\"I\", format=\"M\", array=[4.0 + 5.0j, 6.0 + 7.0j])\n        c10 = Column(\"J\", format=\"PI(2)\", array=[[0, 1], [2, 3]])\n        c11 = Column(\"K\", format=\"QJ(2)\", array=[[0, 1], [2, 3]])\n\n        columns = [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11]\n\n        ta = BinTableHDU.from_columns(columns)\n        tb = BinTableHDU.from_columns([c.copy() for c in columns])\n\n        diff = TableDataDiff(ta.data, tb.data)\n        assert diff.identical\n        assert len(diff.common_columns) == 11\n        assert diff.common_column_names == set(\"abcdefghijk\")\n        assert diff.diff_ratio == 0\n        assert diff.diff_total == 0\n\n        ca8 = Column(\"H\", format=\"C\", array=[0.0 + 1.0j, 2.0 + 3.0j])\n        ca9 = Column(\"I\", format=\"M\", array=[4.0 + 5.0j, 6.0 + 7.0j])\n        ca10 = Column(\"J\", format=\"PI(2)\", array=[[0, 1], [2, 3]])\n        ca11 = Column(\"K\", format=\"QJ(2)\", array=[[0, 1], [2, 3]])\n\n        cb1 = Column(\"A\", format=\"L\", array=[False, False])\n        cb2 = Column(\"B\", format=\"X\", array=[[0], [0]])\n        cb8 = Column(\"H\", format=\"C\", array=[1.0 + 1.0j, 2.0 + 3.0j])\n        cb9 = Column(\"I\", format=\"M\", array=[5.0 + 5.0j, 6.0 + 7.0j])\n        cb10 = Column(\"J\", format=\"PI(2)\", array=[[1, 2], [3, 4]])\n        cb11 = Column(\"K\", format=\"QJ(2)\", array=[[1, 2], [3, 4]])\n\n        ta = BinTableHDU.from_columns(\n            [ca1, ca2, ca3, ca4, ca5, ca6, ca7, ca8, ca9, ca10, ca11]\n        )\n        tb = BinTableHDU.from_columns(\n            [cb1, cb2, cb3, cb4, cb5, cb6, cb7, cb8, cb9, cb10, cb11]\n        )\n\n        diff = TableDataDiff(ta.data, tb.data, numdiffs=20)\n        assert diff.diff_values[12][0] == (\"J\", 1)\n        assert (diff.diff_values[12][1][0] == [2, 3]).all()\n        assert (diff.diff_values[12][1][1] == [3, 4]).all()\n        assert diff.diff_values[13][0] == (\"K\", 0)\n        assert (diff.diff_values[13][1][0] == [0, 1]).all()\n        assert (diff.diff_values[13][1][1] == [1, 2]).all()\n        assert diff.diff_values[14][0] == (\"K\", 1)\n        assert (diff.diff_values[14][1][0] == [2, 3]).all()\n        assert (diff.diff_values[14][1][1] == [3, 4]).all()\n\n        assert diff.diff_total == 15\n        assert np.isclose(diff.diff_ratio, 0.682, atol=1e-3, rtol=0)\n\n        report = diff.report()\n        assert \"Column A data differs in row 0:\\n    a> True\\n    b> False\" in report\n        assert \"...and at 1 more indices.\\n Column D data differs in row 0:\" in report\n        assert \"15 different table data element(s) found (68.18% different)\" in report\n        assert report.count(\"more indices\") == 1\n\n    def test_identical_files_basic(self):"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_diff.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "astropy/astropy",
+      "instanceId": "astropy__astropy-14539",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-038",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "ASCII table output to HTML does not support supplied \"formats\"\n<!-- This comments are hidden when you submit the issue,\r\nso you do not need to remove them! -->\r\n\r\n<!-- Please be sure to check out our contributing guidelines,\r\nhttps://github.com/astropy/astropy/blob/main/CONTRIBUTING.md .\r\nPlease be sure to check out our code of conduct,\r\nhttps://github.com/astropy/astropy/blob/main/CODE_OF_CONDUCT.md . -->\r\n\r\n<!-- Please have a search on our GitHub repository to see if a similar\r\nissue has alrea",
+    "startingFiles": {
+      "html.py": "a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py\n        cols = list(table.columns.values())\n\n        self.data.header.cols = cols\n\n        if isinstance(self.data.fill_values, tuple):\n            self.data.fill_values = [self.data.fill_values]\n\n        self.data._set_fill_values(cols)\n\n        lines = []\n",
+      "test_html.py": "a/astropy/io/ascii/tests/test_html.py b/astropy/io/ascii/tests/test_html.py\n    assert buffer_output.getvalue() == buffer_expected.getvalue()\n\n\ndef test_write_table_formatted_columns():\n    \"\"\"\n    Test to make sure that the HTML writer writes out using the\n    supplied formatting.\n    \"\"\"\n\n    col1 = [1, 2]\n    col2 = [1.234567e-11, -9.876543e11]\n    formats = {\"C1\": \"04d\", \"C2\": \".2e\"}\n    table = Table([col1, col2], names=formats.keys())\n\n    expected = \"\"\"\\\n<html>\n <head>\n  <meta charset=\"utf-8\"/>\n  <meta content=\"text/html;charset=UTF-8\" http-equiv=\"Content-type\"/>\n </head>\n <body>\n  <table>\n   <thead>\n    <tr>\n     <th>C1</th>\n     <th>C2</th>\n    </tr>\n   </thead>\n   <tr>\n    <td>0001</td>\n    <td>1.23e-11</td>\n   </tr>\n   <tr>\n    <td>0002</td>\n    <td>-9.88e+11</td>\n   </tr>\n  </table>\n </body>\n</html>\n    \"\"\"\n    with StringIO() as sp:\n        table.write(sp, format=\"html\", formats=formats)\n        out = sp.getvalue().strip()\n    assert out == expected.strip()\n\n\n@pytest.mark.skipif('not HAS_BS4')\ndef test_read_html_unicode():\n    \"\"\""
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_html.py -v",
+    "metadata": {
+      "category": "type-error",
+      "repo": "astropy/astropy",
+      "instanceId": "astropy__astropy-13453",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-039",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "IndexError: list index out of range in export_text when the tree only has one feature\n<!--\r\nIf your issue is a usage question, submit it here instead:\r\n- StackOverflow with the scikit-learn tag: https://stackoverflow.com/questions/tagged/scikit-learn\r\n- Mailing List: https://mail.python.org/mailman/listinfo/scikit-learn\r\nFor more information, see User Questions: http://scikit-learn.org/stable/support.html#user-questions\r\n-->\r\n\r\n<!-- Instructions For Filing a Bug: https://github.com/scikit-learn/",
+    "startingFiles": {
+      "export.py": "a/sklearn/tree/export.py b/sklearn/tree/export.py\n        value_fmt = \"{}{} value: {}\\n\"\n\n    if feature_names:\n        feature_names_ = [feature_names[i] for i in tree_.feature]\n    else:\n        feature_names_ = [\"feature_{}\".format(i) for i in tree_.feature]\n",
+      "test_export.py": "a/sklearn/tree/tests/test_export.py b/sklearn/tree/tests/test_export.py\n    assert export_text(reg, decimals=1) == expected_report\n    assert export_text(reg, decimals=1, show_weights=True) == expected_report\n\n    X_single = [[-2], [-1], [-1], [1], [1], [2]]\n    reg = DecisionTreeRegressor(max_depth=2, random_state=0)\n    reg.fit(X_single, y_mo)\n\n    expected_report = dedent(\"\"\"\n    |--- first <= 0.0\n    |   |--- value: [-1.0, -1.0]\n    |--- first >  0.0\n    |   |--- value: [1.0, 1.0]\n    \"\"\").lstrip()\n    assert export_text(reg, decimals=1,\n                       feature_names=['first']) == expected_report\n    assert export_text(reg, decimals=1, show_weights=True,\n                       feature_names=['first']) == expected_report\n\n\ndef test_plot_tree_entropy(pyplot):\n    # mostly smoke tests"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_export.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "scikit-learn/scikit-learn",
+      "instanceId": "scikit-learn__scikit-learn-14053",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-040",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "CountVectorizer's get_feature_names raise not NotFittedError when the vocabulary parameter is provided\nIf you initialize a `CounterVectorizer` and try to perform a transformation without training you will get a `NotFittedError` exception.\r\n\r\n```python\r\nIn [1]: from sklearn.feature_extraction.text import CountVectorizer\r\nIn [2]: vectorizer = CountVectorizer()\r\nIn [3]: corpus = [\r\n    ...:     'This is the first document.',\r\n    ...:     'This is the second second document.',\r\n    ...:     'And th",
+    "startingFiles": {
+      "text.py": "a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py\n\n    def get_feature_names(self):\n        \"\"\"Array mapping from feature integer indices to feature name\"\"\"\n        self._check_vocabulary()\n\n        return [t for t, i in sorted(six.iteritems(self.vocabulary_),",
+      "test_text.py": "a/sklearn/feature_extraction/tests/test_text.py b/sklearn/feature_extraction/tests/test_text.py\n    assert_equal(X.shape[1], len(what_we_like))\n\n\ndef test_countvectorizer_custom_vocabulary_repeated_indices():\n    vocab = {\"pizza\": 0, \"beer\": 0}\n    try:\n        CountVectorizer(vocabulary=vocab)\n\n    # test for Value error on unfitted/empty vocabulary\n    assert_raises(ValueError, cv.get_feature_names)\n    assert_false(cv.fixed_vocabulary_)\n\n    # test for vocabulary learned from data\n    X = cv.fit_transform(ALL_FOOD_DOCS)\n    n_samples, n_features = X.shape\n    assert_equal(len(cv.vocabulary_), n_features)\n    for idx, name in enumerate(feature_names):\n        assert_equal(idx, cv.vocabulary_.get(name))\n\n    # test for custom vocabulary\n    vocab = ['beer', 'burger', 'celeri', 'coke', 'pizza',\n             'salad', 'sparkling', 'tomato', 'water']\n\n    cv = CountVectorizer(vocabulary=vocab)\n    feature_names = cv.get_feature_names()\n    assert_array_equal(['beer', 'burger', 'celeri', 'coke', 'pizza', 'salad',\n                        'sparkling', 'tomato', 'water'], feature_names)\n    assert_true(cv.fixed_vocabulary_)\n\n    for idx, name in enumerate(feature_names):\n        assert_equal(idx, cv.vocabulary_.get(name))\n\n\ndef test_vectorizer_max_features():\n    vec_factories = ("
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_text.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "scikit-learn/scikit-learn",
+      "instanceId": "scikit-learn__scikit-learn-10908",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-041",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Message.locations duplicate unnecessary\n### Describe the bug\r\n\r\nWhen running \r\n\r\n`make clean; make gettext`\r\n\r\nthere are times the list of locations is duplicated unnecessarily, example:\r\n\r\n```\r\n#: ../../manual/render/shader_nodes/vector/vector_rotate.rst:38\r\n#: ../../manual/modeling/hair.rst:0\r\n#: ../../manual/modeling/hair.rst:0\r\n#: ../../manual/modeling/hair.rst:0\r\n#: ../../manual/modeling/metas/properties.rst:92\r\n```\r\n\r\nor \r\n\r\n```\r\n#: ../../manual/movie_clip/tracking/clip/toolbar/solve.rst:9",
+    "startingFiles": {
+      "gettext.py": "a/sphinx/builders/gettext.py b/sphinx/builders/gettext.py\n\n    def __iter__(self) -> Generator[Message, None, None]:\n        for message in self.messages:\n            positions = [(source, line) for source, line, uuid in self.metadata[message]]\n            uuids = [uuid for source, line, uuid in self.metadata[message]]\n            yield Message(message, positions, uuids)\n",
+      "test_build_gettext.py": "a/tests/test_build_gettext.py b/tests/test_build_gettext.py\n\nimport pytest\n\nfrom sphinx.builders.gettext import Catalog, MsgOrigin\nfrom sphinx.util.osutil import cd\n\n\ndef test_Catalog_duplicated_message():\n    catalog = Catalog()\n    catalog.add('hello', MsgOrigin('/path/to/filename', 1))\n    catalog.add('hello', MsgOrigin('/path/to/filename', 1))\n    catalog.add('hello', MsgOrigin('/path/to/filename', 2))\n    catalog.add('hello', MsgOrigin('/path/to/yetanother', 1))\n    catalog.add('world', MsgOrigin('/path/to/filename', 1))\n\n    assert len(list(catalog)) == 2\n\n    msg1, msg2 = list(catalog)\n    assert msg1.text == 'hello'\n    assert msg1.locations == [('/path/to/filename', 1),\n                              ('/path/to/filename', 2),\n                              ('/path/to/yetanother', 1)]\n    assert msg2.text == 'world'\n    assert msg2.locations == [('/path/to/filename', 1)]\n\n\n@pytest.mark.sphinx('gettext', srcdir='root-gettext')\ndef test_build_gettext(app):\n    # Generic build; should fail only when the builder is horribly broken."
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_build_gettext.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "sphinx-doc/sphinx",
+      "instanceId": "sphinx-doc__sphinx-10466",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-042",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Proxy authentication bug\n<!-- Summary. -->\r\n\r\nWhen using proxies in python 3.8.12, I get an error 407. Using any other version of python works fine. I am assuming it could be to do with this https://docs.python.org/3/whatsnew/3.8.html#notable-changes-in-python-3-8-12.\r\n\r\n<!-- What you expected. -->\r\n\r\nI should get a status of 200.\r\n\r\n<!-- What happened instead. -->\r\n\r\nI get a status code of 407.\r\n\r\n```python\r\nimport requests\r\n\r\n\r\nr = requests.get('https://example.org/', proxies=proxies) # You wi",
+    "startingFiles": {
+      "utils.py": "a/requests/utils.py b/requests/utils.py\n    if not netloc:\n        netloc, path = path, netloc\n\n    if scheme is None:\n        scheme = new_scheme\n    if path is None:",
+      "test_utils.py": "a/tests/test_utils.py b/tests/test_utils.py\n        ('example.com/path', 'http://example.com/path'),\n        ('//example.com/path', 'http://example.com/path'),\n        ('example.com:80', 'http://example.com:80'),\n        (\n            'http://user:pass@example.com/path?query',\n            'http://user:pass@example.com/path?query'\n        ),\n        (\n            'http://user@example.com/path?query',\n            'http://user@example.com/path?query'\n        )\n    ))\ndef test_prepend_scheme_if_needed(value, expected):\n    assert prepend_scheme_if_needed(value, 'http') == expected"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_utils.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "psf/requests",
+      "instanceId": "psf__requests-6028",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-043",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "Inconsistency in double single-quote ('') management in FITS Card\n### Description\r\n\r\nThe management of single-quotes in FITS cards seem correct, except *sometimes* when dealing with null strings, i.e. double single quotes (`''`), which sometimes are transformed into single single quotes (`'`).\r\n\r\nE.g.:\r\n```python\r\nIn [39]: from astropy.io import fits\r\nIn [40]: for n in range(60, 70):\r\n    ...:     card1 = fits.Card('CONFIG', \"x\" * n + \"''\")\r\n    ...:     card2 = fits.Card.fromstring(str(card1))",
+    "startingFiles": {
+      "card.py": "a/astropy/io/fits/card.py b/astropy/io/fits/card.py\n    # followed by an optional comment\n    _strg = r\"\\'(?P<strg>([ -~]+?|\\'\\'|) *?)\\'(?=$|/| )\"\n    _comm_field = r\"(?P<comm_field>(?P<sepr>/ *)(?P<comm>(.|\\n)*))\"\n    _strg_comment_RE = re.compile(f\"({_strg})? *{_comm_field}?\")\n\n    # FSC commentary card string which must contain printable ASCII characters.\n    # Note: \\Z matches the end of the string without allowing newlines\n                    return kw, vc\n\n                value = m.group(\"strg\") or \"\"\n                value = value.rstrip().replace(\"''\", \"'\")\n                if value and value[-1] == \"&\":\n                    value = value[:-1]\n                values.append(value)",
+      "test_header.py": "a/astropy/io/fits/tests/test_header.py b/astropy/io/fits/tests/test_header.py\n                \"CONTINUE  '' / comments in line 1 comments with ''.                             \"\n            )\n\n    def test_long_string_value_with_quotes(self):\n        testval = \"x\" * 100 + \"''\"\n        c = fits.Card(\"TEST\", testval)\n        c = fits.Card.fromstring(c.image)\n        assert c.value == testval\n\n        testval = \"x\" * 100 + \"''xxx\"\n        c = fits.Card(\"TEST\", testval)\n        c = fits.Card.fromstring(c.image)\n        assert c.value == testval\n\n        testval = \"x\" * 100 + \"'' xxx\"\n        c = fits.Card(\"TEST\", testval)\n        c = fits.Card.fromstring(c.image)\n        assert c.value == testval\n\n    def test_continue_card_with_equals_in_value(self):\n        \"\"\"\n        Regression test for https://aeon.stsci.edu/ssb/trac/pyfits/ticket/117"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_header.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "astropy/astropy",
+      "instanceId": "astropy__astropy-14598",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-044",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "ascii.qdp Table format assumes QDP commands are upper case\n### Description\n\nascii.qdp assumes that commands in a QDP file are upper case, for example, for errors they must be \"READ SERR 1 2\" whereas QDP itself is not case sensitive and case use \"read serr 1 2\". \r\n\r\nAs many QDP files are created by hand, the expectation that all commands be all-caps should be removed.\n\n### Expected behavior\n\nThe following qdp file should read into a `Table` with errors, rather than crashing.\r\n```\r\nread serr 1 2",
+    "startingFiles": {
+      "qdp.py": "a/astropy/io/ascii/qdp.py b/astropy/io/ascii/qdp.py\n    _new_re = rf\"NO({sep}NO)+\"\n    _data_re = rf\"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)\"\n    _type_re = rf\"^\\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\\s*(\\!(?P<comment>.*))?\\s*$\"\n    _line_type_re = re.compile(_type_re)\n    line = line.strip()\n    if not line:\n        return \"comment\"\n\n            values = []\n            for v in line.split(delimiter):\n                if v == \"NO\":\n                    values.append(np.ma.masked)\n                else:\n                    # Understand if number is int or float",
+      "test_qdp.py": "a/astropy/io/ascii/tests/test_qdp.py b/astropy/io/ascii/tests/test_qdp.py\n    assert np.isclose(table2[\"MJD_nerr\"][0], -2.37847222222222e-05)\n\n\ndef lowercase_header(value):\n    \"\"\"Make every non-comment line lower case.\"\"\"\n    lines = []\n    for line in value.splitlines():\n        if not line.startswith(\"!\"):\n            line = line.lower()\n        lines.append(line)\n    return \"\\n\".join(lines)\n\n\n@pytest.mark.parametrize(\"lowercase\", [False, True])\ndef test_roundtrip(tmp_path, lowercase):\n    example_qdp = \"\"\"\n    ! Swift/XRT hardness ratio of trigger: XXXX, name: BUBU X-2\n    ! Columns are as labelled\n    53000.123456 2.37847222222222e-05    -2.37847222222222e-05   -0.292553       -0.374935\n    NO 1.14467592592593e-05    -1.14467592592593e-05   0.000000        NO\n    \"\"\"\n    if lowercase:\n        example_qdp = lowercase_header(example_qdp)\n\n    path = str(tmp_path / \"test.qdp\")\n    path2 = str(tmp_path / \"test2.qdp\")"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_qdp.py -v",
+    "metadata": {
+      "category": "concurrency",
+      "repo": "astropy/astropy",
+      "instanceId": "astropy__astropy-14365",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-045",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "hard",
+    "description": "autodoc_typehints_description_target not working with Napoleon\n### Describe the bug\n\nI was trying to use the config option `autodoc_typehints_description_target = \"documented\"` combined with the Napoleon plugin (using Google style).\r\n\r\nThe return types were missing from the resulting documentation.\r\n\r\n\n### How to Reproduce\n\nJust generate the documentation using Napoleon and the config options:\r\n```python\r\nautodoc_typehints = \"description\"\r\nautodoc_typehints_description_target = \"documented\"",
+    "startingFiles": {
+      "typehints.py": "a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py\n        elif parts[0] == 'type':\n            name = ' '.join(parts[1:])\n            has_type.add(name)\n        elif parts[0] == 'return':\n            has_description.add('return')\n        elif parts[0] == 'rtype':\n            has_type.add('return')\n\n    # Add 'type' for parameters with a description but no declared type.\n    for name in annotations:\n        if name == 'return':\n            continue\n        if name in has_description and name not in has_type:\n            field = nodes.field()",
+      "test_ext_autodoc_configs.py": "a/tests/test_ext_autodoc_configs.py b/tests/test_ext_autodoc_configs.py\n    (app.srcdir / 'index.rst').write_text(\n        '.. autofunction:: target.typehints.incr\\n'\n        '\\n'\n        '.. autofunction:: target.typehints.decr\\n'\n        '\\n'\n        '   :returns: decremented number\\n'\n        '\\n'\n        '.. autofunction:: target.typehints.tuple_args\\n'\n        '\\n'\n        '   :param x: arg\\n'\n    app.build()\n    context = (app.outdir / 'index.txt').read_text()\n    assert ('target.typehints.incr(a, b=1)\\n'\n            '\\n'\n            'target.typehints.decr(a, b=1)\\n'\n            '\\n'\n            '   Returns:\\n'\n            '      decremented number\\n'\n            '\\n'\n            '   Return type:\\n'\n            '      int\\n'\n            '\\n'\n            'target.typehints.tuple_args(x)\\n'\n            '\\n'"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_ext_autodoc_configs.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "sphinx-doc/sphinx",
+      "instanceId": "sphinx-doc__sphinx-9673",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-046",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "easy",
+    "description": "Inconsistent behaviour with type alias documentation (not overwriting all the default messages, just some)\n**Describe the bug**\r\nHello, I have 3 muiltiline docstrings for type aliases (using the next-line `\"\"\"` documentation syntax). For 1 one them the docstring is correctly shown in the rendered HTML, but for 2 of them, the docstrings are ignored and the only thing shown is the ``alias of ...`` text. I suppose this is related to #4422, but I might be doing something wrong here (so if you could",
+    "startingFiles": {
+      "__init__.py": "a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py\n    def get_doc(self, ignore: int = None) -> Optional[List[List[str]]]:\n        if self.doc_as_attr:\n            # Don't show the docstring of the class when it is an alias.\n            return None\n\n        lines = getattr(self, '_new_docstrings', None)\n        if lines is not None:\n        tab_width = self.directive.state.document.settings.tab_width\n        return [prepare_docstring(docstring, ignore, tab_width) for docstring in docstrings]\n\n    def add_content(self, more_content: Optional[StringList], no_docstring: bool = False\n                    ) -> None:\n        if self.doc_as_attr:\n            try:\n                more_content = StringList([_('alias of %s') % restify(self.object)], source='')\n            except AttributeError:",
+      "classes.py": "a/tests/roots/test-ext-autodoc/target/classes.py b/tests/roots/test-ext-autodoc/target/classes.py\n\n\nAlias = Foo\n\n#: docstring\nOtherAlias = Bar"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest classes.py -v",
+    "metadata": {
+      "category": "edge-case",
+      "repo": "sphinx-doc/sphinx",
+      "instanceId": "sphinx-doc__sphinx-9229",
+      "split": "train"
+    }
+  },
+  {
+    "id": "swebench-047",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "easy",
+    "description": "Regression in 5.2.3: pytest tries to collect random __init__.py files\nThis was caught by our build server this morning.  It seems that pytest 5.2.3 tries to import any `__init__.py` file under the current directory. (We have some package that is only used on windows and cannot be imported on linux.)\r\n\r\nHere is a minimal example using tox that reproduces the problem (I'm running on Debian 10 with Python 3.7.3):\r\n```sh\r\n❯❯❯ mkdir foobar\r\n❯❯❯ echo 'assert False' >! foobar/__init__.py\r\n❯❯❯ cat > tox",
+    "startingFiles": {
+      "python.py": "a/src/_pytest/python.py b/src/_pytest/python.py\n    @property\n    def obj(self):\n        \"\"\"Underlying Python object.\"\"\"\n        self._mount_obj_if_needed()\n        return self._obj\n\n    @obj.setter\n    def obj(self, value):\n        self._obj = value\n\n    def _mount_obj_if_needed(self):\n        obj = getattr(self, \"_obj\", None)\n        if obj is None:\n            self._obj = obj = self._getobj()\n            # XXX evil hack\n            # used to avoid Instance collector marker duplication\n            if self._ALLOW_MARKERS:\n                self.own_markers.extend(get_unpacked_marks(obj))\n\n    def _getobj(self):\n        \"\"\"Gets the underlying Python object. May be overwritten by subclasses.\"\"\"\nclass Module(nodes.File, PyCollector):\n    \"\"\" Collector for test classes and functions. \"\"\"\n\n    def __init__(self, fspath, parent=None, config=None, session=None, nodeid=None):\n        if fspath.basename == \"__init__.py\":\n            self._ALLOW_MARKERS = False\n\n        nodes.FSCollector.__init__(\n            self, fspath, parent=parent, config=config, session=session, nodeid=nodeid\n        )\n\n    def _getobj(self):\n        return self._importtestmodule()\n\n        return path in self.session._initialpaths\n\n    def collect(self):\n        self._mount_obj_if_needed()\n        this_path = self.fspath.dirpath()\n        init_module = this_path.join(\"__init__.py\")\n        if init_module.check(file=1) and path_matches_patterns(",
+      "test_collection.py": "a/testing/test_collection.py b/testing/test_collection.py\n            \"*= 1 error in *\",\n        ]\n    )\n\n\ndef test_does_not_eagerly_collect_packages(testdir):\n    testdir.makepyfile(\"def test(): pass\")\n    pydir = testdir.mkpydir(\"foopkg\")\n    pydir.join(\"__init__.py\").write(\"assert False\")\n    result = testdir.runpytest()\n    assert result.ret == ExitCode.OK\n\n\ndef test_does_not_put_src_on_path(testdir):\n    # `src` is not on sys.path so it should not be importable\n    testdir.tmpdir.join(\"src/nope/__init__.py\").ensure()\n    testdir.makepyfile(\n        \"import pytest\\n\"\n        \"def test():\\n\"\n        \"    with pytest.raises(ImportError):\\n\"\n        \"        import nope\\n\"\n    )\n    result = testdir.runpytest()\n    assert result.ret == ExitCode.OK"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_collection.py -v",
+    "metadata": {
+      "category": "error-handling",
+      "repo": "pytest-dev/pytest",
+      "instanceId": "pytest-dev__pytest-6197",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-048",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "easy",
+    "description": "bad-names-rgxs mangles regular expressions with commas\n### Bug description\r\n\r\nSince pylint splits on commas in this option, instead of taking a list of strings, if there are any commas in the regular expression, the result is mangled before being parsed. The config below demonstrates this clearly by causing pylint to crash immediately.\r\n\r\n### Configuration\r\n\r\n```ini\r\n[tool.pylint.basic]\r\n# capture group ensures that the part after the comma is an invalid regular\r\n# expression, causing pylint to",
+    "startingFiles": {
+      "argument.py": "a/pylint/config/argument.py b/pylint/config/argument.py\ndef _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:\n    \"\"\"Transforms a comma separated list of regular expressions.\"\"\"\n    patterns: list[Pattern[str]] = []\n    for pattern in _csv_transformer(value):\n        patterns.append(_regex_transformer(pattern))\n    return patterns\n",
+      "test_config.py": "a/tests/config/test_config.py b/tests/config/test_config.py\nfrom __future__ import annotations\n\nimport os\nimport re\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom typing import Any\n\nimport pytest\nfrom pytest import CaptureFixture\n    assert \"the-newest has an invalid format, should be a version string.\" in output.err\n\n\nCSV_REGEX_COMMA_CASES = [\n    (\"foo\", [\"foo\"]),\n    (\"foo,bar\", [\"foo\", \"bar\"]),\n    (\"foo, bar\", [\"foo\", \"bar\"]),\n    (\"foo, bar{1,3}\", [\"foo\", \"bar{1,3}\"]),\n]\n\n\n@pytest.mark.parametrize(\"in_string,expected\", CSV_REGEX_COMMA_CASES)\ndef test_csv_regex_comma_in_quantifier(in_string: str, expected: list[str]) -> None:\n    \"\"\"Check that we correctly parse a comma-separated regex when there are one\n    or more commas within quantifier expressions.\n    \"\"\"\n\n    def _template_run(in_string: str) -> list[re.Pattern[Any]]:\n        r = Run(\n            [str(EMPTY_MODULE), rf\"--bad-names-rgx={in_string}\"],\n            exit=False,\n        )\n        bad_names_rgxs: list[re.Pattern[Any]] = r.linter.config.bad_names_rgxs\n        return bad_names_rgxs\n\n    assert _template_run(in_string) == [re.compile(regex) for regex in expected]\n\n\ndef test_regex_error(capsys: CaptureFixture) -> None:\n    \"\"\"Check that we correctly error when an an option is passed whose value is an invalid regular expression.\"\"\"\n    with pytest.raises(SystemExit):\n    \"\"\"\n    with pytest.raises(SystemExit):\n        Run(\n            [str(EMPTY_MODULE), r\"--bad-names-rgx=(foo{1,}, foo{1,3}})\"],\n            exit=False,\n        )\n    output = capsys.readouterr()\n    assert (\n        r\"Error in provided regular expression: (foo{1,} beginning at index 0: missing ), unterminated subpattern\"\n        in output.err\n    )\n"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_config.py -v",
+    "metadata": {
+      "category": "regex",
+      "repo": "pylint-dev/pylint",
+      "instanceId": "pylint-dev__pylint-8898",
+      "split": "test"
+    }
+  },
+  {
+    "id": "swebench-049",
+    "source": "swebench-verified",
+    "language": "python",
+    "difficulty": "easy",
+    "description": "Consider MRO when obtaining marks for classes\nWhen using pytest markers in two baseclasses `Foo` and `Bar`, inheriting from both of those baseclasses will lose the markers of one of those classes. This behavior is present in pytest 3-6, and I think it may as well have been intended. I am still filing it as a bug because I am not sure if this edge case was ever explicitly considered.\r\n\r\nIf it is widely understood that all markers are part of a single attribute, I guess you could say that this is",
+    "startingFiles": {
+      "structures.py": "a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py\n        return self.with_args(*args, **kwargs)\n\n\ndef get_unpacked_marks(obj: object) -> Iterable[Mark]:\n    \"\"\"Obtain the unpacked marks that are stored on an object.\"\"\"\n    mark_list = getattr(obj, \"pytestmark\", [])\n    if not isinstance(mark_list, list):\n        mark_list = [mark_list]\n    return normalize_mark_list(mark_list)\n\n\ndef normalize_mark_list(\n    assert isinstance(mark, Mark), mark\n    # Always reassign name to avoid updating pytestmark in a reference that\n    # was only borrowed.\n    obj.pytestmark = [*get_unpacked_marks(obj), mark]\n\n\n# Typing for builtin pytest marks. This is cheating; it gives builtin marks",
+      "test_mark.py": "a/testing/test_mark.py b/testing/test_mark.py\n    result = pytester.runpytest(foo, \"-m\", expr)\n    result.stderr.fnmatch_lines([expected])\n    assert result.ret == ExitCode.USAGE_ERROR\n\n\ndef test_mark_mro() -> None:\n    xfail = pytest.mark.xfail\n\n    @xfail(\"a\")\n    class A:\n        pass\n\n    @xfail(\"b\")\n    class B:\n        pass\n\n    @xfail(\"c\")\n    class C(A, B):\n        pass\n\n    from _pytest.mark.structures import get_unpacked_marks\n\n    all_marks = get_unpacked_marks(C)\n\n    assert all_marks == [xfail(\"c\").mark, xfail(\"a\").mark, xfail(\"b\").mark]\n\n    assert get_unpacked_marks(C, consider_mro=False) == [xfail(\"c\").mark]"
+    },
+    "testCommand": "cd $WORKSPACE && python -m pytest test_mark.py -v",
+    "metadata": {
+      "category": "edge-case",
+      "repo": "pytest-dev/pytest",
+      "instanceId": "pytest-dev__pytest-10356",
+      "split": "train"
+    }
+  }
+]

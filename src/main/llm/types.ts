@@ -26,6 +26,8 @@ export interface StreamOptions {
   fallbackModel?: string
   /** Invoked before each retry attempt so callers can emit UI notifications. */
   onRetry?: (info: RetryInfo) => void
+  /** Thinking depth for extended reasoning (maps to effort/thinking API params) */
+  thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
 }
 
 export interface LLMAdapter {

@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
 
   // Stream channels (main -> renderer, fire-and-forget via webContents.send)
   'stream:text_delta': 'stream:text_delta',
+  'stream:thinking_delta': 'stream:thinking_delta',
   'stream:tool_use_start': 'stream:tool_use_start',
   'stream:tool_use_delta': 'stream:tool_use_delta',
   'stream:tool_use_end': 'stream:tool_use_end',
@@ -166,6 +167,7 @@ export interface IpcRequestPayloads {
     baseURL?: string
     systemPrompt?: string
     relayToken?: string
+    thinkingDepth?: string
   }
   'workspace:open_folder': void
   'workspace:get_tree': { dirPath?: string; depth?: number }
@@ -226,6 +228,7 @@ export interface IpcResponsePayloads {
     baseURL?: string
     systemPrompt?: string
     relayToken?: string
+    thinkingDepth?: string
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null
@@ -281,6 +284,7 @@ export interface IpcResponsePayloads {
 // Stream payloads (main sends to renderer via webContents.send)
 export interface IpcStreamPayloads {
   'stream:text_delta': { content: string }
+  'stream:thinking_delta': { content: string }
   'stream:tool_use_start': { id: string; name: string }
   'stream:tool_use_delta': { id: string; partialJson: string }
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
@@ -375,6 +379,7 @@ export const IpcSchemas = {
     response: z.object({ success: z.boolean() })
   },
   'stream:text_delta': z.object({ content: z.string() }),
+  'stream:thinking_delta': z.object({ content: z.string() }),
   'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
   'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),
   'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) }),

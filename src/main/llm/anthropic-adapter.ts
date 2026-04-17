@@ -8,12 +8,14 @@ export class AnthropicAdapter implements LLMAdapter {
   private client: Anthropic
 
   constructor(config: ProviderConfig) {
-    // Use authToken (Bearer) for third-party Anthropic-compatible endpoints (e.g. ZhipuAI GLM)
-    // Use apiKey (X-Api-Key) only for real Anthropic API — detect by baseURL
+    // Use authToken (Bearer) for third-party Anthropic-compatible endpoints
+    // that don't accept x-api-key. Most endpoints (ZhipuAI, etc.) accept x-api-key.
     const isRealAnthropic = !config.baseURL || config.baseURL.includes('anthropic.com')
-    const clientOptions: Record<string, unknown> = isRealAnthropic
-      ? { apiKey: config.apiKey }
-      : { authToken: config.apiKey, apiKey: 'placeholder' }
+    const clientOptions: Record<string, unknown> = { apiKey: config.apiKey }
+    if (!isRealAnthropic) {
+      // Third-party: suppress default auth header to avoid conflicts
+      clientOptions.authToken = undefined
+    }
     if (config.baseURL) clientOptions.baseURL = config.baseURL
     this.client = new Anthropic(clientOptions as ConstructorParameters<typeof Anthropic>[0])
   }
@@ -90,9 +92,32 @@ export class AnthropicAdapter implements LLMAdapter {
         }),
       }
 
+      // Inject thinking + effort params based on thinkingDepth setting
+      // Only apply to real Anthropic API — third-party endpoints may not support these
+      const isRealAnthropic = !options.model.startsWith('deepseek') &&
+        (!this.client.baseURL || this.client.baseURL.includes('anthropic.com'))
+      const depth = options.thinkingDepth
+      if (depth && depth !== 'none' && isRealAnthropic) {
+        params.output_config = { effort: depth }
+        if (depth === 'medium' || depth === 'high') {
+          // Use reasonable fixed budget — not max_tokens-1 which leaves zero room for output
+          const budgetMap = { medium: 8192, high: 16384 }
+          params.thinking = { type: 'enabled', budget_tokens: budgetMap[depth] }
+          // Ensure max_tokens is large enough to hold output after thinking
+          if (!options.maxTokens || options.maxTokens < 8192) {
+            params.max_tokens = 16384
+          }
+        }
+      }
+
       // Enable prompt caching beta — pass abort signal so stop button kills the HTTP request
+      const betas = ['prompt-caching-2024-07-31']
+      if (depth && depth !== 'none' && isRealAnthropic) {
+        betas.push('interleaved-thinking-2025-05-14')
+        betas.push('effort-2025-11-24')
+      }
       const stream = this.client.messages.stream(params, {
-        headers: { 'anthropic-beta': 'prompt-caching-2024-07-31' },
+        headers: { 'anthropic-beta': betas.join(',') },
         signal: options.abortSignal,
       } as any)
 
@@ -114,12 +139,20 @@ export class AnthropicAdapter implements LLMAdapter {
                 name: event.content_block.name,
               }
             }
+            // Thinking block — emit empty thinking_delta so UI shows thinking state
+            if ((event.content_block as any).type === 'thinking') {
+              yield { type: 'thinking_delta', content: '' }
+            }
             break
           }
 
           case 'content_block_delta': {
             if (event.delta.type === 'text_delta') {
               yield { type: 'text_delta', content: event.delta.text }
+            }
+            // Thinking delta — forward thinking content to UI
+            if ((event.delta as any).type === 'thinking_delta') {
+              yield { type: 'thinking_delta', content: (event.delta as any).thinking }
             }
             if (event.delta.type === 'input_json_delta') {
               const acc = toolAccumulators.get(event.index)

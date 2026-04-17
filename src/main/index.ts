@@ -1,5 +1,14 @@
-import { app, BrowserWindow, Menu, ipcMain } from 'electron'
+import { config as dotenvConfig } from 'dotenv'
 import path from 'path'
+// Explicitly resolve .env from project root (cwd is unreliable in packaged Electron)
+const _envResult = dotenvConfig({ path: path.resolve(__dirname, '../../.env') })
+if (_envResult.error) {
+  console.warn('[dotenv] .env not loaded:', _envResult.error.message)
+} else {
+  console.log('[dotenv] loaded, LANGFUSE_PUBLIC_KEY=', process.env.LANGFUSE_PUBLIC_KEY?.slice(0, 10) + '...')
+}
+
+import { app, BrowserWindow, Menu, ipcMain } from 'electron'
 import crypto from 'crypto'
 const { join } = path
 import { networkInterfaces } from 'os'
@@ -744,6 +753,7 @@ app.whenReady().then(async () => {
         systemPrompt: config.systemPrompt,
         workingDirectory,
         conversationId: sessionId,
+        thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
       }
 
       // Broadcast the assigned session ID back to mobile so it can track it
@@ -792,6 +802,9 @@ app.whenReady().then(async () => {
             switch (agentEvent.type) {
               case 'agent:text':
                 wc.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
+                break
+              case 'agent:thinking':
+                wc.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
                 break
               case 'agent:tool_call':
                 wc.send(IPC_CHANNELS['stream:tool_use_start'], { id: agentEvent.toolCallId, name: agentEvent.toolName })
