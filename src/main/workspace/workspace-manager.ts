@@ -222,30 +222,38 @@ export class WorkspaceManager {
     if (this.watcher) return // Already watching
 
     const { watch } = await import('chokidar')
+
+    // Use a function-based ignored so chokidar skips ENTERING these directories
+    // entirely (glob patterns still cause chokidar to readdir into them).
+    const SKIP_WATCH_DIRS = new Set([
+      'node_modules', '.git', 'dist', 'out', '.next',
+      '__pycache__', '.cache', '.wzxclaw', '.svn', '.hg',
+      'build', '.turbo', '.nuxt', '.output', 'coverage',
+      '.nyc_output', '.parcel-cache', '.vercel'
+    ])
+    const ignoreFn = (filePath: string): boolean => {
+      const name = basename(filePath)
+      if (SKIP_WATCH_DIRS.has(name)) return true
+      return false
+    }
+
     this.watcher = watch(this.workspaceRoot, {
       ignoreInitial: true,
-      ignored: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/dist/**',
-        '**/out/**',
-        '**/.next/**',
-        '**/__pycache__/**',
-        '**/.cache/**'
-      ],
-      persistent: true
+      ignored: ignoreFn,
+      persistent: true,
+      depth: 20,
     })
 
-    this.watcher.on('add', (path) => {
-      this.enqueueFileChange(path, 'created')
+    this.watcher.on('add', (p) => {
+      this.enqueueFileChange(p, 'created')
     })
 
-    this.watcher.on('change', (path) => {
-      this.enqueueFileChange(path, 'modified')
+    this.watcher.on('change', (p) => {
+      this.enqueueFileChange(p, 'modified')
     })
 
-    this.watcher.on('unlink', (path) => {
-      this.enqueueFileChange(path, 'deleted')
+    this.watcher.on('unlink', (p) => {
+      this.enqueueFileChange(p, 'deleted')
     })
   }
 

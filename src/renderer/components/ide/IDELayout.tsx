@@ -153,7 +153,7 @@ export default function IDELayout(): JSX.Element {
   return (
     <div className="ide-container">
       <TitleBar
-        onOpenFolder={() => window.wzxclaw.openFolder()}
+        onOpenFolder={() => useWorkspaceStore.getState().openFolder()}
         onToggleTerminal={() => useTerminalStore.getState().togglePanel()}
         onToggleRightSidebar={() => setRightSidebarVisible((v) => !v)}
         rightSidebarVisible={rightSidebarVisible}

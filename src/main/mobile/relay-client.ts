@@ -153,6 +153,13 @@ export class RelayClient extends EventEmitter {
     this.ws.on('close', (code: number, reason: Buffer) => {
       console.log('[RelayClient] close code=%d reason=%s', code, reason?.toString() || '')
       this._stopHeartbeat()
+      // 4001 = invalid token — do NOT reconnect, clear saved token
+      if (code === 4001) {
+        console.warn('[RelayClient] token rejected by server, stopping reconnect')
+        this._updateState(false, false)
+        this.emitStatus()
+        return
+      }
       if (!this.disposed && (this._connected || this._connecting)) {
         this._updateState(false, false)
         this._scheduleReconnect()

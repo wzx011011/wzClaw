@@ -62,7 +62,7 @@ interface TfidfVocab {
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
 const RATE_LIMIT_DELAY_MS = 100
 const BATCH_SIZE = 50
-const API_TIMEOUT_MS = 10000
+const API_TIMEOUT_MS = 3000
 const MAX_VOCAB_SIZE = 5000 // Cap vocabulary to prevent unbounded memory growth
 const API_FAILURE_COOLDOWN_MS = 5 * 60 * 1000 // 5 min cooldown after consecutive failures
 const MAX_CONSECUTIVE_FAILURES = 3

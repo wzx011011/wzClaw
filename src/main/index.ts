@@ -96,6 +96,15 @@ let permissionManager: PermissionManager | null = null
 // Persistent settings for embedding API configuration
 const settingsManager = new SettingsManager()
 
+// ── Startup diagnostics ────────────────────────────────────────────────────
+const _t0 = Date.now()
+const logStartup = (label: string) => console.log(`[STARTUP] +${Date.now() - _t0}ms  ${label}`)
+
+// NOTE: Single-instance lock REMOVED — suspected cause of "Not Responding" freeze.
+// app.requestSingleInstanceLock() may interact with GPU/cache mutex on Windows
+// and cause periodic main-thread stalls. Re-enable with a different strategy if
+// multi-instance prevention is needed later.
+
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -120,6 +129,9 @@ function createWindow(): BrowserWindow {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // DEBUG: auto-open DevTools to catch renderer errors (dev mode only)
+  if (is.dev) mainWindow.webContents.openDevTools({ mode: 'detach' })
 
   return mainWindow
 }
@@ -197,8 +209,12 @@ function createIndexingEngineForWorkspace(rootPath: string): IndexingEngine {
   })
   const engine = new IndexingEngine(rootPath, embeddingClient)
   // Only auto-index if embedding API is configured
+  // Delay 15s so the UI is fully interactive before indexing starts
   if (embeddingClient.isConfigured()) {
-    engine.indexFull().catch((err) => console.error('[IndexingEngine] Initial indexing failed:', err))
+    setTimeout(() => {
+      engine.indexFull().catch((err) => console.error('[IndexingEngine] Initial indexing failed:', err))
+    }, 15_000)
+    logStartup('IndexingEngine scheduled (15s delay)')
   } else {
     console.log('[IndexingEngine] Embedding API not configured, skipping auto-index.')
   }
@@ -232,22 +248,26 @@ function handleWorkspaceOpened(rootPath: string, toolRegistry: ToolRegistry): vo
 }
 
 app.whenReady().then(async () => {
+  logStartup('app.whenReady fired')
   electronApp.setAppUserModelId('com.wzxclaw')
 
   // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups）
   await ensureAppDirs()
+  logStartup('ensureAppDirs done')
   // 清理 7 天以上的旧文件（一次性，非热路径）
   cleanOldDebugFiles().catch(() => {})
   cleanOldMediaFiles().catch(() => {})
 
   // Load persisted settings for embedding API config
   settingsManager.load()
+  logStartup('settingsManager loaded')
 
   // Initialize deferred services (after app is ready, before window creation)
   browserManager = new BrowserManager()
   mobileServer = new MobileServer()
   tunnelManager = new TunnelManager()
   relayClient = new RelayClient()
+  logStartup('services instantiated')
 
   // Restore last workspace if saved
   const lastWsPath = settingsManager.getLastWorkspacePath()
@@ -260,6 +280,7 @@ app.whenReady().then(async () => {
   if (savedRelayToken) {
     relayClient.connect(savedRelayToken)
   }
+  logStartup('relay connect dispatched')
 
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
@@ -338,6 +359,7 @@ app.whenReady().then(async () => {
   const historyManager = new FileHistoryManager()
 
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
+  logStartup('AgentLoop + MCP created')
 
   // Instantiate and connect MCP servers (tools auto-register into toolRegistry)
   const mcpManager = new MCPManager(toolRegistry)
@@ -923,8 +945,12 @@ app.whenReady().then(async () => {
       token = crypto.randomUUID().replace(/-/g, '').slice(0, 16)
       settingsManager.setRelayToken(token)
     }
+    // Ensure desktop is connected to relay with this token
+    if (!relayClient.connected) {
+      relayClient.connect(token)
+    }
     const { generateQRCode } = await import('./mobile/qr-generator')
-    const relayUrl = `wss://relay.5945.top/?role=mobile&token=${encodeURIComponent(token)}`
+    const relayUrl = `https://relay.5945.top/?token=${encodeURIComponent(token)}`
     const qrCode = await generateQRCode(relayUrl)
     return { qrCode, token }
   })
@@ -1027,9 +1053,11 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
   const mainWindow = createWindow()
+  logStartup('BrowserWindow created')
 
   // Deferred side-effects after renderer loads
   mainWindow.webContents.once('did-finish-load', () => {
+    logStartup('renderer did-finish-load')
     // Restore workspace if saved
     if (lastWsPath && require('fs').existsSync(lastWsPath)) {
       handleWorkspaceOpened(lastWsPath, toolRegistry)
