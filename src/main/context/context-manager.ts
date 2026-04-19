@@ -71,10 +71,12 @@ export class ContextManager {
     try {
       const contextLimit = this.getContextWindowForModel(model)
       const targetRecentTokens = contextLimit * this.config.compactKeepRatio
+      // Pre-compute per-message token counts once (O(n) instead of O(n²))
+      const perMsgTokens = messages.map(m => countMessagesTokens([m], model))
       let recentCount = 0
       let recentTokens = 0
       for (let i = messages.length - 1; i >= 0 && recentCount < this.config.compactKeepMax; i--) {
-        const msgTokens = countMessagesTokens([messages[i]], model)
+        const msgTokens = perMsgTokens[i]
         if (recentTokens + msgTokens > targetRecentTokens && recentCount >= this.config.compactKeepMin) break
         recentTokens += msgTokens
         recentCount++

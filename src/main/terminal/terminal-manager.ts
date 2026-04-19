@@ -69,8 +69,9 @@ export class TerminalManager {
     // Wire PTY output to buffer and callbacks
     ptyProcess.onData((data: string) => {
       entry.buffer += data
-      // Trim buffer from start if it exceeds max size
-      if (entry.buffer.length > TERMINAL_BUFFER_SIZE) {
+      // Trim buffer from start if it exceeds 1.5x max size (reduces trim frequency)
+      const trimThreshold = TERMINAL_BUFFER_SIZE * 1.5
+      if (entry.buffer.length > trimThreshold) {
         entry.buffer = entry.buffer.slice(entry.buffer.length - TERMINAL_BUFFER_SIZE)
       }
       // Notify all subscribers

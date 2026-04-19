@@ -3,6 +3,7 @@ import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
 import { getCommandsDir, getSkillsDir } from './paths'
+import { invalidateGitCache } from './git/git-context'
 
 /**
  * Check whether a file path is within the workspace root boundary.
@@ -232,6 +233,8 @@ export function registerIpcHandlers(
 
   function forwardFileChanges(): void {
     const callback = (filePath: string, changeType: string) => {
+      // Invalidate git cache when files change so next agent turn gets fresh status
+      invalidateGitCache()
       for (const bw of BrowserWindow.getAllWindows()) {
         bw.webContents.send(IPC_CHANNELS['file:changed'], { filePath, changeType })
       }

@@ -96,10 +96,20 @@ function shouldSkipEntry(name: string, isDir: boolean): boolean {
 
 type FileChangeCallback = (filePath: string, changeType: string) => void
 
+/** Pending batched file change notifications. */
+interface PendingChange {
+  filePath: string
+  changeType: string
+}
+
 export class WorkspaceManager {
   private workspaceRoot: string | null = null
   private watcher: FSWatcher | null = null
   private fileChangeCallbacks: FileChangeCallback[] = []
+  /** Throttle file change IPC: batch notifications every 300ms. */
+  private _pendingChanges: PendingChange[] = []
+  private _changeFlushTimer: ReturnType<typeof setTimeout> | null = null
+  private static readonly CHANGE_FLUSH_INTERVAL_MS = 300
 
   /**
    * Opens a native folder selection dialog and sets the workspace root.
@@ -227,15 +237,15 @@ export class WorkspaceManager {
     })
 
     this.watcher.on('add', (path) => {
-      this.notifyFileChange(path, 'created')
+      this.enqueueFileChange(path, 'created')
     })
 
     this.watcher.on('change', (path) => {
-      this.notifyFileChange(path, 'modified')
+      this.enqueueFileChange(path, 'modified')
     })
 
     this.watcher.on('unlink', (path) => {
-      this.notifyFileChange(path, 'deleted')
+      this.enqueueFileChange(path, 'deleted')
     })
   }
 
@@ -243,6 +253,12 @@ export class WorkspaceManager {
    * Stops the chokidar file watcher.
    */
   stopWatching(): void {
+    // Flush any pending change notifications before stopping
+    this.flushPendingChanges()
+    if (this._changeFlushTimer) {
+      clearTimeout(this._changeFlushTimer)
+      this._changeFlushTimer = null
+    }
     if (this.watcher) {
       this.watcher.close()
       this.watcher = null
@@ -300,12 +316,37 @@ export class WorkspaceManager {
     this.fileChangeCallbacks = []
   }
 
-  private notifyFileChange(filePath: string, changeType: string): void {
-    for (const cb of this.fileChangeCallbacks) {
-      try {
-        cb(filePath, changeType)
-      } catch {
-        // Swallow callback errors to keep watcher stable
+  /**
+   * Enqueue a file change and schedule a batched flush.
+   * Deduplicates same-file events within the flush window.
+   */
+  private enqueueFileChange(filePath: string, changeType: string): void {
+    // Deduplicate: keep latest changeType for same file
+    const existing = this._pendingChanges.findIndex(c => c.filePath === filePath)
+    if (existing >= 0) {
+      this._pendingChanges[existing].changeType = changeType
+    } else {
+      this._pendingChanges.push({ filePath, changeType })
+    }
+
+    if (!this._changeFlushTimer) {
+      this._changeFlushTimer = setTimeout(() => {
+        this.flushPendingChanges()
+      }, WorkspaceManager.CHANGE_FLUSH_INTERVAL_MS)
+    }
+  }
+
+  private flushPendingChanges(): void {
+    this._changeFlushTimer = null
+    const changes = this._pendingChanges
+    this._pendingChanges = []
+    for (const { filePath, changeType } of changes) {
+      for (const cb of this.fileChangeCallbacks) {
+        try {
+          cb(filePath, changeType)
+        } catch {
+          // Swallow callback errors to keep watcher stable
+        }
       }
     }
   }

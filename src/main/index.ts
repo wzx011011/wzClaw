@@ -81,10 +81,11 @@ const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
 const terminalManager = new TerminalManager()
 const taskManager = new TaskManager()
-const browserManager = new BrowserManager()
-const mobileServer = new MobileServer()
-const tunnelManager = new TunnelManager()
-const relayClient = new RelayClient()
+// These services are initialized lazily inside app.whenReady() to speed up startup
+let browserManager!: BrowserManager
+let mobileServer!: MobileServer
+let tunnelManager!: TunnelManager
+let relayClient!: RelayClient
 
 // Module-level IndexingEngine reference (created when workspace opens)
 let indexingEngine: IndexingEngine | null = null
@@ -241,6 +242,12 @@ app.whenReady().then(async () => {
 
   // Load persisted settings for embedding API config
   settingsManager.load()
+
+  // Initialize deferred services (after app is ready, before window creation)
+  browserManager = new BrowserManager()
+  mobileServer = new MobileServer()
+  tunnelManager = new TunnelManager()
+  relayClient = new RelayClient()
 
   // Restore last workspace if saved
   const lastWsPath = settingsManager.getLastWorkspacePath()
