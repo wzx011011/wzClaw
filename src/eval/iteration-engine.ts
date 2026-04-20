@@ -400,6 +400,7 @@ export class IterationEngine {
       },
       splitFilter: 'train',
       judgeConfig: this.config.judgeConfig,
+      storeTraceData: true,
     })))
     const results: Record<string, RunSummary> = {}
     entries.forEach(([key], i) => { results[key] = summaries[i] })
@@ -517,7 +518,7 @@ export class IterationEngine {
       } catch { /* dataset may not exist yet */ }
     }
 
-    await lf.shutdownAsync()
+    await lf.flushAsync()
   }
 
   private loadAllTasks(): BenchmarkTask[] {
@@ -543,8 +544,13 @@ export class IterationEngine {
     oldRates: Record<string, number>,
     newRates: Record<string, number>,
   ): boolean {
+    // 空基线：任何正向结果都是改进
+    if (Object.keys(oldRates).length === 0) {
+      const newAvg = this.averageRate(newRates)
+      console.log(`  Improvement check: baseline → ${(newAvg * 100).toFixed(1)}% (first run, any positive = improved)`)
+      return newAvg > 0
+    }
     // 动态阈值：基于样本量的 Wilson interval 近似 Δ > 2/√n
-    // 样本越小，阈值越高，避免追逐噪声
     const threshold = this.dynamicThreshold()
     const oldAvg = this.averageRate(oldRates)
     const newAvg = this.averageRate(newRates)
