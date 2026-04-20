@@ -29,6 +29,11 @@ export function getProjectMemoryDir(workspaceRoot: string): string {
   return path.join(getUserDir(), 'projects', hash, 'memory')
 }
 
+/** 任务级记忆目录：~/.wzxclaw/task-memory/{taskId}/ */
+export function getTaskMemoryDir(taskId: string): string {
+  return path.join(getUserDir(), 'task-memory', taskId)
+}
+
 /** 全局记忆文件：~/.wzxclaw/MEMORY.md（跨项目共享的个人偏好） */
 export function getGlobalMemoryPath(): string {
   return path.join(getUserDir(), 'MEMORY.md')
@@ -93,6 +98,14 @@ export function getTasksDir(workspaceRoot: string): string {
  */
 export function getSessionsDir(projectHash: string): string {
   return path.join(getAppDataDir(), 'sessions', projectHash)
+}
+
+/**
+ * 任务级会话目录：%APPDATA%/wzxclaw/sessions/task-{taskId}/
+ * 当 session 归属于 Task 时，使用 taskId 而非 workspace hash
+ */
+export function getTaskSessionsDir(taskId: string): string {
+  return path.join(getAppDataDir(), 'sessions', `task-${taskId}`)
 }
 
 /** 设置文件备份目录：%APPDATA%/wzxclaw/backups/ */
