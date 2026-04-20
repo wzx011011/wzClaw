@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
-import type { FileTreeNode, SessionMeta, AgentStep } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep, Task } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -137,6 +137,15 @@ export const IPC_CHANNELS = {
   // Todo panel (main -> renderer push)
   'todo:updated': 'todo:updated',
 
+  // Task management channels (renderer -> main)
+  'task:list': 'task:list',
+  'task:get': 'task:get',
+  'task:create': 'task:create',
+  'task:update': 'task:update',
+  'task:delete': 'task:delete',
+  'task:add-project': 'task:add-project',
+  'task:remove-project': 'task:remove-project',
+
   // Shell utility (renderer -> main)
   'shell:open_path': 'shell:open_path',
   'shell:get_extension_paths': 'shell:get_extension_paths',
@@ -215,6 +224,13 @@ export interface IpcRequestPayloads {
   'relay:get_status': void
   'relay:qrcode': { token?: string }
   'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
+  'task:list': { includeArchived?: boolean }
+  'task:get': { taskId: string }
+  'task:create': { title: string; description?: string }
+  'task:update': { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
+  'task:delete': { taskId: string }
+  'task:add-project': { taskId: string; folderPath: string }
+  'task:remove-project': { taskId: string; projectId: string }
   'shell:open_path': { path: string }
   'shell:get_extension_paths': void
 }
@@ -277,6 +293,13 @@ export interface IpcResponsePayloads {
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
   'ask-user:answer': void
+  'task:list': Task[]
+  'task:get': Task | null
+  'task:create': Task
+  'task:update': Task
+  'task:delete': void
+  'task:add-project': Task
+  'task:remove-project': Task
   'shell:open_path': void
   'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
 }

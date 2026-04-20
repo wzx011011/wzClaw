@@ -324,3 +324,27 @@ export interface AgentStep {
   createdAt: number
   updatedAt: number
 }
+
+// ============================================================
+// Task Management Types — top-level user work units
+// ============================================================
+
+/** A folder-based code repository mounted under a Task */
+export interface Project {
+  id: string           // uuid
+  path: string         // absolute folder path
+  name: string         // display name (basename of folder)
+  addedAt: number
+}
+
+/** Top-level user work unit — can have 0-N Projects (folders) */
+export interface Task {
+  id: string           // uuid
+  title: string
+  description?: string
+  projects: Project[]  // mounted folders
+  createdAt: number
+  updatedAt: number
+  lastSessionId?: string // most recent chat session
+  archived: boolean
+}

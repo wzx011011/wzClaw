@@ -30,6 +30,7 @@ import { handleSymbolResult } from './tools/symbol-nav'
 import type { IndexingEngine } from './indexing/indexing-engine'
 import { getGitStatusShort } from './git/git-context'
 import type { MCPManager } from './mcp/mcp-manager'
+import type { TaskStore } from './tasks/task-store'
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -43,6 +44,7 @@ export function registerIpcHandlers(
   indexingEngine: IndexingEngine | null,
   settingsManager: SettingsManager,
   mcpManager: MCPManager,
+  taskStore: TaskStore,
   onWorkspaceOpened?: (rootPath: string) => void
 ): void {
   // Mutable reference to IndexingEngine (updated when workspace opens)
@@ -752,6 +754,37 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['step:list'], () => {
     return stepManager.getAllSteps()
+  })
+
+  // ============================================================
+  // Task management — CRUD for top-level user tasks
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['task:list'], async (_event, payload?: { includeArchived?: boolean }) => {
+    return taskStore.listTasks(payload?.includeArchived)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:get'], async (_event, payload: { taskId: string }) => {
+    return taskStore.getTask(payload.taskId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:create'], async (_event, payload: { title: string; description?: string }) => {
+    return taskStore.createTask(payload.title, payload.description)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }) => {
+    return taskStore.updateTask(payload.taskId, payload.updates)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:delete'], async (_event, payload: { taskId: string }) => {
+    return taskStore.deleteTask(payload.taskId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:add-project'], async (_event, payload: { taskId: string; folderPath: string }) => {
+    return taskStore.addProject(payload.taskId, payload.folderPath)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['task:remove-project'], async (_event, payload: { taskId: string; projectId: string }) => {
+    return taskStore.removeProject(payload.taskId, payload.projectId)
   })
 
   // ============================================================

@@ -47,6 +47,7 @@ import { SessionStore } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
 import { StepManager } from './steps/step-manager'
+import { TaskStore } from './tasks/task-store'
 import { HookRegistry } from './hooks/hook-registry'
 import { registerBuiltInHooks } from './hooks/built-in-hooks'
 import { CreateStepTool } from './tools/create-step'
@@ -81,6 +82,7 @@ const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
 const terminalManager = new TerminalManager()
 const stepManager = new StepManager()
+const taskStore = new TaskStore()
 // These services are initialized lazily inside app.whenReady() to speed up startup
 let browserManager!: BrowserManager
 let mobileServer!: MobileServer
@@ -1007,7 +1009,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers(
     gateway, agentLoop, permissionManager, workspaceManager, () => sessionStore,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
-    mcpManager,
+    mcpManager, taskStore,
     (rootPath) => {
       handleWorkspaceOpened(rootPath, toolRegistry)
       // Persist last workspace path

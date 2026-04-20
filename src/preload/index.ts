@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentStep } from '../shared/types'
+import type { AgentStep, Task } from '../shared/types'
 
 const api = {
   // Agent
@@ -150,6 +150,22 @@ const api = {
     ipcRenderer.on('step:updated', handler)
     return () => ipcRenderer.removeListener('step:updated', handler)
   },
+
+  // Tasks — top-level user work units
+  listTasks: (request?: { includeArchived?: boolean }): Promise<Task[]> =>
+    ipcRenderer.invoke('task:list', request),
+  getTask: (request: { taskId: string }): Promise<Task | null> =>
+    ipcRenderer.invoke('task:get', request),
+  createTask: (request: { title: string; description?: string }): Promise<Task> =>
+    ipcRenderer.invoke('task:create', request),
+  updateTask: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Task> =>
+    ipcRenderer.invoke('task:update', request),
+  deleteTask: (request: { taskId: string }): Promise<void> =>
+    ipcRenderer.invoke('task:delete', request),
+  addTaskProject: (request: { taskId: string; folderPath: string }): Promise<Task> =>
+    ipcRenderer.invoke('task:add-project', request),
+  removeTaskProject: (request: { taskId: string; projectId: string }): Promise<Task> =>
+    ipcRenderer.invoke('task:remove-project', request),
 
   // Index
   getIndexStatus: () => ipcRenderer.invoke('index:status'),
