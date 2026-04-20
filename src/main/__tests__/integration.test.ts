@@ -173,10 +173,10 @@ describe('IPC Handler Registration', () => {
       dispose: vi.fn(),
     } as unknown
 
-    const mockTaskManager = {
-      getAllTasks: vi.fn(() => []),
-      createTask: vi.fn(),
-      updateTask: vi.fn(),
+    const mockStepManager = {
+      getAllSteps: vi.fn(() => []),
+      createStep: vi.fn(),
+      updateStep: vi.fn(),
     } as unknown
 
     // Dynamic import to get fresh module with our mocks
@@ -192,7 +192,7 @@ describe('IPC Handler Registration', () => {
         mockSessionStore as import('../persistence/session-store').SessionStore,
         mockContextManager as import('../context/context-manager').ContextManager,
         mockTerminalManager as import('../terminal/terminal-manager').TerminalManager,
-        mockTaskManager as import('../tasks/task-manager').TaskManager,
+        mockStepManager as import('../steps/step-manager').StepManager,
         null // indexingEngine (optional)
       )
     }).not.toThrow()

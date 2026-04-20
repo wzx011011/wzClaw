@@ -46,11 +46,11 @@ import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
-import { TaskManager } from './tasks/task-manager'
+import { StepManager } from './steps/step-manager'
 import { HookRegistry } from './hooks/hook-registry'
 import { registerBuiltInHooks } from './hooks/built-in-hooks'
-import { CreateTaskTool } from './tools/create-task'
-import { UpdateTaskTool } from './tools/update-task'
+import { CreateStepTool } from './tools/create-step'
+import { UpdateStepTool } from './tools/update-step'
 import { IndexingEngine } from './indexing/indexing-engine'
 import { EmbeddingClient } from './indexing/embedding-client'
 import { SettingsManager } from './settings-manager'
@@ -80,7 +80,7 @@ import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
 const terminalManager = new TerminalManager()
-const taskManager = new TaskManager()
+const stepManager = new StepManager()
 // These services are initialized lazily inside app.whenReady() to speed up startup
 let browserManager!: BrowserManager
 let mobileServer!: MobileServer
@@ -285,7 +285,7 @@ app.whenReady().then(async () => {
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
   const getWebContents = () => BrowserWindow.getAllWindows()[0]?.webContents ?? null
-  const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, taskManager, indexingEngine)
+  const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, stepManager, indexingEngine)
   permissionManager = new PermissionManager()
   // Load persisted alwaysAllow rules from previous sessions
   permissionManager.loadAlwaysAllowRules(settingsManager.getAlwaysAllowRules())
@@ -1006,7 +1006,7 @@ app.whenReady().then(async () => {
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
     gateway, agentLoop, permissionManager, workspaceManager, () => sessionStore,
-    contextManager, terminalManager, taskManager, indexingEngine, settingsManager,
+    contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
     mcpManager,
     (rootPath) => {
       handleWorkspaceOpened(rootPath, toolRegistry)

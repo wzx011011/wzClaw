@@ -95,8 +95,8 @@
         setGenerating(false)
         break
 
-      case 'todo:updated':
-        updateTodoPanel(msg.data.todos)
+      case 'step:updated':
+        updateStepPanel(msg.data.todos)
         break
 
       case 'session:messages':
@@ -198,12 +198,12 @@
     thinkingEl = null
   }
 
-  function updateTodoPanel(todos) {
-    var panel = document.getElementById('todoPanel')
+  function updateStepPanel(todos) {
+    var panel = document.getElementById('stepPanel')
     if (!panel) {
       panel = document.createElement('div')
-      panel.id = 'todoPanel'
-      panel.className = 'todo-panel'
+      panel.id = 'stepPanel'
+      panel.className = 'step-panel'
       // Insert before input area
       var inputArea = document.querySelector('.input-area')
       if (inputArea) inputArea.parentNode.insertBefore(panel, inputArea)
@@ -214,12 +214,12 @@
     }
     panel.style.display = ''
     var completed = todos.filter(function (t) { return t.status === 'completed' }).length
-    var html = '<div class="todo-header">Todos (' + completed + '/' + todos.length + ')</div><ul class="todo-list">'
+    var html = '<div class="step-header">Steps (' + completed + '/' + todos.length + ')</div><ul class="step-list">'
     todos.forEach(function (t) {
       var icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '⟳' : '○'
-      var cls = 'todo-' + t.status
+      var cls = 'step-' + t.status
       var text = t.status === 'in_progress' ? t.activeForm : t.content
-      html += '<li class="' + cls + '"><span class="todo-icon">' + icon + '</span>' + text + '</li>'
+      html += '<li class="' + cls + '"><span class="step-icon">' + icon + '</span>' + text + '</li>'
     })
     html += '</ul>'
     panel.innerHTML = html

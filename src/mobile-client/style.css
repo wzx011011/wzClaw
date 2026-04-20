@@ -193,8 +193,8 @@ html, body {
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-/* Todo Panel */
-.todo-panel {
+/* Step Panel */
+.step-panel {
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
@@ -202,7 +202,7 @@ html, body {
   overflow-y: auto;
 }
 
-.todo-header {
+.step-header {
   padding: 8px 16px;
   font-size: 12px;
   font-weight: 600;
@@ -210,13 +210,13 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-.todo-list {
+.step-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.todo-list li {
+.step-list li {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -226,19 +226,19 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 
-.todo-list li:last-child { border-bottom: none; }
+.step-list li:last-child { border-bottom: none; }
 
-.todo-icon {
+.step-icon {
   flex-shrink: 0;
   width: 16px;
   text-align: center;
   font-weight: 700;
 }
 
-.todo-completed .todo-icon { color: #4ade80; }
-.todo-in_progress .todo-icon { color: var(--accent); }
-.todo-pending .todo-icon { color: var(--text-secondary); }
-.todo-completed { opacity: 0.7; }
+.step-completed .step-icon { color: #4ade80; }
+.step-in_progress .step-icon { color: var(--accent); }
+.step-pending .step-icon { color: var(--text-secondary); }
+.step-completed { opacity: 0.7; }
 
 /* Thinking indicator */
 .thinking-msg .msg-body {

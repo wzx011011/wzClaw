@@ -24,7 +24,7 @@ import type { AgentConfig } from './agent/types'
 import type { SessionStore } from './persistence/session-store'
 import type { ContextManager } from './context/context-manager'
 import type { TerminalManager } from './terminal/terminal-manager'
-import type { TaskManager } from './tasks/task-manager'
+import type { StepManager } from './steps/step-manager'
 import { SettingsManager } from './settings-manager'
 import { handleSymbolResult } from './tools/symbol-nav'
 import type { IndexingEngine } from './indexing/indexing-engine'
@@ -39,7 +39,7 @@ export function registerIpcHandlers(
   getSessionStore: () => SessionStore,
   contextManager: ContextManager,
   terminalManager: TerminalManager,
-  taskManager: TaskManager,
+  stepManager: StepManager,
   indexingEngine: IndexingEngine | null,
   settingsManager: SettingsManager,
   mcpManager: MCPManager,
@@ -748,10 +748,10 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Task: list — returns all agent tasks
+  // Step: list — returns all agent steps
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['task:list'], () => {
-    return taskManager.getAllTasks()
+  ipcMain.handle(IPC_CHANNELS['step:list'], () => {
+    return stepManager.getAllSteps()
   })
 
   // ============================================================

@@ -11,11 +11,11 @@ import { GlobTool } from './glob'
 import { WebSearchTool } from './web-search'
 import { WebFetchTool } from './web-fetch'
 import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './symbol-nav'
-import { CreateTaskTool } from './create-task'
-import { UpdateTaskTool } from './update-task'
+import { CreateStepTool } from './create-step'
+import { UpdateStepTool } from './update-step'
 import { SemanticSearchTool } from './semantic-search'
 import { TodoWriteTool } from './todo-write'
-import type { TaskManager } from '../tasks/task-manager'
+import type { StepManager } from '../steps/step-manager'
 import type { IndexingEngine } from '../indexing/indexing-engine'
 
 export class ToolRegistry {
@@ -25,7 +25,7 @@ export class ToolRegistry {
   private static readonly READ_ONLY_TOOLS = new Set([
     'FileRead', 'Grep', 'Glob', 'WebSearch', 'WebFetch',
     'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
-    'CreateTask', 'UpdateTask'
+    'CreateStep', 'UpdateStep'
   ])
 
   register(tool: Tool): void {
@@ -66,7 +66,7 @@ export function createDefaultTools(
   workingDirectory: string,
   terminalManager?: TerminalManager,
   getWebContents?: () => Electron.WebContents | null,
-  taskManager?: TaskManager,
+  stepManager?: StepManager,
   indexingEngine?: IndexingEngine
 ): ToolRegistry {
   const registry = new ToolRegistry()
@@ -94,10 +94,10 @@ export function createDefaultTools(
     registry.register(new SearchSymbolsTool(getWebContents))
   }
 
-  // Task tools (no approval required)
-  if (taskManager && getWebContents) {
-    registry.register(new CreateTaskTool(taskManager, getWebContents))
-    registry.register(new UpdateTaskTool(taskManager, getWebContents))
+  // Step tools (no approval required)
+  if (stepManager && getWebContents) {
+    registry.register(new CreateStepTool(stepManager, getWebContents))
+    registry.register(new UpdateStepTool(stepManager, getWebContents))
   }
 
   // TodoWrite — session task list manager (no approval required)

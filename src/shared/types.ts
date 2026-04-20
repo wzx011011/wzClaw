@@ -310,17 +310,17 @@ export type SlashCommandHandler =
   | { type: 'action'; execute: (args: string) => void }
 
 // ============================================================
-// Task Management Types (per TASK-01 through TASK-05)
+// Step Management Types (per TASK-01 through TASK-05)
 // ============================================================
 
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+export type StepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
 
-export interface AgentTask {
+export interface AgentStep {
   id: string
   subject: string
   description: string
-  status: TaskStatus
-  blockedBy: string[]    // task IDs this task depends on
+  status: StepStatus
+  blockedBy: string[]    // step IDs this step depends on
   createdAt: number
   updatedAt: number
 }

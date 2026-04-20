@@ -6,7 +6,7 @@ import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
-import { useTaskStore } from '../../stores/task-store'
+import { useStepStore } from '../../stores/step-store'
 import { SLASH_COMMANDS } from '../../commands/slash-commands'
 import ChatMessage from './ChatMessage'
 import DiffPreview from './DiffPreview'
@@ -14,7 +14,7 @@ import MentionPicker from './MentionPicker'
 import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
-import TaskPanel from './TaskPanel'
+import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
 import type { MentionItem } from '../../../shared/types'
 
@@ -74,7 +74,7 @@ export default function ChatPanel(): JSX.Element {
   const pendingMentions = useChatStore((s) => s.pendingMentions)
 
   // Task panel state
-  const taskPanelVisible = useTaskStore((s) => s.panelVisible)
+  const stepPanelVisible = useStepStore((s) => s.panelVisible)
 
   // Todo list (from TodoWrite tool)
   const currentTodos = useChatStore((s) => s.currentTodos)
@@ -196,9 +196,9 @@ export default function ChatPanel(): JSX.Element {
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
 
-  // Initialize task store — subscribe to IPC events for real-time updates
+  // Initialize step store — subscribe to IPC events for real-time updates
   useEffect(() => {
-    const unsub = useTaskStore.getState().init()
+    const unsub = useStepStore.getState().init()
     return unsub
   }, [])
 
@@ -431,9 +431,9 @@ export default function ChatPanel(): JSX.Element {
         </div>
       )}
 
-      {/* Task panel for agent task tracking */}
-      {taskPanelVisible && (
-        <TaskPanel onClose={() => useTaskStore.getState().togglePanel()} />
+      {/* Step panel for agent step tracking */}
+      {stepPanelVisible && (
+        <StepPanel onClose={() => useStepStore.getState().togglePanel()} />
       )}
 
       {/* TodoWrite panel — shows active session task list (Copilot style) */}

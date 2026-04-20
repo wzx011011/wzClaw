@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
-import type { FileTreeNode, SessionMeta, AgentTask } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -83,10 +83,10 @@ export const IPC_CHANNELS = {
   'symbol:query': 'symbol:query',
   'symbol:result': 'symbol:result',
 
-  // Task channels (renderer -> main for list, main -> renderer for streaming)
-  'task:list': 'task:list',
-  'task:created': 'task:created',
-  'task:updated': 'task:updated',
+  // Step channels (renderer -> main for list, main -> renderer for streaming)
+  'step:list': 'step:list',
+  'step:created': 'step:created',
+  'step:updated': 'step:updated',
 
   // Index channels (renderer -> main for status/reindex/search, main -> renderer for progress)
   'index:status': 'index:status',
