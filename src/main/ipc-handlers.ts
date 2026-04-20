@@ -94,7 +94,7 @@ export function registerIpcHandlers(
 
     // Inject active task context into agent loop
     if (result.data.activeTaskId) {
-      const task = taskStore.getTask(result.data.activeTaskId)
+      const task = await taskStore.getTask(result.data.activeTaskId)
       agentLoop.activeTask = task ?? null
     } else {
       agentLoop.activeTask = null

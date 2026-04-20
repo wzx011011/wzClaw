@@ -98,3 +98,12 @@ describe('StepManager', () => {
     })
 
     it('does not unblock if only some blockers are completed', () => {
+      const t1 = tm.createStep('blocker-a')
+      const t2 = tm.createStep('blocker-b')
+      const t3 = tm.createStep('blocked', undefined, [t1.id, t2.id])
+
+      tm.updateStep(t1.id, { status: 'completed' })
+      expect(tm.getStep(t3.id)?.status).toBe('blocked')
+    })
+  })
+})

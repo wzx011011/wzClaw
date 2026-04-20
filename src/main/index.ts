@@ -877,7 +877,7 @@ app.whenReady().then(async () => {
 
         // Inject active task context from mobile message
         if (msg.data.activeTaskId) {
-          const task = taskStore.getTask(msg.data.activeTaskId)
+          const task = await taskStore.getTask(msg.data.activeTaskId)
           agentLoop.activeTask = task ?? null
         } else {
           agentLoop.activeTask = null
