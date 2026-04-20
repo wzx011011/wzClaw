@@ -105,6 +105,7 @@ export class AgentLoop {
 
     // ---- 主循环 ----
     let toolsDisabled = false  // 降级标志：上下文过长时禁用工具（用局部变量而非破坏原数组）
+    let stallCount = 0  // EVAL-OPT: stall-detection-init
     for (let turn = 0; turn < maxTurns; turn++) {
       turnCount++
 
@@ -201,6 +202,23 @@ export class AgentLoop {
       // 累计 token 用量
       totalUsage.inputTokens += turnResult.usage.inputTokens
       totalUsage.outputTokens += turnResult.usage.outputTokens
+
+      // EVAL-OPT: stall-detection: 连续无文件编辑时提前终止（迭代引擎自动添加）
+      {
+        const lastCalls = turnResult as any
+        const hasFileEdit = lastCalls?.toolCalls?.some(
+          (tc: any) => tc.name === 'FileEdit' || tc.name === 'FileWrite'
+        ) ?? false
+        if (!hasFileEdit) {
+          stallCount++
+          if (stallCount >= 3) {
+            yield { type: 'agent:done', usage: totalUsage, turnCount: turn + 1 } as any
+            return
+          }
+        } else {
+          stallCount = 0
+        }
+      }
       this.contextManager.trackTokenUsage(turnResult.usage.inputTokens, turnResult.usage.outputTokens)
 
       // Eval: 记录 turn 输出 token
