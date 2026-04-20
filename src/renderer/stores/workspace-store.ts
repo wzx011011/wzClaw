@@ -14,6 +14,7 @@ interface WorkspaceState {
 
 interface WorkspaceActions {
   openFolder: () => Promise<void>
+  setFolder: (folderPath: string) => Promise<void>
   initWorkspace: () => Promise<void>
   loadTree: (dirPath?: string, depth?: number) => Promise<void>
   expandNode: (dirPath: string) => Promise<void>
@@ -91,6 +92,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const result = await window.wzxclaw.openFolder()
+      if (result) {
+        set({ rootPath: result.rootPath })
+        await get().loadTree(undefined, 1)
+      }
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    } finally {
+      set({ isLoading: false })
+    }
+  },
+
+  setFolder: async (folderPath: string) => {
+    set({ isLoading: true, error: null })
+    try {
+      const result = await window.wzxclaw.setFolder({ folderPath })
       if (result) {
         set({ rootPath: result.rootPath })
         await get().loadTree(undefined, 1)

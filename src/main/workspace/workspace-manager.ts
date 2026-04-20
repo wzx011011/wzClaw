@@ -139,6 +139,26 @@ export class WorkspaceManager {
   }
 
   /**
+   * Sets the workspace root directly to a given path (no dialog).
+   * Starts chokidar file watching on the folder.
+   */
+  async setFolder(folderPath: string): Promise<string | null> {
+    const fs = await import('fs/promises')
+    try {
+      const stat = await fs.stat(folderPath)
+      if (!stat.isDirectory()) return null
+    } catch {
+      return null
+    }
+    this.workspaceRoot = folderPath
+    this.stopWatching()
+    this.startWatching().catch((err) => {
+      console.error('[WorkspaceManager] Failed to start watching:', err)
+    })
+    return folderPath
+  }
+
+  /**
    * Reads directory entries and returns them as FileTreeNode[].
    * Directories are sorted first (alphabetically), then files (alphabetically).
    * Respects depth limit for lazy loading (default depth=1).

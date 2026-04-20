@@ -54,6 +54,7 @@ const api = {
   getDirectoryTree: (request: { dirPath?: string; depth?: number }) =>
     ipcRenderer.invoke('workspace:get_tree', request),
   getWorkspaceStatus: () => ipcRenderer.invoke('workspace:status'),
+  setFolder: (request: { folderPath: string }) => ipcRenderer.invoke('workspace:set_folder', request),
 
   // File operations
   readFile: (request: { filePath: string }) => ipcRenderer.invoke('file:read', request),

@@ -4,6 +4,7 @@ import type { Task } from '../../shared/types'
 interface TaskStoreState {
   tasks: Task[]
   activeTaskId: string | null
+  viewingTaskId: string | null
   isLoading: boolean
   error: string | null
 }
@@ -13,11 +14,14 @@ interface TaskStoreActions {
   createTask: (title: string, description?: string) => Promise<Task>
   updateTask: (taskId: string, updates: { title?: string; description?: string; archived?: boolean }) => Promise<void>
   deleteTask: (taskId: string) => Promise<void>
+  openTaskDetail: (taskId: string) => void
+  closeTaskDetail: () => void
   openTask: (taskId: string) => void
   closeTask: () => void
   addProject: (taskId: string, folderPath: string) => Promise<void>
   removeProject: (taskId: string, projectId: string) => Promise<void>
   getActiveTask: () => Task | null
+  getViewingTask: () => Task | null
 }
 
 type TaskStore = TaskStoreState & TaskStoreActions
@@ -25,6 +29,7 @@ type TaskStore = TaskStoreState & TaskStoreActions
 export const useTaskStore = create<TaskStore>((set, get) => ({
   tasks: [],
   activeTaskId: null,
+  viewingTaskId: null,
   isLoading: false,
   error: null,
 
@@ -59,8 +64,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     }))
   },
 
+  openTaskDetail: (taskId) => {
+    set({ viewingTaskId: taskId })
+  },
+
+  closeTaskDetail: () => {
+    set({ viewingTaskId: null })
+  },
+
   openTask: (taskId) => {
-    set({ activeTaskId: taskId })
+    set({ activeTaskId: taskId, viewingTaskId: null })
   },
 
   closeTask: () => {
@@ -85,5 +98,11 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     const { tasks, activeTaskId } = get()
     if (!activeTaskId) return null
     return tasks.find((t) => t.id === activeTaskId) ?? null
+  },
+
+  getViewingTask: () => {
+    const { tasks, viewingTaskId } = get()
+    if (!viewingTaskId) return null
+    return tasks.find((t) => t.id === viewingTaskId) ?? null
   }
 }))

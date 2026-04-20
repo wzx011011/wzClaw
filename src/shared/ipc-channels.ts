@@ -33,6 +33,7 @@ export const IPC_CHANNELS = {
 
   // Workspace channels (renderer -> main)
   'workspace:open_folder': 'workspace:open_folder',
+  'workspace:set_folder': 'workspace:set_folder',
   'workspace:get_tree': 'workspace:get_tree',
   'workspace:watch': 'workspace:watch',
   'workspace:status': 'workspace:status',
@@ -180,6 +181,7 @@ export interface IpcRequestPayloads {
     thinkingDepth?: string
   }
   'workspace:open_folder': void
+  'workspace:set_folder': { folderPath: string }
   'workspace:get_tree': { dirPath?: string; depth?: number }
   'workspace:watch': void
   'workspace:status': void
@@ -249,6 +251,7 @@ export interface IpcResponsePayloads {
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null
+  'workspace:set_folder': { rootPath: string } | null
   'workspace:get_tree': FileTreeNode[]
   'workspace:watch': void
   'workspace:status': { rootPath: string | null; isWatching: boolean }

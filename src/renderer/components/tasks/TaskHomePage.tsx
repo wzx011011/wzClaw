@@ -10,7 +10,7 @@ export default function TaskHomePage(): JSX.Element {
   const createTask = useTaskStore((s) => s.createTask)
   const updateTask = useTaskStore((s) => s.updateTask)
   const deleteTask = useTaskStore((s) => s.deleteTask)
-  const openTask = useTaskStore((s) => s.openTask)
+  const openTaskDetail = useTaskStore((s) => s.openTaskDetail)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
@@ -26,7 +26,7 @@ export default function TaskHomePage(): JSX.Element {
   const handleCreate = async (title: string, description?: string) => {
     const task = await createTask(title, description)
     setShowCreateModal(false)
-    openTask(task.id)
+    openTaskDetail(task.id)
   }
 
   const handleArchive = (taskId: string) => {
@@ -71,7 +71,7 @@ export default function TaskHomePage(): JSX.Element {
             <TaskCard
               key={task.id}
               task={task}
-              onOpen={openTask}
+              onOpen={openTaskDetail}
               onArchive={handleArchive}
               onDelete={handleDelete}
             />

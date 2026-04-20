@@ -31,6 +31,7 @@ import { useTaskStore } from '../../stores/task-store'
 export default function IDELayout(): JSX.Element {
   const openFolder = useWorkspaceStore((s) => s.openFolder)
   const initWorkspace = useWorkspaceStore((s) => s.initWorkspace)
+  const setFolder = useWorkspaceStore((s) => s.setFolder)
   const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
   const initChat = useChatStore((s) => s.init)
   const openPalette = useCommandStore((s) => s.openPalette)
@@ -127,10 +128,14 @@ export default function IDELayout(): JSX.Element {
     return unsubscribe
   }, [initChat])
 
-  // Restore last workspace on startup
+  // Restore workspace on startup — prefer the task's first project folder
   useEffect(() => {
-    initWorkspace()
-  }, [initWorkspace])
+    if (activeTask?.projects && activeTask.projects.length > 0) {
+      setFolder(activeTask.projects[0].path)
+    } else {
+      initWorkspace()
+    }
+  }, [activeTask?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to index progress events
   useEffect(() => {

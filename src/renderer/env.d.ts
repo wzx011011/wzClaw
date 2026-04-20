@@ -15,6 +15,7 @@ declare global {
       onStreamRetrying: (cb: (p: { attempt: number; maxAttempts: number; delayMs: number }) => void) => () => void
       // Workspace
       openFolder: () => Promise<{ rootPath: string } | null>
+      setFolder: (request: { folderPath: string }) => Promise<{ rootPath: string } | null>
       getDirectoryTree: (request: { dirPath?: string; depth?: number }) => Promise<FileTreeNode[]>
       readFile: (request: { filePath: string }) => Promise<{ content: string; language: string }>
       readFileContent: (request: { filePath: string }) => Promise<{ content: string; size: number; path: string } | { error: string; size: number; limit: number }>

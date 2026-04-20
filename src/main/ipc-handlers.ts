@@ -279,6 +279,22 @@ export function registerIpcHandlers(
     return null
   })
 
+  ipcMain.handle(IPC_CHANNELS['workspace:set_folder'], async (_event, { folderPath }: { folderPath: string }) => {
+    const rootPath = await workspaceManager.setFolder(folderPath)
+    if (rootPath) {
+      if (fileChangeUnsubscribe) {
+        fileChangeUnsubscribe()
+        fileChangeUnsubscribe = null
+      }
+      forwardFileChanges()
+      if (onWorkspaceOpened) {
+        onWorkspaceOpened(rootPath)
+      }
+      return { rootPath }
+    }
+    return null
+  })
+
   // ============================================================
   // Shell: open path in OS file manager
   // ============================================================
