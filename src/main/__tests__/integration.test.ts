@@ -179,6 +179,32 @@ describe('IPC Handler Registration', () => {
       updateStep: vi.fn(),
     } as unknown
 
+    const mockSettingsManager = {
+      getCurrentConfig: vi.fn(() => ({})),
+      updateConfig: vi.fn(),
+      setLastWorkspacePath: vi.fn(),
+      getRecentWorkspaces: vi.fn(() => []),
+    } as unknown
+
+    const mockMcpManager = {
+      listServers: vi.fn(() => []),
+      getServerStatus: vi.fn(),
+      addServer: vi.fn(),
+      removeServer: vi.fn(),
+      restartServer: vi.fn(),
+      loadAndConnect: vi.fn(),
+    } as unknown
+
+    const mockTaskStore = {
+      listTasks: vi.fn(() => []),
+      getTask: vi.fn(),
+      createTask: vi.fn(),
+      updateTask: vi.fn(),
+      deleteTask: vi.fn(),
+      addProject: vi.fn(),
+      removeProject: vi.fn(),
+    } as unknown
+
     // Dynamic import to get fresh module with our mocks
     const { registerIpcHandlers } = await import('../ipc-handlers')
 
@@ -189,11 +215,14 @@ describe('IPC Handler Registration', () => {
         mockAgentLoop as import('../agent/agent-loop').AgentLoop,
         mockPermissionManager as import('../permission/permission-manager').PermissionManager,
         mockWorkspaceManager as import('../workspace/workspace-manager').WorkspaceManager,
-        mockSessionStore as import('../persistence/session-store').SessionStore,
+        (() => mockSessionStore) as () => import('../persistence/session-store').SessionStore,
         mockContextManager as import('../context/context-manager').ContextManager,
         mockTerminalManager as import('../terminal/terminal-manager').TerminalManager,
         mockStepManager as import('../steps/step-manager').StepManager,
-        null // indexingEngine (optional)
+        null, // indexingEngine (optional)
+        mockSettingsManager as any,
+        mockMcpManager as any,
+        mockTaskStore as import('../tasks/task-store').TaskStore,
       )
     }).not.toThrow()
 
@@ -209,6 +238,15 @@ describe('IPC Handler Registration', () => {
     expect(handleCalls).toContain('index:status')
     expect(handleCalls).toContain('index:reindex')
     expect(handleCalls).toContain('index:search')
+
+    // Task IPC handlers
+    expect(handleCalls).toContain('task:list')
+    expect(handleCalls).toContain('task:get')
+    expect(handleCalls).toContain('task:create')
+    expect(handleCalls).toContain('task:update')
+    expect(handleCalls).toContain('task:delete')
+    expect(handleCalls).toContain('task:add-project')
+    expect(handleCalls).toContain('task:remove-project')
   })
 })
 
@@ -237,5 +275,28 @@ describe('IPC Zod Schemas', () => {
       content: 'Hello!',
     })
     expect(result.success).toBe(false)
+  })
+
+  it('should accept agent:send_message with optional activeTaskId', () => {
+    const result = IpcSchemas['agent:send_message'].request.safeParse({
+      conversationId: 'test-123',
+      content: 'Hello!',
+      activeTaskId: 'task-abc',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.activeTaskId).toBe('task-abc')
+    }
+  })
+
+  it('should accept agent:send_message without activeTaskId', () => {
+    const result = IpcSchemas['agent:send_message'].request.safeParse({
+      conversationId: 'test-123',
+      content: 'Hello!',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.activeTaskId).toBeUndefined()
+    }
   })
 })
