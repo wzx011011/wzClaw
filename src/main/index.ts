@@ -709,6 +709,54 @@ app.whenReady().then(async () => {
       return
     }
 
+    // -- Task management: list tasks --
+    if (msg.event === 'task:list:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const tasks = await taskStore.listTasks(msg.data?.includeArchived)
+        broadcastToMobile('task:list:response', { requestId, tasks })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
+    // -- Task management: create task --
+    if (msg.event === 'task:create:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const task = await taskStore.createTask(msg.data?.title ?? 'New Task', msg.data?.description)
+        broadcastToMobile('task:create:response', { requestId, task })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
+    // -- Task management: update task --
+    if (msg.event === 'task:update:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const task = await taskStore.updateTask(msg.data?.taskId, msg.data?.updates ?? {})
+        broadcastToMobile('task:update:response', { requestId, task })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
+    // -- Task management: delete task --
+    if (msg.event === 'task:delete:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        await taskStore.deleteTask(msg.data?.taskId)
+        broadcastToMobile('task:delete:response', { requestId, success: true })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
     // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
       // Slash command preprocessing for mobile

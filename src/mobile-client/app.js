@@ -99,6 +99,20 @@
         updateStepPanel(msg.data.todos)
         break
 
+      case 'task:list:response':
+        renderTaskList(msg.data.tasks)
+        break
+
+      case 'task:create:response':
+        // Refresh task list after creation
+        requestTaskList()
+        break
+
+      case 'task:update:response':
+      case 'task:delete:response':
+        requestTaskList()
+        break
+
       case 'session:messages':
         // Full session sync
         clearMessages()
@@ -272,6 +286,51 @@
 
   sendBtn.addEventListener('click', sendCommand)
   stopBtn.addEventListener('click', stopCommand)
+
+  // Task management functions
+  function requestTaskList() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ event: 'task:list:request', data: { requestId: Date.now().toString() } }))
+  }
+
+  function renderTaskList(tasks) {
+    var panel = document.getElementById('taskPanel')
+    if (!panel) {
+      panel = document.createElement('div')
+      panel.id = 'taskPanel'
+      panel.className = 'task-panel'
+      var header = document.querySelector('.header')
+      if (header) header.parentNode.insertBefore(panel, header.nextSibling)
+    }
+    if (!tasks || tasks.length === 0) {
+      panel.innerHTML = '<div class="task-panel-header">任务 <button class="task-panel-btn" onclick="window._wzxCreateTask()">+</button></div><div class="task-empty">无任务</div>'
+      return
+    }
+    var html = '<div class="task-panel-header">任务 (' + tasks.length + ') <button class="task-panel-btn" onclick="window._wzxCreateTask()">+</button></div>'
+    html += '<ul class="task-list">'
+    tasks.forEach(function (t) {
+      html += '<li class="task-item" data-id="' + t.id + '">'
+      html += '<span class="task-name">' + escapeHtml(t.title) + '</span>'
+      html += '<span class="task-meta">' + t.projects.length + ' 项目</span>'
+      html += '</li>'
+    })
+    html += '</ul>'
+    panel.innerHTML = html
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div')
+    div.textContent = str
+    return div.innerHTML
+  }
+
+  // Expose create task to inline onclick
+  window._wzxCreateTask = function () {
+    var title = prompt('任务名称:')
+    if (title && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ event: 'task:create:request', data: { requestId: Date.now().toString(), title: title } }))
+    }
+  }
 
   // Start connection
   connect()
