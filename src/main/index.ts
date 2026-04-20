@@ -757,6 +757,42 @@ app.whenReady().then(async () => {
       return
     }
 
+    // -- Task management: get single task --
+    if (msg.event === 'task:get:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const task = await taskStore.getTask(msg.data?.taskId)
+        broadcastToMobile('task:get:response', { requestId, task })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
+    // -- Task management: add project to task --
+    if (msg.event === 'task:add-project:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const task = await taskStore.addProject(msg.data?.taskId, msg.data?.folderPath)
+        broadcastToMobile('task:add-project:response', { requestId, task })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
+    // -- Task management: remove project from task --
+    if (msg.event === 'task:remove-project:request') {
+      const requestId = msg.data?.requestId ?? ''
+      try {
+        const task = await taskStore.removeProject(msg.data?.taskId, msg.data?.projectId)
+        broadcastToMobile('task:remove-project:response', { requestId, task })
+      } catch (err: any) {
+        broadcastToMobile('task:error', { requestId, error: err.message })
+      }
+      return
+    }
+
     // -- Agent command: send --
     if (msg.event === 'command:send' && msg.data?.content) {
       // Slash command preprocessing for mobile

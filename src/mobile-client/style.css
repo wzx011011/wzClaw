@@ -344,3 +344,32 @@ html, body {
   font-size: 13px;
   text-align: center;
 }
+
+.task-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.task-action-btn:active {
+  opacity: 1;
+}
+
+.task-description {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.task-projects-title {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}

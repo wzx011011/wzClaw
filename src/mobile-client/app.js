@@ -104,13 +104,20 @@
         break
 
       case 'task:create:response':
-        // Refresh task list after creation
+      case 'task:update:response':
+      case 'task:delete:response':
+      case 'task:add-project:response':
+      case 'task:remove-project:response':
+        // Refresh task list after any mutation
         requestTaskList()
         break
 
-      case 'task:update:response':
-      case 'task:delete:response':
-        requestTaskList()
+      case 'task:get:response':
+        if (msg.data.task) renderTaskDetail(msg.data.task)
+        break
+
+      case 'task:error':
+        console.error('[Task Error]', msg.data?.error)
         break
 
       case 'session:messages':
@@ -310,8 +317,10 @@
     html += '<ul class="task-list">'
     tasks.forEach(function (t) {
       html += '<li class="task-item" data-id="' + t.id + '">'
-      html += '<span class="task-name">' + escapeHtml(t.title) + '</span>'
+      html += '<span class="task-name" onclick="window._wzxOpenTask(\'' + t.id + '\')">' + escapeHtml(t.title) + '</span>'
       html += '<span class="task-meta">' + t.projects.length + ' 项目</span>'
+      html += '<button class="task-action-btn" onclick="window._wzxArchiveTask(\'' + t.id + '\')" title="归档">📦</button>'
+      html += '<button class="task-action-btn" onclick="window._wzxDeleteTask(\'' + t.id + '\')" title="删除">🗑</button>'
       html += '</li>'
     })
     html += '</ul>'
@@ -331,6 +340,44 @@
       ws.send(JSON.stringify({ event: 'task:create:request', data: { requestId: Date.now().toString(), title: title } }))
     }
   }
+
+  window._wzxOpenTask = function (taskId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ event: 'task:get:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+  }
+
+  window._wzxArchiveTask = function (taskId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ event: 'task:update:request', data: { requestId: Date.now().toString(), taskId: taskId, updates: { archived: true } } }))
+  }
+
+  window._wzxDeleteTask = function (taskId) {
+    if (!confirm('确定删除此任务？')) return
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ event: 'task:delete:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+  }
+
+  function renderTaskDetail(task) {
+    var panel = document.getElementById('taskPanel')
+    if (!panel) return
+    var html = '<div class="task-panel-header"><button class="task-panel-btn" onclick="requestTaskList()">←</button> ' + escapeHtml(task.title) + '</div>'
+    if (task.description) {
+      html += '<div class="task-description">' + escapeHtml(task.description) + '</div>'
+    }
+    if (task.projects && task.projects.length > 0) {
+      html += '<div class="task-projects-title">项目:</div><ul class="task-list">'
+      task.projects.forEach(function (p) {
+        html += '<li class="task-item"><span class="task-name">' + escapeHtml(p.name) + '</span><span class="task-meta">' + escapeHtml(p.path) + '</span></li>'
+      })
+      html += '</ul>'
+    } else {
+      html += '<div class="task-empty">无挂载项目</div>'
+    }
+    panel.innerHTML = html
+  }
+
+  // Expose requestTaskList for back button
+  window.requestTaskList = requestTaskList
 
   // Start connection
   connect()
