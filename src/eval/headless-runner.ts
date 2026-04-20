@@ -44,10 +44,11 @@ export async function runBenchmarkTask(
     ownWorkspace = true
   }
 
+  // 保存旧 BENCHMARK_TASK_ID，避免并行任务互相覆盖
+  const prevTaskId = process.env.BENCHMARK_TASK_ID
   try {
     // 2. 设置 BENCHMARK_TASK_ID — Langfuse trace 自动打 tag
-    // 使用前保存旧值，完成后恢复，避免并行任务互相覆盖
-    const prevTaskId = process.env.BENCHMARK_TASK_ID
+    process.env.BENCHMARK_TASK_ID = task.id
     process.env.BENCHMARK_TASK_ID = task.id
 
     // 3. 构建真实 LLM Gateway
