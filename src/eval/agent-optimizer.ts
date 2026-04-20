@@ -218,8 +218,8 @@ export class AgentOptimizer {
     }
 `
 
-    // 在 "return { error: ..." 之前插入（精确匹配失败时）
-    const insertPoint = content.indexOf("return { error: 'No match found")
+    // 在 matchCount === 0 的 return 之前插入（精确匹配失败时）
+    const insertPoint = content.indexOf("old_string not found in file")
     if (insertPoint === -1) {
       console.log('  [agent-optimizer] Could not find insertion point in file-edit.ts')
       return null

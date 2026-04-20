@@ -46,6 +46,8 @@ export async function runBenchmarkTask(
 
   try {
     // 2. 设置 BENCHMARK_TASK_ID — Langfuse trace 自动打 tag
+    // 使用前保存旧值，完成后恢复，避免并行任务互相覆盖
+    const prevTaskId = process.env.BENCHMARK_TASK_ID
     process.env.BENCHMARK_TASK_ID = task.id
 
     // 3. 构建真实 LLM Gateway
@@ -137,6 +139,12 @@ export async function runBenchmarkTask(
       patch: patch || undefined,
     }
   } finally {
+    // 恢复之前的 BENCHMARK_TASK_ID，避免影响并行任务
+    if (prevTaskId !== undefined) {
+      process.env.BENCHMARK_TASK_ID = prevTaskId
+    } else {
+      delete process.env.BENCHMARK_TASK_ID
+    }
     // 只清理自行创建的工作空间（batch-runner 管理的由 batch-runner 清理）
     if (ownWorkspace) {
       await workspace.cleanup().catch(() => {})

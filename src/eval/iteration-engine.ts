@@ -324,6 +324,10 @@ export class IterationEngine {
     console.log('Iteration complete.')
     console.log(`Best pass rates: ${JSON.stringify(this.state.bestPassRate)}`)
     console.log('='.repeat(60))
+
+    // 所有迭代完成后关闭全局资源
+    const { shutdown } = await import('./headless-runner')
+    await shutdown()
   }
 
   // ---- Private methods ----

@@ -135,6 +135,10 @@ async function cmdRun(args: Record<string, string>) {
   // 同时保存 JSON 结果
   const jsonPath = await saveReport(JSON.stringify(summary, null, 2), `${runName}.json`)
   console.log(`JSON results saved to: ${jsonPath}`)
+
+  // 单次运行结束时关闭全局资源
+  const { shutdown } = await import('../../src/eval/headless-runner')
+  await shutdown()
 }
 
 async function cmdReport(args: Record<string, string>) {

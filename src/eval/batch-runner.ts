@@ -215,10 +215,8 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
   const summary = aggregateScores(config.runName, config.datasetName, config.agentConfig, results)
   summary.timestamp = new Date().toISOString()
 
-  // 确保 Langfuse 写入
+  // 确保 Langfuse 写入（只 flush，不 shutdown — 调用方负责 shutdown）
   await lf.flushAsync()
-  await lf.shutdownAsync()
-  await shutdown()
 
   console.log(`\n=== Run Complete ===`)
   console.log(`Tasks: ${results.length}`)
