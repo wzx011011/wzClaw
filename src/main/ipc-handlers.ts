@@ -92,6 +92,14 @@ export function registerIpcHandlers(
       thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
     }
 
+    // Inject active task context into agent loop
+    if (result.data.activeTaskId) {
+      const task = taskStore.getTask(result.data.activeTaskId)
+      agentLoop.activeTask = task ?? null
+    } else {
+      agentLoop.activeTask = null
+    }
+
     // Cleanup on window close
     const onWindowClosed = (): void => {
       agentLoop.cancel()

@@ -162,6 +162,7 @@ export interface IpcRequestPayloads {
   'agent:send_message': {
     conversationId: string
     content: string
+    activeTaskId?: string
   }
   'agent:stop': void
   'agent:permission_response': {
@@ -350,7 +351,8 @@ export const IpcSchemas = {
   'agent:send_message': {
     request: z.object({
       conversationId: z.string(),
-      content: z.string().min(1)
+      content: z.string().min(1),
+      activeTaskId: z.string().optional()
     }),
     response: z.undefined()
   },

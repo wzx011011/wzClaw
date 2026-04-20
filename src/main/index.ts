@@ -874,6 +874,15 @@ app.whenReady().then(async () => {
             }
           }
         } as unknown as Electron.WebContents
+
+        // Inject active task context from mobile message
+        if (msg.data.activeTaskId) {
+          const task = taskStore.getTask(msg.data.activeTaskId)
+          agentLoop.activeTask = task ?? null
+        } else {
+          agentLoop.activeTask = null
+        }
+
         for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig, mobileSender)) {
           // Forward stream events to renderer
           const wc = BrowserWindow.getAllWindows()[0]?.webContents

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import type { SessionMeta, MentionItem } from '../../shared/types'
+import { useTaskStore } from './task-store'
 
 // ============================================================
 // Chat Store (per D-54, D-55, D-56)
@@ -484,7 +485,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent })
+      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeTaskId: useTaskStore.getState().activeTaskId ?? undefined })
     } catch (err) {
       set({
         isStreaming: false,

@@ -3,7 +3,7 @@ import type { AgentStep, Task } from '../shared/types'
 
 const api = {
   // Agent
-  sendMessage: (request: { conversationId: string; content: string }) =>
+  sendMessage: (request: { conversationId: string; content: string; activeTaskId?: string }) =>
     ipcRenderer.invoke('agent:send_message', request),
   stopGeneration: () => ipcRenderer.invoke('agent:stop'),
 

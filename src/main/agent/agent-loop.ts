@@ -10,7 +10,7 @@
 import type { LLMGateway } from '../llm/gateway'
 import type { ToolRegistry } from '../tools/tool-registry'
 import type { PermissionManager } from '../permission/permission-manager'
-import type { Message } from '../../shared/types'
+import type { Message, Task } from '../../shared/types'
 import { MAX_AGENT_TURNS } from '../../shared/constants'
 import { ContextManager } from '../context/context-manager'
 import type { HookRegistry } from '../hooks/hook-registry'
@@ -29,6 +29,9 @@ export class AgentLoop {
   private conversation = new ConversationManager()
   private abortController: AbortController | null = null
   private turnManager = new TurnManager()
+
+  /** Active task context — injected into system prompt when set */
+  activeTask: Task | null = null
 
   constructor(
     private gateway: LLMGateway,
@@ -81,7 +84,7 @@ export class AgentLoop {
     this.conversation.appendUserMessage(userMessage)
 
     // 构建系统提示（委托给 SystemPromptBuilder）
-    const systemPrompt = await buildSystemPrompt(config)
+    const systemPrompt = await buildSystemPrompt(config, this.activeTask)
     const toolDefinitions = this.toolRegistry.getDefinitions().map(t => ({
       name: t.name,
       description: t.description,

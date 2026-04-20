@@ -4,7 +4,7 @@ declare global {
   interface Window {
     wzxclaw: {
       // Agent
-      sendMessage: (request: { conversationId: string; content: string }) => Promise<void>
+      sendMessage: (request: { conversationId: string; content: string; activeTaskId?: string }) => Promise<void>
       stopGeneration: () => Promise<void>
       // Stream listeners
       onStreamText: (cb: (p: { content: string }) => void) => () => void
