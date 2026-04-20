@@ -297,6 +297,10 @@ async function cmdSplitAnalyze(args: Record<string, string>) {
   console.log(formatSplitAnalysis(analysis))
 }
 
+async function cmdCleanup(_args: Record<string, string>) {
+  await import('./cleanup-runs')
+}
+
 async function main() {
   // 加载 .env
   try {
@@ -329,6 +333,9 @@ async function main() {
     case 'split-analyze':
       await cmdSplitAnalyze(args)
       break
+    case 'cleanup':
+      await cmdCleanup(args)
+      break
     default:
       console.log(`wzxClaw Eval CLI
 
@@ -341,6 +348,7 @@ Commands:
   compare  Compare two runs
   analyze  Analyze weaknesses in a run
   iterate  Self-iteration: evaluate → analyze → fix → re-evaluate
+  cleanup  Delete stale dataset runs from Langfuse
 
 Options:
   --dataset=<name>      Dataset: aider-polyglot | swebench-curated (default: aider-polyglot)

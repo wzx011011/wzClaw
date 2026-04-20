@@ -14,12 +14,22 @@ import { AgentOptimizer } from './agent-optimizer'
 import { writeImprovementChangelog } from './improvement-changelog'
 import { compareStratified, formatStratifiedReport } from './stratified-tracker'
 import { ELORanking } from './elo-ranking'
+import { analyzeTaskFailure } from './trace-analyzer'
+import { computeTraceMetrics, formatTraceMetrics } from './trace-metrics'
+import { clusterFailures, formatClusterSummary } from './failure-clusterer'
+import { generatePromptWithOPRO } from './opro-optimizer'
+import { ExpertExecutor } from './expert-executor'
 import type {
   IterationConfig,
   IterationState,
   IterationRecord,
   RunSummary,
   WeaknessReport,
+  FailureClassification,
+  FailureCluster,
+  TraceMetrics,
+  TaskEvalResult,
+  BenchmarkTask,
 } from './types'
 
 const DATASETS = {
@@ -44,6 +54,7 @@ export class IterationEngine {
   private basePrompt: string
   private agentOptimizer: AgentOptimizer
   private eloRanking: ELORanking
+  private expertExecutor: ExpertExecutor
 
   constructor(config: IterationConfig) {
     this.config = config
@@ -59,6 +70,9 @@ export class IterationEngine {
 
     // ELO 排名系统
     this.eloRanking = this.loadELORanking()
+
+    // Expert-Executor 重试引擎
+    this.expertExecutor = new ExpertExecutor()
   }
 
   async run(): Promise<void> {
@@ -99,64 +113,44 @@ export class IterationEngine {
         break
       }
 
-      // 5. Optimize prompt based on weaknesses
-      console.log('\n[Step 3] Optimizing system prompt...')
-      let { prompt: newPrompt, changes } = optimizePrompt(
-        this.state.currentPromptVariant,
-        weaknessReport,
-      )
+      // 5. Per-task trace analysis
+      console.log('\n[Step 2b] Analyzing per-task failures...')
+      const { classifications, clusters, metrics } = await this.analyzeTaskFailures(trainResults)
 
-      if (changes.length === 0) {
-        console.log('Static rules exhausted. Trying LLM-based optimization...')
-        // 静态规则用完 → 使用 LLM 生成针对性 prompt 增补
-        if (this.config.judgeConfig) {
-          const llmResult = await optimizePromptWithLLM(
-            this.state.currentPromptVariant,
-            weaknessReport,
-            {
-              apiKey: this.config.judgeConfig.apiKey,
-              baseURL: this.config.judgeConfig.baseURL,
-              model: this.config.judgeConfig.judgeModel,
-            },
-          )
-          if (llmResult.changes.length > 0) {
-            this.state.currentPromptVariant = llmResult.prompt
-            changes = llmResult.changes
-            console.log(`Applied ${changes.length} LLM-generated changes: ${changes.join(', ')}`)
-          } else {
-            // 最后手段：重置后让 LLM 重新生成
-            const resetPrompt = stripOptimizations(this.state.currentPromptVariant)
-            const retryResult = await optimizePromptWithLLM(resetPrompt, weaknessReport, {
-              apiKey: this.config.judgeConfig.apiKey,
-              baseURL: this.config.judgeConfig.baseURL,
-              model: this.config.judgeConfig.judgeModel,
-            })
-            if (retryResult.changes.length > 0) {
-              this.state.currentPromptVariant = retryResult.prompt
-              changes = retryResult.changes
-              console.log(`Applied ${changes.length} LLM changes after reset: ${changes.join(', ')}`)
-            } else {
-              console.log('LLM optimization also exhausted.')
-            }
-          }
+      // 6. Print failure diagnostics
+      console.log('\n[Step 2c] Failure clusters:')
+      console.log(formatClusterSummary(clusters))
+      console.log('\n[Step 2d] Trace metrics:')
+      console.log(formatTraceMetrics(metrics))
+
+      // 7. Optimize prompt — OPRO first, fallback to static
+      console.log('\n[Step 3] Optimizing system prompt...')
+      let changes: string[] = []
+
+      if (clusters.length > 0 && this.config.judgeConfig) {
+        const oproResult = await generatePromptWithOPRO(
+          this.state.currentPromptVariant,
+          clusters,
+          this.state.optimizationHistory,
+          {
+            apiKey: this.config.judgeConfig.apiKey,
+            baseURL: this.config.judgeConfig.baseURL,
+            model: this.config.judgeConfig.judgeModel,
+          },
+        )
+        if (oproResult.changes.length > 0) {
+          this.state.currentPromptVariant = oproResult.prompt
+          changes = oproResult.changes
+          console.log(`OPRO applied: ${oproResult.rationale}`)
         } else {
-          // 无 LLM 配置，回退静态重置逻辑
-          const resetPrompt = stripOptimizations(this.state.currentPromptVariant)
-          const { prompt: retryPrompt, changes: retryChanges } = optimizePrompt(resetPrompt, weaknessReport)
-          if (retryChanges.length > 0) {
-            this.state.currentPromptVariant = retryPrompt
-            changes = retryChanges
-            console.log(`Applied ${changes.length} changes after reset: ${changes.join(', ')}`)
-          } else {
-            console.log('Prompt optimization fully exhausted (no LLM config).')
-          }
+          console.log(`OPRO: ${oproResult.rationale}`)
+          changes = this.fallbackToStaticOptimization(weaknessReport)
         }
       } else {
-        this.state.currentPromptVariant = newPrompt
-        console.log(`Applied ${changes.length} prompt changes: ${changes.join(', ')}`)
+        changes = this.fallbackToStaticOptimization(weaknessReport)
       }
 
-      // 5b. Optimize agent code (file-edit, loop-detector, stall detection)
+      // 7b. Optimize agent code (file-edit, loop-detector, stall detection)
       console.log('\n[Step 3b] Optimizing agent code...')
       const codeChanges = await this.agentOptimizer.optimize(weaknessReport)
       if (codeChanges.length > 0) {
@@ -165,7 +159,32 @@ export class IterationEngine {
         console.log('No code optimizations applicable.')
       }
 
-      // 6. Re-run train split with new prompt (median of repeatRuns if configured)
+      // 7c. Expert-Executor retry for recoverable failures
+      if (classifications.some(c => c.recoverable) && this.config.judgeConfig) {
+        console.log('\n[Step 3c] Expert-Executor retry...')
+        this.expertExecutor.resetIteration()
+        // Load tasks for retry
+        const allTasks = this.loadAllTasks()
+        await this.expertExecutor.retryRecoverable(
+          allTasks,
+          classifications,
+          {
+            model: this.config.model,
+            provider: this.config.provider,
+            apiKey: this.config.apiKey,
+            baseURL: this.config.baseURL ?? '',
+            maxTurns: this.config.maxTurns,
+            systemPrompt: this.state.currentPromptVariant,
+          },
+          {
+            apiKey: this.config.judgeConfig.apiKey,
+            baseURL: this.config.judgeConfig.baseURL,
+            model: this.config.judgeConfig.judgeModel,
+          },
+        )
+      }
+
+      // 8. Re-run train split with new prompt (median of repeatRuns if configured)
       console.log('\n[Step 4] Re-running train split with optimized prompt...')
       const newTrainResults = await this.runTrainSplitWithRepeat(this.state.currentPromptVariant)
 
@@ -179,6 +198,15 @@ export class IterationEngine {
 
       if (improved) {
         console.log('\n✓ IMPROVED! Updating best results.')
+
+        // Record optimization history
+        this.state.optimizationHistory.push({
+          iteration: i + 1,
+          targetedClusters: clusters.slice(0, 3).map(c => c.failureMode),
+          promptDiff: changes.join('; '),
+          resultPassRate: newPassRate,
+          kept: true,
+        })
 
         // 写入改进变更日志
         const oldPromptSnapshot = this.state.bestPromptVariant
@@ -204,6 +232,16 @@ export class IterationEngine {
         // 代码优化保留（已验证编译通过且效果提升）
       } else {
         console.log('\n✗ No improvement. Rolling back prompt and code changes.')
+
+        // Record optimization history (rolled back)
+        this.state.optimizationHistory.push({
+          iteration: i + 1,
+          targetedClusters: clusters.slice(0, 3).map(c => c.failureMode),
+          promptDiff: changes.join('; '),
+          resultPassRate: newPassRate,
+          kept: false,
+        })
+
         this.state.currentPromptVariant = this.state.bestPromptVariant
         // 回滚代码优化
         await this.agentOptimizer.rollback()
@@ -308,7 +346,7 @@ export class IterationEngine {
         const summary = await runBatch({
           datasetName: ds.name,
           dataFile: resolve(ds.file),
-          runName: `iterate-train-v${this.state.currentIteration + 1}-${key}-r${r + 1}`,
+          runName: `iterate-train-${key}-r${r + 1}`,
           agentConfig: {
             model: this.config.model,
             provider: this.config.provider,
@@ -319,6 +357,7 @@ export class IterationEngine {
           },
           splitFilter: 'train',
           judgeConfig: this.config.judgeConfig,
+          storeTraceData: true,
         })
         results[key] = summary
       }
@@ -339,13 +378,17 @@ export class IterationEngine {
   }
 
   private async runTrainSplit(customPrompt?: string): Promise<Record<string, RunSummary>> {
+    // Clean up previous iteration's train runs
+    const trainRunNames = Object.keys(DATASETS).map(key => `iterate-train-${key}`)
+    await this.cleanupPreviousRuns(trainRunNames)
+
     const results: Record<string, RunSummary> = {}
 
     for (const [key, ds] of Object.entries(DATASETS)) {
       const summary = await runBatch({
         datasetName: ds.name,
         dataFile: resolve(ds.file),
-        runName: `iterate-train-v${this.state.currentIteration + 1}-${key}`,
+        runName: `iterate-train-${key}`,
         agentConfig: {
           model: this.config.model,
           provider: this.config.provider,
@@ -364,13 +407,17 @@ export class IterationEngine {
   }
 
   private async runTestSplit(): Promise<Record<string, RunSummary>> {
+    // Clean up previous iteration's test runs
+    const testRunNames = Object.keys(DATASETS).map(key => `iterate-test-${key}`)
+    await this.cleanupPreviousRuns(testRunNames)
+
     const results: Record<string, RunSummary> = {}
 
     for (const [key, ds] of Object.entries(DATASETS)) {
       const summary = await runBatch({
         datasetName: ds.name,
         dataFile: resolve(ds.file),
-        runName: `iterate-test-v${this.state.currentIteration + 1}-${key}`,
+        runName: `iterate-test-${key}`,
         agentConfig: {
           model: this.config.model,
           provider: this.config.provider,
@@ -405,6 +452,86 @@ export class IterationEngine {
       categories: allCategories,
       topRecommendations: [...new Set(allRecommendations)].slice(0, 5),
     }
+  }
+
+  private async analyzeTaskFailures(
+    trainResults: Record<string, RunSummary>,
+  ): Promise<{ classifications: FailureClassification[]; clusters: FailureCluster[]; metrics: TraceMetrics }> {
+    const allClassifications: FailureClassification[] = []
+    const allResults: TaskEvalResult[] = []
+
+    const llmConfig = this.config.judgeConfig
+      ? { apiKey: this.config.judgeConfig.apiKey, baseURL: this.config.judgeConfig.baseURL, model: this.config.judgeConfig.judgeModel }
+      : undefined
+
+    for (const summary of Object.values(trainResults)) {
+      allResults.push(...summary.perTaskResults)
+
+      // 对每个失败且有 traceData 的任务进行分析
+      const failed = summary.perTaskResults.filter(r => r.testPassed === false && r.traceData)
+      for (const result of failed) {
+        const cls = await analyzeTaskFailure(
+          '', // task description not stored in TaskEvalResult — use empty
+          result,
+          result.traceData!,
+          llmConfig,
+        )
+        allClassifications.push(cls)
+      }
+    }
+
+    const clusters = clusterFailures(allClassifications, allResults)
+    const metrics = computeTraceMetrics(allResults)
+
+    return { classifications: allClassifications, clusters, metrics }
+  }
+
+  private fallbackToStaticOptimization(weaknessReport: WeaknessReport): string[] {
+    const { prompt: newPrompt, changes } = optimizePrompt(
+      this.state.currentPromptVariant,
+      weaknessReport,
+    )
+
+    if (changes.length > 0) {
+      this.state.currentPromptVariant = newPrompt
+      console.log(`Static fallback: ${changes.join(', ')}`)
+    }
+    return changes
+  }
+
+  private async cleanupPreviousRuns(runNames: string[]): Promise<void> {
+    const lf = new Langfuse({
+      publicKey: process.env.LANGFUSE_PUBLIC_KEY ?? '',
+      secretKey: process.env.LANGFUSE_SECRET_KEY ?? '',
+      baseUrl: process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000',
+    })
+
+    for (const ds of Object.values(DATASETS)) {
+      try {
+        const runs = await lf.api.datasetsGetRuns({ datasetName: ds.name })
+        for (const run of runs.data ?? []) {
+          if (runNames.includes(run.name)) {
+            try {
+              await lf.api.datasetsDeleteRun(ds.name, run.name)
+              console.log(`  Cleaned up old run: ${run.name} from ${ds.name}`)
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* dataset may not exist yet */ }
+    }
+
+    await lf.shutdownAsync()
+  }
+
+  private loadAllTasks(): BenchmarkTask[] {
+    const allTasks: BenchmarkTask[] = []
+    for (const ds of Object.values(DATASETS)) {
+      try {
+        const raw = readFileSync(resolve(ds.file), 'utf-8')
+        allTasks.push(...JSON.parse(raw))
+      } catch { /* skip missing datasets */ }
+    }
+    return allTasks
   }
 
   private checkTargets(passRates: Record<string, number>): boolean {
@@ -546,6 +673,7 @@ export class IterationEngine {
         console.log(`Resuming from iteration ${saved.currentIteration}`)
         // Backfill stagnationCount for old state files
         if (saved.stagnationCount === undefined) saved.stagnationCount = 0
+        if (saved.optimizationHistory === undefined) saved.optimizationHistory = []
         return saved
       } catch {
         // corrupted state, start fresh
@@ -558,6 +686,7 @@ export class IterationEngine {
       currentPromptVariant: this.basePrompt,
       history: [],
       stagnationCount: 0,
+      optimizationHistory: [],
     }
   }
 

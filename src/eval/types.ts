@@ -66,6 +66,85 @@ export interface MessageRecord {
   toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
 }
 
+/** 逐任务 trace 摘要（从事件流提取，用于失败分析） */
+export interface TaskTraceData {
+  /** 工具调用序列 */
+  toolCallSequence: Array<{ tool: string; turn: number; isError: boolean }>
+  /** 第一次文件编辑尝试 */
+  firstEditAttempt?: { tool: string; turn: number; isError: boolean }
+  /** agent 是否在结束前跑了测试命令 */
+  ranTestBeforeDone: boolean
+  /** 第一次编辑前的文件读取次数 */
+  readsBeforeFirstEdit: number
+  /** 总错误事件数 */
+  errorCount: number
+  /** 最后一条 assistant 消息摘要 */
+  finalAssistantText: string
+  /** 是否触达最大轮次 */
+  hitMaxTurns: boolean
+  /** 测试输出（仅失败时，max 2000 chars） */
+  testOutput?: string
+}
+
+/** SWE-bench 风格的失败分类 */
+export interface FailureClassification {
+  taskId: string
+  /** SWE-bench 失败分类 */
+  taxonomy: 'localization' | 'repair' | 'iteration' | 'environment' | 'knowledge' | 'unknown'
+  /** 具体失败模式 */
+  failureMode: string
+  /** agent 首次出错的 turn */
+  criticalTurn: number
+  /** 一句话根因 */
+  rootCause: string
+  /** 重试是否能改善 */
+  recoverable: boolean
+  /** 针对性的 prompt 修复建议 */
+  suggestedPromptFix: string
+  /** 分析来源 */
+  analysisSource: 'rule' | 'llm'
+}
+
+/** 失败聚类 */
+export interface FailureCluster {
+  failureMode: string
+  taxonomy: string
+  taskIds: string[]
+  count: number
+  /** impact = count * (1 + hardTaskRatio) */
+  impact: number
+  representativeCause: string
+  suggestedFixes: string[]
+  priority: number
+}
+
+/** 跨任务诊断指标 */
+export interface TraceMetrics {
+  /** 失败任务中没跑测试的比例 */
+  noTestRunRate: number
+  /** 失败任务中第一次编辑出错的比例 */
+  firstEditFailRate: number
+  /** 失败任务中触达最大轮次的比例 */
+  maxTurnsRate: number
+  /** 失败任务中盲目编辑的比例 */
+  blindEditRate: number
+  /** 成功任务平均编辑前读取次数 */
+  avgReadsBeforeEditSuccess: number
+  /** 失败任务平均编辑前读取次数 */
+  avgReadsBeforeEditFailure: number
+  /** 有工具错误时最终恢复的比例 */
+  toolErrorRecoveryRate: number
+}
+
+/** OPRO 优化历史记录 */
+export interface OptimizationHistoryEntry {
+  iteration: number
+  targetedClusters: string[]
+  promptDiff: string
+  resultPassRate: Record<string, number>
+  kept: boolean
+}
+
 /** 单个任务的完整评测结果 */
 export interface TaskEvalResult {
   taskId: string
@@ -86,9 +165,9 @@ export interface TaskEvalResult {
   traceId: string
   patch?: string
   error?: string
+  /** 逐任务 trace 摘要（迭代模式下填充） */
+  traceData?: TaskTraceData
 }
-
-/** 一次完整 run 的聚合结果 */
 export interface RunSummary {
   runName: string
   datasetName: string
@@ -183,4 +262,6 @@ export interface IterationState {
   history: IterationRecord[]
   /** 连续无改进的轮次计数 */
   stagnationCount: number
+  /** OPRO 优化历史（含得分和是否被回滚） */
+  optimizationHistory: OptimizationHistoryEntry[]
 }

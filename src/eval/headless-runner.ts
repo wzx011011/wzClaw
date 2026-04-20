@@ -12,7 +12,7 @@ import { shutdownLangfuse, flushLangfuse } from '../main/observability/langfuse-
 import { prepareWorkspace, extractPatch } from './workspace-isolation'
 import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
 import type { AgentEvent, AgentConfig } from '../main/agent/types'
-import type { BenchmarkTask, HeadlessConfig, HeadlessRunResult } from './types'
+import type { BenchmarkTask, HeadlessConfig, HeadlessRunResult, TaskTraceData } from './types'
 
 /**
  * 运行单个评测任务
@@ -149,4 +149,112 @@ export async function runBenchmarkTask(
  */
 export async function shutdown(): Promise<void> {
   await shutdownLangfuse()
+}
+
+const EDIT_TOOLS = new Set(['FileEdit', 'FileWrite'])
+const READ_TOOLS = new Set(['FileRead', 'Grep', 'Glob'])
+
+/**
+ * 从事件流和消息记录中提取结构化 trace 摘要
+ * 用于逐任务失败分析，替代存储完整原始事件
+ */
+export function extractTraceData(
+  events: HeadlessRunResult['events'],
+  messages: HeadlessRunResult['messages'],
+  testCommand?: string,
+  testOutput?: string,
+): TaskTraceData {
+  let currentTurn = 0
+  let firstEditAttempt: TaskTraceData['firstEditAttempt'] = undefined
+  let readsBeforeFirstEdit = 0
+  let ranTestBeforeDone = false
+  let errorCount = 0
+  let hitMaxTurns = false
+  let hasSeenEdit = false
+  const toolCallSequence: TaskTraceData['toolCallSequence'] = []
+
+  for (const ev of events) {
+    if (ev.type === 'agent:done') {
+      currentTurn = (ev as any).turnCount ?? currentTurn
+      if ((ev as any).reason === 'max_turns') hitMaxTurns = true
+    }
+
+    if (ev.type === 'agent:tool_call') {
+      const tool = String((ev as any).toolName ?? '')
+      toolCallSequence.push({ tool, turn: currentTurn, isError: false })
+
+      if (EDIT_TOOLS.has(tool) && !hasSeenEdit) {
+        hasSeenEdit = true
+        firstEditAttempt = { tool, turn: currentTurn, isError: false }
+      }
+      if (READ_TOOLS.has(tool) && !hasSeenEdit) {
+        readsBeforeFirstEdit++
+      }
+      // 检测是否跑了测试命令
+      if (tool === 'Bash' && testCommand) {
+        // 从后续 tool_result 事件的 messages 中检测
+      }
+    }
+
+    if (ev.type === 'agent:tool_result') {
+      const tool = String((ev as any).toolName ?? '')
+      const isError = Boolean((ev as any).isError)
+      if (isError) errorCount++
+
+      // 更新 toolCallSequence 中对应项的 isError
+      const entry = toolCallSequence.findLast(tc => tc.tool === tool && !tc.isError)
+      if (entry && isError) entry.isError = true
+
+      // 更新 firstEditAttempt
+      if (firstEditAttempt && EDIT_TOOLS.has(tool) && isError) {
+        firstEditAttempt.isError = true
+      }
+
+      // 检测 Bash 命令是否包含测试命令关键字
+      if (tool === 'Bash' && testCommand && !ranTestBeforeDone) {
+        ranTestBeforeDone = true
+      }
+    }
+  }
+
+  // 从 messages 中更精确地检测测试执行
+  if (!ranTestBeforeDone && testCommand) {
+    for (const m of messages) {
+      if (m.role === 'assistant' && m.toolCalls) {
+        for (const tc of m.toolCalls) {
+          if (tc.name === 'Bash' && tc.input?.command) {
+            const cmd = String(tc.input.command)
+            // 提取 testCommand 中的核心关键词（如 pytest, go test 等）
+            const testKeywords = testCommand.split(/\s+/).filter(w => w.length > 2).slice(0, 3)
+            if (testKeywords.some(kw => cmd.includes(kw))) {
+              ranTestBeforeDone = true
+              break
+            }
+          }
+        }
+      }
+      if (ranTestBeforeDone) break
+    }
+  }
+
+  // 提取最后一条 assistant 文本
+  let finalAssistantText = ''
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'assistant' && m.content && m.content.length > 0) {
+      finalAssistantText = m.content.slice(0, 2000)
+      break
+    }
+  }
+
+  return {
+    toolCallSequence: toolCallSequence.slice(0, 100), // limit size
+    firstEditAttempt,
+    ranTestBeforeDone,
+    readsBeforeFirstEdit,
+    errorCount,
+    finalAssistantText,
+    hitMaxTurns,
+    testOutput: testOutput?.slice(0, 2000),
+  }
 }

@@ -19,7 +19,8 @@
     "eval:compare": "npx tsx scripts/eval/eval-bootstrap.ts compare",
     "eval:analyze": "npx tsx scripts/eval/eval-bootstrap.ts analyze",
     "eval:regression": "npx tsx scripts/eval/eval-bootstrap.ts run --dataset=aider-polyglot --model=glm-5.1 --max-turns=15",
-    "eval:iterate": "npx tsx scripts/eval/eval-bootstrap.ts iterate"
+    "eval:iterate": "npx tsx scripts/eval/eval-bootstrap.ts iterate",
+    "eval:cleanup": "npx tsx scripts/eval/eval-bootstrap.ts cleanup"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",

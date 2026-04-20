@@ -30,10 +30,29 @@ export async function scoreTestExecution(
       shell: true,
       timeout: 60_000,
       cwd: workspaceDir,
+      env: process.env,
     })
     return { passed: true, output: (stdout + '\n' + stderr).trim() }
   } catch (err: any) {
     const output = (err?.stdout ?? '') + '\n' + (err?.stderr ?? '') + '\n' + (err?.message ?? '')
+
+    // Windows fallback: python not found → retry with py
+    if (process.platform === 'win32' && /\bpython\b/.test(resolvedCmd) && /not recognized|not found/i.test(output)) {
+      try {
+        const fallbackCmd = resolvedCmd.replace(/\bpython\b/g, 'py')
+        const { stdout: stdout2, stderr: stderr2 } = await execAsync(fallbackCmd, {
+          shell: true,
+          timeout: 60_000,
+          cwd: workspaceDir,
+          env: process.env,
+        })
+        return { passed: true, output: (stdout2 + '\n' + stderr2).trim() }
+      } catch (err2: any) {
+        const output2 = (err2?.stdout ?? '') + '\n' + (err2?.stderr ?? '') + '\n' + (err2?.message ?? '')
+        return { passed: false, output: output2.trim() }
+      }
+    }
+
     return { passed: false, output: output.trim() }
   }
 }

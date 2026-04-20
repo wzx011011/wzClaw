@@ -5,11 +5,12 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { Langfuse } from 'langfuse'
-import { runBenchmarkTask, shutdown } from './headless-runner'
+import { runBenchmarkTask, shutdown, extractTraceData } from './headless-runner'
 import { prepareWorkspace } from './workspace-isolation'
 import { scoreTask } from './scorer'
 import { aggregateScores } from './score-aggregator'
 import { pullAutoScores } from './auto-score-puller'
+import { ensureToolchains, isToolchainAvailable } from './toolchain-resolver'
 import type { BenchmarkTask, HeadlessConfig, RunSummary, TaskEvalResult } from './types'
 
 const LANGFUSE_BASE_URL = process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000'
@@ -37,6 +38,8 @@ export interface BatchRunConfig {
   keepWorkspaces?: boolean
   /** 只运行指定 split 的任务（'train' | 'test'） */
   splitFilter?: 'train' | 'test'
+  /** 是否保存 trace 摘要到 TaskEvalResult（迭代模式需要） */
+  storeTraceData?: boolean
 }
 
 /**
@@ -48,6 +51,14 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
     secretKey: LANGFUSE_SECRET_KEY,
     baseUrl: LANGFUSE_BASE_URL,
   })
+
+  // 检测工具链并补全 PATH
+  const toolchains = ensureToolchains()
+  console.log('Toolchain status:')
+  console.log(`  Python: ${toolchains.python.available ? toolchains.python.version : 'NOT FOUND'}`)
+  console.log(`  Go: ${toolchains.go.available ? toolchains.go.version : 'NOT FOUND'}`)
+  console.log(`  Rust: ${toolchains.rust.available ? toolchains.rust.version : 'NOT FOUND'}`)
+  console.log(`  JavaScript: ${toolchains.javascript.version}`)
 
   // 加载数据集
   const raw = readFileSync(resolve(config.dataFile), 'utf-8')
@@ -74,6 +85,25 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]
     console.log(`[${i + 1}/${tasks.length}] ${task.id} (${task.language}/${task.difficulty})...`)
+
+    // 跳过工具链不可用的任务（不浪费 API 调用）
+    if (!isToolchainAvailable(task.language)) {
+      console.log(`  -> SKIP (${task.language} toolchain not installed)`)
+      results.push({
+        taskId: task.id,
+        taskSource: task.source,
+        language: task.language,
+        difficulty: task.difficulty,
+        testPassed: null,
+        testOutput: `Skipped: ${task.language} toolchain not available`,
+        autoScores: {},
+        judgeScores: {},
+        turnCount: 0,
+        duration: 0,
+        traceId: '',
+      })
+      continue
+    }
 
     try {
       // 准备工作空间（scorer 和 agent 共用同一目录）
@@ -138,6 +168,16 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
       }
 
       results.push(evalResult)
+
+      // 提取 trace 摘要（迭代模式需要，用于逐任务失败分析）
+      if (config.storeTraceData) {
+        evalResult.traceData = extractTraceData(
+          runResult.events,
+          runResult.messages,
+          task.testCommand,
+          evalResult.testOutput,
+        )
+      }
 
       // 输出进度
       const status = evalResult.testPassed === true ? 'PASS' : evalResult.testPassed === false ? 'FAIL' : 'N/A'
