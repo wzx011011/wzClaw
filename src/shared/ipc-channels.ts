@@ -194,7 +194,7 @@ export interface IpcRequestPayloads {
   'terminal:resize': { terminalId: string; cols: number; rows: number }
   'terminal:output': { terminalId: string }
   'symbol:query': { operation: string; params: Record<string, unknown> }
-  'task:list': void
+  'step:list': void
   'index:status': void
   'index:reindex': void
   'index:search': { query: string; topK?: number }
@@ -256,7 +256,7 @@ export interface IpcResponsePayloads {
   'terminal:resize': void
   'terminal:output': { buffer: string }
   'symbol:query': { results: Array<{ filePath: string; line: number; symbolName: string; kind: string }> }
-  'task:list': AgentTask[]
+  'step:list': AgentStep[]
   'index:status': { status: string; fileCount: number; currentFile: string; error?: string }
   'index:reindex': void
   'index:search': Array<{ filePath: string; startLine: number; endLine: number; content: string; score: number }>
@@ -306,8 +306,8 @@ export interface IpcStreamPayloads {
   'terminal:data': { terminalId: string; data: string }
   'symbol:query': { queryId: string; operation: string; params: Record<string, unknown> }
   'symbol:result': { queryId: string; result: unknown; isError: boolean }
-  'task:created': AgentTask
-  'task:updated': AgentTask
+  'step:created': AgentStep
+  'step:updated': AgentStep
   'index:progress': { status: string; fileCount: number; currentFile: string; error?: string }
   'browser:screenshot': { url: string; base64: string; timestamp: number }
   'browser:status': { running: boolean; url: string | null }
