@@ -15,6 +15,8 @@ interface TitleBarProps {
   rightSidebarVisible: boolean
   onConnectPhone: () => void
   onOpenBrowser: () => void
+  onBackToTasks?: () => void
+  activeTaskTitle?: string
 }
 
 /**
@@ -29,7 +31,9 @@ export default function TitleBar({
   onToggleRightSidebar,
   rightSidebarVisible,
   onConnectPhone,
-  onOpenBrowser
+  onOpenBrowser,
+  onBackToTasks,
+  activeTaskTitle
 }: TitleBarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const [currentTheme, setCurrentTheme] = useState<ThemeMode>('midnight')
@@ -67,6 +71,13 @@ export default function TitleBar({
 
   return (
     <div className="ide-titlebar">
+      {/* Back to tasks */}
+      {onBackToTasks && (
+        <button className="task-back-btn" onClick={onBackToTasks} title="返回任务列表">
+          ← {activeTaskTitle || '任务'}
+        </button>
+      )}
+
       {/* Hamburger menu */}
       <div className="titlebar-menu-container" ref={menuRef}>
         <button

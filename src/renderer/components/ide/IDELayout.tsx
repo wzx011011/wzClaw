@@ -18,6 +18,7 @@ import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
+import { useTaskStore } from '../../stores/task-store'
 
 /**
  * IDELayout — Chat-centric layout with right sidebar for sessions + editor.
@@ -35,6 +36,8 @@ export default function IDELayout(): JSX.Element {
   const openPalette = useCommandStore((s) => s.openPalette)
   const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
   const showTerminal = useTerminalStore((s) => s.panelVisible)
+  const closeTask = useTaskStore((s) => s.closeTask)
+  const activeTask = useTaskStore((s) => s.getActiveTask)()
 
   // Sidebar state
   const [sidebarVisible, setSidebarVisible] = useState(true)
@@ -164,6 +167,8 @@ export default function IDELayout(): JSX.Element {
           setRightSidebarVisible(true)
           setRightSidebarTab('preview')
         }}
+        onBackToTasks={closeTask}
+        activeTaskTitle={activeTask?.title}
       />
       <div className="ide-main">
         <div className="ide-content">

@@ -1,0 +1,279 @@
+/* ============================================================
+   Task Management Styles — Midnight Theme
+   ============================================================ */
+
+/* Task Home Page */
+.task-home {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: var(--sp-8);
+  padding-top: calc(var(--titlebar-height) + var(--sp-8));
+  overflow-y: auto;
+}
+
+.task-home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-6);
+}
+
+.task-home-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+.task-home-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.task-home-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Task Grid */
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* Task Card */
+.task-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.task-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.task-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--sp-2);
+}
+
+.task-card-title {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: var(--sp-1);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.task-card:hover .task-card-actions {
+  opacity: 1;
+}
+
+.task-card-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+}
+
+.task-card-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.task-card-btn-danger:hover {
+  color: var(--error);
+}
+
+.task-card-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 var(--sp-3) 0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-card-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Buttons */
+.task-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-family: 'Inter', sans-serif;
+}
+
+.task-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.task-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-family: 'Inter', sans-serif;
+}
+
+.task-btn-secondary:hover {
+  background: var(--hover-bg);
+}
+
+.task-filter-btn {
+  background: none;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: 'Inter', sans-serif;
+}
+
+.task-filter-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.task-filter-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Create Task Modal */
+.task-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.task-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-6);
+  width: 420px;
+  max-width: 90vw;
+}
+
+.task-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 var(--sp-5) 0;
+}
+
+.task-modal-field {
+  margin-bottom: var(--sp-4);
+}
+
+.task-modal-field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-1);
+}
+
+.task-modal-field input,
+.task-modal-field textarea {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  transition: border-color var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.task-modal-field input:focus,
+.task-modal-field textarea:focus {
+  border-color: var(--accent);
+}
+
+.task-modal-field textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.task-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+
+/* Back button in IDE layout when task is active */
+.task-back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-family: 'Inter', sans-serif;
+}
+
+.task-back-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
