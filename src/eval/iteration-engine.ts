@@ -341,26 +341,25 @@ export class IterationEngine {
 
     for (let r = 0; r < repeats; r++) {
       console.log(`  [Repeat ${r + 1}/${repeats}]`)
+      const entries = Object.entries(DATASETS)
+      const summaries = await Promise.all(entries.map(([key, ds]) => runBatch({
+        datasetName: ds.name,
+        dataFile: resolve(ds.file),
+        runName: `iterate-train-${key}-r${r + 1}`,
+        agentConfig: {
+          model: this.config.model,
+          provider: this.config.provider,
+          apiKey: this.config.apiKey,
+          baseURL: this.config.baseURL,
+          maxTurns: this.config.maxTurns,
+          systemPrompt: customPrompt ?? this.state.currentPromptVariant,
+        },
+        splitFilter: 'train',
+        judgeConfig: this.config.judgeConfig,
+        storeTraceData: true,
+      })))
       const results: Record<string, RunSummary> = {}
-      for (const [key, ds] of Object.entries(DATASETS)) {
-        const summary = await runBatch({
-          datasetName: ds.name,
-          dataFile: resolve(ds.file),
-          runName: `iterate-train-${key}-r${r + 1}`,
-          agentConfig: {
-            model: this.config.model,
-            provider: this.config.provider,
-            apiKey: this.config.apiKey,
-            baseURL: this.config.baseURL,
-            maxTurns: this.config.maxTurns,
-            systemPrompt: customPrompt ?? this.state.currentPromptVariant,
-          },
-          splitFilter: 'train',
-          judgeConfig: this.config.judgeConfig,
-          storeTraceData: true,
-        })
-        results[key] = summary
-      }
+      entries.forEach(([key], i) => { results[key] = summaries[i] })
       allRuns.push(results)
     }
 
@@ -382,27 +381,24 @@ export class IterationEngine {
     const trainRunNames = Object.keys(DATASETS).map(key => `iterate-train-${key}`)
     await this.cleanupPreviousRuns(trainRunNames)
 
+    const entries = Object.entries(DATASETS)
+    const summaries = await Promise.all(entries.map(([key, ds]) => runBatch({
+      datasetName: ds.name,
+      dataFile: resolve(ds.file),
+      runName: `iterate-train-${key}`,
+      agentConfig: {
+        model: this.config.model,
+        provider: this.config.provider,
+        apiKey: this.config.apiKey,
+        baseURL: this.config.baseURL,
+        maxTurns: this.config.maxTurns,
+        systemPrompt: customPrompt ?? this.state.currentPromptVariant,
+      },
+      splitFilter: 'train',
+      judgeConfig: this.config.judgeConfig,
+    })))
     const results: Record<string, RunSummary> = {}
-
-    for (const [key, ds] of Object.entries(DATASETS)) {
-      const summary = await runBatch({
-        datasetName: ds.name,
-        dataFile: resolve(ds.file),
-        runName: `iterate-train-${key}`,
-        agentConfig: {
-          model: this.config.model,
-          provider: this.config.provider,
-          apiKey: this.config.apiKey,
-          baseURL: this.config.baseURL,
-          maxTurns: this.config.maxTurns,
-          systemPrompt: customPrompt ?? this.state.currentPromptVariant,
-        },
-        splitFilter: 'train',
-        judgeConfig: this.config.judgeConfig,
-      })
-      results[key] = summary
-    }
-
+    entries.forEach(([key], i) => { results[key] = summaries[i] })
     return results
   }
 
@@ -411,27 +407,24 @@ export class IterationEngine {
     const testRunNames = Object.keys(DATASETS).map(key => `iterate-test-${key}`)
     await this.cleanupPreviousRuns(testRunNames)
 
+    const entries = Object.entries(DATASETS)
+    const summaries = await Promise.all(entries.map(([key, ds]) => runBatch({
+      datasetName: ds.name,
+      dataFile: resolve(ds.file),
+      runName: `iterate-test-${key}`,
+      agentConfig: {
+        model: this.config.model,
+        provider: this.config.provider,
+        apiKey: this.config.apiKey,
+        baseURL: this.config.baseURL,
+        maxTurns: this.config.maxTurns,
+        systemPrompt: this.state.bestPromptVariant,
+      },
+      splitFilter: 'test',
+      judgeConfig: this.config.judgeConfig,
+    })))
     const results: Record<string, RunSummary> = {}
-
-    for (const [key, ds] of Object.entries(DATASETS)) {
-      const summary = await runBatch({
-        datasetName: ds.name,
-        dataFile: resolve(ds.file),
-        runName: `iterate-test-${key}`,
-        agentConfig: {
-          model: this.config.model,
-          provider: this.config.provider,
-          apiKey: this.config.apiKey,
-          baseURL: this.config.baseURL,
-          maxTurns: this.config.maxTurns,
-          systemPrompt: this.state.bestPromptVariant,
-        },
-        splitFilter: 'test',
-        judgeConfig: this.config.judgeConfig,
-      })
-      results[key] = summary
-    }
-
+    entries.forEach(([key], i) => { results[key] = summaries[i] })
     return results
   }
 
