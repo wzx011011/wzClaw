@@ -72,6 +72,7 @@ export function optimizePrompt(
   currentPrompt: string,
   report: WeaknessReport,
 ): { prompt: string; changes: string[] } {
+  if (!currentPrompt) return { prompt: currentPrompt, changes: [] }
   const changes: string[] = []
   const additions: string[] = []
 

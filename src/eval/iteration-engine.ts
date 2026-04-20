@@ -667,6 +667,7 @@ export class IterationEngine {
         // Backfill stagnationCount for old state files
         if (saved.stagnationCount === undefined) saved.stagnationCount = 0
         if (saved.optimizationHistory === undefined) saved.optimizationHistory = []
+        if (!saved.currentPromptVariant) saved.currentPromptVariant = saved.bestPromptVariant ?? this.basePrompt
         return saved
       } catch {
         // corrupted state, start fresh
