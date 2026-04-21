@@ -1,32 +1,14 @@
-
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e1e2e"/>
-      <stop offset="100%" stop-color="#282a36"/>
-    </linearGradient>
-    <linearGradient id="primary" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8be9fd"/>
-      <stop offset="100%" stop-color="#bd93f9"/>
-    </linearGradient>
-    <linearGradient id="secondary" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff79c6"/>
-      <stop offset="100%" stop-color="#ffb86c"/>
-    </linearGradient>
-  </defs>
+<!DOCTYPE html>
+<html>
+<head><style>body { margin: 0; padding: 0; background: transparent; }</style></head>
+<body>
+<svg id="icon" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="224" fill="#0A0A0A"/>
   
-  <!-- Base background with rounded corners for macOS style -->
-  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bg)"/>
+  <path d="M 380 280 L 140 512 L 380 744" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 644 280 L 884 512 L 644 744" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
   
-  <g transform="translate(0, 16)">
-    <!-- Central AI Core / Eye -->
-    <circle cx="256" cy="220" r="48" fill="url(#secondary)"/>
-    
-    <!-- Code Brackets <> styled like a mechanical claw -->
-    <path d="M 190 120 L 110 220 L 190 320" fill="none" stroke="url(#primary)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 322 120 L 402 220 L 322 320" fill="none" stroke="url(#primary)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-    
-    <!-- The 3 claws reaching up from the base to grab the core -->
-    <path d="M 206 380 L 220 280 M 306 380 L 292 280 M 256 400 L 256 290" fill="none" stroke="url(#secondary)" stroke-width="32" stroke-linecap="round"/>
-  </g>
+  <path d="M 512 290 C 512 430 430 512 290 512 C 430 512 512 594 512 734 C 512 594 594 512 734 512 C 594 512 512 430 512 290 Z" fill="#3B82F6" />
 </svg>
+</body>
+</html>
