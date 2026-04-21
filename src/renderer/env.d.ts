@@ -8,6 +8,7 @@ declare global {
       stopGeneration: () => Promise<void>
       // Stream listeners
       onStreamText: (cb: (p: { content: string }) => void) => () => void
+      onStreamThinking: (cb: (p: { content: string }) => void) => () => void
       onStreamToolStart: (cb: (p: { id: string; name: string }) => void) => () => void
       onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean }) => void) => () => void
       onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number } }) => void) => () => void

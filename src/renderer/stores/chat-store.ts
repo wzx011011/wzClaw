@@ -18,8 +18,9 @@ interface ToolCallInfo {
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool_result'
+  role: 'user' | 'assistant'
   content: string
+  thinkingContent?: string
   timestamp: number
   // assistant-only fields
   toolCalls?: ToolCallInfo[]
@@ -42,6 +43,7 @@ interface ChatState {
   sessionsCache: Record<string, ChatMessage[]>
   pendingMentions: MentionItem[]
   streamJustEnded: boolean
+  streamingMessageId: string | null
   currentTodos: Array<{ content: string; status: string; activeForm: string }>
   todoCollapsed: boolean
 }
@@ -107,6 +109,48 @@ function removeSessionFromLru(sessionId: string): void {
   }
 }
 
+// ============================================================
+// Text delta batching (~60fps) for smooth streaming updates
+// ============================================================
+
+let textBatchBuffer = ''
+let textBatchTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushTextBatch(set: (partial: Partial<ChatStore>) => void, get: () => ChatStore): void {
+  if (textBatchTimer) {
+    clearTimeout(textBatchTimer)
+    textBatchTimer = null
+  }
+  const batch = textBatchBuffer
+  textBatchBuffer = ''
+  if (!batch) return
+
+  const sid = get().streamingMessageId
+  if (!sid) {
+    // Create new assistant message with batch content
+    const newMsg: ChatMessage = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: batch,
+      timestamp: Date.now(),
+      isStreaming: true,
+      toolCalls: []
+    }
+    set({
+      isWaitingForResponse: false,
+      messages: [...get().messages, newMsg],
+      streamingMessageId: newMsg.id
+    })
+  } else {
+    set({
+      isWaitingForResponse: false,
+      messages: get().messages.map(m =>
+        m.id === sid ? { ...m, content: m.content + batch } : m
+      )
+    })
+  }
+}
+
 export const useChatStore = create<ChatStore>((set, get) => {
   const initialId = uuidv4()
   return {
@@ -121,6 +165,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
   sessionsCache: {},
   pendingMentions: [],
   streamJustEnded: false,
+  streamingMessageId: null,
   currentTodos: [],
   todoCollapsed: false,
 
@@ -130,50 +175,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   init: () => {
     const unsubText = window.wzxclaw.onStreamText((payload) => {
-      const { messages, isWaitingForResponse } = get()
-      // Find the last assistant message that is streaming
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
-
-      if (lastAssistantIdx) {
-        // Append content to existing streaming assistant message
-        set({
-          isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
-              ? { ...m, content: m.content + payload.content }
-              : m
-          )
-        })
-      } else {
-        // No streaming assistant message — create one
-        const newMsg: ChatMessage = {
-          id: uuidv4(),
-          role: 'assistant',
-          content: payload.content,
-          timestamp: Date.now(),
-          isStreaming: true,
-          toolCalls: []
-        }
-        set({ isWaitingForResponse: false, messages: [...messages, newMsg] })
+      textBatchBuffer += payload.content
+      if (!textBatchTimer) {
+        textBatchTimer = setTimeout(() => {
+          textBatchTimer = null
+          flushTextBatch(set, get)
+        }, 16) // ~60fps
       }
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
-      const { messages, isWaitingForResponse } = get()
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
-
-      if (lastAssistantIdx) {
+      const sid = get().streamingMessageId
+      if (sid) {
         set({
           isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
-              ? { ...m, content: m.content + payload.content }
+          messages: get().messages.map(m =>
+            m.id === sid
+              ? { ...m, thinkingContent: (m.thinkingContent ?? '') + payload.content }
               : m
           )
         })
@@ -181,17 +199,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
-      const { messages } = get()
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      // Flush any pending text batch before processing tool event
+      flushTextBatch(set, get)
 
-      if (lastAssistantIdx) {
+      const sid = get().streamingMessageId
+      if (sid) {
         set({
           isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
+          messages: get().messages.map(m =>
+            m.id === sid
               ? {
                   ...m,
                   toolCalls: [
@@ -231,6 +247,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
+      // Flush any pending text batch before finalizing
+      flushTextBatch(set, get)
+
       const { messages } = get()
       // Remove any trailing empty assistant message (created by turn_end as a
       // placeholder for ThinkingIndicator) before finalizing.
@@ -239,48 +258,43 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (last && last.role === 'assistant' && last.isStreaming && !last.content && (!last.toolCalls || last.toolCalls.length === 0)) {
         cleaned = cleaned.slice(0, -1)
       }
-      // Mark last streaming assistant as complete
-      const lastStreamingIdx = [...cleaned]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastStreamingIdx) {
+      const sid = get().streamingMessageId
+      if (sid) {
         set({
           isStreaming: false,
           isWaitingForResponse: false,
           currentTokenUsage: payload.usage,
           streamJustEnded: true,
-          messages: cleaned.map((m, i) =>
-            i === lastStreamingIdx.i
+          streamingMessageId: null,
+          messages: cleaned.map(m =>
+            m.id === sid
               ? { ...m, isStreaming: false, usage: payload.usage }
               : m
           )
         })
       } else {
-        set({ isStreaming: false, isWaitingForResponse: false, streamJustEnded: true, messages: cleaned })
+        set({ isStreaming: false, isWaitingForResponse: false, streamJustEnded: true, streamingMessageId: null, messages: cleaned })
       }
     })
 
     const unsubError = window.wzxclaw.onStreamError((payload) => {
-      const { messages } = get()
-      // Mark last streaming assistant as not streaming anymore
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      // Flush any pending text batch before processing error
+      flushTextBatch(set, get)
 
-      if (lastStreamingIdx) {
+      const sid = get().streamingMessageId
+      if (sid) {
         set({
           isStreaming: false,
           isWaitingForResponse: false,
+          streamingMessageId: null,
           error: payload.error,
-          messages: messages.map((m, i) =>
-            i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
+          messages: get().messages.map(m =>
+            m.id === sid ? { ...m, isStreaming: false } : m
           )
         })
       } else {
-        set({ isStreaming: false, isWaitingForResponse: false, error: payload.error })
+        set({ isStreaming: false, isWaitingForResponse: false, streamingMessageId: null, error: payload.error })
       }
     })
 
@@ -290,12 +304,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // next LLM call is in flight.
     const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.(() => {
       const { messages } = get()
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      const sid = get().streamingMessageId
 
-      if (lastStreamingIdx) {
+      if (sid) {
         // Create a new empty assistant message for the upcoming turn so that
         // ThinkingIndicator is visible immediately between turns.
         const nextMsg: ChatMessage = {
@@ -307,9 +318,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
           toolCalls: []
         }
         set({
+          streamingMessageId: nextMsg.id,
           messages: [
-            ...messages.map((m, i) =>
-              i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
+            ...messages.map(m =>
+              m.id === sid ? { ...m, isStreaming: false } : m
             ),
             nextMsg
           ]
@@ -363,20 +375,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Retry notifications from the LLM retry wrapper
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
-      const { messages } = get()
-      // Update the last streaming assistant message with a retrying status note,
-      // or append a transient status message if none is streaming yet.
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
-
+      const sid = get().streamingMessageId
       const retryNote = `[Retrying ${payload.attempt}/${payload.maxAttempts} — waiting ${(payload.delayMs / 1000).toFixed(1)}s...]`
 
-      if (lastStreamingIdx) {
+      if (sid) {
         set({
-          messages: messages.map((m, i) =>
-            i === lastStreamingIdx.i
+          messages: get().messages.map(m =>
+            m.id === sid
               ? { ...m, content: m.content ? `${m.content}\n${retryNote}` : retryNote }
               : m
           )
@@ -390,7 +395,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: true,
           toolCalls: []
         }
-        set({ messages: [...messages, statusMsg] })
+        set({ messages: [...get().messages, statusMsg], streamingMessageId: statusMsg.id })
       }
     }) ?? (() => {})
 
@@ -423,6 +428,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Return combined unsubscribe
     return () => {
+      // Clear text batch state
+      if (textBatchTimer) {
+        clearTimeout(textBatchTimer)
+        textBatchTimer = null
+      }
+      textBatchBuffer = ''
       unsubText()
       unsubThinking()
       unsubToolStart()
@@ -481,14 +492,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
       isStreaming: true,
       isWaitingForResponse: true,
       error: null,
-      pendingMentions: []
+      pendingMentions: [],
+      streamJustEnded: false,
+      streamingMessageId: assistantMsg.id
     })
 
+    const SEND_TIMEOUT = 10 * 60 * 1000 // 10 minutes
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Agent response timed out after 10 minutes')), SEND_TIMEOUT)
+    )
+
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeTaskId: useTaskStore.getState().activeTaskId ?? undefined })
+      await Promise.race([
+        window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeTaskId: useTaskStore.getState().activeTaskId ?? undefined }),
+        timeoutPromise
+      ])
     } catch (err) {
       set({
         isStreaming: false,
+        streamingMessageId: null,
         error: err instanceof Error ? err.message : String(err)
       })
     }
@@ -516,7 +538,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       conversationId: newId,
       activeSessionId: newId,
       error: null,
-      currentTodos: []
+      currentTodos: [],
+      streamingMessageId: null
     })
   },
 
@@ -543,7 +566,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Phase 1: Convert all raw messages to a lookup-friendly format
       const parsed = (rawMessages as Array<Record<string, unknown>>).map((msg) => ({
         id: (msg.id as string) || uuidv4(),
-        role: msg.role as 'user' | 'assistant' | 'tool_result',
+        role: msg.role as string,
         content: msg.content as string,
         timestamp: msg.timestamp as number,
         toolCalls: msg.toolCalls as Array<{ id: string; name: string; input?: Record<string, unknown> }> | undefined,
@@ -572,7 +595,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
         const chatMsg: ChatMessage = {
           id: msg.id,
-          role: msg.role,
+          role: msg.role as 'user' | 'assistant',
           content: msg.content || '',
           timestamp: msg.timestamp,
           usage: msg.usage,
@@ -646,7 +669,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       activeSessionId: newId,
       error: null,
       sessionsCache: newCache,
-      currentTodos: []
+      currentTodos: [],
+      streamingMessageId: null
     })
   },
 

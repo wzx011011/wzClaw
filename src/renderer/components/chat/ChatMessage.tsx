@@ -49,7 +49,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
 }
 
 export default function ChatMessage({ message }: ChatMessageProps): JSX.Element {
-  const { role, content, isStreaming, toolCalls, usage, mentions } = message
+  const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions } = message
 
   if (role === 'user') {
     // Show mention context blocks if present, then the display content
@@ -92,6 +92,14 @@ export default function ChatMessage({ message }: ChatMessageProps): JSX.Element 
 
   return (
     <div className={`chat-message chat-message-assistant${streamingClass}`}>
+      {/* Thinking block — collapsible, shown when thinkingContent exists */}
+      {thinkingContent && (
+        <details className="thinking-block">
+          <summary>Thinking...</summary>
+          <div className="thinking-content">{thinkingContent}</div>
+        </details>
+      )}
+
       {/* Thinking indicator — shown when streaming with no content yet */}
       {isStreaming && !displayContent && (!toolCalls || toolCalls.length === 0) && (
         <ThinkingIndicator />
