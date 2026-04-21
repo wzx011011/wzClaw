@@ -56,6 +56,9 @@ export function registerIpcHandlers(
   // Track how many messages were already persisted so we only append new ones
   let persistedMessageCount = 0
 
+  // Guard against concurrent agent:send_message calls
+  let isAgentRunning = false
+
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
   // events to the renderer via webContents.send
@@ -65,6 +68,11 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
+
+    if (isAgentRunning) {
+      throw new Error('Agent is already processing a message. Please wait for it to finish or stop it first.')
+    }
+    isAgentRunning = true
 
     const sender = event.sender
 
@@ -184,6 +192,19 @@ export function registerIpcHandlers(
               const allMessages = agentLoop.getMessages()
               const newMessages = allMessages.slice(persistedMessageCount)
               if (newMessages.length > 0) {
+                // Inject usage into last assistant message for /insights cost tracking.
+                // Create a copy to avoid mutating the shared message object in ConversationManager.
+                const lastAsstIdx = [...newMessages].reverse().findIndex(m => m.role === 'assistant')
+                if (lastAsstIdx >= 0) {
+                  const realIdx = newMessages.length - 1 - lastAsstIdx
+                  newMessages[realIdx] = {
+                    ...newMessages[realIdx],
+                    usage: {
+                      inputTokens: agentEvent.usage.inputTokens,
+                      outputTokens: agentEvent.usage.outputTokens,
+                    }
+                  }
+                }
                 await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
                 persistedMessageCount = allMessages.length
               }
@@ -198,6 +219,7 @@ export function registerIpcHandlers(
         error: error instanceof Error ? error.message : String(error),
       })
     } finally {
+      isAgentRunning = false
       sender.removeListener('destroyed', onWindowClosed)
     }
   })
