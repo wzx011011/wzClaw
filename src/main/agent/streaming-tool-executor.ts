@@ -53,13 +53,17 @@ export class StreamingToolExecutor {
       const promise = execute()
       this.pending.push({ id, name, promise })
     } else {
-      // Chain onto sequential write chain
-      // Use .then() with a second arg so a failed prior write doesn't skip this one
+      // Write-chain concurrency model:
+      // The writeChain promise serializes write-tool execution (one at a time, in LLM emission order).
+      // Errors on the chain itself are intentionally swallowed (.then(() => {}, () => {})) because:
+      //   - The chain's purpose is ONLY to control execution ordering
+      //   - Actual tool results (success or failure) are captured in individual promises stored in this.pending
+      //   - A failed write tool should NOT prevent subsequent write tools from running
+      //     (hence the rejection handler also calls execute())
       const promise = this.writeChain.then(
         () => execute(),
         () => execute()
       )
-      // Absorb errors on the chain itself (result is captured in the promise above)
       this.writeChain = promise.then(
         () => {},
         () => {}
