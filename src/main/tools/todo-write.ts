@@ -3,7 +3,7 @@ import * as fsp from 'fs/promises'
 import * as path from 'path'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
-import { getTasksDir } from '../paths'
+import { getTaskMemoryDir } from '../paths'
 
 // ============================================================
 // TodoWrite Tool — Session task list management
@@ -93,9 +93,15 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
   private currentTodos: TodoItem[] = []
   private getWebContents: () => Electron.WebContents | null
+  private onProgressUpdate?: (taskId: string, summary: string) => void
 
   constructor(getWebContents: () => Electron.WebContents | null) {
     this.getWebContents = getWebContents
+  }
+
+  /** Attach a callback to push progress summary to the task store. */
+  setProgressCallback(cb: (taskId: string, summary: string) => void): void {
+    this.onProgressUpdate = cb
   }
 
   getCurrentTodos(): TodoItem[] {
@@ -108,11 +114,11 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
   }
 
   /**
-   * Load persisted todos for a workspace from disk.
+   * Load persisted todos for a task from disk.
    * Returns empty array if no file exists or the file is corrupt.
    */
-  static async loadFromDir(workingDirectory: string): Promise<TodoItem[]> {
-    const file = path.join(getTasksDir(workingDirectory), 'todos.json')
+  static async loadForTask(taskId: string): Promise<TodoItem[]> {
+    const file = path.join(getTaskMemoryDir(taskId), 'todos.json')
     try {
       const raw = await fsp.readFile(file, 'utf-8')
       const parsed = z.array(TodoItemSchema).safeParse(JSON.parse(raw))
@@ -123,10 +129,10 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
   }
 
   /** Atomically write todos to disk (tmp + rename). Silently fails. */
-  private async persistTodos(workingDirectory: string, todos: TodoItem[]): Promise<void> {
-    const tasksDir = getTasksDir(workingDirectory)
-    await fsp.mkdir(tasksDir, { recursive: true })
-    const file = path.join(tasksDir, 'todos.json')
+  private async persistTodos(taskId: string, todos: TodoItem[]): Promise<void> {
+    const taskDir = getTaskMemoryDir(taskId)
+    await fsp.mkdir(taskDir, { recursive: true })
+    const file = path.join(taskDir, 'todos.json')
     const tmp = `${file}.tmp`
     await fsp.writeFile(tmp, JSON.stringify(todos, null, 2), 'utf-8')
     await fsp.rename(tmp, file)
@@ -157,8 +163,22 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
     this.currentTodos = todos
 
-    // Persist to disk (fire-and-forget, atomic write)
-    this.persistTodos(context.workingDirectory, todos).catch(() => { /* ignore */ })
+    // Persist to disk (fire-and-forget, atomic write) — task-scoped
+    if (context.taskId) {
+      this.persistTodos(context.taskId, todos).catch(() => { /* ignore */ })
+
+      // Push progress summary to task card
+      if (this.onProgressUpdate) {
+        const inProgressItem = todos.find(t => t.status === 'in_progress')
+        const completed = todos.filter(t => t.status === 'completed').length
+        const total = todos.length
+        let summary = `${completed}/${total} 完成`
+        if (inProgressItem) {
+          summary += ` · 当前: ${inProgressItem.title}`
+        }
+        this.onProgressUpdate(context.taskId, summary)
+      }
+    }
 
     // Notify renderer
     const wc = this.getWebContents()

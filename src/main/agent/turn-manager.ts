@@ -85,6 +85,7 @@ export class TurnManager {
     config: AgentConfig,
     abortSignal: AbortSignal,
     sender?: Electron.WebContents,
+    taskId?: string,
   ): ExecuteToolFn {
     return async (toolCall: ToolCall): Promise<ToolExecResult> => {
       const _eval = getActiveTrace(config.conversationId)?.evalCollector
@@ -143,6 +144,7 @@ export class TurnManager {
         const toolSpan = getActiveTrace(config.conversationId)?.startToolSpan(toolCall.name, toolCall.input)
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
+          taskId,
           abortSignal,
         })
 

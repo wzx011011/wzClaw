@@ -319,6 +319,11 @@ html, body {
 
 .task-item:last-child { border-bottom: none; }
 
+.task-item.task-active {
+  background: rgba(99, 102, 241, 0.1);
+  border-left: 3px solid var(--accent);
+}
+
 .task-item:active {
   background: rgba(99, 102, 241, 0.15);
 }
@@ -336,6 +341,64 @@ html, body {
   font-size: 11px;
   flex-shrink: 0;
   margin-left: 8px;
+}
+
+.task-progress {
+  font-size: 11px;
+  color: #58a6ff;
+  background: rgba(88, 166, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin: 3px 0;
+  width: fit-content;
+}
+
+.task-switch-btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin: 8px 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.task-switch-btn:active {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.task-switch-btn.active {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: #4ade80;
+  color: #4ade80;
+  cursor: default;
+}
+
+.task-folders {
+  width: 100%;
+  margin: 4px 0;
+}
+
+.task-folder-row {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 1px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-folder-row b {
+  color: var(--text);
+}
+
+.task-folder-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 4px;
 }
 
 .task-empty {

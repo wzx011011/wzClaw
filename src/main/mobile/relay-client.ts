@@ -187,7 +187,8 @@ export class RelayClient extends EventEmitter {
     this.heartbeatTimer = setInterval(() => {
       this._send(JSON.stringify({ event: 'ping' }))
       this.heartbeatTimeoutTimer = setTimeout(() => {
-        // Pong timeout — force reconnect
+        // Pong timeout — stop heartbeat first, then force reconnect
+        this._stopHeartbeat()
         this._closeWs()
         this._updateState(false, false)
         this._scheduleReconnect()

@@ -143,10 +143,9 @@ export class WorkspaceManager {
    * Starts chokidar file watching on the folder.
    */
   async setFolder(folderPath: string): Promise<string | null> {
-    const fs = await import('fs/promises')
     try {
-      const stat = await fs.stat(folderPath)
-      if (!stat.isDirectory()) return null
+      const s = await stat(folderPath)
+      if (!s.isDirectory()) return null
     } catch {
       return null
     }

@@ -15,6 +15,7 @@ interface WorkspaceState {
 interface WorkspaceActions {
   openFolder: () => Promise<void>
   setFolder: (folderPath: string) => Promise<void>
+  setFolders: (projects: Array<{ name: string; path: string }>) => Promise<void>
   initWorkspace: () => Promise<void>
   loadTree: (dirPath?: string, depth?: number) => Promise<void>
   expandNode: (dirPath: string) => Promise<void>
@@ -111,6 +112,47 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         set({ rootPath: result.rootPath })
         await get().loadTree(undefined, 1)
       }
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    } finally {
+      set({ isLoading: false })
+    }
+  },
+
+  /**
+   * Load multiple project folders as separate root nodes in the file tree.
+   * Sets the first folder as the main workspace (for agent working dir),
+   * then loads all folders and displays them as top-level collapsible roots.
+   */
+  setFolders: async (projects: Array<{ name: string; path: string }>) => {
+    if (projects.length === 0) return
+    if (projects.length === 1) {
+      return get().setFolder(projects[0].path)
+    }
+    set({ isLoading: true, error: null })
+    try {
+      // Set first project as the agent's working directory
+      const result = await window.wzxclaw.setFolder({ folderPath: projects[0].path })
+      if (result) set({ rootPath: result.rootPath })
+
+      // Load all project folders in parallel, each becomes a root node
+      const rootNodes = await Promise.all(
+        projects.map(async (project) => {
+          const children = await window.wzxclaw.getDirectoryTree({
+            dirPath: project.path,
+            depth: 1,
+          })
+          const rootNode: FileTreeNode = {
+            name: project.name,
+            path: project.path,
+            isDirectory: true,
+            isExpanded: true,
+            children,
+          }
+          return rootNode
+        })
+      )
+      set({ tree: rootNodes })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) })
     } finally {

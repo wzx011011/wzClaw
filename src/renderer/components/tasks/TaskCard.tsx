@@ -9,7 +9,6 @@ interface TaskCardProps {
 }
 
 export default function TaskCard({ task, onOpen, onArchive, onDelete }: TaskCardProps): JSX.Element {
-  const projectCount = task.projects.length
   const timeAgo = formatTimeAgo(task.updatedAt)
 
   return (
@@ -36,10 +35,27 @@ export default function TaskCard({ task, onOpen, onArchive, onDelete }: TaskCard
       {task.description && (
         <p className="task-card-desc">{task.description}</p>
       )}
+      {task.progressSummary && (
+        <div className="task-card-progress">
+          <span className="task-card-progress-icon">📊</span>
+          <span className="task-card-progress-text">{task.progressSummary}</span>
+        </div>
+      )}
+      {task.projects.length > 0 && (
+        <ul className="task-card-folders">
+          {task.projects.map((p) => (
+            <li key={p.id} className="task-card-folder-item" title={p.path}>
+              <span className="task-card-folder-icon">📁</span>
+              <span className="task-card-folder-name">{p.name}</span>
+              <span className="task-card-folder-path">{shortenPath(p.path)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="task-card-meta">
-        <span className="task-card-projects">
-          {projectCount === 0 ? '无项目' : `${projectCount} 个项目`}
-        </span>
+        {task.projects.length === 0 && (
+          <span className="task-card-no-folder">无绑定文件夹</span>
+        )}
         <span className="task-card-time">{timeAgo}</span>
       </div>
     </div>
@@ -56,4 +72,12 @@ function formatTimeAgo(timestamp: number): string {
   const days = Math.floor(hours / 24)
   if (days < 30) return `${days} 天前`
   return new Date(timestamp).toLocaleDateString()
+}
+
+/** Show up to the last 2 path segments to keep the UI compact */
+function shortenPath(fullPath: string): string {
+  const sep = fullPath.includes('\\') ? '\\' : '/'
+  const parts = fullPath.split(sep).filter(Boolean)
+  if (parts.length <= 2) return fullPath
+  return '…' + sep + parts.slice(-2).join(sep)
 }

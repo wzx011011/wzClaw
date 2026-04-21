@@ -44,6 +44,7 @@ export default function TaskHomePage(): JSX.Element {
 
   return (
     <div className="task-home">
+      <div className="task-home-dragbar" />
       <div className="task-home-header">
         <h1 className="task-home-title">任务</h1>
         <div className="task-home-actions">

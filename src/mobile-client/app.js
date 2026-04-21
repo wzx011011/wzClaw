@@ -11,6 +11,7 @@
 
   let ws = null
   let isGenerating = false
+  let activeTaskId = null
 
   // Extract token from URL query params
   const params = new URLSearchParams(window.location.search)
@@ -25,6 +26,8 @@
     ws.onopen = function () {
       statusEl.textContent = '已连接'
       statusEl.className = 'status connected'
+      // Auto-fetch task list on connect
+      requestTaskList()
     }
 
     ws.onclose = function () {
@@ -264,7 +267,9 @@
     var text = inputEl.value.trim()
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return
 
-    ws.send(JSON.stringify({ event: 'command:send', data: { content: text } }))
+    var payload = { content: text }
+    if (activeTaskId) payload.activeTaskId = activeTaskId
+    ws.send(JSON.stringify({ event: 'command:send', data: payload }))
     addMessage('user', text)
     inputEl.value = ''
     inputEl.style.height = 'auto'
@@ -316,11 +321,24 @@
     var html = '<div class="task-panel-header">任务 (' + tasks.length + ') <button class="task-panel-btn" onclick="window._wzxCreateTask()">+</button></div>'
     html += '<ul class="task-list">'
     tasks.forEach(function (t) {
-      html += '<li class="task-item" data-id="' + t.id + '">'
-      html += '<span class="task-name" onclick="window._wzxOpenTask(\'' + t.id + '\')">' + escapeHtml(t.title) + '</span>'
-      html += '<span class="task-meta">' + t.projects.length + ' 项目</span>'
-      html += '<button class="task-action-btn" onclick="window._wzxArchiveTask(\'' + t.id + '\')" title="归档">📦</button>'
-      html += '<button class="task-action-btn" onclick="window._wzxDeleteTask(\'' + t.id + '\')" title="删除">🗑</button>'
+      var safeId = escapeHtml(t.id)
+      var isActive = activeTaskId === t.id
+      html += '<li class="task-item' + (isActive ? ' task-active' : '') + '" data-id="' + safeId + '">'
+      html += '<span class="task-name" onclick="window._wzxOpenTask(\'' + safeId + '\')">' + (isActive ? '▶ ' : '') + escapeHtml(t.title) + '</span>'
+      if (t.progressSummary) {
+        html += '<div class="task-progress">📊 ' + escapeHtml(t.progressSummary) + '</div>'
+      }
+      if (t.projects.length > 0) {
+        html += '<div class="task-folders">'
+        t.projects.forEach(function (p) {
+          html += '<div class="task-folder-row">📁 <b>' + escapeHtml(p.name) + '</b> <span class="task-folder-path">' + escapeHtml(p.path) + '</span></div>'
+        })
+        html += '</div>'
+      } else {
+        html += '<span class="task-meta">无绑定文件夹</span>'
+      }
+      html += '<button class="task-action-btn" onclick="window._wzxArchiveTask(\'' + safeId + '\')" title="归档">📦</button>'
+      html += '<button class="task-action-btn" onclick="window._wzxDeleteTask(\'' + safeId + '\')" title="删除">🗑</button>'
       html += '</li>'
     })
     html += '</ul>'
@@ -357,6 +375,14 @@
     ws.send(JSON.stringify({ event: 'task:delete:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
   }
 
+  window._wzxSwitchTask = function (taskId) {
+    activeTaskId = taskId
+    // Re-render task list to show active state
+    requestTaskList()
+    // Also re-fetch task detail to update button
+    ws.send(JSON.stringify({ event: 'task:get:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+  }
+
   function renderTaskDetail(task) {
     var panel = document.getElementById('taskPanel')
     if (!panel) return
@@ -364,6 +390,11 @@
     if (task.description) {
       html += '<div class="task-description">' + escapeHtml(task.description) + '</div>'
     }
+    if (task.progressSummary) {
+      html += '<div class="task-progress" style="margin-bottom:8px">📊 ' + escapeHtml(task.progressSummary) + '</div>'
+    }
+    var isActive = activeTaskId === task.id
+    html += '<button class="task-switch-btn' + (isActive ? ' active' : '') + '" onclick="window._wzxSwitchTask(\'' + escapeHtml(task.id) + '\')">' + (isActive ? '✓ 当前任务' : '切换到此任务') + '</button>'
     if (task.projects && task.projects.length > 0) {
       html += '<div class="task-projects-title">项目:</div><ul class="task-list">'
       task.projects.forEach(function (p) {

@@ -318,6 +318,14 @@ app.whenReady().then(async () => {
   toolRegistry.register(new EnterPlanModeTool(permissionManager, getPlanModeSender))
   toolRegistry.register(new ExitPlanModeTool(permissionManager, getPlanModeSender, planModeController))
 
+  // Wire TodoWrite → TaskStore progress sync
+  const todoTool = toolRegistry.get('TodoWrite') as import('./tools/todo-write').TodoWriteTool | undefined
+  if (todoTool) {
+    todoTool.setProgressCallback((taskId, summary) => {
+      taskStore.updateTask(taskId, { progressSummary: summary }).catch(() => { /* ignore */ })
+    })
+  }
+
   // AskUserQuestion tool — interactive question card in chat (Phase 4.2)
   const askUserTool = new AskUserQuestionTool(getWebContents)
   toolRegistry.register(askUserTool)

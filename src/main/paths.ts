@@ -23,15 +23,11 @@ export function getAppDataDir(): string {
 
 // ---- 用户级子目录（~/.wzxclaw/） ----
 
-/** 项目记忆目录：~/.wzxclaw/projects/{hash}/memory/ */
-export function getProjectMemoryDir(workspaceRoot: string): string {
-  const hash = sanitizePath(workspaceRoot)
-  return path.join(getUserDir(), 'projects', hash, 'memory')
-}
-
 /** 任务级记忆目录：~/.wzxclaw/task-memory/{taskId}/ */
 export function getTaskMemoryDir(taskId: string): string {
-  return path.join(getUserDir(), 'task-memory', taskId)
+  // Sanitize taskId to prevent path traversal (H1 defense-in-depth)
+  const safe = taskId.replace(/[\/\\]/g, '_')
+  return path.join(getUserDir(), 'task-memory', safe)
 }
 
 /** 全局记忆文件：~/.wzxclaw/MEMORY.md（跨项目共享的个人偏好） */
@@ -82,12 +78,6 @@ export function getShellSnapshotsDir(): string {
 /** 截图媒体目录：~/.wzxclaw/media/（Browser 工具截图持久化，7 天自动清理） */
 export function getMediaDir(): string {
   return path.join(getUserDir(), 'media')
-}
-
-/** 任务持久化目录：~/.wzxclaw/tasks/{hash}/ */
-export function getTasksDir(workspaceRoot: string): string {
-  const hash = sanitizePath(workspaceRoot)
-  return path.join(getUserDir(), 'tasks', hash)
 }
 
 // ---- AppData 级子目录（%APPDATA%/wzxclaw/） ----

@@ -65,8 +65,8 @@ export class AgentLoop {
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool && config.workingDirectory) {
-      const saved = await TodoWriteTool.loadFromDir(config.workingDirectory)
+    if (todoTool && this.activeTask) {
+      const saved = await TodoWriteTool.loadForTask(this.activeTask.id)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately
@@ -101,6 +101,7 @@ export class AgentLoop {
       config,
       this.abortController.signal,
       sender,
+      this.activeTask?.id,
     )
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }

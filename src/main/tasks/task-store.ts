@@ -67,7 +67,7 @@ export class TaskStore {
 
   async updateTask(
     id: string,
-    updates: Partial<Pick<Task, 'title' | 'description' | 'archived' | 'lastSessionId'>>
+    updates: Partial<Pick<Task, 'title' | 'description' | 'archived' | 'lastSessionId' | 'progressSummary'>>
   ): Promise<Task> {
     await this.load()
     const task = this.tasks.get(id)

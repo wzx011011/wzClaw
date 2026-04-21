@@ -41,6 +41,7 @@ export default function TaskDetailPage(): JSX.Element {
 
   return (
     <div className="task-detail-page">
+      <div className="task-home-dragbar" />
       {/* Header */}
       <div className="task-detail-header">
         <button className="task-detail-back" onClick={closeTaskDetail}>

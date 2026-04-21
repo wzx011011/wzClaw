@@ -347,4 +347,5 @@ export interface Task {
   updatedAt: number
   lastSessionId?: string // most recent chat session
   archived: boolean
+  progressSummary?: string // e.g. "3/5 完成, 当前: 编写测试"
 }

@@ -252,10 +252,20 @@ export default function FileExplorer(): JSX.Element {
     return <div style={{ padding: 12, color: 'var(--text-secondary)' }}>Empty workspace</div>
   }
 
+  // When there are multiple root folders, show each with a section header
+  const isMultiRoot = tree.length > 1 && tree.every((n) => n.isDirectory)
+
   return (
     <div className="file-explorer">
       {tree.map((node) => (
-        <TreeNodeItem key={node.path} node={node} depth={0} />
+        <div key={node.path} className={isMultiRoot ? 'file-explorer-root-section' : undefined}>
+          {isMultiRoot && (
+            <div className="file-explorer-root-header" title={node.path}>
+              <span className="file-explorer-root-label">{node.name.toUpperCase()}</span>
+            </div>
+          )}
+          <TreeNodeItem node={node} depth={0} />
+        </div>
       ))}
     </div>
   )

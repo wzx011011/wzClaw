@@ -891,6 +891,29 @@ html, body, #root {
   overflow-x: hidden;
 }
 
+/* Multi-root section separator */
+.file-explorer-root-section {
+  margin-bottom: 2px;
+}
+
+.file-explorer-root-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px 3px;
+  cursor: default;
+  user-select: none;
+}
+
+.file-explorer-root-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tree-node {
   display: flex;
   align-items: center;

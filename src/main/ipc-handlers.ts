@@ -795,7 +795,7 @@ export function registerIpcHandlers(
     return taskStore.createTask(payload.title, payload.description)
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }) => {
+  ipcMain.handle(IPC_CHANNELS['task:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
     return taskStore.updateTask(payload.taskId, payload.updates)
   })
 

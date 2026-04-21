@@ -226,7 +226,12 @@ export class MobileServer extends EventEmitter {
         res.end('Not Found')
         return
       }
-      res.writeHead(200, { 'Content-Type': mimeTypes[ext] ?? 'application/octet-stream' })
+      res.writeHead(200, {
+        'Content-Type': mimeTypes[ext] ?? 'application/octet-stream',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      })
       res.end(data)
     })
   }

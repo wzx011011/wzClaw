@@ -32,6 +32,7 @@ export default function IDELayout(): JSX.Element {
   const openFolder = useWorkspaceStore((s) => s.openFolder)
   const initWorkspace = useWorkspaceStore((s) => s.initWorkspace)
   const setFolder = useWorkspaceStore((s) => s.setFolder)
+  const setFolders = useWorkspaceStore((s) => s.setFolders)
   const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
   const initChat = useChatStore((s) => s.init)
   const openPalette = useCommandStore((s) => s.openPalette)
@@ -128,10 +129,10 @@ export default function IDELayout(): JSX.Element {
     return unsubscribe
   }, [initChat])
 
-  // Restore workspace on startup — prefer the task's first project folder
+  // Restore workspace on startup — load all task project folders into the file tree
   useEffect(() => {
     if (activeTask?.projects && activeTask.projects.length > 0) {
-      setFolder(activeTask.projects[0].path)
+      setFolders(activeTask.projects)
     } else {
       initWorkspace()
     }

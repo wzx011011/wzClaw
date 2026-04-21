@@ -36,9 +36,9 @@ export async function buildSystemPrompt(
   const [gitContext, instructionSection, memorySection] = await Promise.all([
     getGitContext(config.workingDirectory).catch(() => ''),
     loadInstructions(config.workingDirectory).catch(() => ''),
-    new MemoryManager(config.workingDirectory)
-      .buildSystemPromptSection()
-      .catch(() => ''),
+    activeTask
+      ? new MemoryManager(activeTask.id).buildSystemPromptSection().catch(() => '')
+      : Promise.resolve(''),
   ])
 
   // 构建环境信息

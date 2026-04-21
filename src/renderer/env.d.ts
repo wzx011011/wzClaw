@@ -59,7 +59,7 @@ declare global {
       listTasks: (request?: { includeArchived?: boolean }) => Promise<Task[]>
       getTask: (request: { taskId: string }) => Promise<Task | null>
       createTask: (request: { title: string; description?: string }) => Promise<Task>
-      updateTask: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }) => Promise<Task>
+      updateTask: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Task>
       deleteTask: (request: { taskId: string }) => Promise<void>
       addTaskProject: (request: { taskId: string; folderPath: string }) => Promise<Task>
       removeTaskProject: (request: { taskId: string; projectId: string }) => Promise<Task>
