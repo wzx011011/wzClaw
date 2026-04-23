@@ -10,8 +10,9 @@ if (_envResult.error) {
 
 import { app, BrowserWindow, Menu, ipcMain } from 'electron'
 import crypto from 'crypto'
+import fs from 'fs'
+import fsp from 'fs/promises'
 const { join } = path
-import { networkInterfaces } from 'os'
 
 // Ignore EPIPE errors on stdout/stderr — happens when Electron is launched from
 // a pipe (e.g. Claude Code hook) and the parent process exits while async
@@ -57,6 +58,7 @@ import { EmbeddingClient } from './indexing/embedding-client'
 import { SettingsManager } from './settings-manager'
 import { ToolRegistry } from './tools/tool-registry'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
+import { DEFAULT_MODELS } from '../shared/constants'
 import { BrowserManager } from './browser/browser-manager'
 import { MCPManager } from './mcp/mcp-manager'
 import { PlanModeController, EnterPlanModeTool, ExitPlanModeTool } from './tools/plan-mode'
@@ -71,9 +73,6 @@ import {
   BrowserEvaluateTool,
   BrowserCloseTool
 } from './tools/browser-tools'
-import { MobileServer } from './mobile/mobile-server'
-import { TunnelManager } from './mobile/tunnel-manager'
-import { generateQRCode } from './mobile/qr-generator'
 import { RelayClient } from './mobile/relay-client'
 import { ensureAppDirs } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
@@ -85,8 +84,6 @@ const stepManager = new StepManager()
 const taskStore = new TaskStore()
 // These services are initialized lazily inside app.whenReady() to speed up startup
 let browserManager!: BrowserManager
-let mobileServer!: MobileServer
-let tunnelManager!: TunnelManager
 let relayClient!: RelayClient
 
 // Module-level IndexingEngine reference (created when workspace opens)
@@ -266,14 +263,12 @@ app.whenReady().then(async () => {
 
   // Initialize deferred services (after app is ready, before window creation)
   browserManager = new BrowserManager()
-  mobileServer = new MobileServer()
-  tunnelManager = new TunnelManager()
   relayClient = new RelayClient()
   logStartup('services instantiated')
 
   // Restore last workspace if saved
   const lastWsPath = settingsManager.getLastWorkspacePath()
-  if (lastWsPath && require('fs').existsSync(lastWsPath)) {
+  if (lastWsPath && fs.existsSync(lastWsPath)) {
     workspaceManager.setWorkspaceRoot(lastWsPath)
   }
 
@@ -305,10 +300,8 @@ app.whenReady().then(async () => {
       send: (channel: string, ...args: unknown[]) => {
         wc.send(channel, ...args)
         if (channel === IPC_CHANNELS['agent:plan-mode-entered']) {
-          mobileServer.broadcast('stream:agent:plan_mode_entered', args[0] ?? {})
           relayClient.broadcast('stream:agent:plan_mode_entered', args[0] ?? {})
         } else if (channel === IPC_CHANNELS['agent:plan-mode-exited']) {
-          mobileServer.broadcast('stream:agent:plan_mode_exited', args[0] ?? {})
           relayClient.broadcast('stream:agent:plan_mode_exited', args[0] ?? {})
         }
       }
@@ -353,7 +346,7 @@ app.whenReady().then(async () => {
     const entry = historyManager.getByToolCallId(request.toolCallId)
     if (!entry) return { success: false, error: 'No snapshot found for this tool call' }
     try {
-      const fsp = await import('fs/promises')
+      // fsp imported at top
       await fsp.writeFile(entry.filePath, entry.content, 'utf-8')
       return { success: true }
     } catch (err: any) {
@@ -383,14 +376,17 @@ app.whenReady().then(async () => {
     new AgentTool(gateway, toolRegistry, permissionManager, contextManager, undefined, {
       provider: 'anthropic' as any,
       model: '',
-      workingDirectory
+      workingDirectory,
+      projectRoots: [workingDirectory],
     }, 0, () => {
       const cfg = settingsManager.getCurrentConfig()
+      const wd = workspaceManager.getWorkspaceRoot() ?? workingDirectory
       return {
         provider: cfg.provider as 'openai' | 'anthropic',
         model: cfg.model,
         systemPrompt: cfg.systemPrompt,
-        workingDirectory: workspaceManager.getWorkspaceRoot() ?? workingDirectory
+        workingDirectory: wd,
+        projectRoots: [wd],
       }
     })
   )
@@ -415,13 +411,6 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Forward mobile server status to renderer
-  mobileServer.on('status', (data) => {
-    for (const bw of BrowserWindow.getAllWindows()) {
-      bw.webContents.send(IPC_CHANNELS['mobile:status'], data)
-    }
-  })
-
   // Forward relay status to renderer
   relayClient.on('status', (data) => {
     for (const bw of BrowserWindow.getAllWindows()) {
@@ -429,14 +418,40 @@ app.whenReady().then(async () => {
     }
   })
 
+  // Clear saved relay token when server rejects it
+  relayClient.on('token-rejected', () => {
+    settingsManager.setRelayToken('')
+  })
+
   // Session store reference — assigned after creation below, but captured by closure
   let sessionStore: SessionStore
+  // Task-scoped session stores — one per active task, cached for reuse
+  const taskSessionStores = new Map<string, SessionStore>()
   // Track mobile session ID for persisting mobile-initiated conversations
   let mobileSessionId: string | null = null
+  // Current active task ID (synced from renderer)
+  let currentActiveTaskId: string | null = null
 
-  // Helper: broadcast to both mobile transports
+  /**
+   * Return the appropriate SessionStore for the current context.
+   * Checks currentActiveTaskId first (set by both renderer IPC and mobile WS),
+   * then falls back to agentLoop.activeTask, then workspace store.
+   */
+  const getActiveSessionStore = (): SessionStore => {
+    const taskId = currentActiveTaskId ?? agentLoop.activeTask?.id ?? null
+    if (taskId) {
+      let taskStore = taskSessionStores.get(taskId)
+      if (!taskStore) {
+        taskStore = SessionStore.forTask(taskId)
+        taskSessionStores.set(taskId, taskStore)
+      }
+      return taskStore
+    }
+    return sessionStore
+  }
+
+  // Helper: broadcast to mobile via relay
   const broadcastToMobile = (event: string, data: unknown) => {
-    mobileServer.broadcast(event, data)
     relayClient.broadcast(event, data)
   }
 
@@ -457,7 +472,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Handle mobile client commands → agent (from local mobileServer or relay)
+  // Handle mobile client commands → agent (from relay)
   const handleClientMessage = async (msg: { clientId: string; event: string; data: any }) => {
     console.log('[handleClientMessage]', msg.clientId, msg.event, JSON.stringify(msg.data)?.substring(0, 200))
     try {
@@ -465,13 +480,16 @@ app.whenReady().then(async () => {
     // -- Session sync: list sessions --
     if (msg.event === 'session:list:request') {
       const requestId = msg.data?.requestId ?? ''
+      const activeTaskId = msg.data?.activeTaskId ?? null
+      if (activeTaskId) currentActiveTaskId = activeTaskId
+      const store = getActiveSessionStore()
       const workspaceRoot = workspaceManager.getWorkspaceRoot()
-      if (!workspaceRoot || !sessionStore) {
+      if (!workspaceRoot || !store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
       }
       try {
-        const sessions = await sessionStore.listSessions()
+        const sessions = await store.listSessions()
         broadcastToMobile('session:list:response', {
           requestId,
           workspaceName: path.basename(workspaceRoot),
@@ -487,12 +505,15 @@ app.whenReady().then(async () => {
     // -- Session sync: load session messages (with pagination) --
     if (msg.event === 'session:load:request') {
       const { requestId = '', sessionId, offset = 0, limit = 50 } = msg.data ?? {}
-      if (!sessionStore) {
+      const activeTaskId = msg.data?.activeTaskId ?? null
+      if (activeTaskId) currentActiveTaskId = activeTaskId
+      const store = getActiveSessionStore()
+      if (!store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
       }
       try {
-        const allMessages = await sessionStore.loadSession(sessionId)
+        const allMessages = await store.loadSession(sessionId)
         const total = allMessages.length
         const sliced = allMessages.slice(offset, offset + limit)
         broadcastToMobile('session:load:response', {
@@ -512,7 +533,10 @@ app.whenReady().then(async () => {
     // -- Session sync: create session --
     if (msg.event === 'session:create:request') {
       const requestId = msg.data?.requestId ?? ''
-      if (!sessionStore) {
+      const activeTaskId = msg.data?.activeTaskId ?? null
+      if (activeTaskId) currentActiveTaskId = activeTaskId
+      const store = getActiveSessionStore()
+      if (!store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
       }
@@ -521,9 +545,9 @@ app.whenReady().then(async () => {
         const sessionId = crypto.randomUUID()
         // Create the session file with a meta line
         const metaLine = JSON.stringify({ type: 'meta', title }) + '\n'
-        const fsp = await import('fs/promises')
+        // fsp imported at top
         const sessionPath = path.join(
-          (sessionStore as any).sessionsDir,
+          store.sessionDir,
           `${sessionId}.jsonl`
         )
         await fsp.writeFile(sessionPath, metaLine, 'utf-8')
@@ -541,13 +565,19 @@ app.whenReady().then(async () => {
     if (msg.event === 'session:delete:request') {
       const requestId = msg.data?.requestId ?? ''
       const sessionId = msg.data?.sessionId
-      if (!sessionStore || !sessionId) {
+      const activeTaskId = msg.data?.activeTaskId ?? null
+      if (activeTaskId) currentActiveTaskId = activeTaskId
+      const store = getActiveSessionStore()
+      if (!store || !sessionId) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace or session ID', code: 'NO_WORKSPACE' })
         return
       }
       try {
-        const success = await sessionStore.deleteSession(sessionId)
+        const success = await store.deleteSession(sessionId)
         broadcastToMobile('session:delete:response', { requestId, success })
+        // Notify desktop renderer
+        const wcDel = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wcDel && !wcDel.isDestroyed()) wcDel.send('data:changed', { source: 'mobile', entity: 'session', action: 'deleted', data: { sessionId } })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
       }
@@ -559,13 +589,19 @@ app.whenReady().then(async () => {
       const requestId = msg.data?.requestId ?? ''
       const sessionId = msg.data?.sessionId
       const title = msg.data?.title
-      if (!sessionStore || !sessionId || !title) {
+      const activeTaskId = msg.data?.activeTaskId ?? null
+      if (activeTaskId) currentActiveTaskId = activeTaskId
+      const store = getActiveSessionStore()
+      if (!store || !sessionId || !title) {
         broadcastToMobile('session:error', { requestId, error: 'Missing parameters', code: 'BAD_REQUEST' })
         return
       }
       try {
-        const success = await sessionStore.renameSession(sessionId, title)
+        const success = await store.renameSession(sessionId, title)
         broadcastToMobile('session:rename:response', { requestId, success })
+        // Notify desktop renderer
+        const wcRen = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wcRen && !wcRen.isDestroyed()) wcRen.send('data:changed', { source: 'mobile', entity: 'session', action: 'renamed', data: { sessionId, title } })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
       }
@@ -601,8 +637,7 @@ app.whenReady().then(async () => {
         return
       }
       try {
-        const fsSync = await import('fs')
-        if (!fsSync.existsSync(workspacePath)) {
+        if (!fs.existsSync(workspacePath)) {
           broadcastToMobile('workspace:switch:response', { requestId, success: false, error: 'Path does not exist' })
           return
         }
@@ -653,17 +688,17 @@ app.whenReady().then(async () => {
         return
       }
       try {
-        const absolutePath = require('path').isAbsolute(filePath) ? filePath : require('path').resolve(workspaceRoot, filePath)
+        const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath)
 
         // Security: verify path is within workspace
-        const normalizedPath = require('path').resolve(absolutePath).toLowerCase()
-        const normalizedRoot = require('path').resolve(workspaceRoot).toLowerCase()
+        const normalizedPath = path.resolve(absolutePath).toLowerCase()
+        const normalizedRoot = path.resolve(workspaceRoot).toLowerCase()
         if (!normalizedPath.startsWith(normalizedRoot)) {
           broadcastToMobile('session:error', { requestId, error: 'Access denied: path outside workspace', code: 'ACCESS_DENIED' })
           return
         }
 
-        const fs = await import('fs/promises')
+        // fs/promises imported at top as fsp
         const stat = await fs.stat(absolutePath)
 
         // Limit to 500KB for mobile
@@ -680,7 +715,7 @@ app.whenReady().then(async () => {
         const content = await fs.readFile(absolutePath, 'utf-8')
 
         // Detect language from extension
-        const ext = require('path').extname(absolutePath).slice(1).toLowerCase()
+        const ext = path.extname(absolutePath).slice(1).toLowerCase()
         const langMap: Record<string, string> = {
           ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
           py: 'python', rs: 'rust', go: 'go', java: 'java', kt: 'kotlin',
@@ -696,7 +731,7 @@ app.whenReady().then(async () => {
           content,
           language,
           size: stat.size,
-          filePath: require('path').relative(workspaceRoot, absolutePath).replace(/\\\\/g, '/'),
+          filePath: path.relative(workspaceRoot, absolutePath).replace(/\\\\/g, '/'),
         })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
@@ -714,6 +749,35 @@ app.whenReady().then(async () => {
     if (msg.event === 'ask-user:answer') {
       const answer = msg.data as { questionId: string; selectedLabels: string[]; customText?: string }
       askUserTool.resolveQuestion(answer)
+      return
+    }
+
+    // -- Permission mode: mobile requests current mode --
+    if (msg.event === 'permission:get_mode:request') {
+      const requestId = msg.data?.requestId ?? ''
+      broadcastToMobile('permission:mode:response', {
+        requestId,
+        mode: permissionManager.getMode()
+      })
+      return
+    }
+
+    // -- Permission mode: mobile sets a new mode --
+    if (msg.event === 'permission:set_mode:request') {
+      const requestId = msg.data?.requestId ?? ''
+      const mode = msg.data?.mode as string | undefined
+      if (mode) {
+        try {
+          permissionManager.setMode(mode)
+        } catch (err: any) {
+          broadcastToMobile('permission:mode:response', { requestId, error: err.message })
+          return
+        }
+      }
+      broadcastToMobile('permission:mode:response', {
+        requestId,
+        mode: permissionManager.getMode()
+      })
       return
     }
 
@@ -735,6 +799,9 @@ app.whenReady().then(async () => {
       try {
         const task = await taskStore.createTask(msg.data?.title ?? 'New Task', msg.data?.description)
         broadcastToMobile('task:create:response', { requestId, task })
+        // Notify desktop renderer
+        const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'created', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -747,6 +814,8 @@ app.whenReady().then(async () => {
       try {
         const task = await taskStore.updateTask(msg.data?.taskId, msg.data?.updates ?? {})
         broadcastToMobile('task:update:response', { requestId, task })
+        const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -759,6 +828,8 @@ app.whenReady().then(async () => {
       try {
         await taskStore.deleteTask(msg.data?.taskId)
         broadcastToMobile('task:delete:response', { requestId, success: true })
+        const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'deleted', data: { taskId: msg.data?.taskId } })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -783,6 +854,8 @@ app.whenReady().then(async () => {
       try {
         const task = await taskStore.addProject(msg.data?.taskId, msg.data?.folderPath)
         broadcastToMobile('task:add-project:response', { requestId, task })
+        const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -795,6 +868,8 @@ app.whenReady().then(async () => {
       try {
         const task = await taskStore.removeProject(msg.data?.taskId, msg.data?.projectId)
         broadcastToMobile('task:remove-project:response', { requestId, task })
+        const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -869,12 +944,31 @@ app.whenReady().then(async () => {
           apiKey: config.apiKey,
           baseURL: config.baseURL,
         })
+        // If model requires a different provider, add cross-adapter (e.g. glm-4-plus needs openai)
+        const modelPreset = DEFAULT_MODELS.find((m) => m.id === config.model)
+        if (modelPreset && modelPreset.provider !== config.provider) {
+          const crossProvider = modelPreset.provider as 'openai' | 'anthropic'
+          let crossBaseURL = config.baseURL
+          if (config.baseURL?.includes('/api/anthropic')) {
+            crossBaseURL = config.baseURL.replace('/api/anthropic', '/api/paas/v4')
+          } else if (config.baseURL?.includes('/api/paas/v4')) {
+            crossBaseURL = config.baseURL.replace('/api/paas/v4', '/api/anthropic')
+          }
+          gateway.addProvider({
+            provider: crossProvider,
+            apiKey: config.apiKey,
+            baseURL: crossBaseURL,
+          })
+        }
       }
       const agentConfig: AgentConfig = {
         model: config.model,
         provider: config.provider as 'openai' | 'anthropic',
         systemPrompt: config.systemPrompt,
         workingDirectory,
+        projectRoots: agentLoop.activeTask
+          ? agentLoop.activeTask.projects.map(p => p.path)
+          : [workingDirectory],
         conversationId: sessionId,
         thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
       }
@@ -901,6 +995,10 @@ app.whenReady().then(async () => {
         })
       }
 
+      // Acknowledge receipt back to mobile.
+      const messageId = msg.data.messageId || crypto.randomUUID()
+      broadcastToMobile('command:ack', { messageId, status: 'received' })
+
       try {
         // Mobile sender: forwards stream:retrying to mobile alongside the renderer
         const wcForMobile = BrowserWindow.getAllWindows()[0]?.webContents
@@ -909,11 +1007,9 @@ app.whenReady().then(async () => {
           send: (channel: string, ...args: unknown[]) => {
             if (wcForMobile && !wcForMobile.isDestroyed()) wcForMobile.send(channel, ...args)
             if (channel === IPC_CHANNELS['stream:retrying']) {
-              mobileServer.broadcast('stream:retrying', args[0] ?? {})
               relayClient.broadcast('stream:retrying', args[0] ?? {})
             }
             if (channel === IPC_CHANNELS['ask-user:question']) {
-              mobileServer.broadcast('stream:agent:ask_user_question', args[0])
               relayClient.broadcast('stream:agent:ask_user_question', args[0])
             }
           }
@@ -923,9 +1019,16 @@ app.whenReady().then(async () => {
         if (msg.data.activeTaskId) {
           const task = await taskStore.getTask(msg.data.activeTaskId)
           agentLoop.activeTask = task ?? null
+          currentActiveTaskId = msg.data.activeTaskId
         } else {
           agentLoop.activeTask = null
+          currentActiveTaskId = null
         }
+
+        // Concurrency guard: cancel any in-progress agent run before starting a new one.
+        agentLoop.cancel()
+        // Yield to let the previous generator unwind before starting a new run.
+        await new Promise(r => setTimeout(r, 0))
 
         for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig, mobileSender)) {
           // Forward stream events to renderer
@@ -948,7 +1051,7 @@ app.whenReady().then(async () => {
                   const tc = (agentEvent as any).input
                   const filePath = tc?.path as string | undefined
                   if (filePath) {
-                    const absolutePath = require('path').isAbsolute(filePath) ? filePath : require('path').resolve(agentConfig.workingDirectory, filePath)
+                    const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(agentConfig.workingDirectory, filePath)
                     wc.send(IPC_CHANNELS['file:changed'], { filePath: absolutePath, changeType: 'modified' })
                   }
                 }
@@ -961,6 +1064,18 @@ app.whenReady().then(async () => {
                 break
               case 'agent:done':
                 wc.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+                // Persist mobile messages to session file (Unit 4 bug fix)
+                try {
+                  const activeStore = getActiveSessionStore()
+                  if (activeStore) {
+                    const allMsgs = agentLoop.getMessages()
+                    if (allMsgs.length > 0) {
+                      await activeStore.appendMessages(sessionId, allMsgs)
+                    }
+                  }
+                } catch (saveErr) {
+                  console.error('[mobile] Failed to persist session:', saveErr)
+                }
                 break
               case 'agent:compacted':
                 wc.send(IPC_CHANNELS['session:compacted'], {
@@ -971,7 +1086,6 @@ app.whenReady().then(async () => {
                 break
             }
           }
-          mobileServer.broadcast(`stream:${agentEvent.type}`, agentEvent)
           relayClient.broadcast(`stream:${agentEvent.type}`, agentEvent)
           // Forward TodoWrite structured todo list to mobile
           if (agentEvent.type === 'agent:tool_result' && agentEvent.toolName === 'TodoWrite' && !agentEvent.isError) {
@@ -982,7 +1096,6 @@ app.whenReady().then(async () => {
           }
         }
       } catch (err: any) {
-        mobileServer.broadcast('stream:error', { error: err.message })
         relayClient.broadcast('stream:error', { error: err.message })
       }
       return
@@ -996,7 +1109,6 @@ app.whenReady().then(async () => {
     }
   }
 
-  mobileServer.on('client-message', handleClientMessage)
   relayClient.on('client-message', handleClientMessage)
 
   // Send workspace info when mobile connects via relay
@@ -1058,57 +1170,13 @@ app.whenReady().then(async () => {
     return { qrCode, token }
   })
 
-  // Mobile handlers
-  ipcMain.handle(IPC_CHANNELS['mobile:start'], async () => {
-    const { port, token } = await mobileServer.start()
-
-    // Get LAN IP for QR code
-    const nets = networkInterfaces()
-    let lanIp = 'localhost'
-    for (const ifaces of Object.values(nets) as any[]) {
-      for (const iface of ifaces) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          lanIp = iface.address
-          break
-        }
-      }
-      if (lanIp !== 'localhost') break
-    }
-
-    const localUrl = `http://${lanIp}:${port}?token=${token}`
-
-    // Generate LAN QR code (always available)
-    const lanQrCode = await generateQRCode(localUrl)
-
-    // Try to create tunnel for WAN access
-    let tunnelUrl: string | null = null
-    let tunnelQrCode: string | null = null
-    let tunnelError: string | null = null
-    try {
-      const rawTunnelUrl = await tunnelManager.open(port)
-      tunnelUrl = `${rawTunnelUrl}?token=${token}`
-      tunnelQrCode = await generateQRCode(tunnelUrl)
-    } catch (err: any) {
-      tunnelError = err.message
-      console.warn('[TunnelManager] Failed to create tunnel:', err.message)
-    }
-
-    return { lanQrCode, tunnelQrCode, localUrl, tunnelUrl, tunnelError }
-  })
-
-  ipcMain.handle(IPC_CHANNELS['mobile:stop'], async () => {
-    await tunnelManager.close()
-    relayClient.dispose()
-    await mobileServer.stop()
-  })
-
   // Create session store for JSONL persistence (per PERSIST-01)
   sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
-    gateway, agentLoop, permissionManager, workspaceManager, () => sessionStore,
+    gateway, agentLoop, permissionManager, workspaceManager, getActiveSessionStore,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
     mcpManager, taskStore,
     (rootPath) => {
@@ -1120,7 +1188,9 @@ app.whenReady().then(async () => {
       // Reset mobile session and notify connected mobile
       mobileSessionId = null
       sendWorkspaceInfoToMobile()
-    }
+    },
+    // onDataChanged: broadcast desktop CRUD changes to mobile
+    (event, data) => broadcastToMobile(event, data)
   )
 
   // Listen for file changes to trigger incremental index updates
@@ -1162,7 +1232,7 @@ app.whenReady().then(async () => {
   mainWindow.webContents.once('did-finish-load', () => {
     logStartup('renderer did-finish-load')
     // Restore workspace if saved
-    if (lastWsPath && require('fs').existsSync(lastWsPath)) {
+    if (lastWsPath && fs.existsSync(lastWsPath)) {
       handleWorkspaceOpened(lastWsPath, toolRegistry)
       sessionStore = new SessionStore(lastWsPath)
       sendWorkspaceInfoToMobile()
@@ -1205,6 +1275,4 @@ app.on('before-quit', () => {
   terminalManager.dispose()
   workspaceManager.dispose()
   browserManager.close().catch(() => {})
-  tunnelManager.close().catch(() => {})
-  mobileServer.stop().catch(() => {})
 })

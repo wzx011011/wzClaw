@@ -307,7 +307,7 @@ export interface SlashCommand {
 
 export type SlashCommandHandler =
   | { type: 'inject-prompt'; getPrompt: (args: string, workspaceRoot: string) => Promise<string> }
-  | { type: 'action'; execute: (args: string) => void }
+  | { type: 'action'; execute: (args: string) => void | Promise<void> }
 
 // ============================================================
 // Step Management Types (per TASK-01 through TASK-05)
@@ -348,4 +348,35 @@ export interface Task {
   lastSessionId?: string // most recent chat session
   archived: boolean
   progressSummary?: string // e.g. "3/5 完成, 当前: 编写测试"
+}
+
+/** Response type for agent:context_breakdown IPC */
+export interface ContextBreakdownResponse {
+  systemPromptTokens: number
+  systemPromptDynamicTokens: number
+  instructionsTokens: number
+  commandsTokens: number
+  skillsTokens: number
+  memoryTokens: number
+  toolDefinitionsTokens: number
+  builtinToolTokens: number
+  mcpToolTokens: number
+  conversationTokens: number
+  conversationMessageCount: number
+  messagesByRole: { user: number; assistant: number; tool_result: number }
+  totalEstimatedTokens: number
+  contextWindowSize: number
+  maxOutputTokens: number
+  usagePercent: number
+  autocompactBufferTokens: number
+  freeSpaceTokens: number
+  sessionUsage: {
+    inputTokens: number; outputTokens: number
+    cacheReadTokens: number; cacheWriteTokens: number
+    totalCostUSD: number; model: string
+  }
+  compactionHistory: {
+    compactCount: number; lastBefore: number | null; lastAfter: number | null
+  }
+  model: string
 }

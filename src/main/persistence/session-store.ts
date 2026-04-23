@@ -51,6 +51,7 @@ export interface SessionMeta {
  */
 export class SessionStore {
   private sessionsDir: string
+  get sessionDir(): string { return this.sessionsDir }
 
   constructor(workspaceRoot: string) {
     const projectHash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)

@@ -15,9 +15,10 @@ import { DEFAULT_MODELS } from '../../shared/constants'
 export function buildEnvInfo(options: {
   model: string
   provider: string
-  workingDirectory: string
+  projectRoots: string[]
 }): string {
-  const { model, provider, workingDirectory } = options
+  const { model, provider, projectRoots } = options
+  const primaryRoot = projectRoots[0]
 
   // Resolve human-readable model name
   const preset = DEFAULT_MODELS.find((m) => m.id === model)
@@ -27,8 +28,8 @@ export function buildEnvInfo(options: {
   const platform = os.platform()
   const osVersion = `${os.type()} ${os.release()}`
 
-  // Git repo check
-  const isGitRepo = fs.existsSync(path.join(workingDirectory, '.git'))
+  // Git repo check on primary root
+  const isGitRepo = fs.existsSync(path.join(primaryRoot, '.git'))
 
   // Current date
   const date = new Date().toISOString().slice(0, 10)
@@ -58,14 +59,26 @@ export function buildEnvInfo(options: {
 
   const lines = [
     '## Environment',
-    ` - Working directory: ${workingDirectory}`,
+    ` - Working directory: ${primaryRoot}`,
+  ]
+
+  // List all project roots for multi-project tasks
+  if (projectRoots.length > 1) {
+    lines.push(` - Project roots (${projectRoots.length}):`)
+    for (let i = 0; i < projectRoots.length; i++) {
+      const label = i === 0 ? ' (primary)' : ''
+      lines.push(`   ${i + 1}. ${path.basename(projectRoots[i])}: \`${projectRoots[i]}\`${label}`)
+    }
+  }
+
+  lines.push(
     ` - Is git repo: ${isGitRepo}`,
     ` - Platform: ${platform}`,
     ` - OS: ${osVersion}`,
     ` - Shell: ${shellInfo}`,
     ` - You are powered by the model ${modelName} (model ID: ${model}, provider: ${provider}).`,
     ` - Current date: ${date}`,
-  ]
+  )
 
   return lines.join('\n')
 }

@@ -8,9 +8,12 @@ export default function TaskDetailPage(): JSX.Element {
   const openTask = useTaskStore((s) => s.openTask)
   const addProject = useTaskStore((s) => s.addProject)
   const removeProject = useTaskStore((s) => s.removeProject)
+  const updateTask = useTaskStore((s) => s.updateTask)
   const openFolder = useWorkspaceStore((s) => s.openFolder)
 
   const [isAddingFolder, setIsAddingFolder] = useState(false)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
 
   if (!viewingTask) return <></>
 
@@ -18,11 +21,22 @@ export default function TaskDetailPage(): JSX.Element {
     openTask(viewingTask.id)
   }
 
+  const handleRenameStart = () => {
+    setRenameValue(viewingTask.title)
+    setIsRenaming(true)
+  }
+
+  const handleRenameSubmit = () => {
+    const trimmed = renameValue.trim()
+    if (trimmed && trimmed !== viewingTask.title) {
+      updateTask(viewingTask.id, { title: trimmed })
+    }
+    setIsRenaming(false)
+  }
+
   const handleAddFolder = async () => {
     setIsAddingFolder(true)
     try {
-      // openFolder opens the OS dialog and updates workspace-store internally.
-      // We need the path — call the IPC directly so we can pass it to addProject.
       const result = await window.wzxclaw.openFolder()
       if (result?.rootPath) {
         await addProject(viewingTask.id, result.rootPath)
@@ -55,7 +69,28 @@ export default function TaskDetailPage(): JSX.Element {
       {/* Task info */}
       <div className="task-detail-body">
         <div className="task-detail-info">
-          <h1 className="task-detail-title">{viewingTask.title}</h1>
+          <div className="task-detail-title-row">
+            {isRenaming ? (
+              <input
+                className="task-detail-rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onBlur={handleRenameSubmit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRenameSubmit()
+                  if (e.key === 'Escape') setIsRenaming(false)
+                }}
+                autoFocus
+              />
+            ) : (
+              <h1 className="task-detail-title">{viewingTask.title}</h1>
+            )}
+            {!isRenaming && (
+              <button className="task-card-btn" title="重命名" onClick={handleRenameStart}>
+                ✎
+              </button>
+            )}
+          </div>
           {viewingTask.description && (
             <p className="task-detail-description">{viewingTask.description}</p>
           )}

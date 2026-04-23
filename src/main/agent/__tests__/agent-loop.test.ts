@@ -121,6 +121,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-1'
     }
 
@@ -164,6 +165,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-2'
     }
 
@@ -219,6 +221,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-3'
     }
 
@@ -262,6 +265,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-4',
       maxTurns: 3 // Use a small max for testing
     }
@@ -297,6 +301,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-5'
     }
 
@@ -339,6 +344,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-6'
     }
 
@@ -378,6 +384,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-7'
     }
 
@@ -417,6 +424,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-8'
     }
 
@@ -460,6 +468,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-9'
     }
 
@@ -492,6 +501,7 @@ describe('AgentLoop', () => {
       provider: 'openai' as const,
       systemPrompt: 'You are helpful.',
       workingDirectory: '/tmp',
+      projectRoots: ['/tmp'],
       conversationId: 'conv-10'
     }
 

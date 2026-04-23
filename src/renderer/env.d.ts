@@ -9,7 +9,7 @@ declare global {
       // Stream listeners
       onStreamText: (cb: (p: { content: string }) => void) => () => void
       onStreamToolStart: (cb: (p: { id: string; name: string }) => void) => () => void
-      onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean }) => void) => () => void
+      onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean; toolName: string }) => void) => () => void
       onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number } }) => void) => () => void
       onStreamError: (cb: (p: { error: string }) => void) => () => void
       onStreamRetrying: (cb: (p: { attempt: number; maxAttempts: number; delayMs: number }) => void) => () => void
@@ -32,7 +32,7 @@ declare global {
       getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string }>
       updateSettings: (request: Record<string, unknown>) => Promise<void>
       // Sessions
-      listSessions: () => Promise<SessionMeta[]>
+      listSessions: (request?: { activeTaskId?: string }) => Promise<SessionMeta[]>
       loadSession: (request: { sessionId: string }) => Promise<unknown[]>
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
@@ -74,16 +74,12 @@ declare global {
       closeBrowser: () => Promise<void>
       onBrowserScreenshot: (cb: (p: { url: string; base64: string; timestamp: number }) => void) => () => void
       onBrowserStatus: (cb: (p: { running: boolean; url: string | null }) => void) => () => void
-      // Mobile
-      startMobileServer: () => Promise<{ lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }>
-      stopMobileServer: () => Promise<void>
-      onMobileStatus: (cb: (p: { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }) => void) => () => void
       // Relay
       connectRelay: (request: { token: string }) => Promise<void>
       disconnectRelay: () => Promise<void>
-      onRelayStatus: (cb: (p: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => void) => () => void
+      onRelayStatus: (cb: (p: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null; mobiles: Array<{ deviceId: string; name: string | null; platform: string | null; osVersion: string | null; appVersion: string | null; connectedAt: number }> }) => void) => () => void
       getRelayQrCode: (request?: { token: string }) => Promise<{ qrCode: string }>
-      getRelayStatus: () => Promise<{ connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }>
+      getRelayStatus: () => Promise<{ connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null; mobiles: Array<{ deviceId: string; name: string | null; platform: string | null; osVersion: string | null; appVersion: string | null; connectedAt: number }> }>
       // Mobile user message (relay/mobile -> renderer)
       onMobileUserMessage: (cb: (p: { content: string; source: 'mobile' }) => void) => () => void
       // Permission mode
@@ -106,6 +102,13 @@ declare global {
       // Shell utilities
       openInExplorer: (folderPath: string) => Promise<void>
       getExtensionPaths: () => Promise<{ commandsDir: string; skillsDir: string }>
+      // Insights
+      generateInsights: () => Promise<{ summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }>
+      onInsightsProgress: (cb: (p: { stage: string; current: number; total: number; message: string }) => void) => () => void
+      // Context breakdown
+      getContextBreakdown: () => Promise<import('../shared/types').ContextBreakdownResponse>
+      // Data changed notification (mobile <-> desktop sync)
+      onDataChanged: (cb: (p: { source: string; entity: string; action: string; data: unknown }) => void) => () => void
     }
   }
 }

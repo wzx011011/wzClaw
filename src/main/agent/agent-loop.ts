@@ -277,7 +277,7 @@ export class AgentLoop {
 
   async restoreContext(
     rawMessages: unknown[],
-    config: Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory'>
+    config: Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory' | 'projectRoots'>
   ): Promise<{ messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }> {
     const messages = (rawMessages as Array<Record<string, unknown>>)
       .filter((m) => m.type !== 'meta' && m.role != null)

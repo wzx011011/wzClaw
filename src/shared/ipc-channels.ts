@@ -115,12 +115,6 @@ export const IPC_CHANNELS = {
   'browser:screenshot': 'browser:screenshot',
   'browser:status': 'browser:status',
 
-  // Mobile channels (renderer -> main, main -> renderer)
-  'mobile:start': 'mobile:start',
-  'mobile:stop': 'mobile:stop',
-  'mobile:status': 'mobile:status',
-  'mobile:qrcode': 'mobile:qrcode',
-
   // Relay channels (renderer -> main, main -> renderer)
   'relay:connect': 'relay:connect',
   'relay:disconnect': 'relay:disconnect',
@@ -150,6 +144,13 @@ export const IPC_CHANNELS = {
   // Shell utility (renderer -> main)
   'shell:open_path': 'shell:open_path',
   'shell:get_extension_paths': 'shell:get_extension_paths',
+
+  // Insights (renderer -> main for trigger, main -> renderer for progress)
+  'insights:generate': 'insights:generate',
+  'insights:progress': 'insights:progress',
+
+  // Context breakdown (renderer -> main for token usage analysis)
+  'agent:context_breakdown': 'agent:context_breakdown',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -220,8 +221,6 @@ export interface IpcRequestPayloads {
   'browser:navigate': { url: string }
   'browser:take_screenshot': void
   'browser:close': void
-  'mobile:start': void
-  'mobile:stop': void
   'relay:connect': { token: string }
   'relay:disconnect': void
   'relay:get_status': void
@@ -236,6 +235,8 @@ export interface IpcRequestPayloads {
   'task:remove-project': { taskId: string; projectId: string }
   'shell:open_path': { path: string }
   'shell:get_extension_paths': void
+  'insights:generate': void
+  'agent:context_breakdown': void
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -290,8 +291,6 @@ export interface IpcResponsePayloads {
   'browser:navigate': { title: string }
   'browser:take_screenshot': { base64: string }
   'browser:close': void
-  'mobile:start': { lanQrCode: string; tunnelQrCode: string | null; localUrl: string; tunnelUrl: string | null; tunnelError: string | null }
-  'mobile:stop': void
   'relay:connect': void
   'relay:disconnect': void
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
@@ -306,6 +305,8 @@ export interface IpcResponsePayloads {
   'task:remove-project': Task
   'shell:open_path': void
   'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
+  'insights:generate': { summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }
+  'agent:context_breakdown': import('./types').ContextBreakdownResponse
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -338,12 +339,11 @@ export interface IpcStreamPayloads {
   'index:progress': { status: string; fileCount: number; currentFile: string; error?: string }
   'browser:screenshot': { url: string; base64: string; timestamp: number }
   'browser:status': { running: boolean; url: string | null }
-  'mobile:status': { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }
   'relay:status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
-  'mobile:qrcode': { qrCode: string }
   'ask-user:question': { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
   'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
   'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }> }
+  'insights:progress': { stage: string; current: number; total: number; message: string }
 }
 
 // ============================================================

@@ -130,24 +130,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   init: () => {
     const unsubText = window.wzxclaw.onStreamText((payload) => {
-      const { messages, isWaitingForResponse } = get()
-      // Find the last assistant message that is streaming
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      // Use set() callback to guarantee sequential access under rapid IPC events
+      set((state) => {
+        const { messages } = state
+        // Find the last assistant message that is streaming
+        const lastAssistantIdx = [...messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastAssistantIdx) {
-        // Append content to existing streaming assistant message
-        set({
-          isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
-              ? { ...m, content: m.content + payload.content }
-              : m
-          )
-        })
-      } else {
+        if (lastAssistantIdx) {
+          // Append content to existing streaming assistant message
+          return {
+            isWaitingForResponse: false,
+            messages: messages.map((m, i) =>
+              i === lastAssistantIdx.i
+                ? { ...m, content: m.content + payload.content }
+                : m
+            )
+          }
+        }
         // No streaming assistant message — create one
         const newMsg: ChatMessage = {
           id: uuidv4(),
@@ -157,131 +159,140 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: true,
           toolCalls: []
         }
-        set({ isWaitingForResponse: false, messages: [...messages, newMsg] })
-      }
+        return { isWaitingForResponse: false, messages: [...messages, newMsg] }
+      })
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
-      const { messages, isWaitingForResponse } = get()
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        const { messages } = state
+        const lastAssistantIdx = [...messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastAssistantIdx) {
-        set({
-          isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
-              ? { ...m, content: m.content + payload.content }
-              : m
-          )
-        })
-      }
+        if (lastAssistantIdx) {
+          return {
+            isWaitingForResponse: false,
+            messages: messages.map((m, i) =>
+              i === lastAssistantIdx.i
+                ? { ...m, content: m.content + payload.content }
+                : m
+            )
+          }
+        }
+        return state
+      })
     }) ?? (() => {})
 
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
-      const { messages } = get()
-      const lastAssistantIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        const { messages } = state
+        const lastAssistantIdx = [...messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastAssistantIdx) {
-        set({
-          isWaitingForResponse: false,
-          messages: messages.map((m, i) =>
-            i === lastAssistantIdx.i
-              ? {
-                  ...m,
-                  toolCalls: [
-                    ...(m.toolCalls ?? []),
-                    { id: payload.id, name: payload.name, status: 'running' }
-                  ]
-                }
-              : m
-          )
-        })
-      }
+        if (lastAssistantIdx) {
+          return {
+            isWaitingForResponse: false,
+            messages: messages.map((m, i) =>
+              i === lastAssistantIdx.i
+                ? {
+                    ...m,
+                    toolCalls: [
+                      ...(m.toolCalls ?? []),
+                      { id: payload.id, name: payload.name, status: 'running' }
+                    ]
+                  }
+                : m
+            )
+          }
+        }
+        return state
+      })
     })
 
     const unsubToolResult = window.wzxclaw.onStreamToolResult((payload) => {
-      const { messages } = get()
-      // Find any assistant message containing this tool call
-      set({
-        messages: messages.map((m) => {
-          if (!m.toolCalls) return m
-          const hasTool = m.toolCalls.some((tc) => tc.id === payload.id)
-          if (!hasTool) return m
-          return {
-            ...m,
-            toolCalls: m.toolCalls.map((tc) =>
-              tc.id === payload.id
-                ? {
-                    ...tc,
-                    output: payload.output,
-                    isError: payload.isError,
-                    status: payload.isError ? 'error' : 'completed'
-                  }
-                : tc
-            )
-          }
-        })
+      set((state) => {
+        // Find any assistant message containing this tool call
+        return {
+          messages: state.messages.map((m) => {
+            if (!m.toolCalls) return m
+            const hasTool = m.toolCalls.some((tc) => tc.id === payload.id)
+            if (!hasTool) return m
+            return {
+              ...m,
+              toolCalls: m.toolCalls.map((tc) =>
+                tc.id === payload.id
+                  ? {
+                      ...tc,
+                      output: payload.output,
+                      isError: payload.isError,
+                      status: payload.isError ? 'error' : 'completed'
+                    }
+                  : tc
+              )
+            }
+          })
+        }
       })
     })
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
-      const { messages } = get()
-      // Remove any trailing empty assistant message (created by turn_end as a
-      // placeholder for ThinkingIndicator) before finalizing.
-      let cleaned = messages
-      const last = cleaned[cleaned.length - 1]
-      if (last && last.role === 'assistant' && last.isStreaming && !last.content && (!last.toolCalls || last.toolCalls.length === 0)) {
-        cleaned = cleaned.slice(0, -1)
-      }
-      // Mark last streaming assistant as complete
-      const lastStreamingIdx = [...cleaned]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        // Remove any trailing empty assistant message (created by turn_end as a
+        // placeholder for ThinkingIndicator) before finalizing.
+        let cleaned = state.messages
+        const last = cleaned[cleaned.length - 1]
+        if (last && last.role === 'assistant' && last.isStreaming && !last.content && (!last.toolCalls || last.toolCalls.length === 0)) {
+          cleaned = cleaned.slice(0, -1)
+        }
+        // Mark last streaming assistant as complete
+        const lastStreamingIdx = [...cleaned]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastStreamingIdx) {
-        set({
-          isStreaming: false,
-          isWaitingForResponse: false,
-          currentTokenUsage: payload.usage,
-          streamJustEnded: true,
-          messages: cleaned.map((m, i) =>
-            i === lastStreamingIdx.i
-              ? { ...m, isStreaming: false, usage: payload.usage }
-              : m
-          )
-        })
-      } else {
-        set({ isStreaming: false, isWaitingForResponse: false, streamJustEnded: true, messages: cleaned })
-      }
+        if (lastStreamingIdx) {
+          return {
+            isStreaming: false,
+            isWaitingForResponse: false,
+            currentTokenUsage: payload.usage,
+            streamJustEnded: true,
+            messages: cleaned.map((m, i) =>
+              i === lastStreamingIdx.i
+                ? { ...m, isStreaming: false, usage: payload.usage }
+                : m
+            )
+          }
+        }
+        return { isStreaming: false, isWaitingForResponse: false, streamJustEnded: true, messages: cleaned }
+      })
+      // Refresh session list after agent completes (session is now persisted)
+      get().loadSessionList()
     })
 
     const unsubError = window.wzxclaw.onStreamError((payload) => {
-      const { messages } = get()
-      // Mark last streaming assistant as not streaming anymore
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        // Mark last streaming assistant as not streaming anymore
+        const lastStreamingIdx = [...state.messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastStreamingIdx) {
-        set({
-          isStreaming: false,
-          isWaitingForResponse: false,
-          error: payload.error,
-          messages: messages.map((m, i) =>
-            i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
-          )
-        })
-      } else {
-        set({ isStreaming: false, isWaitingForResponse: false, error: payload.error })
-      }
+        if (lastStreamingIdx) {
+          return {
+            isStreaming: false,
+            isWaitingForResponse: false,
+            error: payload.error,
+            messages: state.messages.map((m, i) =>
+              i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
+            )
+          }
+        }
+        return { isStreaming: false, isWaitingForResponse: false, error: payload.error }
+      })
     })
 
     // Turn-end: finalize current assistant bubble so the next turn starts a new one.
@@ -289,99 +300,106 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Also set isWaitingForTurn so a ThinkingIndicator shows while the
     // next LLM call is in flight.
     const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.(() => {
-      const { messages } = get()
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        const { messages } = state
+        const lastStreamingIdx = [...messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      if (lastStreamingIdx) {
-        // Create a new empty assistant message for the upcoming turn so that
-        // ThinkingIndicator is visible immediately between turns.
-        const nextMsg: ChatMessage = {
-          id: uuidv4(),
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-          isStreaming: true,
-          toolCalls: []
+        if (lastStreamingIdx) {
+          // Create a new empty assistant message for the upcoming turn so that
+          // ThinkingIndicator is visible immediately between turns.
+          const nextMsg: ChatMessage = {
+            id: uuidv4(),
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            isStreaming: true,
+            toolCalls: []
+          }
+          return {
+            messages: [
+              ...messages.map((m, i) =>
+                i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
+              ),
+              nextMsg
+            ]
+          }
         }
-        set({
-          messages: [
-            ...messages.map((m, i) =>
-              i === lastStreamingIdx.i ? { ...m, isStreaming: false } : m
-            ),
-            nextMsg
-          ]
-        })
-      }
+        return state
+      })
     }) ?? (() => {})
 
     // Mobile user messages (from phone via relay)
     const unsubMobileMsg = window.wzxclaw.onMobileUserMessage?.((payload) => {
-      const userMsg: ChatMessage = {
-        id: uuidv4(),
-        role: 'user',
-        content: payload.content,
-        timestamp: Date.now()
-      }
-      const { messages } = get()
-      set({ messages: [...messages, userMsg] })
+      set((state) => {
+        const userMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'user',
+          content: payload.content,
+          timestamp: Date.now()
+        }
+        return { messages: [...state.messages, userMsg] }
+      })
     }) ?? (() => {})
 
     // Session compacted events (per CTX-03, CTX-05)
     const unsubCompacted = window.wzxclaw.onSessionCompacted((payload) => {
-      const compactMsg: ChatMessage = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: payload.auto
-          ? `Auto-compacted context: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens (80% threshold reached)`
-          : `Context compacted: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens`,
-        timestamp: Date.now(),
-        isCompacted: true
-      }
-      const { messages } = get()
-      set({ messages: [...messages, compactMsg] })
+      set((state) => {
+        const compactMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: payload.auto
+            ? `Auto-compacted context: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens (80% threshold reached)`
+            : `Context compacted: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens`,
+          timestamp: Date.now(),
+          isCompacted: true
+        }
+        return { messages: [...state.messages, compactMsg] }
+      })
     })
 
     // Session context restored — fires after session:load restores the agent loop (Phase 3.4)
     const unsubContextRestored = window.wzxclaw.onSessionContextRestored?.((payload) => {
-      const { messages } = get()
-      let note = `Session context restored (${payload.messageCount} messages)`
-      if (payload.compacted) {
-        note += ` — compacted ${(payload.beforeTokens / 1000).toFixed(1)}K→${(payload.afterTokens / 1000).toFixed(1)}K tokens`
-      }
-      const restoredMsg: ChatMessage = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: note,
-        timestamp: Date.now(),
-        isCompacted: true
-      }
-      set({ messages: [...messages, restoredMsg] })
+      set((state) => {
+        let note = `Session context restored (${payload.messageCount} messages)`
+        if (payload.compacted) {
+          note += ` — compacted ${(payload.beforeTokens / 1000).toFixed(1)}K→${(payload.afterTokens / 1000).toFixed(1)}K tokens`
+        }
+        const restoredMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: note,
+          timestamp: Date.now(),
+          isCompacted: true
+        }
+        return { messages: [...state.messages, restoredMsg] }
+      })
     }) ?? (() => {})
 
     // Retry notifications from the LLM retry wrapper
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
-      const { messages } = get()
-      // Update the last streaming assistant message with a retrying status note,
-      // or append a transient status message if none is streaming yet.
-      const lastStreamingIdx = [...messages]
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === 'assistant' && m.isStreaming)
+      set((state) => {
+        const { messages } = state
+        // Update the last streaming assistant message with a retrying status note,
+        // or append a transient status message if none is streaming yet.
+        const lastStreamingIdx = [...messages]
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === 'assistant' && m.isStreaming)
 
-      const retryNote = `[Retrying ${payload.attempt}/${payload.maxAttempts} — waiting ${(payload.delayMs / 1000).toFixed(1)}s...]`
+        const retryNote = `[Retrying ${payload.attempt}/${payload.maxAttempts} — waiting ${(payload.delayMs / 1000).toFixed(1)}s...]`
 
-      if (lastStreamingIdx) {
-        set({
-          messages: messages.map((m, i) =>
-            i === lastStreamingIdx.i
-              ? { ...m, content: m.content ? `${m.content}\n${retryNote}` : retryNote }
-              : m
-          )
-        })
-      } else {
+        if (lastStreamingIdx) {
+          return {
+            messages: messages.map((m, i) =>
+              i === lastStreamingIdx.i
+                ? { ...m, content: m.content ? `${m.content}\n${retryNote}` : retryNote }
+                : m
+            )
+          }
+        }
         const statusMsg: ChatMessage = {
           id: uuidv4(),
           role: 'assistant',
@@ -390,8 +408,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: true,
           toolCalls: []
         }
-        set({ messages: [...messages, statusMsg] })
-      }
+        return { messages: [...messages, statusMsg] }
+      })
     }) ?? (() => {})
 
     // Load session list on startup
@@ -421,6 +439,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set({ currentTodos: payload.todos })
     }) ?? (() => {})
 
+    // Data changed notifications (mobile <-> desktop sync) — debounced refresh
+    let taskRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    const unsubDataChanged = window.wzxclaw.onDataChanged?.(({ entity }) => {
+      if (entity === 'task') {
+        if (taskRefreshTimer) clearTimeout(taskRefreshTimer)
+        taskRefreshTimer = setTimeout(() => useTaskStore.getState().loadTasks(), 300)
+      }
+      if (entity === 'session') {
+        if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
+        sessionRefreshTimer = setTimeout(() => get().loadSessionList(), 300)
+      }
+    }) ?? (() => {})
+
     // Return combined unsubscribe
     return () => {
       unsubText()
@@ -436,6 +468,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubRetrying()
       unsubRestore()
       unsubTodo()
+      unsubDataChanged()
     }
   },
 
@@ -525,7 +558,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   loadSessionList: async () => {
     try {
-      const sessions = await window.wzxclaw.listSessions()
+      const { activeTaskId } = useTaskStore.getState()
+      const sessions = await window.wzxclaw.listSessions(activeTaskId ? { activeTaskId } : undefined)
       set({ sessions })
     } catch (err) {
       console.error('Failed to load session list:', err)

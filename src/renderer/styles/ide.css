@@ -18,10 +18,10 @@
   --text-secondary: #808080;
   --text-muted: #5a5a5a;
 
-  /* Accent — purple */
-  --accent: #7c3aed;
-  --accent-hover: #6d28d9;
-  --accent-subtle: rgba(124, 58, 237, 0.15);
+  /* Accent — emerald green */
+  --accent: #10b981;
+  --accent-hover: #059669;
+  --accent-subtle: rgba(16, 185, 129, 0.15);
 
   /* Borders */
   --border: #2e2e2e;

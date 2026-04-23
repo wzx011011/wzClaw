@@ -90,6 +90,21 @@
   word-break: break-word;
 }
 
+.task-card-rename-input {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--accent);
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+  width: 100%;
+  font-family: 'Inter', sans-serif;
+}
+
 .task-card-actions {
   display: flex;
   gap: var(--sp-1);
@@ -424,10 +439,30 @@
   gap: var(--sp-3);
 }
 
+.task-detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 .task-detail-title {
   font-size: 28px;
   font-weight: 700;
   margin: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+.task-detail-rename-input {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-bottom: 2px solid var(--accent);
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+  flex: 1;
   font-family: 'Inter', sans-serif;
 }
 
@@ -508,6 +543,156 @@
   font-size: 12px;
   color: var(--text-muted);
   font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Task Home — Connected Devices & Theme Selector
+   ============================================================ */
+
+.task-home-section {
+  margin-top: var(--sp-8);
+  padding-top: var(--sp-6);
+  border-top: 1px solid var(--border);
+}
+
+.task-home-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-4);
+}
+
+.task-home-section-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.theme-selector {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.theme-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  font-family: 'Inter', sans-serif;
+}
+
+.theme-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.theme-btn.active {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  font-weight: 500;
+}
+
+.device-item-disconnect {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: 'Inter', sans-serif;
+  flex-shrink: 0;
+}
+
+.device-item-disconnect:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* ── Connection Panel (layered: relay → mobile devices) ── */
+
+.connection-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.connection-row.relay-row {
+  border-bottom: none;
+}
+
+.connection-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connection-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.mobile-devices {
+  border-top: 1px solid var(--border);
+}
+
+.mobile-row {
+  padding-left: var(--sp-8);
+}
+
+.mobile-device-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mobile-device-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mobile-device-detail {
+  font-size: 11px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

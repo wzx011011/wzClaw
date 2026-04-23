@@ -23,8 +23,8 @@ const api = {
     ipcRenderer.on('stream:tool_use_start', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_start', handler)
   },
-  onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean }) => void) => {
-    const handler = (_: unknown, payload: { id: string; output: string; isError: boolean }) => callback(payload)
+  onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean; toolName: string }) => void) => {
+    const handler = (_: unknown, payload: { id: string; output: string; isError: boolean; toolName: string }) => callback(payload)
     ipcRenderer.on('stream:tool_use_end', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_end', handler)
   },
@@ -85,7 +85,7 @@ const api = {
   updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
 
   // Sessions
-  listSessions: () => ipcRenderer.invoke('session:list'),
+  listSessions: (request?: { activeTaskId?: string }) => ipcRenderer.invoke('session:list', request),
   loadSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:load', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
@@ -194,15 +194,6 @@ const api = {
     return () => ipcRenderer.removeListener('browser:status', handler)
   },
 
-  // Mobile
-  startMobileServer: () => ipcRenderer.invoke('mobile:start'),
-  stopMobileServer: () => ipcRenderer.invoke('mobile:stop'),
-  onMobileStatus: (callback: (payload: { running: boolean; port: number | null; localUrl: string | null; tunnelUrl: string | null; clients: Array<{ id: string; userAgent: string; connectedAt: number }> }) => void) => {
-    const handler = (_: unknown, payload: any) => callback(payload)
-    ipcRenderer.on('mobile:status', handler)
-    return () => ipcRenderer.removeListener('mobile:status', handler)
-  },
-
   // Relay
   connectRelay: (request: { token: string }) => ipcRenderer.invoke('relay:connect', request),
   disconnectRelay: () => ipcRenderer.invoke('relay:disconnect'),
@@ -278,6 +269,26 @@ const api = {
     const handler = (_: unknown, payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => callback(payload)
     ipcRenderer.on('usage:update', handler)
     return () => ipcRenderer.removeListener('usage:update', handler)
+  },
+
+  // Insights — generate session analysis report
+  generateInsights: (): Promise<{ summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }> =>
+    ipcRenderer.invoke('insights:generate'),
+  onInsightsProgress: (callback: (payload: { stage: string; current: number; total: number; message: string }) => void) => {
+    const handler = (_: unknown, payload: { stage: string; current: number; total: number; message: string }) => callback(payload)
+    ipcRenderer.on('insights:progress', handler)
+    return () => ipcRenderer.removeAllListeners('insights:progress')
+  },
+
+  // Context breakdown — returns detailed token usage per category
+  getContextBreakdown: (): Promise<import('../shared/types').ContextBreakdownResponse> =>
+    ipcRenderer.invoke('agent:context_breakdown'),
+
+  // Data changed notification (mobile <-> desktop sync)
+  onDataChanged: (callback: (payload: { source: string; entity: string; action: string; data: unknown }) => void) => {
+    const handler = (_: unknown, payload: { source: string; entity: string; action: string; data: unknown }) => callback(payload)
+    ipcRenderer.on('data:changed', handler)
+    return () => ipcRenderer.removeListener('data:changed', handler)
   },
 }
 

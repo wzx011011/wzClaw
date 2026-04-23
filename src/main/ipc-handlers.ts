@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, shell } from 'electron'
 import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
-import { getCommandsDir, getSkillsDir } from './paths'
+import { getCommandsDir, getSkillsDir, getAppDataDir, getInsightsCacheDir, getInsightsReportDir } from './paths'
 import { invalidateGitCache } from './git/git-context'
 
 /**
@@ -15,7 +15,7 @@ function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
   const root = path.resolve(workspaceRoot).toLowerCase()
   return normalized === root || normalized.startsWith(root + path.sep)
 }
-import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_MODELS } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
 import type { AgentLoop } from './agent/agent-loop'
 import type { PermissionManager } from './permission/permission-manager'
@@ -45,7 +45,8 @@ export function registerIpcHandlers(
   settingsManager: SettingsManager,
   mcpManager: MCPManager,
   taskStore: TaskStore,
-  onWorkspaceOpened?: (rootPath: string) => void
+  onWorkspaceOpened?: (rootPath: string) => void,
+  onDataChanged?: (event: string, data: unknown) => void
 ): void {
   // Mutable reference to IndexingEngine (updated when workspace opens)
   const indexingEngineRef = { current: indexingEngine }
@@ -71,7 +72,9 @@ export function registerIpcHandlers(
     // Reset persisted message counter for new conversation turn
     persistedMessageCount = agentLoop.getMessages().length
 
-    // Ensure the LLM gateway has the current provider configured with up-to-date settings
+    // Ensure the LLM gateway has adapters for the configured provider AND the model's provider.
+    // GLM models span both anthropic (glm-5*) and openai (glm-4*) APIs, so both adapters
+    // may be needed when the user switches between them.
     const config = settingsManager.getCurrentConfig()
     if (config.apiKey) {
       gateway.addProvider({
@@ -79,18 +82,27 @@ export function registerIpcHandlers(
         apiKey: config.apiKey,
         baseURL: config.baseURL
       })
+      // If the selected model requires a different provider than configured, add that adapter too.
+      // Convert GLM anthropic baseURL → openai baseURL and vice versa.
+      const modelPreset = DEFAULT_MODELS.find((m) => m.id === config.model)
+      if (modelPreset && modelPreset.provider !== config.provider) {
+        const crossProvider = modelPreset.provider as 'openai' | 'anthropic'
+        let crossBaseURL = config.baseURL
+        if (config.baseURL?.includes('/api/anthropic')) {
+          crossBaseURL = config.baseURL.replace('/api/anthropic', '/api/paas/v4')
+        } else if (config.baseURL?.includes('/api/paas/v4')) {
+          crossBaseURL = config.baseURL.replace('/api/paas/v4', '/api/anthropic')
+        }
+        gateway.addProvider({
+          provider: crossProvider,
+          apiKey: config.apiKey,
+          baseURL: crossBaseURL
+        })
+      }
     }
 
     // Build AgentConfig from current settings; use workspace root if available
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const agentConfig: AgentConfig = {
-      model: config.model,
-      provider: config.provider as 'openai' | 'anthropic',
-      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      workingDirectory,
-      conversationId: result.data.conversationId,
-      thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
-    }
 
     // Inject active task context into agent loop
     if (result.data.activeTaskId) {
@@ -98,6 +110,21 @@ export function registerIpcHandlers(
       agentLoop.activeTask = task ?? null
     } else {
       agentLoop.activeTask = null
+    }
+
+    // Build projectRoots from active task or fall back to workspace root
+    const projectRoots = agentLoop.activeTask
+      ? agentLoop.activeTask.projects.map(p => p.path)
+      : [workingDirectory]
+
+    const agentConfig: AgentConfig = {
+      model: config.model,
+      provider: config.provider as 'openai' | 'anthropic',
+      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      workingDirectory,
+      projectRoots,
+      conversationId: result.data.conversationId,
+      thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
     }
 
     // Cleanup on window close
@@ -184,6 +211,14 @@ export function registerIpcHandlers(
               const allMessages = agentLoop.getMessages()
               const newMessages = allMessages.slice(persistedMessageCount)
               if (newMessages.length > 0) {
+                // Inject usage into last assistant message for /insights cost tracking
+                const lastAsst = [...newMessages].reverse().find(m => m.role === 'assistant')
+                if (lastAsst) {
+                  (lastAsst as Record<string, unknown>).usage = {
+                    inputTokens: agentEvent.usage.inputTokens,
+                    outputTokens: agentEvent.usage.outputTokens,
+                  }
+                }
                 await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
                 persistedMessageCount = allMessages.length
               }
@@ -586,9 +621,15 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Session: list — returns all sessions for current project
+  // Session: list — returns all sessions for current project or task
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:list'], async () => {
+  ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeTaskId?: string }) => {
+    // If activeTaskId provided, use task-scoped store; otherwise fall through
+    // to the dynamic getSessionStore() which checks agentLoop.activeTask
+    if (payload?.activeTaskId) {
+      const { SessionStore } = await import('./persistence/session-store')
+      return SessionStore.forTask(payload.activeTaskId).listSessions()
+    }
     return getSessionStore().listSessions()
   })
 
@@ -610,11 +651,16 @@ export function registerIpcHandlers(
     // Run asynchronously after returning messages to the renderer — the renderer
     // shows the chat immediately while the (potentially slow) compaction runs.
     const config = settingsManager.getCurrentConfig()
+    const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const restoreRoots = agentLoop.activeTask
+      ? agentLoop.activeTask.projects.map(p => p.path)
+      : [restoreCwd]
     agentLoop.restoreContext(rawMessages, {
       model: config.model,
       provider: config.provider as 'openai' | 'anthropic',
       systemPrompt: config.systemPrompt,
-      workingDirectory: workspaceManager.getWorkspaceRoot() ?? process.cwd()
+      workingDirectory: restoreCwd,
+      projectRoots: restoreRoots,
     }).then((info) => {
       const sender = event.sender
       if (!sender.isDestroyed()) {
@@ -641,7 +687,9 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return { success: await getSessionStore().deleteSession(result.data.sessionId) }
+    const success = await getSessionStore().deleteSession(result.data.sessionId)
+    if (success) onDataChanged?.('session:changed', { action: 'deleted', sessionId: result.data.sessionId })
+    return { success }
   })
 
   // ============================================================
@@ -652,7 +700,9 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    return { success: await getSessionStore().renameSession(result.data.sessionId, result.data.title) }
+    const success = await getSessionStore().renameSession(result.data.sessionId, result.data.title)
+    if (success) onDataChanged?.('session:changed', { action: 'renamed', sessionId: result.data.sessionId, title: result.data.title })
+    return { success }
   })
 
   // ============================================================
@@ -792,23 +842,32 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS['task:create'], async (_event, payload: { title: string; description?: string }) => {
-    return taskStore.createTask(payload.title, payload.description)
+    const task = await taskStore.createTask(payload.title, payload.description)
+    onDataChanged?.('task:changed', { action: 'created', task })
+    return task
   })
 
   ipcMain.handle(IPC_CHANNELS['task:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
-    return taskStore.updateTask(payload.taskId, payload.updates)
+    const task = await taskStore.updateTask(payload.taskId, payload.updates)
+    onDataChanged?.('task:changed', { action: 'updated', task })
+    return task
   })
 
   ipcMain.handle(IPC_CHANNELS['task:delete'], async (_event, payload: { taskId: string }) => {
-    return taskStore.deleteTask(payload.taskId)
+    await taskStore.deleteTask(payload.taskId)
+    onDataChanged?.('task:changed', { action: 'deleted', taskId: payload.taskId })
   })
 
   ipcMain.handle(IPC_CHANNELS['task:add-project'], async (_event, payload: { taskId: string; folderPath: string }) => {
-    return taskStore.addProject(payload.taskId, payload.folderPath)
+    const task = await taskStore.addProject(payload.taskId, payload.folderPath)
+    onDataChanged?.('task:changed', { action: 'updated', task })
+    return task
   })
 
   ipcMain.handle(IPC_CHANNELS['task:remove-project'], async (_event, payload: { taskId: string; projectId: string }) => {
-    return taskStore.removeProject(payload.taskId, payload.projectId)
+    const task = await taskStore.removeProject(payload.taskId, payload.projectId)
+    onDataChanged?.('task:changed', { action: 'updated', task })
+    return task
   })
 
   // ============================================================
@@ -905,5 +964,177 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['mcp:remove_server'], (_event, request) => {
     mcpManager.removeServer(request.name)
+  })
+
+  // ============================================================
+  // Insights: generate session analysis report
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['insights:generate'], async (event) => {
+    const sender = event.sender
+    const sendProgress = (stage: string, current: number, total: number, message: string) => {
+      sender.send(IPC_CHANNELS['insights:progress'], { stage, current, total, message })
+    }
+
+    const config = settingsManager.getCurrentConfig()
+    if (!config.apiKey) {
+      throw new Error('No API key configured. Set an API key in Settings to use /insights.')
+    }
+
+    // Insights uses OpenAI-compatible /chat/completions endpoint.
+    // If provider is anthropic with an Anthropic-specific baseURL (e.g. bigmodel.cn/api/anthropic),
+    // convert to the OpenAI-compatible endpoint so raw fetch() works.
+    let effectiveBaseUrl = config.baseURL || 'https://open.bigmodel.cn/api/paas/v4'
+    if (config.provider === 'anthropic') {
+      if (effectiveBaseUrl.includes('/anthropic')) {
+        effectiveBaseUrl = effectiveBaseUrl.replace(/\/anthropic.*/, '/paas/v4')
+      } else if (effectiveBaseUrl.includes('anthropic.com')) {
+        // Real Anthropic — cannot use OpenAI format, fall back to env var or error
+        const openaiKey = process.env.OPENAI_API_KEY
+        if (openaiKey) {
+          effectiveBaseUrl = 'https://api.openai.com/v1'
+          console.log(`[insights] Anthropic provider detected, falling back to OPENAI_API_KEY for insights`)
+        } else {
+          throw new Error('Insights requires an OpenAI-compatible API endpoint. Configure an OpenAI API key or use a provider with OpenAI-compatible endpoint.')
+        }
+      }
+    }
+    console.log(`[insights] config: provider=${config.provider} model=${config.model} baseURL=${effectiveBaseUrl} hasApiKey=${!!config.apiKey}`)
+
+    // Dynamic import to avoid loading insights modules at startup
+    const { scanAllSessions, loadSessionMessages } = await import('./insights/session-scanner')
+    const { batchExtractFacets } = await import('./insights/facet-extractor')
+    const { aggregateData, generateInsights, buildInsightReport } = await import('./insights/insight-generator')
+
+    const sessionsRoot = path.join(getAppDataDir(), 'sessions')
+    const cacheDir = getInsightsCacheDir()
+    const reportDir = getInsightsReportDir()
+
+    // Stage 1: Scan sessions
+    sendProgress('scanning', 0, 0, 'Scanning session files...')
+    const allMeta = await scanAllSessions(sessionsRoot)
+
+    if (allMeta.length === 0) {
+      throw new Error('No sessions found. Start coding first, then run /insights.')
+    }
+
+    // Stage 2: Extract facets
+    sendProgress('extracting_facets', 0, allMeta.length, `Analyzing ${allMeta.length} sessions...`)
+    const sessionsWithData = []
+    for (const meta of allMeta) {
+      const messages = await loadSessionMessages(
+        path.join(sessionsRoot, meta.projectHash, `${meta.sessionId}.jsonl`),
+      )
+      sessionsWithData.push({ meta, messages })
+    }
+
+    const facets = await batchExtractFacets(
+      sessionsWithData,
+      config.apiKey,
+      effectiveBaseUrl,
+      config.model,
+      cacheDir,
+      (current, total) => sendProgress('extracting_facets', current, total, `Analyzing session ${current}/${total}...`),
+    )
+
+    // Stage 3: Aggregate
+    sendProgress('aggregating', 0, 0, 'Aggregating statistics...')
+    const aggregated = aggregateData(allMeta, facets)
+
+    // Stage 4: Generate insights
+    sendProgress('generating_insights', 0, 6, 'Generating insights...')
+    const sections = await generateInsights(
+      aggregated,
+      config.apiKey,
+      effectiveBaseUrl,
+      config.model,
+      (sectionId) => sendProgress('generating_insights', 0, 6, `Generating: ${sectionId}...`),
+    )
+
+    // Stage 5: Build report
+    sendProgress('rendering', 0, 0, 'Rendering report...')
+    const result = await buildInsightReport(aggregated, sections, reportDir)
+
+    sendProgress('done', 0, 0, 'Done!')
+    return result
+  })
+
+  // ============================================================
+  // Context breakdown — detailed token usage per category
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['agent:context_breakdown'], async () => {
+    const { countTokens, countMessagesTokens } = await import('./context/token-counter')
+    const { buildSystemPromptBreakdown } = await import('./agent/system-prompt-builder')
+    const config = settingsManager.getCurrentConfig()
+    const model = config.model
+    const preset = DEFAULT_MODELS.find(m => m.id === model)
+    const contextWindowSize = preset?.contextWindowSize ?? 128000
+    const maxOutputTokens = preset?.maxTokens ?? 16384
+
+    // 1. System prompt breakdown
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const breakdownRoots = agentLoop.activeTask
+      ? agentLoop.activeTask.projects.map(p => p.path)
+      : [cwd]
+    const promptBreakdown = await buildSystemPromptBreakdown({
+      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      workingDirectory: cwd,
+      projectRoots: breakdownRoots,
+      model,
+      provider: config.provider as 'openai' | 'anthropic',
+    }, agentLoop.activeTask)
+
+    // 2. Tool definitions — separate built-in vs MCP
+    const allToolDefs = toolRegistry.getDefinitions()
+    const allToolTokens = countTokens(JSON.stringify(allToolDefs))
+    const mcpToolNames = new Set(mcpManager.listAllTools().map(t => t.name))
+    const builtinDefs = allToolDefs.filter(d => !mcpToolNames.has(d.name))
+    const mcpDefs = allToolDefs.filter(d => mcpToolNames.has(d.name))
+    const builtinToolTokens = countTokens(JSON.stringify(builtinDefs))
+    const mcpToolTokens = countTokens(JSON.stringify(mcpDefs))
+
+    // 3. Conversation messages
+    const messages = agentLoop.getMessages()
+    const conversationTokens = countMessagesTokens(messages, model)
+    const messagesByRole = { user: 0, assistant: 0, tool_result: 0 }
+    for (const m of messages) {
+      const role = m.role as keyof typeof messagesByRole
+      if (role in messagesByRole) messagesByRole[role]++
+    }
+
+    // 4. Totals
+    const totalEstimated = promptBreakdown.staticTokens + promptBreakdown.dynamicTokens
+      + allToolTokens + conversationTokens
+    const usagePercent = (totalEstimated / contextWindowSize) * 100
+    const autocompactBufferTokens = Math.floor(contextWindowSize * (contextManager.getConfig().compactThreshold ?? 0.8))
+      - totalEstimated
+    const freeSpaceTokens = Math.max(0, contextWindowSize - totalEstimated)
+
+    // 5. Session usage + compaction history
+    const sessionUsage = costTracker.getSession()
+    const compactionHistory = contextManager.getCompactHistory()
+
+    return {
+      systemPromptTokens: promptBreakdown.staticTokens,
+      systemPromptDynamicTokens: promptBreakdown.dynamicTokens,
+      instructionsTokens: promptBreakdown.instructionsTokens,
+      commandsTokens: promptBreakdown.commandsTokens,
+      skillsTokens: promptBreakdown.skillsTokens,
+      memoryTokens: promptBreakdown.memoryTokens,
+      toolDefinitionsTokens: allToolTokens,
+      builtinToolTokens,
+      mcpToolTokens,
+      conversationTokens,
+      conversationMessageCount: messages.length,
+      messagesByRole,
+      totalEstimatedTokens: totalEstimated,
+      contextWindowSize,
+      maxOutputTokens,
+      usagePercent,
+      autocompactBufferTokens: Math.max(0, autocompactBufferTokens),
+      freeSpaceTokens,
+      sessionUsage,
+      compactionHistory,
+      model,
+    }
   })
 }

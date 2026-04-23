@@ -1,4 +1,5 @@
 import { execFile } from 'child_process'
+import path from 'path'
 
 // ============================================================
 // Git Context Injection
@@ -30,11 +31,9 @@ function execGit(args: string[], cwd: string): Promise<string> {
 }
 
 /**
- * Gather git context for the given working directory.
- * Runs git commands in parallel, caps output, and returns a formatted string
- * suitable for prepending to the system prompt.
+ * Gather git context for a single working directory.
  */
-export async function getGitContext(cwd: string): Promise<string> {
+async function getGitContextSingle(cwd: string): Promise<string> {
   // Return cached result if still fresh and same workspace
   if (_gitContextCache && _gitContextCache.cwd === cwd && Date.now() - _gitContextCache.timestamp < GIT_CACHE_TTL_MS) {
     return _gitContextCache.result
@@ -57,7 +56,7 @@ export async function getGitContext(cwd: string): Promise<string> {
       ? status.substring(0, STATUS_MAX_CHARS) + '\n... [truncated]'
       : status
 
-  const parts: string[] = ['## Git Context']
+  const parts: string[] = []
   if (userName) parts.push(`User: ${userName}`)
   if (branch) parts.push(`Branch: ${branch}`)
   if (truncatedStatus) parts.push(`Status:\n${truncatedStatus}`)
@@ -66,6 +65,36 @@ export async function getGitContext(cwd: string): Promise<string> {
   const result = parts.join('\n')
   _gitContextCache = { cwd, result, timestamp: Date.now() }
   return result
+}
+
+/**
+ * Gather git context for one or more project roots.
+ * When called with a single root, behaves as before (single section).
+ * When called with multiple roots, queries each in parallel and labels by project name.
+ */
+export async function getGitContext(roots: string | string[]): Promise<string> {
+  if (typeof roots === 'string') {
+    const ctx = await getGitContextSingle(roots)
+    return ctx ? `## Git Context\n${ctx}` : ''
+  }
+  if (roots.length === 1) {
+    const ctx = await getGitContextSingle(roots[0])
+    return ctx ? `## Git Context\n${ctx}` : ''
+  }
+  // Multiple roots — query each in parallel and combine
+  const results = await Promise.all(
+    roots.map(async (root) => {
+      const ctx = await getGitContextSingle(root)
+      return { root, ctx }
+    })
+  )
+  const parts: string[] = []
+  for (const { root, ctx } of results) {
+    if (ctx) {
+      parts.push(`### ${path.basename(root)} (${root})\n${ctx}`)
+    }
+  }
+  return parts.length > 0 ? `## Git Context\n\n${parts.join('\n\n')}` : ''
 }
 
 /** Invalidate git cache (call on file changes that may affect git status). */

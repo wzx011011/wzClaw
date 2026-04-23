@@ -23,6 +23,7 @@ export class ContextManager {
   private isCompacting = false
   private accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
   private config: AgentRuntimeConfig
+  private compactHistory = { count: 0, lastBefore: null as number | null, lastAfter: null as number | null }
 
   constructor(config?: Partial<AgentRuntimeConfig>) {
     this.config = { ...DEFAULT_RUNTIME_CONFIG, ...config }
@@ -129,6 +130,10 @@ Provide a concise summary:`
       const compactedMessages = [summaryMessage, ...toKeep]
       const afterTokens = countMessagesTokens(compactedMessages, model)
 
+      this.compactHistory.count++
+      this.compactHistory.lastBefore = beforeTokens
+      this.compactHistory.lastAfter = afterTokens
+
       return { summary, keptRecentCount: recentCount, beforeTokens, afterTokens }
     } finally {
       this.isCompacting = false
@@ -146,6 +151,11 @@ Provide a concise summary:`
 
   resetUsage(): void {
     this.accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
+    this.compactHistory = { count: 0, lastBefore: null, lastAfter: null }
+  }
+
+  getCompactHistory(): { count: number; lastBefore: number | null; lastAfter: number | null } {
+    return { ...this.compactHistory }
   }
 
   /**

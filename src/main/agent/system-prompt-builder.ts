@@ -7,14 +7,102 @@ import type { LLMProvider, Task } from '../../shared/types'
 import type { AgentConfig } from './types'
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 import { getGitContext } from '../git/git-context'
-import { loadInstructions } from '../context/instruction-loader'
+import { loadInstructionSections } from '../context/instruction-loader'
 import { buildEnvInfo } from '../context/env-info'
 import { MemoryManager } from '../memory/memory-manager'
+import { countTokens } from '../context/token-counter'
 
 export interface SystemPromptResult {
   /** 完整系统提示（含缓存边界） */
   systemPrompt: string
   /** 工具定义（从 ToolRegistry 获取，不在 prompt 文本中） */
+}
+
+export interface SystemPromptBreakdown {
+  /** 完整系统提示（含缓存边界） */
+  systemPrompt: string
+  /** 静态部分 token 数 (CACHE_BOUNDARY 之前) */
+  staticTokens: number
+  /** 环境信息 token 数 */
+  envInfoTokens: number
+  /** Git 上下文 token 数 */
+  gitContextTokens: number
+  /** WZXCLAW.md + rules token 数 */
+  instructionsTokens: number
+  /** 用户命令 token 数 */
+  commandsTokens: number
+  /** 用户技能 token 数 */
+  skillsTokens: number
+  /** MEMORY.md 部分 token 数 */
+  memoryTokens: number
+  /** 活跃任务上下文 token 数 */
+  taskContextTokens: number
+  /** 所有动态部分 token 总数 */
+  dynamicTokens: number
+}
+
+/**
+ * Build system prompt with per-segment token counts.
+ */
+export async function buildSystemPromptBreakdown(
+  config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
+  activeTask?: Task | null
+): Promise<SystemPromptBreakdown> {
+  const roots = config.projectRoots ?? [config.workingDirectory]
+
+  // Load all dynamic context segments in parallel
+  const [gitContext, instructionSections, memorySection] = await Promise.all([
+    getGitContext(roots).catch(() => ''),
+    loadInstructionSections(roots).catch(() => ({ instructions: '', commands: '', skills: '', merged: '' })),
+    activeTask
+      ? new MemoryManager(activeTask.id).buildSystemPromptSection().catch(() => '')
+      : Promise.resolve(''),
+  ])
+
+  const envInfo = buildEnvInfo({
+    model: config.model,
+    provider: config.provider,
+    projectRoots: roots,
+  })
+
+  const taskContext = activeTask ? buildTaskContext(activeTask) : ''
+
+  // Count tokens per segment
+  const staticTokens = countTokens(config.systemPrompt ?? '')
+  const envInfoTokens = countTokens(envInfo)
+  const gitContextTokens = countTokens(gitContext)
+  const instructionsTokens = countTokens(instructionSections.instructions)
+  const commandsTokens = countTokens(instructionSections.commands)
+  const skillsTokens = countTokens(instructionSections.skills)
+  const memoryTokens = countTokens(memorySection)
+  const taskContextTokens = countTokens(taskContext)
+
+  // Merge instructions section (commands + skills are part of it via merged)
+  const mergedInstructions = instructionSections.merged
+  const dynamicParts: string[] = [envInfo]
+  if (gitContext) dynamicParts.push(gitContext)
+  if (mergedInstructions) dynamicParts.push(mergedInstructions)
+  if (memorySection) dynamicParts.push(memorySection)
+  if (taskContext) dynamicParts.push(taskContext)
+
+  const dynamicTokens = envInfoTokens + gitContextTokens
+    + countTokens(mergedInstructions)
+    + memoryTokens + taskContextTokens
+
+  const systemPrompt = config.systemPrompt + SYSTEM_PROMPT_CACHE_BOUNDARY + dynamicParts.join('\n\n')
+
+  return {
+    systemPrompt,
+    staticTokens,
+    envInfoTokens,
+    gitContextTokens,
+    instructionsTokens,
+    commandsTokens,
+    skillsTokens,
+    memoryTokens,
+    taskContextTokens,
+    dynamicTokens,
+  }
 }
 
 /**
@@ -29,34 +117,11 @@ export interface SystemPromptResult {
  * 动态部分每会话可能变化。
  */
 export async function buildSystemPrompt(
-  config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'model' | 'provider'>,
+  config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
   activeTask?: Task | null
 ): Promise<string> {
-  // 并行加载所有动态上下文段
-  const [gitContext, instructionSection, memorySection] = await Promise.all([
-    getGitContext(config.workingDirectory).catch(() => ''),
-    loadInstructions(config.workingDirectory).catch(() => ''),
-    activeTask
-      ? new MemoryManager(activeTask.id).buildSystemPromptSection().catch(() => '')
-      : Promise.resolve(''),
-  ])
-
-  // 构建环境信息
-  const envInfo = buildEnvInfo({
-    model: config.model,
-    provider: config.provider,
-    workingDirectory: config.workingDirectory,
-  })
-
-  // 组装动态部分
-  const dynamicParts: string[] = [envInfo]
-  if (gitContext) dynamicParts.push(gitContext)
-  if (instructionSection) dynamicParts.push(instructionSection)
-  if (memorySection) dynamicParts.push(memorySection)
-  if (activeTask) dynamicParts.push(buildTaskContext(activeTask))
-
-  // 拼接：静态 + 缓存边界 + 动态
-  return config.systemPrompt + SYSTEM_PROMPT_CACHE_BOUNDARY + dynamicParts.join('\n\n')
+  const breakdown = await buildSystemPromptBreakdown(config, activeTask)
+  return breakdown.systemPrompt
 }
 
 function buildTaskContext(task: Task): string {

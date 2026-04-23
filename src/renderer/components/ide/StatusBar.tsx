@@ -7,6 +7,7 @@ import { useChatStore } from '../../stores/chat-store'
 interface RelayStatus {
   connected: boolean; connecting: boolean; reconnectAttempt: number
   mobileConnected: boolean; mobileIdentity: string | null
+  mobiles: Array<{ deviceId: string; name: string | null; platform: string | null; osVersion: string | null; appVersion: string | null; connectedAt: number }>
 }
 
 interface UsageDisplay {

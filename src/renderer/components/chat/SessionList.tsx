@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useChatStore } from '../../stores/chat-store'
 
 // ============================================================
@@ -33,8 +33,20 @@ export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX
   const conversationId = useChatStore((s) => s.conversationId)
   const loadSession = useChatStore((s) => s.loadSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
+  const renameSession = useChatStore((s) => s.renameSession)
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus input when editing starts
+  useEffect(() => {
+    if (editingSessionId && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editingSessionId])
 
   // Auto-dismiss confirmation after 5 seconds
   useEffect(() => {
@@ -66,6 +78,31 @@ export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX
     setConfirmDeleteId(null)
   }
 
+  const handleDoubleClickTitle = (e: React.MouseEvent, sessionId: string, currentTitle: string): void => {
+    e.stopPropagation()
+    setEditingSessionId(sessionId)
+    setEditTitle(currentTitle)
+  }
+
+  const handleCommitRename = (): void => {
+    if (editingSessionId && editTitle.trim()) {
+      renameSession(editingSessionId, editTitle.trim())
+    }
+    setEditingSessionId(null)
+    setEditTitle('')
+  }
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleCommitRename()
+    } else if (e.key === 'Escape') {
+      e.stopPropagation()
+      setEditingSessionId(null)
+      setEditTitle('')
+    }
+  }
+
   return (
     <div className="session-list">
       {sessions.length === 0 ? (
@@ -79,7 +116,7 @@ export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX
             key={session.id}
             className={`session-item${session.id === conversationId ? ' active' : ''}`}
             onClick={() => {
-              if (confirmDeleteId !== session.id) {
+              if (confirmDeleteId !== session.id && editingSessionId !== session.id) {
                 handleSelectSession(session.id)
               }
             }}
@@ -103,16 +140,36 @@ export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX
             ) : (
               <>
                 <div className="session-item-info">
-                  <div className="session-item-title">{session.title}</div>
+                  {editingSessionId === session.id ? (
+                    <input
+                      ref={inputRef}
+                      className="session-item-title-input"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onBlur={handleCommitRename}
+                      onKeyDown={handleRenameKeyDown}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <div
+                      className="session-item-title"
+                      onDoubleClick={(e) => handleDoubleClickTitle(e, session.id, session.title)}
+                      title="Double-click to rename"
+                    >
+                      {session.title}
+                    </div>
+                  )}
                   <div className="session-item-time">{formatRelativeTime(session.updatedAt)}</div>
                 </div>
-                <button
-                  className="session-item-delete"
-                  onClick={(e) => handleDeleteClick(e, session.id)}
-                  title="Delete session"
-                >
-                  x
-                </button>
+                {editingSessionId !== session.id && (
+                  <button
+                    className="session-item-delete"
+                    onClick={(e) => handleDeleteClick(e, session.id)}
+                    title="Delete session"
+                  >
+                    x
+                  </button>
+                )}
               </>
             )}
           </div>

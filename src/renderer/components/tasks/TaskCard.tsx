@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { Task } from '../../../shared/types'
 
 interface TaskCardProps {
@@ -6,16 +6,51 @@ interface TaskCardProps {
   onOpen: (taskId: string) => void
   onArchive: (taskId: string) => void
   onDelete: (taskId: string) => void
+  onRename: (taskId: string, newTitle: string) => void
 }
 
-export default function TaskCard({ task, onOpen, onArchive, onDelete }: TaskCardProps): JSX.Element {
+export default function TaskCard({ task, onOpen, onArchive, onDelete, onRename }: TaskCardProps): JSX.Element {
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(task.title)
   const timeAgo = formatTimeAgo(task.updatedAt)
 
+  const handleRenameSubmit = () => {
+    const trimmed = renameValue.trim()
+    if (trimmed && trimmed !== task.title) {
+      onRename(task.id, trimmed)
+    }
+    setIsRenaming(false)
+  }
+
   return (
-    <div className="task-card" onClick={() => onOpen(task.id)}>
+    <div className="task-card" onClick={() => { if (!isRenaming) onOpen(task.id) }}>
       <div className="task-card-header">
-        <h3 className="task-card-title">{task.title}</h3>
+        {isRenaming ? (
+          <input
+            className="task-card-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={handleRenameSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameSubmit()
+              if (e.key === 'Escape') { setIsRenaming(false); setRenameValue(task.title) }
+            }}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <h3 className="task-card-title">{task.title}</h3>
+        )}
         <div className="task-card-actions" onClick={(e) => e.stopPropagation()}>
+          {!isRenaming && (
+            <button
+              className="task-card-btn"
+              title="重命名"
+              onClick={() => setIsRenaming(true)}
+            >
+              ✎
+            </button>
+          )}
           <button
             className="task-card-btn"
             title={task.archived ? '取消归档' : '归档'}

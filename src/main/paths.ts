@@ -80,6 +80,16 @@ export function getMediaDir(): string {
   return path.join(getUserDir(), 'media')
 }
 
+/** Insights facet 缓存目录：~/.wzxclaw/insights-cache/ */
+export function getInsightsCacheDir(): string {
+  return path.join(getUserDir(), 'insights-cache')
+}
+
+/** Insights HTML 报告目录：~/.wzxclaw/insights/ */
+export function getInsightsReportDir(): string {
+  return path.join(getUserDir(), 'insights')
+}
+
 // ---- AppData 级子目录（%APPDATA%/wzxclaw/） ----
 
 /**
@@ -144,6 +154,8 @@ export async function ensureAppDirs(): Promise<void> {
     getCommandsDir(),
     getSkillsDir(),
     getMediaDir(),
+    getInsightsCacheDir(),
+    getInsightsReportDir(),
     // AppData 级
     getBackupsDir(),
   ]

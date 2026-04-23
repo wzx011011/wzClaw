@@ -72,6 +72,8 @@ export interface AgentConfig {
   provider: LLMProvider
   systemPrompt: string
   workingDirectory: string
+  /** All project roots for the active task. [0] == workingDirectory. */
+  projectRoots: string[]
   conversationId: string
   maxTurns?: number // defaults to MAX_AGENT_TURNS
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'

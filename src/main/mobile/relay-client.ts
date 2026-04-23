@@ -8,12 +8,22 @@ const RECONNECT_BASE = 1_000
 const RECONNECT_MAX = 30_000
 const JITTER_MAX = 500
 
+export interface MobileDevice {
+  deviceId: string
+  name: string | null
+  platform: string | null
+  osVersion: string | null
+  appVersion: string | null
+  connectedAt: number
+}
+
 export interface RelayStatus {
   connected: boolean
   connecting: boolean
   reconnectAttempt: number
   mobileConnected: boolean
   mobileIdentity: string | null
+  mobiles: MobileDevice[]
 }
 
 export class RelayClient extends EventEmitter {
@@ -28,6 +38,7 @@ export class RelayClient extends EventEmitter {
   private disposed = false
   private _mobileConnected = false
   private _mobileIdentity: string | null = null
+  private _mobiles: MobileDevice[] = []
 
   get connected(): boolean {
     return this._connected
@@ -42,6 +53,7 @@ export class RelayClient extends EventEmitter {
   disconnect(): void {
     this._mobileConnected = false
     this._mobileIdentity = null
+    this._mobiles = []
     this.reconnectAttempt = 0
     this._clearTimers()
     this._closeWs()
@@ -60,6 +72,7 @@ export class RelayClient extends EventEmitter {
       reconnectAttempt: this.reconnectAttempt,
       mobileConnected: this._mobileConnected,
       mobileIdentity: this._mobileIdentity,
+      mobiles: this._mobiles,
     }
   }
 
@@ -122,6 +135,27 @@ export class RelayClient extends EventEmitter {
           return
         }
 
+        // Full mobile device list from relay
+        if (event === 'system:mobile_list') {
+          const list = msg.data?.mobiles
+          if (Array.isArray(list)) {
+            this._mobiles = list.map((m: any) => ({
+              deviceId: m.deviceId ?? '',
+              name: m.name ?? null,
+              platform: m.platform ?? null,
+              osVersion: m.osVersion ?? null,
+              appVersion: m.appVersion ?? null,
+              connectedAt: m.connectedAt ?? 0,
+            }))
+            this._mobileConnected = this._mobiles.length > 0
+            if (this._mobileConnected && !this._mobileIdentity) {
+              this._mobileIdentity = this._mobiles[0].name ?? 'Unknown'
+            }
+          }
+          this.emitStatus()
+          return
+        }
+
         // System events from relay
         if (event === 'system:mobile_connected') {
           this._mobileConnected = true
@@ -132,6 +166,7 @@ export class RelayClient extends EventEmitter {
         if (event === 'system:mobile_disconnected') {
           this._mobileConnected = false
           this._mobileIdentity = null
+          this._mobiles = []
           this.emitStatus()
           return
         }
@@ -139,7 +174,7 @@ export class RelayClient extends EventEmitter {
           return
         }
 
-        // Forward to app as client-message (same shape as MobileServer)
+        // Forward to app as client-message for unified handling
         this.emit('client-message', {
           clientId: 'relay-mobile',
           event,
@@ -157,6 +192,7 @@ export class RelayClient extends EventEmitter {
       if (code === 4001) {
         console.warn('[RelayClient] token rejected by server, stopping reconnect')
         this._updateState(false, false)
+        this.emit('token-rejected')
         this.emitStatus()
         return
       }

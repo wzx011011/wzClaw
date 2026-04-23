@@ -5,7 +5,8 @@ interface MobileConnectModalProps {
 }
 
 /**
- * MobileConnectModal — displays Relay QR code for mobile remote connection.
+ * MobileConnectModal — displays Relay QR code for mobile pairing.
+ * Simplified: just shows QR, auto-closes when mobile connects.
  */
 export default function MobileConnectModal({ onClose }: MobileConnectModalProps): JSX.Element {
   const [relayQrCode, setRelayQrCode] = useState<string | null>(null)
@@ -29,28 +30,14 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
       })
   }, [])
 
-  // Auto-close when mobile connects — use ref to avoid dependency on onClose
+  // Auto-close when mobile connects
   useEffect(() => {
     const cleanup = window.wzxclaw.onRelayStatus((status) => {
-      console.log('[MobileConnectModal] relay status event:', JSON.stringify(status))
       if (status.mobileConnected) {
         onCloseRef.current()
       }
     })
     return cleanup
-  }, [])
-
-  // Polling fallback: check relay status every 2s in case events are missed
-  useEffect(() => {
-    const interval = setInterval(() => {
-      window.wzxclaw.getRelayStatus().then((status) => {
-        console.log('[MobileConnectModal] poll relay status:', JSON.stringify(status))
-        if (status.mobileConnected) {
-          onCloseRef.current()
-        }
-      }).catch(() => {})
-    }, 2000)
-    return () => clearInterval(interval)
   }, [])
 
   return (
@@ -83,7 +70,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
                 <img src={relayQrCode} alt="Relay QR Code" className="mobile-qr" />
               </div>
 
-              <p className="mobile-hint">用 wzxClaw 手机端扫码连接 Relay 服务器</p>
+              <p className="mobile-hint">用 wzxClaw 手机端扫码连接</p>
               {relayToken && (
                 <p style={{ fontSize: 12, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>Token: <code style={{ color: '#aaa' }}>{relayToken}</code></p>
               )}

@@ -1072,6 +1072,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
+  cursor: default;
+}
+
+.session-item-title-input {
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-active, #4a9eff);
+  border-radius: 3px;
+  padding: 1px 4px;
+  width: 100%;
+  max-width: 200px;
+  outline: none;
+  font-family: inherit;
 }
 
 .session-item-time {

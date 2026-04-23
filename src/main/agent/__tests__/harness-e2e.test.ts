@@ -107,6 +107,7 @@ function cfg(overrides?: Partial<AgentConfig>): AgentConfig {
     provider: 'openai',
     systemPrompt: 'test',
     workingDirectory: '/tmp',
+    projectRoots: ['/tmp'],
     conversationId: 'test-conv',
     ...overrides,
   }

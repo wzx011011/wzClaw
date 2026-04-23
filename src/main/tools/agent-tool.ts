@@ -162,7 +162,8 @@ export class AgentTool implements Tool {
       systemPrompt: resolvedSystemPrompt,
       conversationId: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       maxTurns: maxTurns ?? DEFAULT_MAX_SUB_AGENT_TURNS,
-      workingDirectory: context.workingDirectory
+      workingDirectory: context.workingDirectory,
+      projectRoots: currentBase.projectRoots ?? [context.workingDirectory],
     }
 
     // Collect the sub-agent's text output

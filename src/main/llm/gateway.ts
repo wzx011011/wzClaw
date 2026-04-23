@@ -2,6 +2,7 @@ import type { StreamEvent, LLMProvider } from '../../shared/types'
 import type { LLMAdapter, ProviderConfig, StreamOptions } from './types'
 import { OpenAIAdapter } from './openai-adapter'
 import { AnthropicAdapter } from './anthropic-adapter'
+import { DEFAULT_MODELS } from '../../shared/constants'
 import { withRetry } from './retry'
 
 export class LLMGateway {
@@ -48,9 +49,13 @@ export class LLMGateway {
   }
 
   private detectProvider(model: string): LLMProvider {
+    // Check model preset table first — single source of truth
+    const preset = DEFAULT_MODELS.find((m) => m.id === model)
+    if (preset) return preset.provider as LLMProvider
+    // Fallback: prefix-based heuristics for custom model names
     if (model.startsWith('claude')) return 'anthropic'
-    if (model.startsWith('glm-5')) return 'anthropic' // GLM-5 series via Anthropic-compatible API
-    return 'openai' // OpenAI, DeepSeek, and any OpenAI-compatible endpoint
+    if (model.startsWith('glm-5')) return 'anthropic'
+    return 'openai'
   }
 
   getAdapter(provider: LLMProvider): LLMAdapter | undefined {
