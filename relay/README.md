@@ -57,6 +57,7 @@ wss://5945.top/relay/?token=your-secret-token&role=mobile
 - **Token:** 与 .env 中的 AUTH_TOKEN 一致
 
 应用会自动拼接完整连接 URL：
+
 ```
 wss://5945.top/relay/?token=your-secret-token&role=mobile
 ```
@@ -66,11 +67,13 @@ wss://5945.top/relay/?token=your-secret-token&role=mobile
 桌面端可以通过两种方式连接：
 
 **方式一：通过 nginx（推荐，广域网可用）**
+
 ```
 wss://5945.top/relay/?token=your-secret-token&role=desktop
 ```
 
 **方式二：局域网直连（同一网络时更低延迟）**
+
 ```
 ws://NAS局域网IP:8081/?token=your-secret-token&role=desktop
 ```
@@ -96,11 +99,11 @@ docker-compose up -d --build
 
 ## 端口说明
 
-| 端口 | 用途 | 访问范围 |
-|------|------|----------|
-| 8080 | 容器内部端口 | 仅容器内 |
+| 端口 | 用途         | 访问范围             |
+| ---- | ------------ | -------------------- |
+| 8080 | 容器内部端口 | 仅容器内             |
 | 8081 | NAS 本地端口 | 仅 127.0.0.1（本机） |
-| 443 | nginx HTTPS | 公网（5945.top） |
+| 443  | nginx HTTPS  | 公网（5945.top）     |
 
 ## 故障排查
 
