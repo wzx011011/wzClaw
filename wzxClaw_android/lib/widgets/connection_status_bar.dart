@@ -42,7 +42,7 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
     final errorMessage = widget.errorMessage;
     final dotColor = _dotColor(state, desktopOnline);
     final hasError = errorMessage != null &&
-        errorMessage!.isNotEmpty &&
+      errorMessage.isNotEmpty &&
         state != WsConnectionState.connected;
 
     // Determine status text
@@ -108,7 +108,7 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
                         GestureDetector(
                           onTap: () => setState(() => _errorExpanded = !_errorExpanded),
                           child: Text(
-                            errorMessage!,
+                            errorMessage,
                             style: TextStyle(
                               color: colors.textMuted,
                               fontSize: 11,
