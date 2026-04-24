@@ -17,7 +17,7 @@ import SettingsModal from './SettingsModal'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
 import ThinkingIndicator from './ThinkingIndicator'
-import { findLastQuestionAboveViewport, extractBubbleText } from './sticky-question-utils'
+import { findLastQuestionAboveViewportWithIndex, extractBubbleText } from './sticky-question-utils'
 import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
@@ -55,6 +55,8 @@ export default function ChatPanel(): JSX.Element {
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const streamJustEnded = useChatStore((s) => s.streamJustEnded)
+  const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const activeSessionId = useChatStore((s) => s.activeSessionId)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)
@@ -169,29 +171,51 @@ export default function ChatPanel(): JSX.Element {
   }, [streamJustEnded])
 
   // Track scroll position to detect user scroll-up, and compute sticky question
+  // 使用 useCallback 保证 scroll handler 与 messages-change effect 都能复用同一个计算逻辑。
+  const computeSticky = useCallback((): void => {
+    const container = messagesContainerRef.current
+    if (!container) return
+    const containerTop = container.getBoundingClientRect().top
+    const userBubbles = container.querySelectorAll<HTMLElement>('.chat-message-user')
+    const bubbleInfos = Array.from(userBubbles).map((el) => ({
+      text: extractBubbleText(el),
+      bottom: el.getBoundingClientRect().bottom,
+      el,
+    })).filter((b) => b.text.length > 0)
+    // 一次遍历同时拿 index 和 text，保证文字与 element 属于同一条气泡
+    const hit = findLastQuestionAboveViewportWithIndex(bubbleInfos, containerTop)
+    if (hit) {
+      setStickyQuestion(hit.text)
+      stickyQuestionElRef.current = bubbleInfos[hit.index].el
+    } else {
+      setStickyQuestion(null)
+      stickyQuestionElRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     const container = messagesContainerRef.current
     if (!container) return
     const handleScroll = (): void => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
       setUserScrolledUp(distanceFromBottom > 100)
-
-      // 找出所有已滚出顶部的用户消息，取最后一条作为 sticky question
-      const containerTop = container.getBoundingClientRect().top
-      const userBubbles = container.querySelectorAll<HTMLElement>('.chat-message-user')
-      const bubbleInfos = Array.from(userBubbles).map((el) => ({
-        text: extractBubbleText(el),
-        bottom: el.getBoundingClientRect().bottom,
-        el,
-      })).filter((b) => b.text.length > 0)
-      const lastAbove = findLastQuestionAboveViewport(bubbleInfos, containerTop)
-      const lastAboveEl = bubbleInfos.findLast?.((b) => b.bottom < containerTop + 8)?.el ?? null
-      setStickyQuestion(lastAbove)
-      stickyQuestionElRef.current = lastAboveEl
+      computeSticky()
     }
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
-  }, [])
+  }, [computeSticky])
+
+  // 会话切换时立即清除 sticky，避免显示上一个会话的问题。
+  useEffect(() => {
+    setStickyQuestion(null)
+    stickyQuestionElRef.current = null
+  }, [activeSessionId])
+
+  // messages 变化后下一帧重算 sticky，解决加载时 scroll 不触发、stale 的问题。
+  useEffect(() => {
+    const raf = requestAnimationFrame(computeSticky)
+    return () => cancelAnimationFrame(raf)
+  }, [messages.length, computeSticky])
 
   // Listen for plan mode events from main process
   useEffect(() => {

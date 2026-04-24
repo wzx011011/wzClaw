@@ -50,6 +50,8 @@ class _HomePageState extends State<HomePage> {
   double _stickyScrollOffset = 0.0;
   final Map<String, GlobalKey> _userMsgKeys = {};
   final Map<String, double> _userMsgRecordedOffsets = {};
+  // 跟踪上次渲染的会话 id，切换会话时清除遗留的 sticky 状态。
+  String? _lastRenderedSessionId;
   String? _desktopIdentity;
   PermissionRequest? _permissionRequest;
   StreamSubscription? _messagesSub;
@@ -85,8 +87,19 @@ class _HomePageState extends State<HomePage> {
 
     _messagesSub = ChatStore.instance.messagesStream.listen((msgs) {
       if (mounted) {
+        // 检测会话切换：若 currentSessionId 变了，清除 sticky 状态和气泡 key 缓存
+        final curSid = ChatStore.instance.currentSessionId;
+        if (curSid != _lastRenderedSessionId) {
+          _lastRenderedSessionId = curSid;
+          _userMsgKeys.clear();
+          _userMsgRecordedOffsets.clear();
+          _stickyQuestion = null;
+          _stickyScrollOffset = 0.0;
+        }
         setState(() => _displayMessages = msgs);
         if (_isStreaming && !_showScrollFab) _scrollToBottom();
+        // 下一帧重算 sticky，解决加载时 scroll 不触发导致的状态遗留
+        _updateStickyQuestion();
       }
     });
 

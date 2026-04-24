@@ -40,6 +40,26 @@ export function findLastQuestionAboveViewport(
 }
 
 /**
+ * 同时返回命中气泡的 index 和 text，确保 UI 拿到的文字与 element 来自同一条气泡。
+ * 这是 findLastQuestionAboveViewport 的加强版，专为避免 text/el 不一致的会话切换竞态。
+ */
+export function findLastQuestionAboveViewportWithIndex(
+  bubbles: BubbleInfo[],
+  viewportTop: number,
+  tolerance = 8
+): { text: string; index: number } | null {
+  let result: { text: string; index: number } | null = null
+  for (let i = 0; i < bubbles.length; i++) {
+    if (bubbles[i].bottom < viewportTop + tolerance) {
+      result = { text: bubbles[i].text, index: i }
+    } else {
+      break
+    }
+  }
+  return result
+}
+
+/**
  * 从 HTMLElement 中提取纯文字（去掉 .mention-blocks 子树）。
  * 在测试外使用；测试时直接构造 BubbleInfo 即可。
  */
