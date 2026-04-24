@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Structure
 
-This is a monorepo for wzxClaw — a personal AI coding IDE (similar to Cursor). It contains two sub-projects:
+This is a monorepo for wzxClaw — a personal AI coding IDE (similar to Cursor). It contains three top-level code areas:
 
 - **`wzxClaw_desktop/`** — Electron desktop app (the IDE itself)
-- **`wzxClaw_android/`** — Flutter Android companion app (remote control via WebSocket relay)
+- **`wzxClaw_android/`** — Flutter Android companion app (remote control client)
+- **`relay/`** — Node.js WebSocket relay service deployed on the NAS
 
 Both share a single Git repository. The desktop project is the primary codebase.
 
@@ -132,9 +133,9 @@ build_apk.bat
 
 ### Architecture
 
-**Phone** ← WSS → **NAS Relay** ← WS → **Desktop wzxClaw**
+**Phone** ← WSS → **NAS Relay** ← WS/WSS → **Desktop wzxClaw**
 
-The relay server (`relay/`) is a Node.js WebSocket server deployed in Docker on the NAS, exposed via nginx at `wss://5945.top/relay/`. It routes messages between desktop and mobile clients in token-keyed rooms with offline queueing (24h TTL).
+The relay server (`relay/`) is a root-level Node.js WebSocket service deployed in Docker on the NAS, exposed via nginx at `wss://5945.top/relay/`. It routes messages between desktop and mobile clients in token-keyed rooms with offline queueing (24h TTL).
 
 **Flutter app structure** (`lib/`):
 

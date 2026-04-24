@@ -43,4 +43,3 @@ android/.kotlin/
 # Firebase
 android/app/google-services.json
 fcm-service-account.json
-relay/fcm-service-account.json

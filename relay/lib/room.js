@@ -305,6 +305,19 @@ class RoomManager {
       return;
     }
 
+    // ── Intercept fcm:register from mobile ──
+    if (event === 'fcm:register' && role === 'mobile') {
+      const deviceId = ws._wzxDeviceId;
+      if (deviceId) {
+        const entry = room.mobiles.get(deviceId);
+        const tokenValue = parsed.data && parsed.data.token;
+        if (entry && typeof tokenValue === 'string' && tokenValue.trim()) {
+          entry.fcmToken = tokenValue;
+        }
+      }
+      return; // Do NOT forward to desktop.
+    }
+
     // ── Normal routing ──
 
     if (role === 'desktop') {

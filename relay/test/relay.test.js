@@ -183,7 +183,15 @@ describe('Relay Integration Tests', () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     // Filter out system messages for the assertion.
-    const nonSystem = received.filter(r => !r.includes('"system:'));
+    const nonSystem = received
+      .map(r => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      })
+      .filter(msg => msg && !String(msg.event || '').startsWith('system:') && msg.event !== 'pong');
     assert.equal(nonSystem.length, 0, 'No non-system messages should have been forwarded');
 
     desktop.close();

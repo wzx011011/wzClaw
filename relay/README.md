@@ -11,7 +11,7 @@
 ## 快速部署
 
 ```bash
-# 1. 进入 relay 目录
+# 1. 从仓库根目录进入 relay 目录
 cd relay
 
 # 2. 创建 .env 文件，设置认证 token
@@ -111,7 +111,7 @@ docker-compose up -d --build
 docker logs wzxclaw-relay
 
 # 常见原因：
-# - AUTH_TOKEN 未设置：确保 relay/ 目录下有 .env 文件
+# - AUTH_TOKEN 未设置：确保当前目录下有 .env 文件
 # - 端口冲突：检查 8081 端口是否被占用
 #   netstat -tlnp | grep 8081
 ```
@@ -132,7 +132,7 @@ tail -f /var/log/nginx/error.log
 
 ```bash
 # 确认 .env 文件存在
-cat relay/.env
+cat .env
 
 # 确认容器内的环境变量
 docker exec wzxclaw-relay env | grep AUTH_TOKEN
@@ -142,10 +142,10 @@ docker exec wzxclaw-relay env | grep AUTH_TOKEN
 
 ```bash
 # 1. 修改 .env 文件
-echo "AUTH_TOKEN=new-secret-token" > relay/.env
+echo "AUTH_TOKEN=new-secret-token" > .env
 
 # 2. 重启容器
-cd relay && docker-compose up -d
+docker-compose up -d
 
 # 3. 同步更新 Flutter 应用和桌面端的 token 配置
 ```
