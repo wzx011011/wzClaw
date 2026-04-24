@@ -1149,7 +1149,8 @@ app.whenReady().then(async () => {
                 break
             }
           }
-          relayClient.broadcast(`stream:${agentEvent.type}`, agentEvent)
+          // 串台修复: 在所有流式事件中携带 sessionId，手机端可据此过滤非当前会话的事件
+          relayClient.broadcast(`stream:${agentEvent.type}`, { ...agentEvent, sessionId })
           // Forward TodoWrite structured todo list to mobile
           if (agentEvent.type === 'agent:tool_result' && agentEvent.toolName === 'TodoWrite' && !agentEvent.isError) {
             const todoTool = toolRegistry.get('TodoWrite') as { getCurrentTodos?: () => unknown[] } | undefined

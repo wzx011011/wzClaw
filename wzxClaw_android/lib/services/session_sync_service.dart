@@ -241,7 +241,11 @@ class SessionSyncService {
     // Auto-load the most recent session's messages so the user sees
     // the latest conversation instead of an empty chat.
     // 仅当此响应属于当前 generation 时才自动加载，防止过期响应覆盖用户输入。
-    if (sessions.isNotEmpty && gen == _fetchGeneration) {
+    // 串台修复: 若手机已在浏览某个会话 (currentSessionId != null)，不自动跳转，
+    // 避免桌面切换/新建会话时强制覆盖手机用户当前视图。
+    if (sessions.isNotEmpty &&
+        gen == _fetchGeneration &&
+        ChatStore.instance.currentSessionId == null) {
       final latestSession = sessions.first;
       _activeSessionId = latestSession.id;
       _activeSessionController.add(_activeSessionId);

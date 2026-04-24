@@ -208,6 +208,7 @@ class ChatStore {
 
   // ── stream:agent:text ──────────────────────────────────────────────
   void _handleAgentText(dynamic data) {
+    if (_isWrongSession(data)) return;
     final content = _extractContent(data);
     if (_streamingMessage == null) {
       _setWaiting(false);
@@ -228,6 +229,7 @@ class ChatStore {
 
   // ── stream:agent:tool_call ─────────────────────────────────────────
   void _handleAgentToolCall(dynamic data) {
+    if (_isWrongSession(data)) return;
     // Finalize any in-progress streaming text
     _finalizeStreamingMessage();
     _setWaiting(false);
@@ -259,6 +261,7 @@ class ChatStore {
 
   // ── stream:agent:tool_result ───────────────────────────────────────
   void _handleAgentToolResult(dynamic data) {
+    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final toolCallId = map['toolCallId'] as String? ?? '';
     final output = map['output'] as String? ?? '';
@@ -286,6 +289,7 @@ class ChatStore {
 
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
+    if (_isWrongSession(data)) return;
     _finalizeStreamingMessage();
     _setWaiting(false);
 
@@ -397,6 +401,7 @@ class ChatStore {
 
   // ── stream:agent:thinking ─────────────────────────────────────────
   void _handleAgentThinking(dynamic data) {
+    if (_isWrongSession(data)) return;
     final content = data is Map ? data['content'] as String? ?? '' : data?.toString() ?? '';
     if (_thinkingContent.length + content.length > _maxThinkingChars) {
       // 截断：保留后半部分（更新的内容更有价值）
@@ -760,6 +765,15 @@ class ChatStore {
   String _extractContent(dynamic data) {
     if (data is Map) return data['content'] as String? ?? '';
     return data?.toString() ?? '';
+  }
+
+  /// 串台防护：若事件携带的 sessionId 与当前会话不匹配，返回 true 并应丢弃该事件。
+  /// 若事件无 sessionId（老台面版本）或当前未加载会话，不拦截。
+  bool _isWrongSession(dynamic data) {
+    if (data is! Map) return false;
+    final incoming = data['sessionId'] as String?;
+    if (incoming == null || _currentSessionId == null) return false;
+    return incoming != _currentSessionId;
   }
 
   /// Build a human-readable one-line summary of tool input.
