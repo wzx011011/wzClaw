@@ -41,7 +41,7 @@ class ToolCallInfo {
         'toolName': toolName,
         if (inputSummary != null) 'inputSummary': inputSummary,
         if (outputSummary != null) 'outputSummary': outputSummary,
-        'status': status.index,
+        'status': status.name,
         'isError': isError,
       };
 
@@ -50,7 +50,7 @@ class ToolCallInfo {
         toolName: json['toolName'] as String? ?? '',
         inputSummary: json['inputSummary'] as String?,
         outputSummary: json['outputSummary'] as String?,
-        status: ToolCallStatus.values[json['status'] as int? ?? 0],
+        status: ToolCallStatus.values.byName(json['status'] as String? ?? ToolCallStatus.running.name),
         isError: json['isError'] as bool? ?? false,
       );
 }
@@ -123,10 +123,10 @@ class ChatMessage {
       );
 
   Map<String, dynamic> toDbMap() => {
-        'role': role.index,
+        'role': role.name,
         'content': content,
         'tool_name': toolName,
-        'tool_status': toolStatus?.index,
+        'tool_status': toolStatus?.name,
         'created_at': createdAt.millisecondsSinceEpoch,
         'tool_call_id': toolCallId,
         'tool_input': toolInput,
@@ -158,11 +158,11 @@ class ChatMessage {
 
     return ChatMessage(
       id: map['id'] as int?,
-      role: MessageRole.values[map['role'] as int],
+      role: _parseRole(map['role']),
       content: map['content'] as String,
       toolName: map['tool_name'] as String?,
       toolStatus: map['tool_status'] != null
-          ? ToolCallStatus.values[map['tool_status'] as int]
+          ? _parseToolStatus(map['tool_status'])
           : null,
       createdAt:
           DateTime.fromMillisecondsSinceEpoch(map['created_at'] as int),
@@ -173,5 +173,23 @@ class ChatMessage {
       toolCalls: toolCalls,
       usage: usage,
     );
+  }
+
+  /// Parse role from DB — supports both new (name string) and legacy (int index) formats.
+  static MessageRole _parseRole(dynamic value) {
+    if (value is int) return MessageRole.values[value];
+    if (value is String) {
+      return MessageRole.values.byName(value);
+    }
+    return MessageRole.user;
+  }
+
+  /// Parse tool status from DB — supports both new (name string) and legacy (int index) formats.
+  static ToolCallStatus _parseToolStatus(dynamic value) {
+    if (value is int) return ToolCallStatus.values[value];
+    if (value is String) {
+      return ToolCallStatus.values.byName(value);
+    }
+    return ToolCallStatus.running;
   }
 }

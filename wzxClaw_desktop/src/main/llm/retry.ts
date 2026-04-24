@@ -59,7 +59,15 @@ interface ClassifyResult {
  *   - All other 4xx errors
  */
 export function classifyError(errorMsg: string): ClassifyResult {
-  const msg = errorMsg.toLowerCase()
+  // 尝试解析结构化 JSON 错误（如 GLM-5 返回的 JSON 错误体），用内部 message 分类
+  let effectiveMsg = errorMsg
+  try {
+    const parsed = JSON.parse(errorMsg)
+    if (parsed?.error?.message) {
+      effectiveMsg = parsed.error.message
+    }
+  } catch { /* 非 JSON，使用原始消息 */ }
+  const msg = effectiveMsg.toLowerCase()
 
   // --- Rate limit (429) ---
   if (
@@ -97,6 +105,7 @@ export function classifyError(errorMsg: string): ClassifyResult {
     msg.includes('socket hang up') ||
     msg.includes('connect timeout') ||
     msg.includes('network error') ||
+    msg.includes('网络错误') ||
     msg.includes('fetch failed')
   ) {
     return { classification: 'retryable' }

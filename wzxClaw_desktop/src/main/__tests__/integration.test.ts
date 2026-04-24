@@ -37,7 +37,6 @@ describe('IPC Channels', () => {
   it('should define all required stream channels', () => {
     expect(IPC_CHANNELS['stream:text_delta']).toBe('stream:text_delta')
     expect(IPC_CHANNELS['stream:tool_use_start']).toBe('stream:tool_use_start')
-    expect(IPC_CHANNELS['stream:tool_use_delta']).toBe('stream:tool_use_delta')
     expect(IPC_CHANNELS['stream:tool_use_end']).toBe('stream:tool_use_end')
     expect(IPC_CHANNELS['stream:error']).toBe('stream:error')
     expect(IPC_CHANNELS['stream:done']).toBe('stream:done')

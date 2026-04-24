@@ -82,6 +82,7 @@ class SessionSyncService {
   // ignore: unused_field — holds subscription reference to prevent GC
   StreamSubscription<String?>? _activeTaskSub;
   int _requestCounter = 0;
+  int _fetchGeneration = 0; // 递增以丢弃过期的 fetchSessions 响应
   final Map<String, Completer<dynamic>> _pendingRequests = {};
 
   List<SessionMeta> get sessions => List.unmodifiable(_sessions);
@@ -217,6 +218,9 @@ class SessionSyncService {
     final workspaceName = data['workspaceName'] as String? ?? '';
     final rawSessions = data['sessions'] as List? ?? [];
 
+    // 快照当前 generation，用于后续判断响应是否过期
+    final gen = _fetchGeneration;
+
     final sessions = rawSessions
         .whereType<Map>()
         .map((s) => SessionMeta.fromDesktopJson(
@@ -236,11 +240,14 @@ class SessionSyncService {
 
     // Auto-load the most recent session's messages so the user sees
     // the latest conversation instead of an empty chat.
-    if (sessions.isNotEmpty) {
+    // 仅当此响应属于当前 generation 时才自动加载，防止过期响应覆盖用户输入。
+    if (sessions.isNotEmpty && gen == _fetchGeneration) {
       final latestSession = sessions.first;
       _activeSessionId = latestSession.id;
       _activeSessionController.add(_activeSessionId);
       loadSessionMessages(latestSession.id).then((result) {
+        // 二次检查：loadSessionMessages 是异步的，返回时 generation 可能已变
+        if (gen != _fetchGeneration) return;
         final messages = result['messages'] as List<ChatMessage>;
         ChatStore.instance.loadFetchedMessages(messages);
         ChatStore.instance.currentSessionId = latestSession.id;
@@ -414,6 +421,7 @@ class SessionSyncService {
       return;
     }
     _lastSessionFetchTime = now;
+    _fetchGeneration++; // 递增使过期响应可被检测
 
     _isLoading = true;
     _loadingController.add(true);

@@ -216,4 +216,54 @@ describe('AnthropicAdapter', () => {
       expect(toolEnd[0].parsedInput).toEqual({ dir: '/src' })
     }
   })
+
+  it('extracts human-readable message from JSON error body (GLM-5 style)', async () => {
+    // GLM-5 返回的错误体是嵌套 JSON：error.message 才是真正的中文提示
+    const jsonErrorBody = JSON.stringify({
+      type: 'error',
+      error: { message: '网络错误，错误id：abc123，请稍后重试', code: '1234' },
+      request_id: 'req-xyz',
+    })
+    mockStream.mockImplementation(() => {
+      throw new Error(jsonErrorBody)
+    })
+
+    const adapter = new AnthropicAdapter({ provider: 'anthropic', apiKey: 'test-key' })
+    const events = []
+    for await (const event of adapter.stream({
+      model: 'glm-4-flash',
+      messages: [{ role: 'user', content: 'hi' }],
+    })) {
+      events.push(event)
+    }
+
+    expect(events).toHaveLength(1)
+    expect(events[0].type).toBe('error')
+    if (events[0].type === 'error') {
+      // 应当是内部 message，不是原始 JSON 字符串
+      expect(events[0].error).toBe('网络错误，错误id：abc123，请稍后重试')
+      expect(events[0].error).not.toContain('"type":"error"')
+    }
+  })
+
+  it('keeps raw error message when body is not JSON', async () => {
+    mockStream.mockImplementation(() => {
+      throw new Error('Connection refused')
+    })
+
+    const adapter = new AnthropicAdapter({ provider: 'anthropic', apiKey: 'test-key' })
+    const events = []
+    for await (const event of adapter.stream({
+      model: 'claude-sonnet-4-20250514',
+      messages: [{ role: 'user', content: 'hi' }],
+    })) {
+      events.push(event)
+    }
+
+    expect(events).toHaveLength(1)
+    expect(events[0].type).toBe('error')
+    if (events[0].type === 'error') {
+      expect(events[0].error).toBe('Connection refused')
+    }
+  })
 })

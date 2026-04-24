@@ -205,7 +205,8 @@ export class SettingsManager {
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
-    if (request.baseURL !== undefined) this.settings.baseURL = request.baseURL
+    // 空字符串表示用户主动清除自定义 URL，存为 undefined
+    if (request.baseURL !== undefined) this.settings.baseURL = request.baseURL || undefined
     if (request.systemPrompt !== undefined) this.settings.systemPrompt = request.systemPrompt
     if (request.relayToken !== undefined) this.setRelayToken(request.relayToken)
     if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']

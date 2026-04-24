@@ -17,6 +17,7 @@ import SettingsModal from './SettingsModal'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
 import ThinkingIndicator from './ThinkingIndicator'
+import { findLastQuestionAboveViewport, extractBubbleText } from './sticky-question-utils'
 import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
@@ -70,6 +71,8 @@ export default function ChatPanel(): JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
+  const [stickyQuestion, setStickyQuestion] = useState<string | null>(null)
+  const stickyQuestionElRef = useRef<HTMLElement | null>(null)
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
@@ -165,13 +168,26 @@ export default function ChatPanel(): JSX.Element {
     }
   }, [streamJustEnded])
 
-  // Track scroll position to detect user scroll-up
+  // Track scroll position to detect user scroll-up, and compute sticky question
   useEffect(() => {
     const container = messagesContainerRef.current
     if (!container) return
     const handleScroll = (): void => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
       setUserScrolledUp(distanceFromBottom > 100)
+
+      // 找出所有已滚出顶部的用户消息，取最后一条作为 sticky question
+      const containerTop = container.getBoundingClientRect().top
+      const userBubbles = container.querySelectorAll<HTMLElement>('.chat-message-user')
+      const bubbleInfos = Array.from(userBubbles).map((el) => ({
+        text: extractBubbleText(el),
+        bottom: el.getBoundingClientRect().bottom,
+        el,
+      })).filter((b) => b.text.length > 0)
+      const lastAbove = findLastQuestionAboveViewport(bubbleInfos, containerTop)
+      const lastAboveEl = bubbleInfos.findLast?.((b) => b.bottom < containerTop + 8)?.el ?? null
+      setStickyQuestion(lastAbove)
+      stickyQuestionElRef.current = lastAboveEl
     }
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
@@ -383,6 +399,20 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Messages */}
       <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
+        {/* Sticky question bar — 滚动读长回复时始终可见原始问题 */}
+        {stickyQuestion && (
+          <div
+            className="sticky-question-bar"
+            onClick={() => {
+              stickyQuestionElRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }}
+            title="点击定位到原始问题"
+          >
+            <span className="sticky-question-label">问题</span>
+            <span className="sticky-question-text">{stickyQuestion}</span>
+            <span className="sticky-question-jump">↑</span>
+          </div>
+        )}
         {messages.length === 0 ? (
           <div className="chat-empty">
             Start a conversation with the AI agent

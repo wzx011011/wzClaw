@@ -264,11 +264,11 @@ export function registerIpcHandlers(
   })
 
   // Save and get last active session ID (for restoring on next app launch)
-  ipcMain.handle('session:save-last', (_event, request: { sessionId: string }) => {
+  ipcMain.handle(IPC_CHANNELS['session:save-last'], (_event, request: { sessionId: string }) => {
     settingsManager.setLastSessionId(request.sessionId)
   })
 
-  ipcMain.handle('session:get-last', () => {
+  ipcMain.handle(IPC_CHANNELS['session:get-last'], () => {
     return { sessionId: settingsManager.getLastSessionId() ?? null }
   })
 

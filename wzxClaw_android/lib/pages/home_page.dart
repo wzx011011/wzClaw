@@ -23,6 +23,7 @@ import '../widgets/mic_button.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/plan_mode_bar.dart';
 import '../widgets/project_drawer.dart';
+import '../widgets/sticky_question_bar.dart';
 import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
@@ -44,6 +45,11 @@ class _HomePageState extends State<HomePage> {
   bool _showScrollFab = false;
   bool _scrollPending = false;
   int _previousGroupCount = 0;
+  // Sticky question bar
+  String? _stickyQuestion;
+  double _stickyScrollOffset = 0.0;
+  final Map<String, GlobalKey> _userMsgKeys = {};
+  final Map<String, double> _userMsgRecordedOffsets = {};
   String? _desktopIdentity;
   PermissionRequest? _permissionRequest;
   StreamSubscription? _messagesSub;
@@ -185,6 +191,67 @@ class _HomePageState extends State<HomePage> {
     if (shouldShow != _showScrollFab) {
       setState(() => _showScrollFab = shouldShow);
     }
+    _updateStickyQuestion();
+  }
+
+  /// 检测已滚出顶部的用户消息，更新 sticky question bar 状态
+  void _updateStickyQuestion() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+
+      // 取 ListView 视口的全局坐标
+      final scrollCtx = _scrollController.position.context.storageContext;
+      final listBox = scrollCtx.findRenderObject() as RenderBox?;
+      if (listBox == null || !listBox.attached) return;
+      final viewportTop = listBox.localToGlobal(Offset.zero).dy;
+
+      final userMsgs =
+          _displayMessages.where((m) => m.role == MessageRole.user).toList();
+
+      String? candidateQuestion;
+      double candidateOffset = 0.0;
+
+      for (final msg in userMsgs) {
+        final keyStr = msg.createdAt.microsecondsSinceEpoch.toString();
+        final key = _userMsgKeys[keyStr];
+        if (key == null) continue;
+
+        final ctx = key.currentContext;
+        if (ctx != null) {
+          final box = ctx.findRenderObject() as RenderBox?;
+          if (box == null || !box.attached) continue;
+          final itemTop = box.localToGlobal(Offset.zero).dy;
+          final itemBottom = itemTop + box.size.height;
+
+          // 记录滚动偏移（用于点击跳回）
+          final absOffset =
+              (_scrollController.offset + (itemTop - viewportTop))
+                  .clamp(0.0, _scrollController.position.maxScrollExtent);
+          _userMsgRecordedOffsets[keyStr] = absOffset;
+
+          if (itemBottom < viewportTop) {
+            // 完全在视口上方 — sticky 候选
+            candidateQuestion = msg.content;
+            candidateOffset = absOffset;
+          } else {
+            // 进入视口或在下方 — 停止遍历
+            break;
+          }
+        } else if (_userMsgRecordedOffsets.containsKey(keyStr)) {
+          // 已滚出屏幕（未渲染），使用上次记录的偏移
+          candidateQuestion = msg.content;
+          candidateOffset = _userMsgRecordedOffsets[keyStr]!;
+        }
+      }
+
+      if (candidateQuestion != _stickyQuestion ||
+          candidateOffset != _stickyScrollOffset) {
+        setState(() {
+          _stickyQuestion = candidateQuestion;
+          _stickyScrollOffset = candidateOffset;
+        });
+      }
+    });
   }
 
   void _sendMessage() {
@@ -395,6 +462,14 @@ class _HomePageState extends State<HomePage> {
             child: Stack(
               children: [
                 _buildMessageList(),
+                // Sticky question bar
+                if (_stickyQuestion != null)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _buildStickyQuestionBar(),
+                  ),
                 // Scroll-to-bottom FAB
                 if (_showScrollFab)
                   Positioned(
@@ -524,9 +599,12 @@ class _HomePageState extends State<HomePage> {
   // ── User bubble ────────────────────────────────────────────────────
 
   Widget _buildUserBubble(ChatMessage msg) {
+    final keyStr = msg.createdAt.microsecondsSinceEpoch.toString();
+    final msgKey = _userMsgKeys.putIfAbsent(keyStr, () => GlobalKey());
     final colors = AppColors.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
     return GestureDetector(
+      key: msgKey,
       onLongPress: () => _showMessageActions(msg),
       child: Align(
         alignment: Alignment.centerRight,
@@ -672,6 +750,21 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         }
+      },
+    );
+  }
+
+  // ── Sticky question bar ───────────────────────────────────────────
+
+  Widget _buildStickyQuestionBar() {
+    return StickyQuestionBar(
+      question: _stickyQuestion!,
+      onTap: () {
+        _scrollController.animateTo(
+          _stickyScrollOffset,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
       },
     );
   }

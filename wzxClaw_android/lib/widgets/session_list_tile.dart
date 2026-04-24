@@ -192,7 +192,7 @@ class SessionListTile extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   void _showDeleteConfirm(BuildContext context, SessionMeta session) {

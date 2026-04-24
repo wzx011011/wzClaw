@@ -78,7 +78,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       const request: Record<string, unknown> = {
         provider,
         model,
-        baseURL: provider === 'openai' ? baseURL : undefined,
+        baseURL: baseURL.trim(),  // 空字符串表示清除自定义 URL，始终发送以便主进程能更新
         systemPrompt: systemPrompt || undefined,
         relayToken: relayToken || undefined
       }
@@ -144,19 +144,19 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             placeholder="sk-..."
           />
 
-          {/* Base URL section (only for openai provider) */}
-          {provider === 'openai' && (
-            <>
-              <label className="settings-label">Base URL</label>
-              <input
-                className="settings-input"
-                type="text"
-                value={baseURL}
-                onChange={(e) => setBaseURL(e.target.value)}
-                placeholder="https://api.openai.com/v1"
-              />
-            </>
-          )}
+          {/* Base URL section */}
+          <label className="settings-label">Base URL</label>
+          <input
+            className="settings-input"
+            type="text"
+            value={baseURL}
+            onChange={(e) => setBaseURL(e.target.value)}
+            placeholder={
+              provider === 'anthropic'
+                ? 'https://open.bigmodel.cn/api/anthropic  (留空使用官方 Anthropic)'
+                : 'https://api.openai.com/v1'
+            }
+          />
 
           {/* Model section */}
           <label className="settings-label">Model</label>

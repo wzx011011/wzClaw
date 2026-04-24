@@ -240,7 +240,14 @@ class ConnectionManager with WidgetsBindingObserver {
 
   /// Select a specific desktop for message routing.
   /// Pass null to broadcast to all desktops.
+  /// If not connected, stores the selection to be sent on reconnect.
   void selectDesktop(String? desktopId) {
+    // Always store the selection so it can be sent after reconnect.
+    _selectedDesktopId = desktopId;
+    _selectedDesktopIdController.add(desktopId);
+
+    if (_state != WsConnectionState.connected) return;
+
     if (desktopId == null) {
       _rawSend(jsonEncode({'event': WsEvents.targetClear}));
     } else {
@@ -276,7 +283,15 @@ class ConnectionManager with WidgetsBindingObserver {
 
       case AppLifecycleState.inactive:
         // Transient state (notification shade, volume overlay, etc.).
-        // Do NOT interrupt the connection — this fires far too often.
+        // Reset _wasPaused here too — some Android transitions skip resumed
+        // and go paused → inactive directly when returning to foreground.
+        // Only force-reconnect if the connection was actually lost.
+        if (_wasPaused) {
+          _wasPaused = false;
+          if (_url != null && _state != WsConnectionState.connected) {
+            _resumeCheck();
+          }
+        }
         break;
 
       case AppLifecycleState.resumed:
@@ -284,7 +299,9 @@ class ConnectionManager with WidgetsBindingObserver {
         // briefly inactive.  This prevents constant reconnect flicker.
         if (_wasPaused) {
           _wasPaused = false;
-          if (_url != null) _resumeCheck();
+          if (_url != null && _state != WsConnectionState.connected) {
+            _resumeCheck();
+          }
         }
         break;
 
@@ -481,6 +498,12 @@ class ConnectionManager with WidgetsBindingObserver {
   void _forceReconnect(String reason) {
     // Cancel all timers first.
     _cancelAllTimers();
+
+    // Clear desktop state -- stale after reconnect.
+    _desktops.clear();
+    _desktopsController.add([]);
+    _selectedDesktopId = null;
+    _selectedDesktopIdController.add(null);
 
     // Increment sequence to invalidate stale onDone/onError callbacks
     // from the channel we are about to close.

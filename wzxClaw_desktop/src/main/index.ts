@@ -157,7 +157,7 @@ function buildMenuBar(): Menu {
           accelerator: 'CmdOrCtrl+S',
           click: (_menuItem, browserWindow) => {
             if (browserWindow) {
-              browserWindow.webContents.send('file:save_request')
+              browserWindow.webContents.send(IPC_CHANNELS['file:save_request'])
             }
           }
         },
@@ -587,7 +587,7 @@ app.whenReady().then(async () => {
         broadcastToMobile('session:delete:response', { requestId, success })
         // Notify desktop renderer
         const wcDel = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wcDel && !wcDel.isDestroyed()) wcDel.send('data:changed', { source: 'mobile', entity: 'session', action: 'deleted', data: { sessionId } })
+        if (wcDel && !wcDel.isDestroyed()) wcDel.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'deleted', data: { sessionId } })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
       }
@@ -611,7 +611,7 @@ app.whenReady().then(async () => {
         broadcastToMobile('session:rename:response', { requestId, success })
         // Notify desktop renderer
         const wcRen = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wcRen && !wcRen.isDestroyed()) wcRen.send('data:changed', { source: 'mobile', entity: 'session', action: 'renamed', data: { sessionId, title } })
+        if (wcRen && !wcRen.isDestroyed()) wcRen.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'renamed', data: { sessionId, title } })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
       }
@@ -811,7 +811,7 @@ app.whenReady().then(async () => {
         broadcastToMobile('task:create:response', { requestId, task })
         // Notify desktop renderer
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'created', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'created', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -825,7 +825,7 @@ app.whenReady().then(async () => {
         const task = await taskStore.updateTask(msg.data?.taskId, msg.data?.updates ?? {})
         broadcastToMobile('task:update:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -839,7 +839,7 @@ app.whenReady().then(async () => {
         await taskStore.deleteTask(msg.data?.taskId)
         broadcastToMobile('task:delete:response', { requestId, success: true })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'deleted', data: { taskId: msg.data?.taskId } })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'deleted', data: { taskId: msg.data?.taskId } })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -865,7 +865,7 @@ app.whenReady().then(async () => {
         const task = await taskStore.addProject(msg.data?.taskId, msg.data?.folderPath)
         broadcastToMobile('task:add-project:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -879,7 +879,7 @@ app.whenReady().then(async () => {
         const task = await taskStore.removeProject(msg.data?.taskId, msg.data?.projectId)
         broadcastToMobile('task:remove-project:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send('data:changed', { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
         broadcastToMobile('task:error', { requestId, error: err.message })
       }
@@ -1271,7 +1271,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
 
   // IPC: update native titlebar overlay colors when theme changes
-  ipcMain.handle('theme:set-titlebar-overlay', (_event, payload: { color: string; symbolColor: string }) => {
+  ipcMain.handle(IPC_CHANNELS['theme:set-titlebar-overlay'], (_event, payload: { color: string; symbolColor: string }) => {
     const wins = BrowserWindow.getAllWindows()
     for (const win of wins) {
       try {
@@ -1300,7 +1300,7 @@ app.whenReady().then(async () => {
     // Restore last active session into renderer
     const lastSessionId = settingsManager.getLastSessionId()
     if (lastSessionId) {
-      mainWindow.webContents.send('session:restore', { sessionId: lastSessionId })
+      mainWindow.webContents.send(IPC_CHANNELS['session:restore'], { sessionId: lastSessionId })
     }
     // Always push current relay status after renderer loads
     // (relay may have connected before renderer mounted)

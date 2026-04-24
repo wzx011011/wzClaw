@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../models/chat_message.dart';
+import '../models/connection_state.dart';
 import '../models/ws_message.dart';
 import 'chat_database.dart';
 import 'connection_manager.dart';
@@ -70,6 +71,11 @@ class ChatStore {
   final List<ChatMessage> _messages = [];
   ChatMessage? _streamingMessage;
   bool _isStreaming = false;
+
+  // Cached display list — rebuilt only when _messages or _streamingMessage changes.
+  List<ChatMessage> _cachedDisplayMessages = const [];
+  int _cachedMessagesLength = -1;
+  bool _cachedHadStreaming = false;
   StreamSubscription<WsMessage>? _wsSubscription;
   String? _currentSessionId;
   bool _isBrowsingHistory = false; // true when viewing a historical session
@@ -78,9 +84,16 @@ class ChatStore {
   DateTime? _lastErrorTime;
   final Map<String, bool> _pendingMessageIds = {}; // messageId tracking for ack
 
+  // -- Clear guard: 防止 fetchSessions 延迟响应覆盖用户消息 --
+  int _clearGeneration = 0;     // 每次 loadFetchedMessages([]) 清空时递增
+  int _lastUserMsgGen = 0;      // 用户最后发消息时的 generation
+
   // -- Thinking state --
+  static const _maxThinkingChars = 50000; // 约 50KB 上限，防止无限累积
   String _thinkingContent = '';
   String get thinkingContent => _thinkingContent;
+  final _thinkingController = StreamController<String>.broadcast();
+  Stream<String> get thinkingStream => _thinkingController.stream;
 
   // -- Todo state --
   List<Map<String, String>> _todos = [];
@@ -99,15 +112,32 @@ class ChatStore {
   List<ChatMessage> get messages => List.unmodifiable(_messages);
 
   List<ChatMessage> get displayMessages {
-    if (_streamingMessage != null) {
-      return [..._messages, _streamingMessage!];
+    final hasStreaming = _streamingMessage != null;
+    final msgLen = _messages.length;
+    if (msgLen == _cachedMessagesLength && hasStreaming == _cachedHadStreaming) {
+      return _cachedDisplayMessages;
     }
-    return List.unmodifiable(_messages);
+    _cachedMessagesLength = msgLen;
+    _cachedHadStreaming = hasStreaming;
+    if (hasStreaming) {
+      _cachedDisplayMessages = [..._messages, _streamingMessage!];
+    } else {
+      _cachedDisplayMessages = List.unmodifiable(_messages);
+    }
+    return _cachedDisplayMessages;
   }
 
   void _init() {
     _wsSubscription =
         ConnectionManager.instance.messageStream.listen(_handleWsMessage);
+    ConnectionManager.instance.stateStream.listen(_handleConnectionState);
+  }
+
+  void _handleConnectionState(WsConnectionState state) {
+    if (state == WsConnectionState.disconnected) {
+      // 断连时清理 pending，桌面端重启后这些 messageId 不会再被 ack
+      _pendingMessageIds.clear();
+    }
   }
 
   void _handleWsMessage(WsMessage wsMsg) {
@@ -368,14 +398,18 @@ class ChatStore {
   // ── stream:agent:thinking ─────────────────────────────────────────
   void _handleAgentThinking(dynamic data) {
     final content = data is Map ? data['content'] as String? ?? '' : data?.toString() ?? '';
+    if (_thinkingContent.length + content.length > _maxThinkingChars) {
+      // 截断：保留后半部分（更新的内容更有价值）
+      _thinkingContent = _thinkingContent.substring(_thinkingContent.length ~/ 2);
+    }
     _thinkingContent += content;
-    _notifyListeners();
+    _thinkingController.add(_thinkingContent);
   }
 
   // ── stream:agent:turn_end ─────────────────────────────────────────
   void _handleAgentTurnEnd() {
     _thinkingContent = '';
-    _notifyListeners();
+    _thinkingController.add('');
   }
 
   /// Send a permission response back to the desktop.
@@ -553,7 +587,18 @@ class ChatStore {
   }
 
   /// Load messages fetched from desktop into the current view.
+  /// 当传入空列表（清空操作）时递增 _clearGeneration，用于检测后续覆盖。
+  /// 当传入非空列表时，如果用户在清空后已发过消息（_lastUserMsgGen > _clearGeneration），
+  /// 则跳过覆盖以保护用户输入不被丢弃。
   void loadFetchedMessages(List<ChatMessage> messages) {
+    if (messages.isEmpty) {
+      _clearGeneration++;
+      _messages.clear();
+      _notifyListeners();
+      return;
+    }
+    // 用户在清空后已发过消息 → 不覆盖
+    if (_lastUserMsgGen > _clearGeneration) return;
     _messages.clear();
     _messages.addAll(messages);
     _notifyListeners();
@@ -565,6 +610,9 @@ class ChatStore {
       _isBrowsingHistory = false;
     }
 
+    // 记录用户发消息时的 generation，防止后续 fetch 响应覆盖
+    _lastUserMsgGen = _clearGeneration;
+
     final messageId = '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1000000)}';
     final msg = ChatMessage(
       role: MessageRole.user,
@@ -574,6 +622,10 @@ class ChatStore {
     _messages.add(msg);
     await ChatDatabase.instance.insertMessage(msg, sessionId: _currentSessionId);
     _pendingMessageIds[messageId] = true;
+    // 防止累积：超过 100 条时清理最老的未确认条目
+    if (_pendingMessageIds.length > 100) {
+      _pendingMessageIds.remove(_pendingMessageIds.keys.first);
+    }
     ConnectionManager.instance.send(
       WsMessage(event: WsEvents.commandSend, data: {
         'content': text,
@@ -612,10 +664,19 @@ class ChatStore {
   }
 
   Future<void> loadMoreMessages() async {
-    final older = await ChatDatabase.instance.getMessages(
-      limit: 100,
-      offset: _messages.length,
-    );
+    List<ChatMessage> older;
+    if (_currentSessionId != null) {
+      older = await ChatDatabase.instance.getSessionMessages(
+        _currentSessionId!,
+        limit: 100,
+        offset: _messages.length,
+      );
+    } else {
+      older = await ChatDatabase.instance.getMessages(
+        limit: 100,
+        offset: _messages.length,
+      );
+    }
     if (older.isEmpty) return;
     _messages.insertAll(0, older);
     _notifyListeners();

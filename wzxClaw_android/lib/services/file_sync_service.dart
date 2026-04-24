@@ -150,13 +150,9 @@ class FileSyncService {
       }
     });
 
-    try {
-      final result = await completer.future;
-      if (result is List<FileTreeNode>) return result;
-      return [];
-    } catch (e) {
-      rethrow;
-    }
+    final result = await completer.future;
+    if (result is List<FileTreeNode>) return result;
+    return [];
   }
 
   /// Read a file's content from the desktop.

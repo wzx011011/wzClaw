@@ -15,7 +15,6 @@ export const IPC_CHANNELS = {
   'stream:text_delta': 'stream:text_delta',
   'stream:thinking_delta': 'stream:thinking_delta',
   'stream:tool_use_start': 'stream:tool_use_start',
-  'stream:tool_use_delta': 'stream:tool_use_delta',
   'stream:tool_use_end': 'stream:tool_use_end',
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
@@ -55,10 +54,13 @@ export const IPC_CHANNELS = {
   'session:load': 'session:load',
   'session:delete': 'session:delete',
   'session:rename': 'session:rename',
+  'session:save-last': 'session:save-last',
+  'session:get-last': 'session:get-last',
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
   'session:context-restored': 'session:context-restored',
+  'session:restore': 'session:restore',
 
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
@@ -154,6 +156,15 @@ export const IPC_CHANNELS = {
 
   // Context breakdown (renderer -> main for token usage analysis)
   'agent:context_breakdown': 'agent:context_breakdown',
+
+  // Theme channels (renderer -> main)
+  'theme:set-titlebar-overlay': 'theme:set-titlebar-overlay',
+
+  // Data sync channels (main -> renderer push for mobile sync)
+  'data:changed': 'data:changed',
+
+  // File save request (main -> renderer, triggers unsaved file prompt)
+  'file:save_request': 'file:save_request',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -317,7 +328,6 @@ export interface IpcStreamPayloads {
   'stream:text_delta': { content: string }
   'stream:thinking_delta': { content: string }
   'stream:tool_use_start': { id: string; name: string }
-  'stream:tool_use_delta': { id: string; partialJson: string }
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
   'stream:error': { error: string }
   'stream:done': { usage: { inputTokens: number; outputTokens: number } }

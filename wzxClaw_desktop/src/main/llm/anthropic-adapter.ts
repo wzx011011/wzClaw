@@ -201,10 +201,15 @@ export class AnthropicAdapter implements LLMAdapter {
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
         return
       }
-      yield {
-        type: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      }
+      let errorMsg = error instanceof Error ? error.message : String(error)
+      // 尝试解析结构化 JSON 错误（如 GLM-5 返回的 JSON 错误体），提取可读 message
+      try {
+        const parsed = JSON.parse(errorMsg)
+        if (parsed?.error?.message) {
+          errorMsg = parsed.error.message
+        }
+      } catch { /* 非 JSON，保留原始消息 */ }
+      yield { type: 'error', error: errorMsg }
     }
   }
 }

@@ -26,6 +26,7 @@
   /* Borders */
   --border: #2e2e2e;
   --border-subtle: #252525;
+  --border-active: #4a9eff;
   --border-focus: var(--accent);
   --table-border: rgba(255, 255, 255, 0.14);
   --scrollbar-thumb: rgba(255, 255, 255, 0.08);
@@ -75,6 +76,27 @@
 
   /* Titlebar */
   --titlebar-height: 38px;
+
+  /* Tool status colors */
+  --tool-running: #dcb67a;
+  --tool-completed: #89d185;
+  --tool-error: #f48771;
+
+  /* Panel backgrounds */
+  --panel-bg: #1e1e1e;
+  --panel-header-bg: #252526;
+  --panel-hover-bg: #2d2d2d;
+  --panel-active-bg: #3c3c3c;
+
+  /* AskUserQuestion accent */
+  --ask-user-accent: #4fc3f7;
+
+  /* Plan mode accent */
+  --plan-mode-accent: #bb86fc;
+
+  /* Mention colors */
+  --mention-badge-bg: #3c3c3c;
+  --mention-folder-color: #dcb67a;
 }
 
 /* Reset & Full viewport */
