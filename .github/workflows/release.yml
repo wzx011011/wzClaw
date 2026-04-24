@@ -6,17 +6,19 @@ on:
       - "v*"
 
 jobs:
-  release:
-    name: Build & Release (Windows)
+  desktop-release:
+    name: Desktop Release (Windows)
     runs-on: windows-latest
     permissions:
       contents: write
+    defaults:
+      run:
+        working-directory: wzxClaw_desktop
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Python 3.11
-        # node-gyp (for node-pty) needs distutils, removed in Python 3.12+
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -24,27 +26,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # @electron/rebuild requires Node >= 22.12.0
           node-version: "22"
           cache: "npm"
+          cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build Windows installer
-        run: npx electron-vite build && npx electron-builder --win --publish never
+        run: npx electron-vite build; npx electron-builder --win --publish never
         env:
           CI: true
 
-      - name: Upload Release
+      - name: Upload Desktop Release
         uses: softprops/action-gh-release@v2
         with:
           name: wzxClaw ${{ github.ref_name }}
           draft: false
           prerelease: false
           files: |
-            dist/*.exe
-            dist/*.msi
+            wzxClaw_desktop/dist/*.exe
+            wzxClaw_desktop/dist/*.msi
           body: |
             ## wzxClaw ${{ github.ref_name }}
 
@@ -53,3 +55,55 @@ jobs:
 
             ### Changelog
             See commit history for details.
+
+  android-release:
+    name: Android Release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: wzxClaw_android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: "stable"
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK (release, no signing)
+        run: flutter build apk --release --no-shrink
+
+      - name: Upload Android Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: wzxClaw Android ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: wzxClaw_android/build/app/outputs/flutter-apk/app-release.apk
+          body: |
+            ## wzxClaw Android ${{ github.ref_name }}
+
+            ### Install
+            1. Download `app-release.apk`
+            2. Enable "Install from unknown sources" on your device
+            3. Install the APK
+
+            ### Usage
+            Start wzxClaw desktop, enable the Mobile Bridge tunnel in Settings, copy the ngrok URL, and paste it on the connection screen.
+
+            ### Note
+            This APK is unsigned — for personal use only.

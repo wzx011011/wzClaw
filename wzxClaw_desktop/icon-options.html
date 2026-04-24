@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  body {
+    background: #121212;
+    color: #FFF;
+    font-family: system-ui, -apple-system, sans-serif;
+    padding: 60px;
+    margin: 0;
+  }
+  h1 { text-align: center; margin-bottom: 50px; font-weight: 300; letter-spacing: 2px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 50px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s;
+  }
+  .card:hover {
+    transform: scale(1.05);
+  }
+  svg {
+    width: 160px;
+    height: 160px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    border-radius: 35px; /* scale roughly to 160px based on rx=56 of 256px */
+  }
+  .label {
+    margin-top: 20px;
+    font-size: 16px;
+    color: #AAA;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<h1>wzxClaw - 极简 AI 图标方案</h1>
+
+<div class="grid">
+
+  <!-- Option 1 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 70 80 L 110 128 L 70 176" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="130" y="156" width="56" height="20" rx="4" fill="#3B82F6"/>
+    </svg>
+    <div class="label">方案 1: 终端与闪点</div>
+  </div>
+
+  <!-- Option 2 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 80 80 L 40 128 L 80 176" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 176 80 L 216 128 L 176 176" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="128" cy="128" r="24" fill="#8B5CF6"/>
+    </svg>
+    <div class="label">方案 2: 代码与核心</div>
+  </div>
+
+  <!-- Option 3 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 96 70 L 66 186" stroke="#3B82F6" stroke-width="24" stroke-linecap="round"/>
+      <path d="M 144 70 L 114 186" stroke="#3B82F6" stroke-width="24" stroke-linecap="round"/>
+      <path d="M 192 70 L 162 186" stroke="#3B82F6" stroke-width="24" stroke-linecap="round"/>
+    </svg>
+    <div class="label">方案 3: 极简利爪 (Claw)</div>
+  </div>
+
+  <!-- Option 4 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 66 100 L 128 166 L 190 100" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="128" cy="74" r="16" fill="#10B981"/>
+    </svg>
+    <div class="label">方案 4: W 与能量点</div>
+  </div>
+
+  <!-- Option 5 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <circle cx="128" cy="70" r="20" fill="#FFFFFF"/>
+      <circle cx="70" cy="170" r="20" fill="#FFFFFF"/>
+      <circle cx="186" cy="170" r="20" fill="#3B82F6"/>
+      <path d="M 128 70 L 70 170 L 186 170 Z" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linejoin="round"/>
+    </svg>
+    <div class="label">方案 5: 神经网络</div>
+  </div>
+
+  <!-- Option 6 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 140 60 L 90 196" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round"/>
+      <circle cx="180" cy="90" r="16" fill="#F59E0B"/>
+      <circle cx="150" cy="160" r="16" fill="#F59E0B"/>
+    </svg>
+    <div class="label">方案 6: 前斜杠与双点</div>
+  </div>
+
+  <!-- Option 7 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <polygon points="128,50 180,102 128,154 76,102" fill="#3B82F6"/>
+      <polygon points="128,110 180,162 128,214 76,162" fill="#FFFFFF"/>
+    </svg>
+    <div class="label">方案 7: 叠面晶体</div>
+  </div>
+
+  <!-- Option 8 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <rect x="64" y="64" width="128" height="128" rx="24" fill="none" stroke="#FFFFFF" stroke-width="20"/>
+      <rect x="108" y="108" width="40" height="40" rx="8" fill="#3B82F6"/>
+    </svg>
+    <div class="label">方案 8: 视界核心</div>
+  </div>
+
+  <!-- Option 9 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <rect x="80" y="80" width="48" height="96" rx="8" fill="#FFFFFF"/>
+      <rect x="128" y="80" width="48" height="96" rx="8" fill="#8B5CF6" opacity="0.9"/>
+    </svg>
+    <div class="label">方案 9: 分裂光标</div>
+  </div>
+
+  <!-- Option 10 -->
+  <div class="card">
+    <svg viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="256" height="256" rx="56" fill="#0A0A0A"/>
+      <path d="M 128 64 C 180 64 216 128 216 128 C 216 128 180 192 128 192 C 76 192 40 128 40 128 C 40 128 76 64 128 64 Z" fill="none" stroke="#FFFFFF" stroke-width="16"/>
+      <circle cx="128" cy="128" r="24" fill="#3B82F6"/>
+    </svg>
+    <div class="label">方案 10: 科技之眼</div>
+  </div>
+
+</div>
+</body>
+</html>

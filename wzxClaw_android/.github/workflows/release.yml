@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: "stable"
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK (release, no signing)
+        run: flutter build apk --release --no-shrink
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: wzxClaw Android ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: build/app/outputs/flutter-apk/app-release.apk
+          body: |
+            ## wzxClaw Android ${{ github.ref_name }}
+
+            ### Install
+            1. Download `app-release.apk`
+            2. Enable "Install from unknown sources" on your device
+            3. Install the APK
+
+            ### Usage
+            Start wzxClaw desktop, enable the Mobile Bridge tunnel in Settings, copy the ngrok URL, and paste it on the connection screen.
+
+            ### Note
+            This APK is unsigned — for personal use only.

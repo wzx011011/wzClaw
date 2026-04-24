@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent 架构演进路线图</title>
+<style>
+  :root {
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #12121a;
+    --bg-card: #1a1a2e;
+    --bg-card-hover: #1f1f35;
+    --border: #2a2a40;
+    --border-glow: #4a4a6a;
+    --text-primary: #e8e8f0;
+    --text-secondary: #9898b0;
+    --text-muted: #6868a0;
+    --accent-1: #6366f1;
+    --accent-2: #8b5cf6;
+    --accent-3: #a78bfa;
+    --accent-blue: #3b82f6;
+    --accent-cyan: #06b6d4;
+    --accent-green: #10b981;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+    --accent-pink: #ec4899;
+    --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6);
+    --gradient-2: linear-gradient(135deg, #3b82f6, #06b6d4);
+    --gradient-3: linear-gradient(135deg, #10b981, #06b6d4);
+    --gradient-4: linear-gradient(135deg, #f59e0b, #f43f5e);
+    --gradient-5: linear-gradient(135deg, #ec4899, #8b5cf6);
+    --gradient-6: linear-gradient(135deg, #f43f5e, #6366f1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', Roboto, sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  .hero { position: relative; padding: 80px 40px 60px; text-align: center; overflow: hidden; }
+  .hero::before { content:''; position:absolute; top:-50%; left:-50%; width:200%; height:200%; background:radial-gradient(ellipse at 50% 50%, rgba(99,102,241,0.08) 0%, transparent 60%); animation: pulse-bg 8s ease-in-out infinite; }
+  @keyframes pulse-bg { 0%,100%{opacity:.5;transform:scale(1)} 50%{opacity:1;transform:scale(1.05)} }
+  .hero-content { position:relative; z-index:1; max-width:900px; margin:0 auto; }
+  .hero-badge { display:inline-flex; align-items:center; gap:8px; padding:6px 16px; border-radius:20px; background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.25); color:var(--accent-3); font-size:13px; font-weight:500; letter-spacing:0.5px; margin-bottom:28px; }
+  .hero-badge::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--accent-1); animation:blink 2s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .hero h1 { font-size:42px; font-weight:700; letter-spacing:-0.5px; background:linear-gradient(135deg,#e8e8f0 0%,#a78bfa 50%,#6366f1 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:16px; }
+  .hero .subtitle { font-size:17px; color:var(--text-secondary); max-width:680px; margin:0 auto 36px; }
+  .formula-bar { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; padding:18px 28px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:14px; font-size:15px; font-family:'SF Mono','Cascadia Code','Fira Code',monospace; letter-spacing:-0.3px; }
+  .formula-bar .op { color:var(--text-muted); font-weight:300; }
+  .formula-bar .eq { color:var(--accent-3); font-weight:600; }
+  .formula-tag { padding:4px 12px; border-radius:6px; font-weight:500; font-size:13px; white-space:nowrap; }
+  .formula-tag.t-model { background:rgba(99,102,241,0.15); color:#a5b4fc; }
+  .formula-tag.t-prompt { background:rgba(59,130,246,0.15); color:#93c5fd; }
+  .formula-tag.t-tools { background:rgba(6,182,212,0.15); color:#67e8f9; }
+  .formula-tag.t-mcp { background:rgba(16,185,129,0.15); color:#6ee7b7; }
+  .formula-tag.t-skills { background:rgba(245,158,11,0.15); color:#fcd34d; }
+
+  .stats-row { display:flex; justify-content:center; gap:48px; padding:32px 40px; border-bottom:1px solid var(--border); background:var(--bg-secondary); }
+  .stat-item { text-align:center; }
+  .stat-value { font-size:28px; font-weight:700; background:var(--gradient-1); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .stat-label { font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+
+  .timeline-container { position:relative; max-width:1100px; margin:0 auto; padding:60px 40px 80px; }
+  .timeline-line { position:absolute; left:50%; top:60px; bottom:80px; width:2px; background:linear-gradient(to bottom,transparent,var(--border-glow) 10%,var(--border-glow) 90%,transparent); transform:translateX(-50%); }
+  .timeline-line::after { content:''; position:absolute; top:0; left:50%; transform:translateX(-50%); width:8px; height:100%; background:linear-gradient(to bottom,transparent,rgba(99,102,241,0.1) 10%,rgba(99,102,241,0.1) 90%,transparent); filter:blur(4px); }
+
+  .phase { position:relative; display:flex; align-items:flex-start; margin-bottom:64px; opacity:0; transform:translateY(30px); transition:opacity .6s ease,transform .6s ease; }
+  .phase.visible { opacity:1; transform:translateY(0); }
+  .phase:last-child { margin-bottom:0; }
+  .phase:nth-child(odd) { flex-direction:row; }
+  .phase:nth-child(even) { flex-direction:row-reverse; }
+  .phase-content { width:44%; background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:28px 28px 24px; transition:border-color .3s,box-shadow .3s,transform .3s; position:relative; }
+  .phase-content:hover { border-color:var(--border-glow); transform:translateY(-2px); }
+  .phase:nth-child(1) .phase-content:hover { box-shadow:0 8px 30px rgba(99,102,241,0.12); }
+  .phase:nth-child(2) .phase-content:hover { box-shadow:0 8px 30px rgba(59,130,246,0.12); }
+  .phase:nth-child(3) .phase-content:hover { box-shadow:0 8px 30px rgba(16,185,129,0.12); }
+  .phase:nth-child(4) .phase-content:hover { box-shadow:0 8px 30px rgba(245,158,11,0.12); }
+  .phase:nth-child(5) .phase-content:hover { box-shadow:0 8px 30px rgba(236,72,153,0.12); }
+  .phase:nth-child(6) .phase-content:hover { box-shadow:0 8px 30px rgba(244,63,94,0.12); }
+  .phase-node { position:absolute; left:50%; transform:translateX(-50%); width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#fff; z-index:2; border:3px solid var(--bg-primary); }
+  .phase:nth-child(1) .phase-node { background:var(--gradient-1); }
+  .phase:nth-child(2) .phase-node { background:var(--gradient-2); }
+  .phase:nth-child(3) .phase-node { background:var(--gradient-3); }
+  .phase:nth-child(4) .phase-node { background:var(--gradient-4); }
+  .phase:nth-child(5) .phase-node { background:var(--gradient-5); }
+  .phase:nth-child(6) .phase-node { background:var(--gradient-6); }
+  .phase-spacer { width:44%; }
+  .phase-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .phase-number { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-muted); }
+  .phase-period { font-size:12px; padding:3px 10px; border-radius:4px; background:rgba(255,255,255,0.04); color:var(--text-secondary); font-family:'SF Mono','Cascadia Code',monospace; }
+  .phase-title { font-size:20px; font-weight:700; margin-bottom:4px; color:var(--text-primary); }
+  .phase-formula { font-family:'SF Mono','Cascadia Code',monospace; font-size:13px; color:var(--accent-3); margin-bottom:14px; padding:6px 12px; background:rgba(99,102,241,0.06); border-radius:6px; display:inline-block; }
+  .phase-desc { font-size:14px; color:var(--text-secondary); margin-bottom:16px; line-height:1.7; }
+
+  .milestones { width:100%; border-collapse:collapse; margin-bottom:16px; }
+  .milestones td { padding:6px 0; font-size:13px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; }
+  .milestones tr:last-child td { border-bottom:none; }
+  .ms-date { font-family:'SF Mono','Cascadia Code',monospace; color:var(--text-muted); white-space:nowrap; padding-right:16px; width:100px; font-size:12px; }
+  .ms-event { color:var(--text-secondary); }
+  .ms-event strong { color:var(--text-primary); font-weight:600; }
+
+  .ps-row { display:flex; gap:12px; margin-top:14px; }
+  .ps-tag { flex:1; padding:10px 14px; border-radius:8px; font-size:12px; line-height:1.5; }
+  .ps-tag.problem { background:rgba(244,63,94,0.06); border:1px solid rgba(244,63,94,0.15); }
+  .ps-tag.problem .ps-label { color:var(--accent-rose); }
+  .ps-tag.problem .ps-text { color:var(--text-secondary); }
+  .ps-tag.solution { background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.15); }
+  .ps-tag.solution .ps-label { color:var(--accent-green); }
+  .ps-tag.solution .ps-text { color:var(--text-secondary); }
+  .ps-label { font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.8px; display:block; margin-bottom:3px; }
+
+  /* Context Insight Bar */
+  .ctx-bar { display:flex; align-items:center; gap:10px; margin-top:14px; padding:10px 14px; border-radius:8px; background:rgba(6,182,212,0.05); border:1px solid rgba(6,182,212,0.12); }
+  .ctx-bar .ctx-icon { flex-shrink:0; width:28px; height:28px; border-radius:6px; background:rgba(6,182,212,0.12); display:flex; align-items:center; justify-content:center; font-size:13px; }
+  .ctx-bar .ctx-body { flex:1; min-width:0; }
+  .ctx-bar .ctx-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--accent-cyan); margin-bottom:2px; }
+  .ctx-bar .ctx-text { font-size:12px; color:var(--text-secondary); line-height:1.5; }
+  .ctx-bar .ctx-text strong { color:var(--accent-cyan); font-weight:600; }
+  .ctx-bar .ctx-usage { flex-shrink:0; text-align:right; font-family:'SF Mono','Cascadia Code',monospace; font-size:11px; color:var(--text-muted); line-height:1.4; }
+  .ctx-bar .ctx-usage .ctx-val { display:block; font-size:16px; font-weight:700; color:var(--accent-cyan); }
+
+  .code-block { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:14px 16px; margin-top:14px; font-family:'SF Mono','Cascadia Code',monospace; font-size:12px; line-height:1.8; color:var(--text-secondary); overflow-x:auto; }
+  .code-block .kw { color:var(--accent-rose); }
+  .code-block .str { color:var(--accent-green); }
+  .code-block .cmt { color:var(--text-muted); }
+  .code-block .fn { color:var(--accent-blue); }
+  .code-block .prop { color:var(--accent-amber); }
+
+  /* Context Evolution Section */
+  .ctx-section { max-width:1100px; margin:0 auto; padding:60px 40px 80px; }
+  .section-header { text-align:center; margin-bottom:48px; }
+  .section-header h2 { font-size:28px; font-weight:700; margin-bottom:8px; }
+  .section-header p { color:var(--text-secondary); font-size:15px; }
+
+  .ctx-thermo { display:flex; align-items:stretch; gap:0; margin-bottom:40px; }
+  .ctx-stage { flex:1; text-align:center; padding:20px 10px 16px; position:relative; background:var(--bg-card); border:1px solid var(--border); }
+  .ctx-stage:first-child { border-radius:12px 0 0 12px; }
+  .ctx-stage:last-child { border-radius:0 12px 12px 0; }
+  .ctx-stage:not(:last-child) { border-right:none; }
+  .ctx-stage-val { font-family:'SF Mono',monospace; font-size:22px; font-weight:700; margin-bottom:2px; }
+  .ctx-stage:nth-child(1) .ctx-stage-val { color:#a5b4fc; }
+  .ctx-stage:nth-child(2) .ctx-stage-val { color:#93c5fd; }
+  .ctx-stage:nth-child(3) .ctx-stage-val { color:#67e8f9; }
+  .ctx-stage:nth-child(4) .ctx-stage-val { color:#fcd34d; }
+  .ctx-stage:nth-child(5) .ctx-stage-val { color:#f9a8d4; }
+  .ctx-stage-title { font-size:12px; font-weight:600; margin-bottom:4px; color:var(--text-primary); }
+  .ctx-stage-sub { font-size:11px; color:var(--text-muted); line-height:1.4; }
+
+  .ctx-usage-bar { height:4px; border-radius:2px; margin:8px auto 0; max-width:60px; }
+  .ctx-stage:nth-child(1) .ctx-usage-bar { background:#6366f1; width:10%; }
+  .ctx-stage:nth-child(2) .ctx-usage-bar { background:#3b82f6; width:25%; }
+  .ctx-stage:nth-child(3) .ctx-usage-bar { background:#06b6d4; width:50%; }
+  .ctx-stage:nth-child(4) .ctx-usage-bar { background:#f59e0b; width:80%; }
+  .ctx-stage:nth-child(5) .ctx-usage-bar { background:#ec4899; width:100%; }
+
+  .ctx-detail-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ctx-detail-card { background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:16px; position:relative; overflow:hidden; }
+  .ctx-detail-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
+  .ctx-detail-card:nth-child(1)::before { background:#6366f1; }
+  .ctx-detail-card:nth-child(2)::before { background:#3b82f6; }
+  .ctx-detail-card:nth-child(3)::before { background:#06b6d4; }
+  .ctx-detail-card:nth-child(4)::before { background:#f59e0b; }
+  .ctx-detail-card:nth-child(5)::before { background:#ec4899; }
+  .ctx-detail-card h4 { font-size:13px; font-weight:600; margin-bottom:6px; }
+  .ctx-detail-card p { font-size:12px; color:var(--text-secondary); line-height:1.6; margin-bottom:8px; }
+  .ctx-detail-card .ctx-tech { font-family:'SF Mono',monospace; font-size:11px; color:var(--accent-cyan); background:rgba(6,182,212,0.06); padding:2px 6px; border-radius:3px; display:inline-block; margin:1px 2px 1px 0; }
+
+  /* Architecture & Motivation */
+  .arch-section { max-width:1100px; margin:0 auto; padding:60px 40px 80px; }
+  .arch-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:48px; }
+  .arch-cell { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px 16px; text-align:center; transition:transform .3s,border-color .3s; position:relative; overflow:hidden; }
+  .arch-cell:hover { transform:translateY(-3px); border-color:var(--border-glow); }
+  .arch-cell::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+  .arch-cell:nth-child(1)::before { background:var(--gradient-1); }
+  .arch-cell:nth-child(2)::before { background:var(--gradient-2); }
+  .arch-cell:nth-child(3)::before { background:var(--gradient-3); }
+  .arch-cell:nth-child(4)::before { background:var(--gradient-4); }
+  .arch-cell:nth-child(5)::before { background:var(--gradient-5); }
+  .arch-cell:nth-child(6)::before { background:var(--gradient-6); }
+  .arch-icon { font-size:28px; margin-bottom:8px; display:block; }
+  .arch-label { font-size:13px; font-weight:600; margin-bottom:4px; }
+  .arch-year { font-size:11px; color:var(--text-muted); font-family:'SF Mono',monospace; }
+
+  .motivation-section { max-width:900px; margin:0 auto; padding:0 40px 80px; }
+  .motivation-table { width:100%; border-collapse:separate; border-spacing:0; background:var(--bg-card); border-radius:12px; overflow:hidden; border:1px solid var(--border); }
+  .motivation-table thead th { padding:14px 20px; text-align:left; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--text-muted); background:rgba(255,255,255,0.02); border-bottom:1px solid var(--border); }
+  .motivation-table tbody td { padding:14px 20px; font-size:14px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; }
+  .motivation-table tbody tr:last-child td { border-bottom:none; }
+  .motivation-table tbody tr { transition:background .2s; }
+  .motivation-table tbody tr:hover { background:rgba(255,255,255,0.02); }
+  .add-col { font-family:'SF Mono',monospace; font-weight:600; color:var(--accent-green); font-size:13px; white-space:nowrap; }
+  .problem-col { color:var(--text-secondary); }
+  .arrow-col { color:var(--text-muted); text-align:center; font-size:16px; }
+
+  .footer { text-align:center; padding:32px 40px; border-top:1px solid var(--border); color:var(--text-muted); font-size:13px; }
+  .footer a { color:var(--accent-3); text-decoration:none; }
+  .footer a:hover { text-decoration:underline; }
+
+  @media (max-width:900px) {
+    .hero h1 { font-size:30px; }
+    .hero { padding:50px 20px 40px; }
+    .timeline-container { padding:40px 20px 60px; }
+    .timeline-line { display:none; }
+    .phase { flex-direction:column!important; align-items:stretch; }
+    .phase-content,.phase-spacer { width:100%; }
+    .phase-node { display:none; }
+    .stats-row { gap:24px; flex-wrap:wrap; }
+    .arch-grid { grid-template-columns:repeat(3,1fr); }
+    .ps-row { flex-direction:column; }
+    .formula-bar { font-size:12px; padding:12px 16px; }
+    .ctx-thermo { flex-direction:column; }
+    .ctx-stage:first-child { border-radius:12px 12px 0 0; }
+    .ctx-stage:last-child { border-radius:0 0 12px 12px; }
+    .ctx-stage:not(:last-child) { border-right:1px solid var(--border); border-bottom:none; }
+    .ctx-detail-grid { grid-template-columns:1fr 1fr; }
+  }
+  @media (max-width:600px) {
+    .arch-grid { grid-template-columns:repeat(2,1fr); }
+    .motivation-table { font-size:12px; }
+    .motivation-table thead th,.motivation-table tbody td { padding:10px 12px; }
+    .ctx-detail-grid { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">2023 &mdash; 2026 &middot; Anthropic Ecosystem</div>
+    <h1>AI Agent 架构演进路线图</h1>
+    <p class="subtitle">从纯文本聊天到托管式自主 Agent 服务，追踪 Anthropic 两年间如何逐步构建现代 AI Agent 的完整技术栈</p>
+    <div class="formula-bar">
+      <span class="eq">Agent</span>
+      <span class="op">=</span>
+      <span class="formula-tag t-model">Model</span>
+      <span class="op">+</span>
+      <span class="formula-tag t-prompt">System Prompt</span>
+      <span class="op">+</span>
+      <span class="formula-tag t-tools">Tools</span>
+      <span class="op">+</span>
+      <span class="formula-tag t-mcp">MCP Servers</span>
+      <span class="op">+</span>
+      <span class="formula-tag t-skills">Skills</span>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-row">
+  <div class="stat-item"><div class="stat-value">6</div><div class="stat-label">演进阶段</div></div>
+  <div class="stat-item"><div class="stat-value">24</div><div class="stat-label">月</div></div>
+  <div class="stat-item"><div class="stat-value">176</div><div class="stat-label">Claude Code 更新</div></div>
+  <div class="stat-item"><div class="stat-value">5</div><div class="stat-label">可组合层</div></div>
+</div>
+
+<!-- TIMELINE -->
+<div class="timeline-container">
+  <div class="timeline-line"></div>
+
+  <!-- Phase 1 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 1</span><span class="phase-period">2023</span></div>
+      <div class="phase-title">Model + System Prompt</div>
+      <div class="phase-formula">Agent = Model + SystemPrompt</div>
+      <p class="phase-desc">最原始的形态。往 Messages API 的 system 字段塞一段指令文本，模型按要求输出回答。模型能理解指令，但无法采取任何行动——纯文本输入，纯文本输出。</p>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x1F4CB;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text">Context = system_prompt + user_message。没有多轮，没有工具结果，<strong>context 即对话本身</strong>。模型看到的全部内容就是 prompt + 当前消息。无管理需求。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">~2K</span>tokens/轮</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">让模型按角色/风格/约束回答问题</span></div>
+        <div class="ps-tag problem"><span class="ps-label">核心局限</span><span class="ps-text">"光说不做"——模型没有任何行动能力</span></div>
+      </div>
+    </div>
+    <div class="phase-node">1</div>
+    <div class="phase-spacer"></div>
+  </div>
+
+  <!-- Phase 2 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 2</span><span class="phase-period">2024.03 &mdash; 2024.12</span></div>
+      <div class="phase-title">+ Tool Use / Function Calling</div>
+      <div class="phase-formula">Agent = Model + SystemPrompt + Tools</div>
+      <p class="phase-desc">API 层面引入 tool_use 原语。模型不再只能说话，而是能发出结构化的工具调用请求。开发者负责执行工具并返回结果。从 Computer Use 到 Programmatic Tool Calling，Claude 逐步获得与数字世界交互的能力。</p>
+      <table class="milestones">
+        <tr><td class="ms-date">2024.03</td><td class="ms-event">Claude 3 发布，<strong>Tool Use Beta</strong> 上线</td></tr>
+        <tr><td class="ms-date">2024.07</td><td class="ms-event">扩展 tool use 文档和 <strong>structured output</strong></td></tr>
+        <tr><td class="ms-date">2024.10</td><td class="ms-event"><strong>Computer Use</strong> Beta — 首个控制桌面 GUI 的前沿模型</td></tr>
+        <tr><td class="ms-date">2024.12</td><td class="ms-event"><strong>Programmatic Tool Calling</strong> — 并行执行、代码级编排</td></tr>
+      </table>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x1F504;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text">多轮对话出现，每轮追加 tool_use + tool_result。<strong>Context 开始线性膨胀</strong>——工具输出可能数千 token，很快逼近窗口上限。开发者被迫手动裁剪历史消息。200K 窗口成为天花板。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">~20K</span>tokens/轮</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">模型能行动了——调用函数、操作 GUI、执行代码</span></div>
+        <div class="ps-tag problem"><span class="ps-label">核心局限</span><span class="ps-text">每个开发者重复造 agent loop、工具执行、重试逻辑</span></div>
+      </div>
+    </div>
+    <div class="phase-node">2</div>
+    <div class="phase-spacer"></div>
+  </div>
+
+  <!-- Phase 3 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 3</span><span class="phase-period">2024.11</span></div>
+      <div class="phase-title">+ MCP / Model Context Protocol</div>
+      <div class="phase-formula">Agent = Model + Prompt + Tools + <span style="color:#6ee7b7">MCP</span></div>
+      <p class="phase-desc">MCP 作为开源协议发布，定义了 AI 应用与外部工具之间的标准通信方式。从此不再需要为每个工具写自定义集成——只要实现 MCP Server，任何 AI 客户端都能发现和调用。这是从"硬编码集成"到"协议化连接"的范式转变。</p>
+      <table class="milestones">
+        <tr><td class="ms-date">2024.11.25</td><td class="ms-event"><strong>MCP</strong> 开源协议发布（stdio / SSE 传输）</td></tr>
+        <tr><td class="ms-date">2025.Q1</td><td class="ms-event">Streamable HTTP 传输协议，生产就绪</td></tr>
+      </table>
+      <div class="code-block"><span class="cmt">// MCP 统一了工具接入方式</span>
+<span class="kw">AI App</span> (MCP Client) <span class="op">&harr;</span> <span class="fn">MCP Protocol</span> <span class="op">&harr;</span> <span class="kw">Tool Server</span>
+
+<span class="cmt">// 支持动态发现工具，无需预加载</span>
+client.<span class="fn">listTools</span>()   <span class="cmt">// 发现</span>
+client.<span class="fn">callTool</span>(name) <span class="cmt">// 调用</span></div>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x26A0;&#xFE0F;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text"><strong>Context 危机显现</strong>。每个 MCP Server 的工具定义（name + description + inputSchema）都要注入 system prompt。连接 20 个 MCP Server 可能消耗 30K&ndash;50K token，还没开始干活就占了窗口的 15&ndash;25%。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">~50K</span>tokens 静态</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">工具连接标准化，一次接入多处可用</span></div>
+        <div class="ps-tag problem"><span class="ps-label">核心局限</span><span class="ps-text">加载 20 个 MCP Server 工具定义消耗数万 token，撑爆 context</span></div>
+      </div>
+    </div>
+    <div class="phase-node">3</div>
+    <div class="phase-spacer"></div>
+  </div>
+
+  <!-- Phase 4 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 4</span><span class="phase-period">2025.02 &mdash; 2025.10</span></div>
+      <div class="phase-title">Claude Code : Harness 产品化</div>
+      <div class="phase-formula">Harness = Model + Prompt + Tools + MCP + <span style="color:#67e8f9">Context Management</span></div>
+      <p class="phase-desc">Claude Code 将散落的组件组装为完整的 agent runtime。它本身不是一个"功能"，而是一个精心调校的 harness——为 Claude 模型提供合适的工具、提示、上下文和权限控制。Context 工程在这个阶段正式成为核心学科。</p>
+      <table class="milestones">
+        <tr><td class="ms-date">2025.02.24</td><td class="ms-event"><strong>Claude Code</strong> research preview 发布（随 Claude 3.7 Sonnet）</td></tr>
+        <tr><td class="ms-date">2025.05.25</td><td class="ms-event"><strong>Claude 4</strong> 发布，Claude Code v1.0，Max 订阅计划</td></tr>
+        <tr><td class="ms-date">2025.06.12</td><td class="ms-event"><strong>Plan Mode</strong> — 先规划再执行 (~v1.0.18)</td></tr>
+        <tr><td class="ms-date">2025.08.20</td><td class="ms-event"><strong>/context</strong> 命令 — 可视化 context 占用 (v1.0.86)</td></tr>
+      </table>
+      <div class="code-block"><span class="prop">Claude Code Harness</span> = {
+  <span class="prop">model</span>: <span class="str">"Claude 4 / Opus 4.5"</span>,
+  <span class="prop">system_prompt</span>: <span class="str">"工具规范 + 代码风格 + git 工作流 + ..."</span>,
+  <span class="prop">tools</span>: <span class="str">[Read, Write, Edit, Bash, Grep, Glob, Agent, ...]</span>,
+  <span class="prop">mcp</span>: <span class="str">"动态连接外部工具"</span>,
+  <span class="prop">memory</span>: <span class="str">"CLAUDE.md (项目级 + 用户级)"</span>,
+  <span class="prop">session</span>: <span class="str">"JSONL 持久化"</span>,
+  <span class="prop">compaction</span>: <span class="str">"6 层压缩管线"</span>,
+  <span class="prop">permission</span>: <span class="str">"4 级权限控制"</span>,
+}</div>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x1F9EC;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text"><strong>Context 工程成为显学</strong>。Claude Code 建立了 6 层压缩管线：Tool Result Budget → Snip Compact → Microcompact → Context Collapse → Auto-compact → Reactive Compact。/context 命令让用户首次看见 context 占用。Prompt Caching 也在此阶段引入，降低重复 context 的成本。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">~100K</span>tokens 管理</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">开箱即用的 agent runtime，开发者无需自建 loop</span></div>
+        <div class="ps-tag problem"><span class="ps-label">核心局限</span><span class="ps-text">Compaction 是不可逆的——压缩后原始信息从 context 永久消失</span></div>
+      </div>
+    </div>
+    <div class="phase-node">4</div>
+    <div class="phase-spacer"></div>
+  </div>
+
+  <!-- Phase 5 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 5</span><span class="phase-period">2025.10 &mdash; 2025.12</span></div>
+      <div class="phase-title">+ Skills / 渐进式上下文披露</div>
+      <div class="phase-formula">Agent = Model + Prompt + Tools + MCP + <span style="color:#fcd34d">Skills</span></div>
+      <p class="phase-desc">Skills 引入了"渐进式上下文披露"模式：注册时只注入 name + description（几行文字），触发时才展开完整指令和脚本。20 个 Skills 只占几百 token，但能按需加载海量专业能力。2025.12.18 作为 Agent Skills 开源标准发布。</p>
+      <table class="milestones">
+        <tr><td class="ms-date">2025.10.17</td><td class="ms-event"><strong>Claude Skills</strong> 在 Claude Code v2.0.22 中推出</td></tr>
+        <tr><td class="ms-date">2025.12.18</td><td class="ms-event"><strong>Agent Skills</strong> 作为开源标准发布</td></tr>
+      </table>
+      <div class="code-block"><span class="cmt">// 渐进式上下文披露 — 用时才加载</span>
+<span class="cmt">// 注册阶段: 只有几行描述</span>
+<span class="prop">pdf</span>: <span class="str">"Extract and analyze text from PDF documents"</span>
+
+<span class="cmt">// 触发阶段: Claude 判断需要 → tool_use</span>
+<span class="fn">Skill</span>({ <span class="prop">command</span>: <span class="str">"pdf"</span> })
+
+<span class="cmt">// 展开阶段: 完整指令 + 脚本路径注入 context</span>
+<span class="op">&rarr;</span> <span class="str">SKILL.md 全文 + extract_text.py 路径</span>
+
+<span class="cmt">// 20 个 MCP 工具: ~50,000 tokens</span>
+<span class="cmt">// 20 个 Skills:    ~    500 tokens  (100x 节省)</span></div>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x26A1;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text"><strong>Context 膨胀问题的结构化解决</strong>。Skills 用"注册轻量 + 按需展开"模式，将 context 占用从 O(n&times;工具定义) 降到 O(n&times;描述)。同时 Tool Search 动态加载 MCP 工具，不再一次性全量注入。Context 从"静态填充"变为"动态装配"。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">~500</span>tokens 注册</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">在不膨胀主 prompt 的前提下无限扩展能力</span></div>
+        <div class="ps-tag problem"><span class="ps-label">核心局限</span><span class="ps-text">仍需自建 harness 基础设施来运行 Agent</span></div>
+      </div>
+    </div>
+    <div class="phase-node">5</div>
+    <div class="phase-spacer"></div>
+  </div>
+
+  <!-- Phase 6 -->
+  <div class="phase">
+    <div class="phase-content">
+      <div class="phase-header"><span class="phase-number">Phase 6</span><span class="phase-period">2026.04</span></div>
+      <div class="phase-title">Managed Agents : 配置即 Agent</div>
+      <div class="phase-formula">Agent = <span style="color:#f87171">Config Object</span> (model + prompt + tools + MCP + skills)</div>
+      <p class="phase-desc">Managed Agents 将两年的演化成果统一为一个 API 配置对象。开发者只需定义 Agent 的组成（模型、提示、工具、MCP、Skills），Anthropic 托管运行全部基础设施。Brain/Hands/Session 三层解耦，按需弹性扩展。</p>
+      <table class="milestones">
+        <tr><td class="ms-date">2026.04.08</td><td class="ms-event"><strong>Claude Managed Agents</strong> 公共 Beta 发布</td></tr>
+      </table>
+      <div class="code-block"><span class="cmt">// Agent 作为一等配置对象</span>
+<span class="kw">const</span> agent = <span class="fn">createAgent</span>({
+  <span class="prop">model</span>: <span class="str">"claude-sonnet-4-6-20250514"</span>,
+  <span class="prop">system_prompt</span>: <span class="str">"You are a senior engineer..."</span>,
+  <span class="prop">tools</span>: [<span class="str">"bash"</span>, <span class="str">"file"</span>, <span class="str">"web_search"</span>],
+  <span class="prop">mcp_servers</span>: [{ <span class="prop">url</span>: <span class="str">"..."</span> }],
+  <span class="prop">skills</span>: [<span class="str">"pdf"</span>, <span class="str">"deploy"</span>],
+});
+
+<span class="cmt">// 托管运行 — 无需自建任何基础设施</span>
+<span class="kw">const</span> session = <span class="fn">startSession</span>({ <span class="prop">agent</span>, <span class="prop">env</span> });
+session.<span class="fn">sendEvent</span>(<span class="str">"Refactor the auth module"</span>);
+session.<span class="fn">streamEvents</span>(); <span class="cmt">// SSE 流式响应</span></div>
+      <div class="ctx-bar">
+        <div class="ctx-icon">&#x1F5C3;&#xFE0F;</div>
+        <div class="ctx-body">
+          <div class="ctx-label">Context 维度</div>
+          <div class="ctx-text"><strong>Session &ne; Context Window</strong>。Session 成为持久化 context 对象——append-only event log，通过 getEvents() 按位置切片查询。Harness 可以回退到任意时刻重读上下文。Context 管理策略（compaction、caching）由 Harness 决定，Session 只保证数据不丢。</div>
+        </div>
+        <div class="ctx-usage"><span class="ctx-val">&infin;</span>可回溯</div>
+      </div>
+      <div class="ps-row">
+        <div class="ps-tag solution"><span class="ps-label">解决的问题</span><span class="ps-text">配置即 Agent，无需自建 harness、sandbox、session 管理</span></div>
+        <div class="ps-tag solution"><span class="ps-label">架构创新</span><span class="ps-text">Brain/Hands/Session 解耦，p50 TTFT 下降 60%，p95 下降 >90%</span></div>
+      </div>
+    </div>
+    <div class="phase-node">6</div>
+    <div class="phase-spacer"></div>
+  </div>
+</div>
+
+<!-- CONTEXT ENGINEERING EVOLUTION -->
+<section class="ctx-section">
+  <div class="section-header">
+    <h2>Context 工程演化轴</h2>
+    <p>Context 管理是贯穿所有阶段的隐形主线——从无管理到不可逆压缩再到持久可回溯</p>
+  </div>
+
+  <div class="ctx-thermo">
+    <div class="ctx-stage">
+      <div class="ctx-stage-val">2K</div>
+      <div class="ctx-stage-title">无管理</div>
+      <div class="ctx-stage-sub">context = 对话本身<br>无需任何处理</div>
+      <div class="ctx-usage-bar"></div>
+    </div>
+    <div class="ctx-stage">
+      <div class="ctx-stage-val">20K</div>
+      <div class="ctx-stage-title">线性膨胀</div>
+      <div class="ctx-stage-sub">工具结果累积<br>逼近窗口上限</div>
+      <div class="ctx-usage-bar"></div>
+    </div>
+    <div class="ctx-stage">
+      <div class="ctx-stage-val">50K</div>
+      <div class="ctx-stage-title">静态填充</div>
+      <div class="ctx-stage-sub">MCP 定义全部注入<br>15-25% 窗口浪费</div>
+      <div class="ctx-usage-bar"></div>
+    </div>
+    <div class="ctx-stage">
+      <div class="ctx-stage-val">100K</div>
+      <div class="ctx-stage-title">6层压缩</div>
+      <div class="ctx-stage-sub">不可逆 compaction<br>信息永久丢失</div>
+      <div class="ctx-usage-bar"></div>
+    </div>
+    <div class="ctx-stage">
+      <div class="ctx-stage-val">&infin;</div>
+      <div class="ctx-stage-title">持久可回溯</div>
+      <div class="ctx-stage-sub">Session as Context<br>按需切片读取</div>
+      <div class="ctx-usage-bar"></div>
+    </div>
+  </div>
+
+  <div class="ctx-detail-grid">
+    <div class="ctx-detail-card">
+      <h4>Phase 1-2 : 无管理期</h4>
+      <p>开发者手动拼接消息数组，没有自动裁剪。200K 窗口是硬天花板，超出即报错。</p>
+      <span class="ctx-tech">messages[]</span>
+      <span class="ctx-tech">200K limit</span>
+    </div>
+    <div class="ctx-detail-card">
+      <h4>Phase 3 : Context 膨胀危机</h4>
+      <p>MCP 工具定义注入 system prompt，连接越多 Server 越占空间。用户开始意识到需要"context 预算"。</p>
+      <span class="ctx-tech">tool schema</span>
+      <span class="ctx-tech">static injection</span>
+    </div>
+    <div class="ctx-detail-card">
+      <h4>Phase 4 : Compaction 管线</h4>
+      <p>Claude Code 建立 6 层压缩：Tool Result Budget → Snip → Microcompact → Context Collapse → Auto-compact → Reactive Compact。Prompt Caching 减少重复 context 成本。</p>
+      <span class="ctx-tech">autoCompact()</span>
+      <span class="ctx-tech">prompt caching</span>
+      <span class="ctx-tech">/context</span>
+    </div>
+    <div class="ctx-detail-card">
+      <h4>Phase 5 : 渐进式披露</h4>
+      <p>Skills 只注入描述（~25 token），触发时才展开全文。Tool Search 动态加载 MCP 工具。Context 从"预分配"变为"按需装配"。</p>
+      <span class="ctx-tech">lazy loading</span>
+      <span class="ctx-tech">tool search</span>
+      <span class="ctx-tech">100x saving</span>
+    </div>
+    <div class="ctx-detail-card">
+      <h4>Phase 6 : Session as Context</h4>
+      <p>Session &ne; Context Window。append-only event log 持久化全部交互。Harness 通过 getEvents() 按需切片读取，可回溯任意时刻。Compaction 只影响 context 视图，不影响 session 数据。</p>
+      <span class="ctx-tech">getEvents()</span>
+      <span class="ctx-tech">session log</span>
+      <span class="ctx-tech">rewind</span>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section class="arch-section">
+  <div class="section-header">
+    <h2>可组合层架构</h2>
+    <p>每一层都是独立可选的模块，解决前一层留下的缺口</p>
+  </div>
+  <div class="arch-grid">
+    <div class="arch-cell"><span class="arch-icon">&#x1F9E0;</span><div class="arch-label">Model</div><div class="arch-year">2023 &mdash;</div></div>
+    <div class="arch-cell"><span class="arch-icon">&#x1F4DC;</span><div class="arch-label">System Prompt</div><div class="arch-year">2023 &mdash;</div></div>
+    <div class="arch-cell"><span class="arch-icon">&#x1F527;</span><div class="arch-label">Tools</div><div class="arch-year">2024.03 &mdash;</div></div>
+    <div class="arch-cell"><span class="arch-icon">&#x1F50C;</span><div class="arch-label">MCP Servers</div><div class="arch-year">2024.11 &mdash;</div></div>
+    <div class="arch-cell"><span class="arch-icon">&#x26A1;</span><div class="arch-label">Skills</div><div class="arch-year">2025.10 &mdash;</div></div>
+    <div class="arch-cell"><span class="arch-icon">&#x2601;&#xFE0F;</span><div class="arch-label">Managed Infra</div><div class="arch-year">2026.04 &mdash;</div></div>
+  </div>
+</section>
+
+<!-- MOTIVATION -->
+<section class="motivation-section">
+  <div class="section-header">
+    <h2>驱动演化的问题链</h2>
+    <p>每一层的添加都源于上一层留下的缺口</p>
+  </div>
+  <table class="motivation-table">
+    <thead><tr><th>新增层</th><th></th><th>因为上一层的问题</th></tr></thead>
+    <tbody>
+      <tr><td class="add-col">+ Tools</td><td class="arrow-col">&larr;</td><td class="problem-col">模型只能输出文字，无法采取行动</td></tr>
+      <tr><td class="add-col">+ MCP</td><td class="arrow-col">&larr;</td><td class="problem-col">工具连接没有标准，每个集成都是自定义开发</td></tr>
+      <tr><td class="add-col">+ Harness (Claude Code)</td><td class="arrow-col">&larr;</td><td class="problem-col">每个开发者都在重复造 agent loop 的轮子</td></tr>
+      <tr><td class="add-col">+ Skills</td><td class="arrow-col">&larr;</td><td class="problem-col">MCP 工具定义太大，撑爆 context window</td></tr>
+      <tr><td class="add-col">+ Managed Agents</td><td class="arrow-col">&larr;</td><td class="problem-col">自建 harness + sandbox + session 管理太复杂</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- FOOTER -->
+<div class="footer">
+  <p>基于 Anthropic 官方文档、工程博客及 Claude Code 源码分析整理 &middot; 2026.04</p>
+  <p style="margin-top:8px;">
+    <a href="https://www.anthropic.com/engineering/managed-agents" target="_blank">Scaling Managed Agents</a> &middot;
+    <a href="https://www.anthropic.com/research/building-effective-agents" target="_blank">Building Effective Agents</a> &middot;
+    <a href="https://platform.claude.com/docs/en/managed-agents/overview" target="_blank">Managed Agents Docs</a>
+  </p>
+</div>
+
+<script>
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => { if (entry.isIntersecting) entry.target.classList.add('visible'); });
+}, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.phase').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

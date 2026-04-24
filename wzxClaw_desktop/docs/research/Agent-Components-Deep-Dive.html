@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 组件深度解析</title>
+<style>
+:root{--bg:#0a0a0f;--bg2:#12121a;--card:#1a1a2e;--border:#2a2a40;--border2:#4a4a6a;--t1:#e8e8f0;--t2:#9898b0;--t3:#6868a0;--cyan:#06b6d4;--blue:#3b82f6;--purple:#8b5cf6;--green:#10b981;--amber:#f59e0b;--rose:#f43f5e;--pink:#ec4899;--indigo:#6366f1}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--t1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6}
+/* Nav */
+.nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:0;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.nav-logo{font-weight:700;font-size:15px;padding:16px 20px 16px 0;white-space:nowrap;color:var(--t1);border-right:1px solid var(--border);margin-right:8px}
+.nav-tab{padding:14px 18px;font-size:13px;font-weight:500;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap}
+.nav-tab:hover{color:var(--t2)}
+.nav-tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+/* Hero */
+.hero{padding:48px 32px 32px;text-align:center;border-bottom:1px solid var(--border)}
+.hero h1{font-size:32px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg,#e8e8f0,#a78bfa,#6366f1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{color:var(--t2);font-size:15px;max-width:600px;margin:0 auto}
+.formula{display:inline-flex;align-items:center;gap:5px;padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-family:'SF Mono','Cascadia Code',monospace;font-size:13px;margin-top:16px}
+.formula .eq{color:var(--purple);font-weight:600}
+.formula .op{color:var(--t3)}
+.formula .c{padding:2px 8px;border-radius:4px;font-weight:500}
+.c-m{background:rgba(99,102,241,.15);color:#a5b4fc}.c-p{background:rgba(59,130,246,.15);color:#93c5fd}.c-t{background:rgba(6,182,212,.15);color:#67e8f9}.c-c{background:rgba(16,185,129,.15);color:#6ee7b7}.c-k{background:rgba(245,158,11,.15);color:#fcd34d}.c-x{background:rgba(236,72,153,.15);color:#f9a8d4}
+/* Content */
+.wrap{max-width:960px;margin:0 auto;padding:32px 24px 80px}
+.tab{display:none}.tab.active{display:block}
+.tab h2{font-size:22px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:10px}
+.tab h2 .badge{font-size:11px;padding:3px 8px;border-radius:4px;font-weight:600}
+.tab h3{font-size:16px;font-weight:600;margin:28px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.tab p{color:var(--t2);font-size:14px;margin-bottom:12px;line-height:1.7}
+.tab ul{margin:8px 0 16px 20px;color:var(--t2);font-size:14px}
+.tab li{margin-bottom:4px}
+/* Code */
+pre{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:16px;font-family:'SF Mono','Cascadia Code',monospace;font-size:12.5px;line-height:1.7;overflow-x:auto;margin:12px 0 16px;color:var(--t2)}
+pre .kw{color:var(--rose)}pre .str{color:var(--green)}pre .cmt{color:var(--t3)}pre .fn{color:var(--blue)}pre .prop{color:var(--amber)}pre .hl{color:var(--cyan);font-weight:600}
+/* Loop diagram */
+.loop{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin:16px 0}
+.loop-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:12px}
+.loop-step{display:flex;align-items:flex-start;gap:12px;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.03)}
+.loop-step:last-child{border-bottom:none}
+.loop-num{flex-shrink:0;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff}
+.loop-text{color:var(--t2);font-family:'SF Mono',monospace;font-size:12px;line-height:1.6}
+.loop-text .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;margin:0 2px}
+/* Table */
+.tbl{width:100%;border-collapse:collapse;margin:12px 0 16px;font-size:13px}
+.tbl th{text-align:left;padding:8px 12px;background:rgba(255,255,255,.02);border-bottom:1px solid var(--border);color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.tbl td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.03);color:var(--t2);vertical-align:top}
+.tbl tr:hover td{background:rgba(255,255,255,.015)}
+/* Flow */
+.flow{display:flex;flex-direction:column;gap:0;margin:16px 0}
+.flow-row{display:flex;align-items:center;gap:0}
+.flow-box{padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;text-align:center;min-width:100px;border:1px solid var(--border)}
+.flow-arrow{text-align:center;color:var(--t3);font-size:16px;padding:2px 0}
+/* Comparison */
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+.vs-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.vs-card h4{font-size:13px;margin-bottom:8px}
+.vs-card p{font-size:12px;color:var(--t2);line-height:1.6}
+/* Budget bar */
+.budget{margin:16px 0}
+.budget-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px}
+.budget-label{width:120px;text-align:right;color:var(--t2);flex-shrink:0}
+.budget-bar{flex:1;height:20px;border-radius:4px;position:relative;overflow:hidden}
+.budget-val{font-family:'SF Mono',monospace;font-size:11px;color:var(--t3);width:70px;flex-shrink:0}
+/* Footer */
+.foot{text-align:center;padding:24px;border-top:1px solid var(--border);color:var(--t3);font-size:12px}
+@media(max-width:768px){.wrap{padding:20px 16px 60px}.nav{padding:0 12px}.nav-tab{padding:12px 12px;font-size:12px}.hero h1{font-size:24px}.formula{font-size:11px}.vs{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-logo">Agent 组件</div>
+  <div class="nav-tab active" data-tab="model">Model</div>
+  <div class="nav-tab" data-tab="prompt">System Prompt</div>
+  <div class="nav-tab" data-tab="tools">Tools</div>
+  <div class="nav-tab" data-tab="mcp">MCP Servers</div>
+  <div class="nav-tab" data-tab="skills">Skills</div>
+  <div class="nav-tab" data-tab="context">Context</div>
+</div>
+
+<div class="hero">
+  <h1>Agent 组件深度解析</h1>
+  <p>Agent = Model + System Prompt + Tools + MCP Servers + Skills，Context 管理贯穿始终</p>
+  <div class="formula">
+    <span class="eq">Agent</span><span class="op">=</span>
+    <span class="c c-m">Model</span><span class="op">+</span>
+    <span class="c c-p">Prompt</span><span class="op">+</span>
+    <span class="c c-t">Tools</span><span class="op">+</span>
+    <span class="c c-c">MCP</span><span class="op">+</span>
+    <span class="c c-k">Skills</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- ============ MODEL ============ -->
+<div class="tab active" id="model">
+  <h2>Model <span class="badge" style="background:rgba(99,102,241,.15);color:#a5b4fc">核心引擎</span></h2>
+  <p>Model 是 Agent 的大脑。在 Agent Loop 中，每轮循环的核心动作就是调用 LLM API，传入当前 context（system prompt + 消息历史 + 工具定义），获取模型的下一步决策。</p>
+
+  <h3>Agent Loop 中的位置</h3>
+  <div class="loop">
+    <div class="loop-title">Agent Loop — Model 调用时机</div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--indigo)">1</div><div class="loop-text">context 管理（compaction、caching）</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--blue)">2</div><div class="loop-text"><span class="hl">response = await callModel(messages, tools, options)</span> ← Model 调用</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--cyan)">3</div><div class="loop-text">解析 response：提取 text + tool_use blocks</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--green)">4</div><div class="loop-text">如果有 tool_use → 执行工具 → push tool_result → <span class="tag" style="background:rgba(245,158,11,.12);color:#fcd34d">continue loop</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--purple)">5</div><div class="loop-text">如果无 tool_use → 任务完成 → <span class="tag" style="background:rgba(16,185,129,.12);color:#6ee7b7">return result</span></div></div>
+  </div>
+
+  <h3>流式调用机制</h3>
+  <p>Agent 使用 SSE 流式接收模型输出，实现"边生成边处理"——工具调用可以在流式响应完成前就开始执行。</p>
+<pre><span class="cmt">// Anthropic SDK 流式调用</span>
+<span class="kw">const</span> stream = client.messages.stream({
+  <span class="prop">model</span>: <span class="str">"claude-sonnet-4-6-20250514"</span>,
+  <span class="prop">max_tokens</span>: <span class="str">16000</span>,
+  <span class="prop">system</span>: systemPrompt,
+  <span class="prop">messages</span>: messages,
+  <span class="prop">tools</span>: toolDefinitions,
+});
+
+<span class="kw">for await</span> (<span class="kw">const</span> event <span class="kw">of</span> stream) {
+  <span class="kw">if</span> (event.type === <span class="str">'content_block_delta'</span>) {
+    <span class="cmt">// 文本增量 → 实时显示给用户</span>
+    emitToUI(event.delta.text);
+  }
+  <span class="kw">if</span> (event.type === <span class="str">'content_block_start'</span> && event.content_block.type === <span class="str">'tool_use'</span>) {
+    <span class="cmt">// 工具调用开始 → StreamingToolExecutor 提前启动</span>
+    <span class="fn">startToolEarly</span>(event.content_block);
+  }
+}</pre>
+
+  <h3>多模型路由</h3>
+  <p>Gateway 模式根据模型名称前缀路由到不同 API 后端：</p>
+<pre><span class="cmt">// gateway.ts — 模型路由</span>
+<span class="kw">function</span> <span class="fn">routeModel</span>(model) {
+  <span class="kw">if</span> (model.startsWith(<span class="str">'claude-'</span>))
+    <span class="kw">return</span> anthropicClient;  <span class="cmt">// Anthropic SDK</span>
+  <span class="kw">if</span> (model.startsWith(<span class="str">'deepseek-'</span>))
+    <span class="kw">return</span> <span class="fn">openaiClient</span>({ baseURL: <span class="str">'https://api.deepseek.com'</span> });
+  <span class="kw">if</span> (model.startsWith(<span class="str">'gpt-'</span>))
+    <span class="kw">return</span> openaiClient;  <span class="cmt">// OpenAI SDK</span>
+}</pre>
+
+  <h3>关键参数</h3>
+  <table class="tbl">
+    <tr><th>参数</th><th>作用</th><th>典型值</th></tr>
+    <tr><td>model</td><td>选择模型版本</td><td>claude-sonnet-4-6, deepseek-chat</td></tr>
+    <tr><td>max_tokens</td><td>单次响应上限</td><td>4096 - 16384</td></tr>
+    <tr><td>temperature</td><td>随机性控制</td><td>0 (coding) / 0.3 (chat)</td></tr>
+    <tr><td>tool_choice</td><td>工具选择策略</td><td>auto / any / {name: "Bash"}</td></tr>
+    <tr><td>stream</td><td>是否流式</td><td>true (Agent 必须流式)</td></tr>
+  </table>
+
+  <h3>错误处理三级恢复</h3>
+  <div class="flow">
+    <div class="flow-box" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.2)">prompt-too-long → Reactive Compact 紧急压缩</div>
+    <div class="flow-arrow">↓ 失败</div>
+    <div class="flow-box" style="background:rgba(236,72,153,.08);border-color:rgba(236,72,153,.2)">rate-limit → 指数退避重试 (max 3次)</div>
+    <div class="flow-arrow">↓ 失败</div>
+    <div class="flow-box" style="background:rgba(244,63,94,.08);border-color:rgba(244,63,94,.2)">FallbackTriggeredError → 降级到备用模型</div>
+  </div>
+</div>
+
+<!-- ============ SYSTEM PROMPT ============ -->
+<div class="tab" id="prompt">
+  <h2>System Prompt <span class="badge" style="background:rgba(59,130,246,.15);color:#93c5fd">指令装配</span></h2>
+  <p>System Prompt 是 Agent 的"宪法"——定义身份、能力、约束和行为规范。它不是一段静态文本，而是在每次 Agent Loop 启动时动态组装的。</p>
+
+  <h3>Agent Loop 中的位置</h3>
+  <div class="loop">
+    <div class="loop-title">System Prompt 组装时机</div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--indigo)">0</div><div class="loop-text">Agent Loop 启动前 → <span class="hl">buildSystemPrompt(context)</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--blue)">1</div><div class="loop-text">加载基础指令 + 环境信息 + git 状态</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--cyan)">2</div><div class="loop-text">加载 WZXCLAW.md / CLAUDE.md（项目级 + 用户级）</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--green)">3</div><div class="loop-text">注入 MCP 工具描述 + Skills 描述</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--amber)">4</div><div class="loop-text">插入 CACHE_BOUNDARY 标记（静态/动态分割）</div></div>
+  </div>
+
+  <h3>组装流程</h3>
+<pre><span class="cmt">// system-prompt-builder.ts</span>
+<span class="kw">function</span> <span class="fn">buildSystemPrompt</span>(ctx) {
+  <span class="kw">let</span> prompt = <span class="str">''</span>;
+
+  <span class="cmt">// [1] 基础指令：身份 + 能力 + 约束</span>
+  prompt += BASE_INSTRUCTIONS;     <span class="cmt">// ~8K tokens, 可缓存</span>
+
+  <span class="cmt">// [2] 环境信息：OS、shell、CWD、git branch</span>
+  prompt += <span class="fn">formatEnvironment</span>(ctx);
+
+  <span class="cmt">// [3] WZXCLAW.md 记忆文件（8 级加载链）</span>
+  prompt += <span class="fn">loadMemoryFiles</span>(ctx.projectRoot);
+  <span class="cmt">// → ~/.wzxclaw/WZXCLAW.md (global)</span>
+  <span class="cmt">// → project/WZXCLAW.md (project)</span>
+  <span class="cmt">// → project/.wzxclaw/WZXCLAW.md (local)</span>
+
+  <span class="cmt">// [4] Cache 边界 — 此前内容可被缓存</span>
+  prompt += <span class="str">'[CACHE_BOUNDARY]'</span>;
+
+  <span class="cmt">// [5] 动态内容（每轮可能变化）</span>
+  prompt += <span class="fn">formatMCPTools</span>(ctx.mcpTools);
+  prompt += <span class="fn">formatSkills</span>(ctx.skills);
+  prompt += <span class="fn">formatTaskContext</span>(ctx.currentTask);
+
+  <span class="kw">return</span> prompt;
+}</pre>
+
+  <h3>Prompt Caching 优化</h3>
+  <table class="tbl">
+    <tr><th>区域</th><th>内容</th><th>是否缓存</th><th>大小</th></tr>
+    <tr><td>静态前缀</td><td>基础指令 + WZXCLAW.md + 环境信息</td><td>是 (50% 折扣)</td><td>~10-15K</td></tr>
+    <tr><td>Cache 边界</td><td>[CACHE_BOUNDARY] 标记</td><td>分割点</td><td>-</td></tr>
+    <tr><td>动态后缀</td><td>MCP 工具 + Skills + 任务上下文</td><td>否</td><td>~5-50K</td></tr>
+  </table>
+</div>
+
+<!-- ============ TOOLS ============ -->
+<div class="tab" id="tools">
+  <h2>Tools <span class="badge" style="background:rgba(6,182,212,.15);color:#67e8f9">行动能力</span></h2>
+  <p>Tools 是 Agent 的"手"——让模型能读写文件、执行命令、搜索代码。没有 Tools，模型只能说话不能行动。</p>
+
+  <h3>Agent Loop 中的位置</h3>
+  <div class="loop">
+    <div class="loop-title">Tool 调度全流程</div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--indigo)">1</div><div class="loop-text">Model 返回 response → 解析出 tool_use blocks</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--blue)">2</div><div class="loop-text">StreamingToolExecutor：<span class="hl">流式接收时就开始执行并发安全工具</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--cyan)">3</div><div class="loop-text">partition(tools) → 并发安全组（并行） + 非安全组（串行）</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--green)">4</div><div class="loop-text">PreToolUse hook → 权限检查 → <span class="fn">tool.call(args)</span> → PostToolUse hook</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--amber)">5</div><div class="loop-text">结果截断（maxResultSizeChars）→ 包装为 tool_result → push 到 messages</div></div>
+  </div>
+
+  <h3>Tool 接口定义</h3>
+<pre><span class="cmt">// 每个工具必须实现的标准接口</span>
+<span class="kw">interface</span> <span class="fn">Tool</span>&lt;Input, Output&gt; {
+  <span class="prop">name</span>: <span class="str">string</span>;           <span class="cmt">// "Bash", "FileRead", "Grep"...</span>
+  <span class="prop">description</span>: <span class="str">string</span>;    <span class="cmt">// 给模型看的说明</span>
+  <span class="prop">inputSchema</span>: <span class="str">JSONSchema</span>; <span class="cmt">// Zod schema → JSON Schema</span>
+
+  <span class="fn">call</span>(args, ctx): <span class="str">Promise</span>&lt;ToolResult&gt;;
+  <span class="fn">isConcurrencySafe</span>(args): <span class="str">boolean</span>;  <span class="cmt">// 能否并行</span>
+  <span class="fn">isReadOnly</span>(args): <span class="str">boolean</span>;        <span class="cmt">// 只读？</span>
+  <span class="prop">maxResultSizeChars</span>: <span class="str">number</span>;     <span class="cmt">// 结果截断上限</span>
+}</pre>
+
+  <h3>调度策略：并行 vs 串行</h3>
+<pre><span class="cmt">// streaming-tool-executor.ts</span>
+<span class="kw">function</span> <span class="fn">partitionAndExecute</span>(toolCalls) {
+  <span class="kw">const</span> safe = toolCalls.filter(t => t.isConcurrencySafe);   <span class="cmt">// Read, Grep, Glob</span>
+  <span class="kw">const</span> unsafe = toolCalls.filter(t => !t.isConcurrencySafe); <span class="cmt">// Write, Edit, Bash</span>
+
+  <span class="cmt">// 并发安全工具 → Promise.allSettled 并行</span>
+  <span class="kw">const</span> safeResults = <span class="kw">await</span> Promise.allSettled(
+    safe.map(t => <span class="fn">executeWithHooks</span>(t))
+  );
+
+  <span class="cmt">// 非并发安全工具 → for...of 串行</span>
+  <span class="kw">const</span> unsafeResults = [];
+  <span class="kw">for</span> (<span class="kw">const</span> t <span class="kw">of</span> unsafe) {
+    unsafeResults.push(<span class="kw">await</span> <span class="fn">executeWithHooks</span>(t));
+  }
+
+  <span class="kw">return</span> [...safeResults, ...unsafeResults];
+}</pre>
+
+  <h3>工具分类</h3>
+  <table class="tbl">
+    <tr><th>类别</th><th>工具</th><th>并发安全</th><th>只读</th></tr>
+    <tr><td>文件读取</td><td>FileRead, Glob, Grep</td><td>是</td><td>是</td></tr>
+    <tr><td>文件写入</td><td>FileWrite, FileEdit</td><td>否</td><td>否</td></tr>
+    <tr><td>命令执行</td><td>Bash</td><td>否</td><td>否</td></tr>
+    <tr><td>代码搜索</td><td>SemanticSearch, Symbol</td><td>是</td><td>是</td></tr>
+    <tr><td>网络</td><td>WebSearch, WebFetch, Browser</td><td>是</td><td>是</td></tr>
+    <tr><td>子代理</td><td>Agent (subagent)</td><td>否</td><td>视情况</td></tr>
+  </table>
+
+  <h3>权限模式</h3>
+  <table class="tbl">
+    <tr><th>模式</th><th>行为</th></tr>
+    <tr><td>always-ask</td><td>每次工具调用都需用户确认</td></tr>
+    <tr><td>accept-edits</td><td>自动允许读写操作，危险命令仍需确认</td></tr>
+    <tr><td>plan</td><td>只规划不执行，不调用任何工具</td></tr>
+    <tr><td>bypass</td><td>跳过所有权限检查（CI/自动化场景）</td></tr>
+  </table>
+</div>
+
+<!-- ============ MCP SERVERS ============ -->
+<div class="tab" id="mcp">
+  <h2>MCP Servers <span class="badge" style="background:rgba(16,185,129,.15);color:#6ee7b7">外部连接</span></h2>
+  <p>MCP (Model Context Protocol) 是 AI 应用连接外部工具的标准化协议。它让工具集成从"每个自定义"变为"一次接入，处处可用"。</p>
+
+  <h3>架构：Client-Server 模型</h3>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box" style="flex:1;background:rgba(99,102,241,.06);border-color:rgba(99,102,241,.2)">Agent Loop<br><small style="color:var(--t3)">tool_use → MCP 工具名匹配</small></div>
+      <div style="padding:0 12px;color:var(--t3)">→</div>
+      <div class="flow-box" style="flex:1;background:rgba(6,182,212,.06);border-color:rgba(6,182,212,.2)">MCP Client<br><small style="color:var(--t3)">callTool(name, args)</small></div>
+      <div style="padding:0 12px;color:var(--t3)">→</div>
+      <div class="flow-box" style="flex:1;background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.2)">MCP Server<br><small style="color:var(--t3)">stdio / HTTP / SSE</small></div>
+    </div>
+  </div>
+
+  <h3>连接生命周期</h3>
+  <div class="loop">
+    <div class="loop-title">MCP 连接 → 发现 → 注入 → 调用</div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--green)">1</div><div class="loop-text"><span class="hl">connect(serverConfig)</span> → 启动子进程或 HTTP 连接</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--cyan)">2</div><div class="loop-text"><span class="hl">client.listTools()</span> → 获取工具列表 (name + description + inputSchema)</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--blue)">3</div><div class="loop-text">包装为 Agent Tool 接口 → 注入到 <span class="tag" style="background:rgba(59,130,246,.12);color:#93c5fd">system prompt</span> 工具定义区</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--amber)">4</div><div class="loop-text">Agent Loop 中 → Model 返回 tool_use for MCP tool → <span class="hl">client.callTool(name, args)</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--rose)">5</div><div class="loop-text">结果包装为 tool_result → 返回给 Model</div></div>
+  </div>
+
+  <h3>代码层面：工具发现与注册</h3>
+<pre><span class="cmt">// 启动时连接所有 MCP Server</span>
+<span class="kw">async function</span> <span class="fn">connectMCPServers</span>(config) {
+  <span class="kw">for</span> (<span class="kw">const</span> server <span class="kw">of</span> config.servers) {
+    <span class="kw">const</span> client = <span class="kw">await</span> <span class="fn">connect</span>(server);
+    <span class="kw">const</span> tools = <span class="kw">await</span> client.<span class="fn">listTools</span>();
+
+    <span class="cmt">// 包装为标准 Tool 接口</span>
+    <span class="kw">for</span> (<span class="kw">const</span> tool <span class="kw">of</span> tools) {
+      registry.<span class="fn">register</span>({
+        <span class="prop">name</span>: <span class="str">`mcp_${server.name}_${tool.name}`</span>,
+        <span class="prop">description</span>: tool.description,
+        <span class="prop">inputSchema</span>: tool.inputSchema,
+        <span class="fn">call</span>: (args) => client.<span class="fn">callTool</span>(tool.name, args),
+      });
+    }
+  }
+}</pre>
+
+  <h3>Context 占用问题</h3>
+  <p>每个 MCP Server 的工具 schema 全量注入 system prompt。连接越多 Server，context 越膨胀：</p>
+  <table class="tbl">
+    <tr><th>MCP Server 数</th><th>工具定义占用</th><th>占 200K 窗口</th></tr>
+    <tr><td>1</td><td>~2K tokens</td><td>1%</td></tr>
+    <tr><td>5</td><td>~10K tokens</td><td>5%</td></tr>
+    <tr><td>20</td><td>~50K tokens</td><td>25%</td></tr>
+  </table>
+  <p><strong>解决方案</strong>：Tool Search 动态加载 — 只在模型需要时才加载 MCP 工具定义，不预先全量注入。</p>
+</div>
+
+<!-- ============ SKILLS ============ -->
+<div class="tab" id="skills">
+  <h2>Skills <span class="badge" style="background:rgba(245,158,11,.15);color:#fcd34d">渐进式上下文</span></h2>
+  <p>Skills 是"按需展开的能力包"——注册时只占几十 token，触发时才注入完整指令。解决 MCP 工具定义膨胀 context 的核心问题。</p>
+
+  <h3>注册 vs 展开：两个阶段</h3>
+  <div class="vs">
+    <div class="vs-card" style="border-top:2px solid var(--green)">
+      <h4 style="color:#6ee7b7">注册阶段（常驻 Context）</h4>
+      <p>只有 name + description 注入到 Skill 工具定义中。<br><strong>3 个 Skills 只占 ~65 tokens</strong>。</p>
+<pre style="font-size:11px"><span class="cmt">// Skill tool 内嵌的可用列表</span>
+pdf:   <span class="str">"Extract and analyze text from PDFs"</span>  (~25 tk)
+csv:   <span class="str">"Analyze and visualize CSV data"</span>      (~20 tk)
+deploy:<span class="str">"Deploy application to cloud"</span>         (~20 tk)
+<span class="cmt">// Total: ~65 tokens</span></pre>
+    </div>
+    <div class="vs-card" style="border-top:2px solid var(--amber)">
+      <h4 style="color:#fcd34d">展开阶段（按需注入）</h4>
+      <p>Claude 调用 Skill 工具后，SKILL.md 全文 + 脚本路径通过 tool_result 注入。<br><strong>可能 500-2000 tokens</strong>。</p>
+<pre style="font-size:11px"><span class="cmt">// tool_result 返回内容</span>
+<span class="str">"Base Path: ~/.claude/skills/pdf/
+
+# PDF Processing Skill
+Use extract_text.py to extract:
+  python3 extract_text.py &lt;file&gt;
+Then summarize key points..."</span></pre>
+    </div>
+  </div>
+
+  <h3>运行时触发流</h3>
+  <div class="loop">
+    <div class="loop-title">Skills 在 Agent Loop 中的完整触发链</div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--green)">1</div><div class="loop-text">用户：<span class="str">"Extract text from report.pdf"</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--blue)">2</div><div class="loop-text">Model 看到 Skill 工具 + 可用列表 → 判断需要 PDF 能力 → <span class="hl">tool_use: Skill({command: "pdf"})</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--cyan)">3</div><div class="loop-text">Harness 加载 SKILL.md 全文 + 脚本 base path → 返回为 <span class="tag" style="background:rgba(6,182,212,.12);color:#67e8f9">tool_result</span></div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--amber)">4</div><div class="loop-text">Model 现在有了完整 PDF 处理指令 → 调用 <span class="fn">Bash</span>(python3 extract_text.py report.pdf)</div></div>
+    <div class="loop-step"><div class="loop-num" style="background:var(--purple)">5</div><div class="loop-text">按指令总结输出 → 返回结果给用户</div></div>
+  </div>
+
+  <h3>文件结构</h3>
+<pre>.claude/skills/
+├── pdf/
+│   ├── <span class="fn">SKILL.md</span>          <span class="cmt"># frontmatter (name, desc) + body (指令)</span>
+│   ├── extract_text.py   <span class="cmt"># 辅助脚本</span>
+│   └── templates/
+│       └── summary.html
+└── csv/
+    ├── <span class="fn">SKILL.md</span>
+    └── analyze.py</pre>
+
+  <h3>Skills vs MCP 对比</h3>
+  <table class="tbl">
+    <tr><th>维度</th><th>MCP Tools</th><th>Skills</th></tr>
+    <tr><td>加载时机</td><td>启动时全量加载</td><td>按需触发才加载</td></tr>
+    <tr><td>Context 占用</td><td>~2-5K tokens/server</td><td>~25 tokens/skill</td></tr>
+    <tr><td>本质</td><td>外部行动能力</td><td>指令/知识扩展</td></tr>
+    <tr><td>20 个成本</td><td>~50,000 tokens</td><td>~500 tokens (100x 节省)</td></tr>
+  </table>
+</div>
+
+<!-- ============ CONTEXT ============ -->
+<div class="tab" id="context">
+  <h2>Context <span class="badge" style="background:rgba(236,72,153,.15);color:#f9a8d4">隐形主线</span></h2>
+  <p>Context 管理贯穿所有阶段。200K token 的窗口是硬约束——System Prompt、工具定义、消息历史、工具结果全部共享这一空间。Context 工程是 Agent 能否长时间运行的关键。</p>
+
+  <h3>Agent Loop 中的位置</h3>
+  <p>Context 管理<strong>发生在每次 Model 调用之前</strong>——确保输入不超过窗口限制：</p>
+<pre><span class="cmt">// agent-loop.ts — 6 层 context 管理</span>
+<span class="kw">while</span> (!done) {
+  messages = <span class="fn">applyToolResultBudget</span>(messages);    <span class="cmt">// [1] 截断大工具输出</span>
+  messages = <span class="fn">applySnipCompact</span>(messages);          <span class="cmt">// [2] 删除旧轮次</span>
+  messages = <span class="fn">applyMicrocompact</span>(messages);        <span class="cmt">// [3] 压缩工具密集区</span>
+  messages = <span class="fn">applyContextCollapse</span>(messages);      <span class="cmt">// [4] 细粒度折叠</span>
+  messages = <span class="fn">autoCompactIfNeeded</span>(messages);      <span class="cmt">// [5] 超阈值 → subagent 摘要</span>
+
+  response = <span class="kw">await</span> <span class="fn">callModel</span>(messages, tools);    <span class="cmt">// ← 管理后的 context</span>
+
+  <span class="kw">if</span> (response.error == <span class="str">'prompt-too-long'</span>)
+    messages = <span class="fn">reactiveCompact</span>(messages);          <span class="cmt">// [6] 紧急压缩</span>
+}</pre>
+
+  <h3>200K Token 预算分配</h3>
+  <div class="budget">
+    <div class="budget-row"><div class="budget-label">System Prompt</div><div class="budget-bar"><div style="height:100%;width:7%;background:var(--blue);border-radius:4px"></div></div><div class="budget-val">~10-15K</div></div>
+    <div class="budget-row"><div class="budget-label">MCP 工具定义</div><div class="budget-bar"><div style="height:100%;width:20%;background:var(--green);border-radius:4px"></div></div><div class="budget-val">5-50K</div></div>
+    <div class="budget-row"><div class="budget-label">Skills 描述</div><div class="budget-bar"><div style="height:100%;width:2%;background:var(--amber);border-radius:4px"></div></div><div class="budget-val">~0.5K</div></div>
+    <div class="budget-row"><div class="budget-label">对话历史</div><div class="budget-bar"><div style="height:100%;width:55%;background:var(--purple);border-radius:4px"></div></div><div class="budget-val">~100-130K</div></div>
+    <div class="budget-row"><div class="budget-label">安全缓冲</div><div class="budget-bar"><div style="height:100%;width:7%;background:var(--rose);border-radius:4px"></div></div><div class="budget-val">~13K</div></div>
+  </div>
+
+  <h3>6 层压缩管线</h3>
+  <table class="tbl">
+    <tr><th>#</th><th>层名</th><th>触发条件</th><th>动作</th><th>可逆？</th></tr>
+    <tr><td>1</td><td>Tool Result Budget</td><td>工具输出 > 阈值</td><td>截断大输出，替换为摘要</td><td>部分</td></tr>
+    <tr><td>2</td><td>Snip Compact</td><td>历史超过 N 轮</td><td>删除最早的对话轮次</td><td>否</td></tr>
+    <tr><td>3</td><td>Microcompact</td><td>连续工具密集区</td><td>用 cache-edit 压缩近期工具段</td><td>否</td></tr>
+    <tr><td>4</td><td>Context Collapse</td><td>token 接近阈值</td><td>细粒度折叠 + commit-log 重建</td><td>是</td></tr>
+    <tr><td>5</td><td>Auto-compact</td><td>超过阈值 (200K-13K)</td><td>fork subagent 生成摘要替换旧消息</td><td>否</td></tr>
+    <tr><td>6</td><td>Reactive Compact</td><td>prompt-too-long 报错</td><td>紧急压缩 — 最后防线</td><td>否</td></tr>
+  </table>
+
+  <h3>Auto-compact 详解（最重要的压缩层）</h3>
+<pre><span class="cmt">// autoCompact.ts — 超阈值时的核心压缩逻辑</span>
+<span class="kw">async function</span> <span class="fn">autoCompactIfNeeded</span>(messages) {
+  <span class="kw">const</span> tokens = <span class="fn">countTokens</span>(messages);
+  <span class="kw">const</span> threshold = MAX_CONTEXT - <span class="str">13000</span>; <span class="cmt">// 安全缓冲</span>
+
+  <span class="kw">if</span> (tokens > threshold) {
+    <span class="cmt">// Fork 一个无工具的 subagent 来生成摘要</span>
+    <span class="kw">const</span> summary = <span class="kw">await</span> <span class="fn">runForkedAgent</span>({
+      <span class="prop">messages</span>: messages,
+      <span class="prop">task</span>: <span class="str">"Summarize this conversation preserving key facts"</span>,
+      <span class="prop">maxTurns</span>: <span class="str">1</span>,
+      <span class="prop">tools</span>: [],  <span class="cmt">// 不给工具，只做摘要</span>
+    });
+
+    <span class="cmt">// 用摘要替换旧消息，保留最近几轮</span>
+    <span class="kw">return</span> [
+      <span class="fn">systemMsg</span>(<span class="str">`[compacted] ${summary}`</span>),
+      ...recentMessages,
+    ];
+  }
+  <span class="kw">return</span> messages;
+}</pre>
+
+  <h3>Session vs Context Window（Managed Agents 架构）</h3>
+  <div class="vs">
+    <div class="vs-card" style="border-top:2px solid var(--purple)">
+      <h4 style="color:#a78bfa">Context Window（易失）</h4>
+      <p>模型每轮"看到"的内容。有大小限制（200K）。Compaction 是<strong>不可逆</strong>的——压缩后原始信息从 context 永久消失（除非 Session 中有记录）。</p>
+    </div>
+    <div class="vs-card" style="border-top:2px solid var(--pink)">
+      <h4 style="color:#f9a8d4">Session Log（持久）</h4>
+      <p>Append-only event log，记录<strong>所有</strong>交互（包括被 compaction 删除的）。通过 <code style="color:var(--cyan)">getEvents(pos)</code> 可回溯任意时刻。Harness 可以 rewind 重读丢失的上下文。</p>
+    </div>
+  </div>
+
+  <h3>Prompt Caching 节省</h3>
+  <table class="tbl">
+    <tr><th>场景</th><th>无缓存成本</th><th>有缓存成本</th><th>节省</th></tr>
+    <tr><td>25 轮对话（重复 system prompt）</td><td>25 × 12K = 300K input</td><td>12K + 24 × 6K = 156K</td><td>48%</td></tr>
+    <tr><td>长任务 50 轮</td><td>50 × 12K = 600K</td><td>12K + 49 × 6K = 306K</td><td>49%</td></tr>
+  </table>
+</div>
+
+</div>
+
+<div class="foot">
+  Agent 组件深度解析 · 基于 Claude Code 源码分析 · 2026.04 · <a href="agent-components/" style="color:var(--cyan)">查看 MD 文档</a>
+</div>
+
+<script>
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

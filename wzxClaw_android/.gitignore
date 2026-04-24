@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Firebase / FCM credentials
+fcm-service-account.json
+google-services.json
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.lock
+!pubspec.lock
+
+# Android local config (machine-specific)
+android/local.properties
+android/.gradle/
+android/.kotlin/
+
+# Claude Code artifacts
+.claude/
+.planning/
+
+# Stray log files
+*.log
+
+# Firebase
+android/app/google-services.json
+fcm-service-account.json
+relay/fcm-service-account.json

@@ -1,0 +1,13 @@
+{
+  "token-1": {
+    "_format": 2,
+    "desktopQueues": {
+      "faa0993c-45ae-48dd-831f-589da08f1b39": [
+        {
+          "raw": "{\"event\":\"stream:done\",\"data\":{\"content\":\"Task finished\"}}",
+          "timestamp": 1776796270842
+        }
+      ]
+    }
+  }
+}
