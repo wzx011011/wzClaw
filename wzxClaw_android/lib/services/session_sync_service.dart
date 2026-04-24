@@ -426,6 +426,8 @@ class SessionSyncService {
     _isLoading = true;
     _loadingController.add(true);
     final requestId = _nextRequestId();
+    // Bug3修复: 先注册 Completer，再发送消息，避免极速响应到达时找不到对应 requestId
+    _pendingRequests[requestId] = Completer<dynamic>();
     ConnectionManager.instance.send(WsMessage(
       event: WsEvents.sessionListRequest,
       data: {
@@ -434,7 +436,6 @@ class SessionSyncService {
       },
     ),);
     // Timeout — also clean up pending request
-    _pendingRequests[requestId] = Completer<dynamic>();
     Future.delayed(const Duration(seconds: 5), () {
       if (_isLoading) {
         _isLoading = false;

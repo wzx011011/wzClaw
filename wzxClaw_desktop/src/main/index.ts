@@ -463,11 +463,14 @@ app.whenReady().then(async () => {
     const workspaceRoot = workspaceManager.getWorkspaceRoot()
     if (!workspaceRoot || !sessionStore) return
     try {
-      const sessions = await sessionStore.listSessions()
+      // Bug1修复: 使用 getActiveSessionStore() 保证 task-scoped 场景下 sessionCount 准确
+      const activeStore = getActiveSessionStore()
+      const sessions = await activeStore.listSessions()
+      // Bug4修复: 优先使用 settingsManager 记录的桌面最后活跃会话，而非手机侧的 mobileSessionId
       broadcastToMobile('session:workspace:info', {
         workspaceName: path.basename(workspaceRoot),
         workspacePath: workspaceRoot,
-        activeSessionId: mobileSessionId,
+        activeSessionId: settingsManager.getLastSessionId() ?? mobileSessionId,
         sessionCount: sessions.length
       })
     } catch (err) {

@@ -263,9 +263,14 @@ export function registerIpcHandlers(
     settingsManager.updateSettings(request)
   })
 
-  // Save and get last active session ID (for restoring on next app launch)
+  // Save and get last active session ID (for restoring on next app launch).
+  // 同时通知手机：桌面端切换/新建会话时推送 session:changed，让手机刷新会话列表。
   ipcMain.handle(IPC_CHANNELS['session:save-last'], (_event, request: { sessionId: string }) => {
+    const previousId = settingsManager.getLastSessionId()
     settingsManager.setLastSessionId(request.sessionId)
+    if (previousId !== request.sessionId) {
+      onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS['session:get-last'], () => {
