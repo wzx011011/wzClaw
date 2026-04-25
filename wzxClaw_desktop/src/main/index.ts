@@ -111,6 +111,7 @@ function createWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    show: false, // 等 ready-to-show 再显示，消除启动时白屏闪烁
     backgroundColor: '#181818',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -122,6 +123,10 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

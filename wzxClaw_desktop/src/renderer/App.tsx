@@ -1,13 +1,15 @@
-import { useEffect } from 'react'
-import IDELayout from './components/ide/IDELayout'
+import { lazy, Suspense, useEffect } from 'react'
 import TaskHomePage from './components/tasks/TaskHomePage'
-import TaskDetailPage from './components/tasks/TaskDetailPage'
 import { useTaskStore } from './stores/task-store'
 import { useSettingsStore } from './stores/settings-store'
 import './styles/ide.css'
 import './styles/chat.css'
 import './styles/tasks.css'
 import 'highlight.js/styles/vs2015.css'
+
+// 懒加载：IDELayout 拉入 monaco/xterm/allotment 等重量级模块；TaskDetailPage 也按需加载
+const IDELayout = lazy(() => import('./components/ide/IDELayout'))
+const TaskDetailPage = lazy(() => import('./components/tasks/TaskDetailPage'))
 
 function App(): JSX.Element {
   const activeTaskId = useTaskStore((s) => s.activeTaskId)
@@ -19,8 +21,16 @@ function App(): JSX.Element {
     loadSettings()
   }, [])
 
-  if (activeTaskId) return <IDELayout />
-  if (viewingTaskId) return <TaskDetailPage />
+  if (activeTaskId) return (
+    <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
+      <IDELayout />
+    </Suspense>
+  )
+  if (viewingTaskId) return (
+    <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
+      <TaskDetailPage />
+    </Suspense>
+  )
   return <TaskHomePage />
 }
 
