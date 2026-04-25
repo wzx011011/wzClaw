@@ -149,10 +149,10 @@ function renderSymbolNavOutput(toolName: string, output: string): JSX.Element {
 
   const getKindColor = (kind: string): string => {
     const lower = kind.toLowerCase()
-    if (lower.includes('function') || lower.includes('method')) return '#89d185'
+    if (lower.includes('function') || lower.includes('method')) return 'var(--tool-completed)'
     if (lower.includes('class') || lower.includes('interface') || lower.includes('type'))
-      return '#569cd6'
-    return '#9cdcfe'
+      return 'var(--syntax-keyword)'
+    return 'var(--ask-user-accent)'
   }
 
   return (
@@ -160,12 +160,12 @@ function renderSymbolNavOutput(toolName: string, output: string): JSX.Element {
       {results.map((r, i) => (
         <div key={i} className="tool-card-web-result">
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <a className="tool-card-web-url" href="#" title={r.filePath}>
+            <button type="button" className="tool-card-web-url" title={r.filePath}>
               {r.filePath}:{r.line}
-            </a>
+            </button>
             <span
               style={{
-                fontSize: '10px',
+                fontSize: 'var(--font-size-xs)',
                 padding: '1px 6px',
                 borderRadius: '8px',
                 background: `${getKindColor(r.kind)}20`,
@@ -365,7 +365,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
       return (
         <div className="tool-card-section">
           <div className="tool-card-section-label">Query</div>
-          <div className="tool-card-section-content" style={{ fontSize: '11px', fontFamily: 'Consolas, Courier New, monospace' }}>
+          <div className="tool-card-section-content" style={{ fontSize: 'var(--font-size-xs)', fontFamily: 'Consolas, Courier New, monospace' }}>
             {String(input.query)}
           </div>
         </div>
@@ -378,7 +378,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
           <div
             className="tool-card-section-content"
             style={{
-              fontSize: '11px',
+              fontSize: 'var(--font-size-xs)',
               fontFamily: 'Consolas, Courier New, monospace',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -396,7 +396,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
       return (
         <div className="tool-card-section">
           <div className="tool-card-section-label">Symbol</div>
-          <div className="tool-card-section-content" style={{ fontSize: '11px', fontFamily: 'Consolas, Courier New, monospace' }}>
+          <div className="tool-card-section-content" style={{ fontSize: 'var(--font-size-xs)', fontFamily: 'Consolas, Courier New, monospace' }}>
             {symbolName}
             {symFilePath && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>({symFilePath})</span>}
           </div>
@@ -445,7 +445,13 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
 
   return (
     <div className="tool-card">
-      <div className="tool-card-header" onClick={() => setExpanded(!expanded)}>
+      <div
+        className="tool-card-header"
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((v) => !v) } }}
+      >
         <div className="tool-card-header-left">
           <span className="tool-card-name">{name}</span>
           {filePath && <span className="tool-card-path">{filePath}</span>}
@@ -474,7 +480,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
           {/* ExitPlanMode: plan text is displayed in ChatPanel — suppress here */}
           {isExitPlanMode ? (
             <div className="tool-card-section">
-              <div className="tool-card-section-content" style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+              <div className="tool-card-section-content" style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-xs)' }}>
                 {status === 'completed' && !toolCall.isError
                   ? 'Plan approved — proceeding with changes.'
                   : status === 'completed' && toolCall.isError
@@ -550,7 +556,7 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
           {toolCall.subText && status === 'running' && (
             <div className="tool-card-section">
               <div className="tool-card-section-label">Progress</div>
-              <div className="tool-card-section-content" style={{ fontStyle: 'italic', color: 'var(--text-secondary)', fontSize: '11px' }}>
+              <div className="tool-card-section-content" style={{ fontStyle: 'italic', color: 'var(--text-secondary)', fontSize: 'var(--font-size-xs)' }}>
                 {toolCall.subText.split('\n').slice(-5).join('\n')}
               </div>
             </div>
