@@ -1789,6 +1789,37 @@ html, body, #root {
   color: var(--text-primary);
 }
 
+/* ============================================================
+   Accessibility & Motion preferences
+   ============================================================ */
+
+/* Keyboard-focus visibility — only show outline for keyboard users.
+   配合现有的 `outline: none` 规则，使鼠标点击不显示外框，
+   但 Tab/Shift+Tab 键盘导航时获得清晰的聚焦反馈。 */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 尊重用户的"减少动效"偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .terminal-container {
   flex: 1;
   overflow: hidden;
@@ -2020,4 +2051,35 @@ html, body, #root {
   font-size: 10px;
   color: var(--text-muted);
   margin-left: auto;
+}
+
+
+/* ============================================================
+   Accessibility & Motion preferences (added)
+   ============================================================ */
+
+/* Keyboard-focus visibility — only show outline for keyboard users.
+   pairs with the existing outline: none rules to keep mouse/click clean. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Honor user's "reduce motion" preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

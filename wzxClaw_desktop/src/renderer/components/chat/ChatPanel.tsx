@@ -56,7 +56,6 @@ export default function ChatPanel(): JSX.Element {
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const streamJustEnded = useChatStore((s) => s.streamJustEnded)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const activeSessionId = useChatStore((s) => s.activeSessionId)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)

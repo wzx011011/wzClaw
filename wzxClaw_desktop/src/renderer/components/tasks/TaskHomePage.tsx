@@ -90,9 +90,7 @@ export default function TaskHomePage(): JSX.Element {
   }
 
   const handleDelete = (taskId: string) => {
-    if (confirm('确定要删除这个任务吗？此操作不可撤销。')) {
-      deleteTask(taskId)
-    }
+    // \u5220\u9664\u786e\u8ba4\u73b0\u5728\u5728 TaskCard \u5185\u8054\u5b8c\u6210\uff0c\u907f\u514d\u539f\u751f confirm() \u7a81\u5151\u7684\u4f53\u9a8c\n    deleteTask(taskId)
   }
 
   const handleRename = (taskId: string, newTitle: string) => {

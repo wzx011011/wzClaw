@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { Task } from '../../../shared/types'
 
 interface TaskCardProps {
@@ -12,7 +12,15 @@ interface TaskCardProps {
 export default function TaskCard({ task, onOpen, onArchive, onDelete, onRename }: TaskCardProps): JSX.Element {
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(task.title)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timeAgo = formatTimeAgo(task.updatedAt)
+
+  // 内联确认 5 秒后自动取消，防止误点后遗留状态
+  useEffect(() => {
+    if (!confirmingDelete) return
+    const t = window.setTimeout(() => setConfirmingDelete(false), 5000)
+    return () => window.clearTimeout(t)
+  }, [confirmingDelete])
 
   const handleRenameSubmit = () => {
     const trimmed = renameValue.trim()
@@ -58,13 +66,32 @@ export default function TaskCard({ task, onOpen, onArchive, onDelete, onRename }
           >
             {task.archived ? '↩' : '📦'}
           </button>
-          <button
-            className="task-card-btn task-card-btn-danger"
-            title="删除"
-            onClick={() => onDelete(task.id)}
-          >
-            ✕
-          </button>
+          {confirmingDelete ? (
+            <>
+              <button
+                className="task-card-btn task-card-btn-danger"
+                title="确认删除"
+                onClick={() => { onDelete(task.id); setConfirmingDelete(false) }}
+              >
+                ✓
+              </button>
+              <button
+                className="task-card-btn"
+                title="取消"
+                onClick={() => setConfirmingDelete(false)}
+              >
+                ↩
+              </button>
+            </>
+          ) : (
+            <button
+              className="task-card-btn task-card-btn-danger"
+              title="删除"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
       {task.description && (

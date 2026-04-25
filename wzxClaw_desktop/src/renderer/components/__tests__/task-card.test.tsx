@@ -59,7 +59,9 @@ describe('TaskCard', () => {
     const user = userEvent.setup()
     render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
+    // First click triggers inline confirmation; second click confirms.
     await user.click(screen.getByTitle('删除'))
+    await user.click(screen.getByTitle('确认删除'))
     expect(onDelete).toHaveBeenCalledWith('task-1')
   })
 
