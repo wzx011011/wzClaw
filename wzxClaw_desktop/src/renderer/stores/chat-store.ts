@@ -159,6 +159,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     textBatchBuffer = ''
     if (!batch) return
 
+    // 会话切换后 isStreaming/streamingMessageId 都被清零，丢弃残留文本
+    if (!get().isStreaming && !get().streamingMessageId) return
+
     const { messages, streamingMessageId } = get()
     const nextMessages = streamingMessageId
       ? updateMessageById(messages, streamingMessageId, (message) => ({
@@ -237,6 +240,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
       set((state) => {
+        // 会话切换后丢弃残留的 thinking 事件，避免创建孤儿消息
+        if (!state.isStreaming && !state.streamingMessageId) return state
+
         const { messages } = state
         const streamingMessageId = state.streamingMessageId
         const nextMessages = streamingMessageId
@@ -273,6 +279,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
       flushTextBatch()
       set((state) => {
+        // 会话切换后丢弃残留的 tool_start 事件，避免创建孤儿消息
+        if (!state.isStreaming && !state.streamingMessageId) return state
+
         const { messages } = state
         const streamingMessageId = state.streamingMessageId
         const nextMessages = streamingMessageId
@@ -887,16 +896,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * No-op if switching to the same session.
    */
   switchSession: async (sessionId: string) => {
-    flushTextBatch()
-    const { activeSessionId, messages, conversationId, loadingSessionId } = get()
+    // 丢弃未刷新的文本缓冲，而非刷入（切换后这些文本属于旧会话）
+    resetTextBatch()
+    const { activeSessionId, messages, conversationId, loadingSessionId, isStreaming } = get()
 
     // No-op if switching to same session, or the same load is already in flight.
     if (activeSessionId === sessionId || loadingSessionId === sessionId) return
+
+    // 中断正在进行的生成，避免切换后残留流式事件污染新会话
+    if (isStreaming) {
+      try { await window.wzxclaw.stopGeneration() } catch {}
+    }
 
     // Save current messages to cache and apply LRU eviction
     let newCache = { ...get().sessionsCache }
     newCache[conversationId] = messages
     newCache = touchSession(newCache, conversationId)
+
+    // 完整重置所有流式和会话级状态，防止旧会话状态泄漏
+    const cleanState = {
+      isStreaming: false,
+      isWaitingForResponse: false,
+      streamJustEnded: false,
+      streamingMessageId: null as string | null,
+      pendingMentions: [] as MentionItem[],
+      currentTodos: [] as Array<{ content: string; status: string; activeForm: string }>,
+      currentTokenUsage: null as { inputTokens: number; outputTokens: number } | null,
+      error: null as string | null
+    }
 
     // Check cache first
     const cached = newCache[sessionId]
@@ -907,21 +934,22 @@ export const useChatStore = create<ChatStore>((set, get) => {
         conversationId: sessionId,
         activeSessionId: sessionId,
         sessionsCache: touchedCache,
-        streamingMessageId: null,
         isLoadingSession: false,
-        loadingSessionId: null
+        loadingSessionId: null,
+        ...cleanState
       })
     } else {
       // Load from IPC — show loading skeleton during IPC round-trip
       set({
         isLoadingSession: true,
         loadingSessionId: sessionId,
-        messages: []
+        messages: [],
+        conversationId: sessionId,
+        activeSessionId: sessionId,
+        ...cleanState
       })
-      const prevError = get().error
       await get().loadSession(sessionId)
-      if (get().loadingSessionId === sessionId &&
-        (!get().error || get().error === prevError)) {
+      if (get().loadingSessionId === sessionId) {
         const touchedCache = touchSession(newCache, sessionId)
         set({
           activeSessionId: sessionId,
@@ -929,8 +957,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isLoadingSession: false,
           loadingSessionId: null
         })
-      } else if (get().loadingSessionId === sessionId) {
-        set({ isLoadingSession: false, loadingSessionId: null })
       }
     }
 

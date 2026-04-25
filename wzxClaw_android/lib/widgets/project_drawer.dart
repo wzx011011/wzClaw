@@ -354,6 +354,7 @@ class ProjectDrawer extends StatelessWidget {
                     if (result != null) {
                       final sessionId = result['id'] as String?;
                       if (sessionId != null) {
+                        SessionSyncService.instance.setActiveSession(sessionId);
                         ChatStore.instance.switchToSession(sessionId);
                         if (context.mounted) Navigator.pop(context);
                       }

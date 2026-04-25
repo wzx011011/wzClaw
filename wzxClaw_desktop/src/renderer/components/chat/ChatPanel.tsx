@@ -22,7 +22,7 @@ import {
   INITIAL_HISTORY_RENDER_COUNT,
   shouldWindowHistory,
 } from './history-window'
-import { findLastQuestionAboveViewportWithIndex, extractBubbleText } from './sticky-question-utils'
+
 import type { MentionItem } from '../../../shared/types'
 
 // ============================================================
@@ -80,12 +80,6 @@ export default function ChatPanel(): JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
-  const [stickyQuestion, setStickyQuestion] = useState<string | null>(null)
-  const stickyQuestionElRef = useRef<HTMLElement | null>(null)
-  // 导航锁：程序触发 scrollIntoView 期间屏蔽 computeSticky，
-  // 防止 smooth scroll 中间位置重算出幽灵气泡
-  const isNavigatingRef = useRef(false)
-  const navTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previousSessionIdRef = useRef(activeSessionId)
   const previousLoadingSessionRef = useRef(isLoadingSession)
 
@@ -189,38 +183,10 @@ export default function ChatPanel(): JSX.Element {
     }
   }, [streamJustEnded])
 
-  // Track scroll position to detect user scroll-up, and compute sticky question
-  // 使用 useCallback 保证 scroll handler 与 messages-change effect 都能复用同一个计算逻辑。
-  const computeSticky = useCallback((): void => {
-    if (isNavigatingRef.current) return  // 导航锁：程序滚动期间跳过，防止幽灵气泡
-    const container = messagesContainerRef.current
-    if (!container) return
-    const containerTop = container.getBoundingClientRect().top
-    const userBubbles = container.querySelectorAll<HTMLElement>(
-      '.chat-message-user:not(.sticky-question-bubble)'
-    )
-    const bubbleInfos = Array.from(userBubbles).map((el) => ({
-      text: extractBubbleText(el),
-      bottom: el.getBoundingClientRect().bottom,
-      el,
-    })).filter((b) => b.text.length > 0)
-    // 一次遍历同时拿 index 和 text，保证文字与 element 属于同一条气泡
-    // tolerance=0：气泡底部完全离开视口才显示 sticky，确保无重叠也无空白间隙
-    const hit = findLastQuestionAboveViewportWithIndex(bubbleInfos, containerTop, 0)
-    if (hit) {
-      setStickyQuestion(hit.text)
-      stickyQuestionElRef.current = bubbleInfos[hit.index].el
-    } else {
-      setStickyQuestion(null)
-      stickyQuestionElRef.current = null
-    }
-  }, [])
-
+  // Track scroll position to detect user scroll-up
   useEffect(() => {
     const container = messagesContainerRef.current
     if (!container) return
-    // 节流 scroll handler：每帧最多算一次 sticky / scrolledUp，
-    // 避免拖拽窗口或快速滚动时主线程被 getBoundingClientRect 压垮
     let rafId = 0
     const handleScroll = (): void => {
       if (rafId) return
@@ -228,7 +194,6 @@ export default function ChatPanel(): JSX.Element {
         rafId = 0
         const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
         setUserScrolledUp(distanceFromBottom > 100)
-        computeSticky()
       })
     }
     container.addEventListener('scroll', handleScroll, { passive: true })
@@ -236,13 +201,7 @@ export default function ChatPanel(): JSX.Element {
       if (rafId) cancelAnimationFrame(rafId)
       container.removeEventListener('scroll', handleScroll)
     }
-  }, [computeSticky])
-
-  // 会话切换时立即清除 sticky，避免显示上一个会话的问题。
-  useEffect(() => {
-    setStickyQuestion(null)
-    stickyQuestionElRef.current = null
-  }, [activeSessionId])
+  }, [])
 
   useEffect(() => {
     if (previousSessionIdRef.current === activeSessionId) return
@@ -250,6 +209,18 @@ export default function ChatPanel(): JSX.Element {
     previousSessionIdRef.current = activeSessionId
     setHistoryRenderCount(INITIAL_HISTORY_RENDER_COUNT)
     setHistoryWindowed(shouldWindowHistory(messages.length))
+    // 完整重置本地 UI 状态，防止旧会话的 UI 泄漏到新会话
+    setInputValue('')
+    setUserScrolledUp(false)
+    setPendingAskUserQuestions([])
+    setPlanModeActive(false)
+    setPendingPlan(null)
+    setShowMentionPicker(false)
+    setMentionFilter('')
+    setShowSlashPicker(false)
+    setSlashQuery('')
+    setShowThinkingDropdown(false)
+    setShowPermissionDropdown(false)
   }, [activeSessionId, messages.length])
 
   useEffect(() => {
@@ -265,17 +236,6 @@ export default function ChatPanel(): JSX.Element {
       setHistoryWindowed(false)
     }
   }, [messages.length, historyWindowed])
-
-  // messages 变化后下一帧重算 sticky，解决加载时 scroll 不触发、stale 的问题。
-  useEffect(() => {
-    const raf = requestAnimationFrame(computeSticky)
-    return () => cancelAnimationFrame(raf)
-  }, [messages.length, computeSticky])
-
-  // 清理导航锁 timeout，防止组件卸载后 setState
-  useEffect(() => () => {
-    if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
-  }, [])
 
   // Listen for plan mode events from main process
   useEffect(() => {
@@ -496,34 +456,6 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Messages */}
       <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
-        {/* Sticky question — 直接渲染为用户气泡样式，仿佛原始问题被 pin 在顶部 */}
-        {stickyQuestion && (
-          <div className="sticky-question-wrap">
-            <div
-              className="chat-message chat-message-user sticky-question-bubble"
-              onClick={() => {
-                setStickyQuestion(null)              // 立即隐藏
-                isNavigatingRef.current = true       // 上导航锁
-                if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
-                const container = messagesContainerRef.current
-                const target = stickyQuestionElRef.current
-                const unlock = () => {               // 解锁 + 按最终位置重算
-                  isNavigatingRef.current = false
-                  if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
-                  navTimeoutRef.current = null
-                  computeSticky()
-                }
-                // scrollend 精确感知滚动停止；timeout 兜底不支持该事件的环境
-                container?.addEventListener('scrollend', unlock, { once: true })
-                navTimeoutRef.current = setTimeout(unlock, 700)
-                target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }}
-              title="点击定位到原始问题"
-            >
-              {stickyQuestion}
-            </div>
-          </div>
-        )}
         {messages.length === 0 ? (
           isLoadingSession ? (
             <div className="session-loading-skeleton">

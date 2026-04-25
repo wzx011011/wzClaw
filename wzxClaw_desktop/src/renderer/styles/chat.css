@@ -350,39 +350,6 @@
 }
 
 /* ============================================================
-   Sticky Question Bubble — 滚动阅读长回复时，原始问题气泡本身 pin 在顶部
-   视觉与普通 .chat-message-user 一致，让用户感觉就是原始气泡被顶住
-   ============================================================ */
-
-.sticky-question-wrap {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end; /* 右对齐，与用户气泡一致 */
-  pointer-events: none;  /* 允许点击穿透到气泡以外的区域 */
-  margin-bottom: var(--sp-2);
-}
-
-.sticky-question-bubble {
-  pointer-events: auto;
-  cursor: pointer;
-  /* 截断超长内容，避免占据过多视野 */
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  /* 轻入动画 */
-  animation: sticky-bubble-fade-in 0.18s ease;
-}
-
-@keyframes sticky-bubble-fade-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* ============================================================
    Scroll-to-bottom Button
    ============================================================ */
 

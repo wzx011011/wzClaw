@@ -402,6 +402,7 @@ class ChatStore {
 
   // ── stream:agent:permission_request ────────────────────────────────
   void _handlePermissionRequest(dynamic data) {
+    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final request = PermissionRequest(
       toolCallId: map['toolCallId'] as String? ?? '',
@@ -445,6 +446,7 @@ class ChatStore {
 
   // ── stream:agent:plan_mode_entered ────────────────────────────────
   void _handlePlanModeEntered(dynamic data) {
+    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     if (!_planModeController.isClosed) {
       _planModeController.add(map);
@@ -453,6 +455,7 @@ class ChatStore {
 
   // ── stream:agent:plan_mode_exited ─────────────────────────────────
   void _handlePlanModeExited(dynamic data) {
+    if (_isWrongSession(data)) return;
     if (!_planModeController.isClosed) {
       _planModeController.add(null); // null = plan mode ended
     }
@@ -460,6 +463,7 @@ class ChatStore {
 
   // ── stream:retrying ───────────────────────────────────────────────
   void _handleRetrying(dynamic data) {
+    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final attempt = map['attempt'] as int? ?? 1;
     final max = map['maxAttempts'] as int? ?? 3;
@@ -485,6 +489,7 @@ class ChatStore {
 
   // ── stream:agent:ask_user_question ──────────────────────────────────
   void _handleAskUserQuestion(dynamic data) {
+    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final options = (map['options'] as List<dynamic>? ?? [])
         .map((o) {
@@ -524,6 +529,7 @@ class ChatStore {
 
   // ── todo:updated ────────────────────────────────────────────────────
   void _handleTodoUpdated(dynamic data) {
+    if (_isWrongSession(data)) return;
     if (data is! Map) return;
     final todosList = data['todos'] as List<dynamic>?;
     if (todosList == null) return;
@@ -588,9 +594,26 @@ class ChatStore {
       _finalizeStreamingMessage();
     }
 
+    // 完整重置所有流式和会话级状态（与 resetSessionScope 对齐）
+    _isStreaming = false;
+    _setWaiting(false);
+    _streamingMessage = null;
+    _thinkingContent = '';
+    _todos = [];
+    _pendingMessageIds.clear();
+    if (!_permissionController.isClosed) {
+      _permissionController.add(null);
+    }
+    if (!_planModeController.isClosed) {
+      _planModeController.add(null);
+    }
+    if (!_askUserController.isClosed) {
+      _askUserController.add(null);
+    }
+    _thinkingController.add('');
+
     _currentSessionId = sessionId;
     _messages.clear();
-    _streamingMessage = null;
     _persistSessionView(sessionId);
 
     if (sessionId != null) {

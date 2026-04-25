@@ -15,13 +15,13 @@ import fsp from 'fs/promises'
 const { join } = path
 
 // ── Windows 拖拽卡顿修复 ────────────────────────────────────────────
-// `CalculateNativeWinOcclusion` �?Chromium �?Windows 上的窗口遮挡探测特性，
-// 实测会让主线程在窗口拖动 / 长时间运行后周期�?stall，表现为「拖拽卡顿、窗
-// 口无响应几百毫秒」。Electron 官方 issue 已多次记录，禁用后体感明显流畅�?
-// 同时关闭硬件媒体键处理（与本应用无关，但偶发后台占用）�?
+// `CalculateNativeWinOcclusion` �?Chromium �?Windows 上的窗口遮挡探测特性，
+// 实测会让主线程在窗口拖动 / 长时间运行后周期�?stall，表现为「拖拽卡顿、窗
+// 口无响应几百毫秒」。Electron 官方 issue 已多次记录，禁用后体感明显流畅�?
+// 同时关闭硬件媒体键处理（与本应用无关，但偶发后台占用）�?
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling')
 
-// Ignore EPIPE errors on stdout/stderr �?happens when Electron is launched from
+// Ignore EPIPE errors on stdout/stderr �?happens when Electron is launched from
 // a pipe (e.g. Claude Code hook) and the parent process exits while async
 // console.warn / console.log are still writing.
 process.stdout.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err })
@@ -107,7 +107,7 @@ const settingsManager = new SettingsManager()
 const _t0 = Date.now()
 const logStartup = (label: string) => console.log(`[STARTUP] +${Date.now() - _t0}ms  ${label}`)
 
-// NOTE: Single-instance lock REMOVED �?suspected cause of "Not Responding" freeze.
+// NOTE: Single-instance lock REMOVED �?suspected cause of "Not Responding" freeze.
 // app.requestSingleInstanceLock() may interact with GPU/cache mutex on Windows
 // and cause periodic main-thread stalls. Re-enable with a different strategy if
 // multi-instance prevention is needed later.
@@ -118,7 +118,7 @@ function createWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    show: false, // �?ready-to-show 再显示，消除启动时白屏闪�?
+    show: false, // �?ready-to-show 再显示，消除启动时白屏闪�?
     backgroundColor: '#181818',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -137,11 +137,11 @@ function createWindow(): BrowserWindow {
     mainWindow.focus()
   })
 
-  // Fallback: 万一 ready-to-show 因为 renderer 错误未触发，3s 后强制显�?
+  // Fallback: 万一 ready-to-show 因为 renderer 错误未触发，3s 后强制显�?
   // 避免出现「进程在跑但窗口看不见，只能任务管理器结束」的窘境
   const safetyShowTimer = setTimeout(() => {
     if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      console.warn('[STARTUP] ready-to-show 未触发，3s 后兜底显示窗�?)
+      console.warn('[STARTUP] ready-to-show 未触发，3s 后兜底显示窗�?)
       mainWindow.show()
       mainWindow.focus()
     }
@@ -276,10 +276,10 @@ app.whenReady().then(async () => {
   logStartup('app.whenReady fired')
   electronApp.setAppUserModelId('com.wzxclaw')
 
-  // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups�?
+  // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups�?
   await ensureAppDirs()
   logStartup('ensureAppDirs done')
-  // 清理 7 天以上的旧文件（一次性，非热路径�?
+  // 清理 7 天以上的旧文件（一次性，非热路径�?
   cleanOldDebugFiles().catch(() => {})
   cleanOldMediaFiles().catch(() => {})
 
@@ -314,7 +314,7 @@ app.whenReady().then(async () => {
   permissionManager.loadAlwaysAllowRules(settingsManager.getAlwaysAllowRules())
   const contextManager = new ContextManager()
 
-  // Plan mode controller �?shared between tools and IPC handler
+  // Plan mode controller �?shared between tools and IPC handler
   const planModeController = new PlanModeController()
 
   // Sender wrapper for plan-mode tools: broadcasts plan-mode events to mobile alongside renderer
@@ -337,7 +337,7 @@ app.whenReady().then(async () => {
   toolRegistry.register(new EnterPlanModeTool(permissionManager, getPlanModeSender))
   toolRegistry.register(new ExitPlanModeTool(permissionManager, getPlanModeSender, planModeController))
 
-  // Wire TodoWrite �?TaskStore progress sync
+  // Wire TodoWrite �?TaskStore progress sync
   const todoTool = toolRegistry.get('TodoWrite') as import('./tools/todo-write').TodoWriteTool | undefined
   if (todoTool) {
     todoTool.setProgressCallback((taskId, summary) => {
@@ -345,7 +345,7 @@ app.whenReady().then(async () => {
     })
   }
 
-  // AskUserQuestion tool �?interactive question card in chat (Phase 4.2)
+  // AskUserQuestion tool �?interactive question card in chat (Phase 4.2)
   const askUserTool = new AskUserQuestionTool(getWebContents)
   toolRegistry.register(askUserTool)
 
@@ -384,7 +384,7 @@ app.whenReady().then(async () => {
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
 
-  // File history manager �?snapshots files before each AI write for session-scoped revert
+  // File history manager �?snapshots files before each AI write for session-scoped revert
   const historyManager = new FileHistoryManager()
 
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
@@ -396,7 +396,7 @@ app.whenReady().then(async () => {
     console.error('[MCP] Failed to load and connect servers:', err)
   )
 
-  // Register AgentTool (sub-agent) �?must be after registry + agentLoop deps exist
+  // Register AgentTool (sub-agent) �?must be after registry + agentLoop deps exist
   // Pass a getLatestConfig getter so sub-agents always use the current model/provider
   toolRegistry.register(
     new AgentTool(gateway, toolRegistry, permissionManager, contextManager, undefined, {
@@ -449,7 +449,7 @@ app.whenReady().then(async () => {
     settingsManager.setRelayToken('')
   })
 
-  // Session store reference �?assigned after creation below, but captured by closure
+  // Session store reference �?assigned after creation below, but captured by closure
   let sessionStore: SessionStore
   // Track mobile session ID for persisting mobile-initiated conversations
   let mobileSessionId: string | null = null
@@ -495,7 +495,7 @@ app.whenReady().then(async () => {
     const workspaceRoot = workspaceManager.getWorkspaceRoot()
     if (!workspaceRoot || !sessionStore) return
     try {
-      // Bug1修复: 使用 getActiveSessionStore() 保证 task-scoped 场景�?sessionCount 准确
+      // Bug1修复: 使用 getActiveSessionStore() 保证 task-scoped 场景�?sessionCount 准确
       const activeStore = getActiveSessionStore()
       const sessions = await activeStore.listSessions()
       // Bug4修复: 优先使用 settingsManager 记录的桌面最后活跃会话，而非手机侧的 mobileSessionId
@@ -510,11 +510,11 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Dedup set for command:send �?prevents relay-replayed messages from running the agent twice.
-  // Map of messageId �?expiry timestamp (cleaned up lazily on insert).
+  // Dedup set for command:send �?prevents relay-replayed messages from running the agent twice.
+  // Map of messageId �?expiry timestamp (cleaned up lazily on insert).
   const processedMessageIds = new Map<string, number>()
 
-  // Handle mobile client commands �?agent (from relay)
+  // Handle mobile client commands �?agent (from relay)
   const handleClientMessage = async (msg: { clientId: string; event: string; data: any }) => {
     console.log('[handleClientMessage]', msg.clientId, msg.event, JSON.stringify(msg.data)?.substring(0, 200))
     try {
@@ -681,7 +681,7 @@ app.whenReady().then(async () => {
           broadcastToMobile('workspace:switch:response', { requestId, success: false, error: 'Path does not exist' })
           return
         }
-        // Trigger workspace open �?reuses the existing onWorkspaceOpened flow
+        // Trigger workspace open �?reuses the existing onWorkspaceOpened flow
         workspaceManager.setWorkspaceRoot(workspacePath)
         handleWorkspaceOpened(workspacePath, toolRegistry)
         agentLoop.reset()
@@ -1176,7 +1176,7 @@ app.whenReady().then(async () => {
                 break
             }
           }
-          // 串台修复: 在所有流式事件中携带 sessionId，手机端可据此过滤非当前会话的事�?
+          // 串台修复: 在所有流式事件中携带 sessionId，手机端可据此过滤非当前会话的事�?
           relayClient.broadcast(`stream:${agentEvent.type}`, { ...agentEvent, sessionId })
           // Forward TodoWrite structured todo list to mobile
           if (agentEvent.type === 'agent:tool_result' && agentEvent.toolName === 'TodoWrite' && !agentEvent.isError) {
@@ -1246,7 +1246,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC_CHANNELS['relay:qrcode'], async (_e, request?: { token: string }) => {
     let token = request?.token || settingsManager.getRelayToken()
-    // Auto-generate a random token if none configured �?user just needs to scan
+    // Auto-generate a random token if none configured �?user just needs to scan
     if (!token) {
       token = crypto.randomUUID().replace(/-/g, '').slice(0, 16)
       settingsManager.setRelayToken(token)

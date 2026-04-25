@@ -23,7 +23,7 @@ import '../widgets/mic_button.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/plan_mode_bar.dart';
 import '../widgets/project_drawer.dart';
-import '../widgets/sticky_question_bar.dart';
+
 import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
@@ -45,22 +45,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _showScrollFab = false;
   bool _scrollPending = false;
   int _previousGroupCount = 0;
-  // Sticky question bar
-  String? _stickyQuestion;
-  double _stickyScrollOffset = 0.0;
-  String? _stickyTargetKey;          // 当前 sticky 对应的用户消息 key
-  bool _isNavigatingSticky = false;
-  Timer? _stickyNavTimer;
-  /// 已点击定位过的消息 key。这些消息永不会再变成 sticky，
-  /// 除非用户重新向下滚动让它们进入视口又重新完全滚出。
-  final Set<String> _suppressedStickyKeys = {};
-  /// sticky bar 本身的 GlobalKey，用于运行时测量其实际高度。
-  final GlobalKey _stickyBarKey = GlobalKey();
-  /// 运行时测量的 sticky bar 高度；0 表示尚未测量到。
-  double _measuredStickyBarHeight = 0.0;
-  final Map<String, GlobalKey> _userMsgKeys = {};
-  final Map<String, double> _userMsgRecordedOffsets = {};
-  // 跟踪上次渲染的会话 id，切换会话时清除遗留的 sticky 状态。
+  // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   String? _desktopIdentity;
   PermissionRequest? _permissionRequest;
@@ -99,21 +84,17 @@ class _ChatPageState extends State<ChatPage> {
 
     _messagesSub = ChatStore.instance.messagesStream.listen((msgs) {
       if (mounted) {
-        // 检测会话切换：若 currentSessionId 变了，清除 sticky 状态和气泡 key 缓存
+        // 检测会话切换
         final curSid = ChatStore.instance.currentSessionId;
         if (curSid != _lastRenderedSessionId) {
           _lastRenderedSessionId = curSid;
-          _userMsgKeys.clear();
-          _userMsgRecordedOffsets.clear();
-          _stickyQuestion = null;
-          _stickyScrollOffset = 0.0;
-          _stickyTargetKey = null;
-          _suppressedStickyKeys.clear();
+          _showScrollFab = false;
+          _slashSuggestions = [];
+          _permissionRequest = null;
+          _inputController.clear();
         }
         setState(() => _displayMessages = msgs);
         if (_isStreaming && !_showScrollFab) _scrollToBottom();
-        // 下一帧重算 sticky，解决加载时 scroll 不触发导致的状态遗留
-        _updateStickyQuestion();
       }
     });
 
@@ -183,7 +164,6 @@ class _ChatPageState extends State<ChatPage> {
     _permissionSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
-    _stickyNavTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -201,120 +181,6 @@ class _ChatPageState extends State<ChatPage> {
     if (shouldShow != _showScrollFab) {
       setState(() => _showScrollFab = shouldShow);
     }
-    _updateStickyQuestion();
-  }
-
-  /// 检测已滚出顶部的用户消息，更新 sticky question bar 状态
-  void _updateStickyQuestion() {
-    // 导航锁：点击 sticky 后的动画期间不重算，避免中间帧闪现错误问题内容。
-    if (_isNavigatingSticky) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-
-      // 取 ListView 视口的全局坐标
-      final scrollCtx = _scrollController.position.context.storageContext;
-      final listBox = scrollCtx.findRenderObject() as RenderBox?;
-      if (listBox == null || !listBox.attached) return;
-      final viewportTop = listBox.localToGlobal(Offset.zero).dy;
-      // 运行时测量 sticky bar 的实际高度（根据问题文本 1~3 行动态变化）。
-      // 未测量时使用较安全的估计值 60（与初次 build 后的测量差别很小）。
-      double stickyBarH = _measuredStickyBarHeight;
-      if (_stickyQuestion != null) {
-        final stickyCtx = _stickyBarKey.currentContext;
-        if (stickyCtx != null) {
-          final box = stickyCtx.findRenderObject() as RenderBox?;
-          if (box != null && box.attached) {
-            stickyBarH = box.size.height;
-            if (stickyBarH != _measuredStickyBarHeight) {
-              _measuredStickyBarHeight = stickyBarH;
-            }
-          }
-        }
-      }
-      // sticky bar 视觉上遮挡了 listView 顶部 stickyBarH 像素，
-      // 所以"完全滚出可视区"的边界要按 viewportTop + stickyBarH 计算。
-      final visibleTop = viewportTop + stickyBarH;
-
-      final userMsgs =
-          _displayMessages.where((m) => m.role == MessageRole.user).toList();
-
-      String? candidateQuestion;
-      double candidateOffset = 0.0;
-      String? candidateKey;
-
-      for (final msg in userMsgs) {
-        final keyStr = msg.createdAt.microsecondsSinceEpoch.toString();
-        final key = _userMsgKeys[keyStr];
-        if (key == null) continue;
-
-        final ctx = key.currentContext;
-        if (ctx != null) {
-          final box = ctx.findRenderObject() as RenderBox?;
-          if (box == null || !box.attached) continue;
-          final itemTop = box.localToGlobal(Offset.zero).dy;
-          final itemBottom = itemTop + box.size.height;
-
-          // 记录滚动偏移（用于点击跳回）
-          final absOffset =
-              (_scrollController.offset + (itemTop - viewportTop))
-                  .clamp(0.0, _scrollController.position.maxScrollExtent);
-          _userMsgRecordedOffsets[keyStr] = absOffset;
-
-          // 若该气泡至少部分进入了"sticky bar 下方的可见区"，
-          // 就把它从 suppressed 集合移除（用户重新看到了它）。
-          if (itemBottom > visibleTop && itemTop < viewportTop + listBox.size.height) {
-            _suppressedStickyKeys.remove(keyStr);
-          }
-
-          if (itemBottom < visibleTop) {
-            // 完全被 sticky bar 遮挡或在其上方 — sticky 候选
-            // 但若这条已被点击定位过且尚未重新进入可见区，则跳过。
-            if (!_suppressedStickyKeys.contains(keyStr)) {
-              candidateQuestion = msg.content;
-              candidateOffset = absOffset;
-              candidateKey = keyStr;
-            }
-          } else {
-            // 进入可见区或在下方 — 停止遍历
-            break;
-          }
-        } else if (_userMsgRecordedOffsets.containsKey(keyStr)) {
-          // 已滚出屏幕（未渲染），使用上次记录的偏移
-          if (!_suppressedStickyKeys.contains(keyStr)) {
-            candidateQuestion = msg.content;
-            candidateOffset = _userMsgRecordedOffsets[keyStr]!;
-            candidateKey = keyStr;
-          }
-        }
-      }
-
-      if (candidateQuestion != _stickyQuestion ||
-          candidateOffset != _stickyScrollOffset ||
-          candidateKey != _stickyTargetKey) {
-        final wasNull = _stickyQuestion == null;
-        setState(() {
-          _stickyQuestion = candidateQuestion;
-          _stickyScrollOffset = candidateOffset;
-          _stickyTargetKey = candidateKey;
-        });
-        // 首次显示 sticky bar 时（之前为 null），下一帧立刻重测真实高度，
-        // 避免依赖 fallback 60 导致点击补偿不准。
-        if (wasNull && candidateQuestion != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            final ctx = _stickyBarKey.currentContext;
-            if (ctx == null) return;
-            final box = ctx.findRenderObject() as RenderBox?;
-            if (box != null && box.attached) {
-              final h = box.size.height;
-              if (h > 0 && h != _measuredStickyBarHeight) {
-                _measuredStickyBarHeight = h;
-              }
-            }
-          });
-        }
-      }
-    });
   }
 
   void _sendMessage() {
@@ -410,15 +276,19 @@ class _ChatPageState extends State<ChatPage> {
   void _scrollToBottom() {
     if (_scrollPending) return; // already scheduled for this frame
     _scrollPending = true;
+    // 两层 postFrameCallback：第一帧完成 setState rebuild，
+    // 第二帧 ListView 完成布局，maxScrollExtent 才准确。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollPending = false;
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollPending = false;
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
     });
   }
 
@@ -534,17 +404,6 @@ class _ChatPageState extends State<ChatPage> {
             child: Stack(
               children: [
                 _buildMessageList(),
-                // Sticky question bar
-                if (_stickyQuestion != null)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: KeyedSubtree(
-                      key: _stickyBarKey,
-                      child: _buildStickyQuestionBar(),
-                    ),
-                  ),
                 // Scroll-to-bottom FAB
                 if (_showScrollFab)
                   Positioned(
@@ -674,12 +533,9 @@ class _ChatPageState extends State<ChatPage> {
   // ── User bubble ────────────────────────────────────────────────────
 
   Widget _buildUserBubble(ChatMessage msg) {
-    final keyStr = msg.createdAt.microsecondsSinceEpoch.toString();
-    final msgKey = _userMsgKeys.putIfAbsent(keyStr, () => GlobalKey());
     final colors = AppColors.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
     return GestureDetector(
-      key: msgKey,
       onLongPress: () => _showMessageActions(msg),
       child: Align(
         alignment: Alignment.centerRight,
@@ -825,54 +681,6 @@ class _ChatPageState extends State<ChatPage> {
             ),
           );
         }
-      },
-    );
-  }
-
-  // ── Sticky question bar ───────────────────────────────────────────
-
-  Widget _buildStickyQuestionBar() {
-    return StickyQuestionBar(
-      question: _stickyQuestion!,
-      onTap: () {
-        final targetKey = _stickyTargetKey;
-        // 使用实测高度补偿；未测量时 fallback 到 60。
-        final barH = _measuredStickyBarHeight > 0 ? _measuredStickyBarHeight : 60.0;
-        // 让原气泡顶部出现在 sticky bar 下方，不被遮挡
-        final targetOffset = (_stickyScrollOffset - barH)
-            .clamp(0.0, _scrollController.position.maxScrollExtent);
-
-        // 1) 立即隐藏 sticky，并把这条消息加入 suppress 集合：
-        //    它不会再次变成 sticky，直到用户主动让它重新进入可见区后再次滚出。
-        setState(() {
-          if (targetKey != null) _suppressedStickyKeys.add(targetKey);
-          _stickyQuestion = null;
-          _stickyTargetKey = null;
-        });
-
-        // 2) 导航锁：动画期间不重算
-        _isNavigatingSticky = true;
-        _stickyNavTimer?.cancel();
-        _scrollController
-            .animateTo(
-              targetOffset,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            )
-            .then((_) {
-          if (!mounted) return;
-          _isNavigatingSticky = false;
-          _stickyNavTimer?.cancel();
-          _stickyNavTimer = null;
-          _updateStickyQuestion();
-        });
-        // 3) Fallback: 若动画被中断，500ms 后强制解锁
-        _stickyNavTimer = Timer(const Duration(milliseconds: 500), () {
-          if (!mounted) return;
-          _isNavigatingSticky = false;
-          _stickyNavTimer = null;
-          _updateStickyQuestion();
-        });
       },
     );
   }
