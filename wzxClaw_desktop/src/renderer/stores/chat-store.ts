@@ -760,7 +760,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
   loadSession: async (sessionId: string) => {
     flushTextBatch()
     try {
-      const rawMessages = await window.wzxclaw.loadSession({ sessionId })
+      const activeTaskId = useTaskStore.getState().activeTaskId
+      const rawMessages = await window.wzxclaw.loadSession({
+        sessionId,
+        ...(activeTaskId ? { activeTaskId } : {})
+      })
 
       // Phase 1: Convert all raw messages to a lookup-friendly format
       const parsed = (rawMessages as Array<Record<string, unknown>>).map((msg) => ({

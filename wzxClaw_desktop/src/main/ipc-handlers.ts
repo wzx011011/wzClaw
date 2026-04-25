@@ -21,7 +21,7 @@ import type { AgentLoop } from './agent/agent-loop'
 import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
-import type { SessionStore } from './persistence/session-store'
+import { SessionStore } from './persistence/session-store'
 import type { ContextManager } from './context/context-manager'
 import type { TerminalManager } from './terminal/terminal-manager'
 import type { StepManager } from './steps/step-manager'
@@ -647,8 +647,13 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    const sessionId = result.data.sessionId
-    const rawMessages = await getSessionStore().loadSession(sessionId)
+    const { sessionId, activeTaskId } = result.data
+    // 优先使用请求中携带的 activeTaskId（与 listSessions 保持一致），
+    // 避免 agentLoop.activeTask 尚未设置时读错 store。
+    const store = activeTaskId
+      ? SessionStore.forTask(activeTaskId)
+      : getSessionStore()
+    const rawMessages = await store.loadSession(sessionId)
 
     // Reset persisted counter to match loaded message count
     persistedMessageCount = rawMessages.length

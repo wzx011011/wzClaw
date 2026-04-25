@@ -101,7 +101,7 @@ const api = {
 
   // Sessions
   listSessions: (request?: { activeTaskId?: string }) => ipcRenderer.invoke('session:list', request),
-  loadSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:load', request),
+  loadSession: (request: { sessionId: string; activeTaskId?: string }) => ipcRenderer.invoke('session:load', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
   saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
