@@ -31,7 +31,13 @@ export default function TaskCard({ task, onOpen, onArchive, onDelete, onRename }
   }
 
   return (
-    <div className="task-card" onClick={() => { if (!isRenaming) onOpen(task.id) }}>
+    <div
+      className="task-card"
+      role="button"
+      tabIndex={0}
+      onClick={() => { if (!isRenaming) onOpen(task.id) }}
+      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !isRenaming) { e.preventDefault(); onOpen(task.id) } }}
+    >
       <div className="task-card-header">
         {isRenaming ? (
           <input
@@ -49,7 +55,7 @@ export default function TaskCard({ task, onOpen, onArchive, onDelete, onRename }
         ) : (
           <h3 className="task-card-title">{task.title}</h3>
         )}
-        <div className="task-card-actions" onClick={(e) => e.stopPropagation()}>
+        <div className="task-card-actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           {!isRenaming && (
             <button
               className="task-card-btn"
