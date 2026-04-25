@@ -1,8 +1,9 @@
 // ============================================================
 // Hook Registry — Pre/post tool execution and session lifecycle hooks
+// v2: emit() 返回 HookResult，支持 stop hooks 影响循环行为
 // ============================================================
 
-export type HookEvent = 'pre-tool' | 'post-tool' | 'session-start' | 'session-end' | 'error' | 'pre-compact' | 'post-compact' | 'permission-denied'
+export type HookEvent = 'pre-tool' | 'post-tool' | 'session-start' | 'session-end' | 'error' | 'pre-compact' | 'post-compact' | 'permission-denied' | 'turn-end'
 
 export interface HookContext {
   event: HookEvent
@@ -13,17 +14,34 @@ export interface HookContext {
   conversationId?: string
   error?: Error | string
   timestamp: number
+  /** turn-end 事件的上下文 */
+  turnInfo?: {
+    turnIndex: number
+    toolCalls: string[]  // 本轮调用的工具名列表
+    hadWrite: boolean    // 本轮是否有写操作
+    outputTokens: number
+  }
+}
+
+/** Hook 返回结果 — 可影响 agent 循环行为 */
+export interface HookResult {
+  /** 为 true 则阻止 agent 继续循环（直接终止） */
+  preventContinuation?: boolean
+  /** 非空则注入为 user message，循环继续（给 LLM 提醒/纠正） */
+  blockingError?: string
 }
 
 export interface Hook {
   id: string
   event: HookEvent
-  handler: (ctx: HookContext) => Promise<void>
+  handler: (ctx: HookContext) => Promise<HookResult | void>
   priority: number // lower = runs first
   timeout: number  // ms
 }
 
 const DEFAULT_TIMEOUT = 15000
+
+const EMPTY_RESULT: HookResult = {}
 
 export class HookRegistry {
   private hooks: Map<HookEvent, Hook[]> = new Map()
@@ -50,7 +68,12 @@ export class HookRegistry {
     }
   }
 
-  async emit(event: HookEvent, context: Omit<HookContext, 'event' | 'timestamp'>): Promise<void> {
+  /**
+   * 触发事件并聚合所有 hook 结果。
+   * 任一 hook 返回 preventContinuation=true 则整体阻止继续。
+   * 任一 hook 返回 blockingError 则注入为 user message。
+   */
+  async emit(event: HookEvent, context: Omit<HookContext, 'event' | 'timestamp'>): Promise<HookResult> {
     const hooks = this.hooks.get(event) ?? []
     const ctx: HookContext = {
       ...context,
@@ -58,19 +81,31 @@ export class HookRegistry {
       timestamp: Date.now()
     }
 
+    let aggregated: HookResult = {}
+
     for (const hook of hooks) {
       try {
-        await Promise.race([
+        const result = await Promise.race([
           hook.handler(ctx),
-          new Promise<void>((_, reject) =>
+          new Promise<HookResult>((_, reject) =>
             setTimeout(() => reject(new Error(`Hook "${hook.id}" timed out after ${hook.timeout}ms`)), hook.timeout)
           )
-        ])
+        ]) ?? EMPTY_RESULT
+
+        // 聚合结果
+        if (result.preventContinuation) {
+          aggregated.preventContinuation = true
+        }
+        if (result.blockingError && !aggregated.blockingError) {
+          aggregated.blockingError = result.blockingError
+        }
       } catch (err) {
         console.warn(`[HookRegistry] Hook "${hook.id}" failed:`, err)
         // Hooks should not block the main flow
       }
     }
+
+    return aggregated
   }
 
   clear(): void {

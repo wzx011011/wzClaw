@@ -58,6 +58,8 @@ export interface TurnResult {
   usage: { inputTokens: number; outputTokens: number }
   /** 是否有不可恢复错误 */
   hadError: boolean
+  /** 本轮调用的工具名列表（供 stop hooks 使用） */
+  toolNames: string[]
 }
 
 /**
@@ -210,7 +212,7 @@ export class TurnManager {
     // 1. 检查取消
     if (input.abortSignal.aborted) {
       yield { type: 'agent:error', error: 'Agent loop cancelled', recoverable: true }
-      return { shouldStop: true, usage: { inputTokens: 0, outputTokens: 0 }, hadError: true }
+      return { shouldStop: true, usage: { inputTokens: 0, outputTokens: 0 }, hadError: true, toolNames: [] }
     }
 
     // 2. 非首轮注入 turn attachments
@@ -269,7 +271,7 @@ export class TurnManager {
     }
 
     if (phaseMeta.hadError) {
-      return { shouldStop: true, usage: phaseMeta.usage, hadError: true }
+      return { shouldStop: true, usage: phaseMeta.usage, hadError: true, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
     }
 
     // 6. 通过 ConversationManager 记录 assistant 消息
@@ -281,12 +283,12 @@ export class TurnManager {
 
     // 7. 无工具调用 → 结束
     if (phaseMeta.toolCalls.length === 0) {
-      return { shouldStop: true, usage: phaseMeta.usage, hadError: false }
+      return { shouldStop: true, usage: phaseMeta.usage, hadError: false, toolNames: [] }
     }
 
     // 8. 处理工具结果
     if (phaseMeta.loopDetected) {
-      return { shouldStop: true, usage: phaseMeta.usage, hadError: false }
+      return { shouldStop: true, usage: phaseMeta.usage, hadError: false, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
     }
 
     for (const result of phaseMeta.toolResults) {
@@ -331,7 +333,7 @@ export class TurnManager {
     // 10. turn_end 事件
     yield { type: 'agent:turn_end' as const }
 
-    return { shouldStop: false, usage: phaseMeta.usage, hadError: false }
+    return { shouldStop: false, usage: phaseMeta.usage, hadError: false, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
   }
 
   /** 重置所有状态 */

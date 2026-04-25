@@ -275,7 +275,7 @@ describe('AgentLoop', () => {
     // Should have error about max turns exceeded
     const errorEvent = events.find(e => e.type === 'agent:error') as any
     expect(errorEvent).toBeDefined()
-    expect(errorEvent.error).toContain('Max agent turns exceeded')
+    expect(errorEvent.error).toContain('max turns exceeded')
     expect(errorEvent.recoverable).toBe(true)
   })
 

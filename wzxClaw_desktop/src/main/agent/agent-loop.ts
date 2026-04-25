@@ -24,6 +24,7 @@ import { ConversationManager } from './conversation-manager'
 import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
+import { maybeTimeBasedMicrocompact } from '../context/microcompact'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -109,6 +110,7 @@ export class AgentLoop {
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
     let turnCount = 0
+    let stopHookActive = false  // 防止 blockingError → stop hook → 无限循环
 
     // ---- 主循环 ----
     // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
@@ -142,6 +144,13 @@ export class AgentLoop {
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
+      }
+
+      // Time-based microcompact：清理旧工具结果（provider-agnostic，无 API 调用）
+      const mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages())
+      if (mcResult.result.didCompact) {
+        this.conversation.loadFromExternal(mcResult.messages)
+        debugLogger.log('MICROCOMPACT', `cleared ${mcResult.result.clearedCount} old tool results (~${mcResult.result.charsSaved} chars, gap ${Math.round(mcResult.result.gapMinutes)}min)`)
       }
 
       // 上下文压缩检查（LLM 调用前）
@@ -266,6 +275,39 @@ export class AgentLoop {
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
+      }
+
+      // Stop hooks：turn 结束时执行，可阻止继续或注入提醒
+      if (this.hookRegistry && !stopHookActive) {
+        const WRITE_TOOLS = new Set(['FileWrite', 'FileEdit', 'Bash'])
+        const hookResult = await this.hookRegistry.emit('turn-end', {
+          conversationId: config.conversationId,
+          turnInfo: {
+            turnIndex: turnCount - 1,
+            toolCalls: turnResult.toolNames,
+            hadWrite: turnResult.toolNames.some(n => WRITE_TOOLS.has(n)),
+            outputTokens: turnResult.usage.outputTokens,
+          },
+        })
+
+        if (hookResult.preventContinuation) {
+          debugLogger.log('HOOK', 'stop hook prevented continuation')
+          debugLogger.close()
+          yield { type: 'agent:done', usage: totalUsage, turnCount }
+          endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+          await this.hookRegistry.emit('session-end', { conversationId: config.conversationId })
+          return
+        }
+
+        if (hookResult.blockingError) {
+          debugLogger.log('HOOK', `blocking error injected: ${hookResult.blockingError.substring(0, 80)}`)
+          // 注入为 user message，循环继续
+          this.conversation.appendUserMessage(`[System] ${hookResult.blockingError}`)
+          stopHookActive = true
+          continue
+        }
+      } else {
+        stopHookActive = false  // 本轮由 blockingError 注入，下轮恢复正常
       }
 
       // 无工具调用 → 正常结束

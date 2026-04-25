@@ -50,6 +50,12 @@ export interface AgentRuntimeConfig {
   // ---- 消息管理 ----
   /** 单条消息最大字符数（防止异常工具输出撑爆内存）。默认 100000 */
   maxMessageChars: number
+
+  // ---- Microcompact（旧工具结果清理） ----
+  /** 距上次 assistant 消息超过此分钟数触发 microcompact。默认 60 */
+  microcompactGapMinutes: number
+  /** Microcompact 保留最近 N 个 compactable 工具结果。默认 5 */
+  microcompactKeepRecent: number
 }
 
 /** 默认配置 */
@@ -74,6 +80,9 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
   maxBudgetTokens: 0,  // 0 = 不限制
 
   maxMessageChars: 100_000,
+
+  microcompactGapMinutes: 60,
+  microcompactKeepRecent: 5,
 }
 
 /**
