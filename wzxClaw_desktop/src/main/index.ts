@@ -20,9 +20,6 @@ const { join } = path
 // 口无响应几百毫秒」。Electron 官方 issue 已多次记录，禁用后体感明显流畅。
 // 同时关闭硬件媒体键处理（与本应用无关，但偶发后台占用）。
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling')
-// 启用 GPU 栅格化 + 零拷贝合成，让窗口拖动走 GPU 通道而不是 CPU
-app.commandLine.appendSwitch('enable-gpu-rasterization')
-app.commandLine.appendSwitch('enable-zero-copy')
 
 // Ignore EPIPE errors on stdout/stderr — happens when Electron is launched from
 // a pipe (e.g. Claude Code hook) and the parent process exits while async

@@ -81,7 +81,6 @@ type ChatStore = ChatState & ChatActions
 
 const MAX_SESSIONS_CACHE_SIZE = 10
 const LAST_SESSION_RESTORE_DELAY_MS = 80
-const SESSION_LIST_WARMUP_DELAY_MS = 220
 const sessionAccessOrder: string[] = []
 let textBatchBuffer = ''
 let textBatchFrame: number | null = null
@@ -600,10 +599,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }).catch(() => {})
     }, LAST_SESSION_RESTORE_DELAY_MS)
 
-    // Session list is useful, but not required for first contentful paint.
-    const cancelWarmSessionList = scheduleDeferredStartupTask(() => {
-      void get().loadSessionList()
-    }, SESSION_LIST_WARMUP_DELAY_MS)
+    // 立即加载会话列表，确保侧边栏在首帧可见
+    void get().loadSessionList()
 
     // Keep the push listener as a fallback (e.g. if main delays the send)
     const unsubRestore = window.wzxclaw.onSessionRestore?.((payload) => {
@@ -649,7 +646,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubContextRestored()
       unsubRetrying()
       cancelRestoreLastSession()
-      cancelWarmSessionList()
       unsubRestore()
       unsubTodo()
       unsubDataChanged()
