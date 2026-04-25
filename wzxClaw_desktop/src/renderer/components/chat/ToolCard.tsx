@@ -246,13 +246,15 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
     }
   }, [toolCall.status])
 
-  // Timer for running tools
+  // Timer for running tools — 250ms 足够显示秒数（formatElapsed 只精确到 0.1s），
+  // 用 100ms 会让长会话里同时运行的多个 ToolCard 合计每秒触发数十次 setState，
+  // 拖累主线程并放大窗口拖拽卡顿。
   useEffect(() => {
     if (toolCall.status !== 'running') return
     startTimeRef.current = Date.now()
     const interval = setInterval(() => {
       setElapsed(Date.now() - startTimeRef.current)
-    }, 100)
+    }, 250)
     return () => clearInterval(interval)
   }, [toolCall.status])
 

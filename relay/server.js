@@ -13,8 +13,6 @@ const PORT = parseInt(process.env.PORT, 10) || 8080;
 // -- Initialize auth module --
 auth.init();
 
-// FCM module removed
-
 // -- Room manager --
 const roomManager = new RoomManager();
 

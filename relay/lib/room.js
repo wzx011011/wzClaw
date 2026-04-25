@@ -7,7 +7,6 @@ const { log, warn } = require('./logger');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const QUEUE_FILE = path.join(DATA_DIR, 'offline-queues.json');
-
 /**
  * Manages rooms keyed by token. Each room holds multiple desktops and
  * multiple mobiles. Mobiles can target a specific desktop or broadcast
@@ -15,12 +14,13 @@ const QUEUE_FILE = path.join(DATA_DIR, 'offline-queues.json');
  * per-desktop and flushed on reconnect.
  */
 class RoomManager {
-  constructor() {
+  constructor(options = {}) {
     // Map<string, {
     //   desktops: Map<desktopId, { ws, identity: {name?, platform?}, connectedAt, offlineQueue: Array }>,
-    //   mobiles: Map<deviceId, { ws, identity: {name?, platform?}, connectedAt, targetDesktopId: string|null }>
+    //   mobiles: Map<deviceId, { ws, identity: {name?, platform?}, connectedAt, targetDesktopId: string|null }>,
     // }>
     this._rooms = new Map();
+    this._disablePersistence = options.disablePersistence ?? false;
 
     // Periodic cleanup of expired queue entries (24-hour TTL).
     this._cleanupInterval = setInterval(() => this._cleanupExpiredQueues(), 3600_000);
@@ -36,6 +36,7 @@ class RoomManager {
 
   _loadQueues() {
     try {
+      if (this._disablePersistence) return;
       if (!fs.existsSync(QUEUE_FILE)) return;
       const raw = fs.readFileSync(QUEUE_FILE, 'utf8');
       const data = JSON.parse(raw);
@@ -47,8 +48,8 @@ class RoomManager {
           if (Array.isArray(value)) {
             // Legacy format v1: { token: [queue] }
             desktops.set('legacy', { ws: null, identity: {}, connectedAt: 0, offlineQueue: value });
-          } else if (value && value._format === 2 && value.desktopQueues) {
-            // Format v2: { token: { _format: 2, desktopQueues: { dId: [queue] } } }
+          } else if (value && (value._format === 2 || value._format === 3) && value.desktopQueues) {
+            // Format v2/v3: { token: { _format, desktopQueues: { dId: [queue] } } }
             for (const [dId, dq] of Object.entries(value.desktopQueues)) {
               if (Array.isArray(dq) && dq.length > 0) {
                 desktops.set(dId, { ws: null, identity: {}, connectedAt: 0, offlineQueue: dq });
@@ -68,6 +69,7 @@ class RoomManager {
 
   _saveQueues() {
     try {
+      if (this._disablePersistence) return;
       const data = {};
       for (const [token, room] of this._rooms) {
         const desktopQueues = {};
@@ -77,7 +79,7 @@ class RoomManager {
           }
         }
         if (Object.keys(desktopQueues).length > 0) {
-          data[token] = { _format: 2, desktopQueues };
+          data[token] = { _format: 3, desktopQueues };
         }
       }
       if (Object.keys(data).length === 0) {
@@ -98,7 +100,10 @@ class RoomManager {
 
   join(token, role, ws) {
     if (!this._rooms.has(token)) {
-      this._rooms.set(token, { desktops: new Map(), mobiles: new Map() });
+      this._rooms.set(token, {
+        desktops: new Map(),
+        mobiles: new Map(),
+      });
     }
 
     const room = this._rooms.get(token);
@@ -305,19 +310,6 @@ class RoomManager {
       return;
     }
 
-    // ── Intercept fcm:register from mobile ──
-    if (event === 'fcm:register' && role === 'mobile') {
-      const deviceId = ws._wzxDeviceId;
-      if (deviceId) {
-        const entry = room.mobiles.get(deviceId);
-        const tokenValue = parsed.data && parsed.data.token;
-        if (entry && typeof tokenValue === 'string' && tokenValue.trim()) {
-          entry.fcmToken = tokenValue;
-        }
-      }
-      return; // Do NOT forward to desktop.
-    }
-
     // ── Normal routing ──
 
     if (role === 'desktop') {
@@ -438,8 +430,12 @@ class RoomManager {
       if (desktop.offlineQueue && desktop.offlineQueue.length > 0) { hasQueue = true; break; }
     }
     if (room.desktops.size === 0 && room.mobiles.size === 0 && !hasQueue) {
-      this._rooms.delete(token);
-      log(`Room [${token}]: room deleted (empty)`);
+      if ((room.pushTokens?.size ?? 0) > 0) {
+        room.lastWakePushAt = 0;
+      } else {
+        this._rooms.delete(token);
+        log(`Room [${token}]: room deleted (empty)`);
+      }
     }
   }
 

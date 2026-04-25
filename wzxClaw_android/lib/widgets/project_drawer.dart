@@ -49,74 +49,83 @@ class ProjectDrawer extends StatelessWidget {
       builder: (context, connSnap) {
         final connState = connSnap.data ?? WsConnectionState.disconnected;
         return StreamBuilder<String?>(
-          stream: ConnectionManager.instance.desktopIdentityStream,
-          initialData: ConnectionManager.instance.desktopIdentity,
-          builder: (context, identitySnap) {
-            final identity = identitySnap.data;
-            final desktops = ConnectionManager.instance.desktops;
-            final desktop = desktops.isNotEmpty ? desktops.first : null;
-            final connected = connState == WsConnectionState.connected;
-            String title;
-            String subtitle;
-            if (connected && identity != null) {
-              title = identity;
-              subtitle = desktop?.platform != null ? '${desktop!.platform}' : '已连接';
-            } else if (connected) {
-              title = 'wzxClaw';
-              subtitle = '等待桌面端...';
-            } else {
-              title = 'wzxClaw';
-              subtitle = '未连接';
-            }
-            return Container(
-              height: 120,
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: BoxDecoration(
-                color: colors.bgSecondary,
-                border: Border(
-                  bottom: BorderSide(color: colors.accent, width: 3),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Row(
+          stream: ConnectionManager.instance.selectedDesktopIdStream,
+          initialData: ConnectionManager.instance.selectedDesktopId,
+          builder: (context, selectedSnap) {
+            return StreamBuilder<String?>(
+              stream: ConnectionManager.instance.desktopIdentityStream,
+              initialData: ConnectionManager.instance.desktopIdentity,
+              builder: (context, identitySnap) {
+                final identity = identitySnap.data;
+                final selectedId = selectedSnap.data;
+                final desktops = ConnectionManager.instance.desktops;
+                final desktop = selectedId != null
+                    ? desktops.where((d) => d.desktopId == selectedId).firstOrNull
+                    : null;
+                final connected = connState == WsConnectionState.connected;
+                String title;
+                String subtitle;
+                if (connected && identity != null) {
+                  title = identity;
+                  subtitle = desktop?.platform != null ? '${desktop!.platform}' : '已连接';
+                } else if (connected) {
+                  title = 'wzxClaw';
+                  subtitle = '等待桌面端...';
+                } else {
+                  title = 'wzxClaw';
+                  subtitle = '未连接';
+                }
+                return Container(
+                  height: 120,
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: colors.bgSecondary,
+                    border: Border(
+                      bottom: BorderSide(color: colors.accent, width: 3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: connected ? Colors.green : Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 20,
-                            color: colors.textPrimary,
-                            fontWeight: FontWeight.w500,
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: connected ? Colors.green : Colors.red,
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                          overflow: TextOverflow.ellipsis,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: TextStyle(
+                                fontSize: 20,
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textSecondary,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: colors.textSecondary,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
+                );
+              },
             );
           },
         );

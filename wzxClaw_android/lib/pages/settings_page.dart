@@ -6,6 +6,7 @@ import '../config/app_colors.dart';
 import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
+import '../services/push_wake_service.dart';
 import '../services/session_sync_service.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
@@ -22,10 +23,12 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _obscureToken = true;
   bool _loading = true;
   bool _pushEnabled = true;
+  bool _backgroundKeepAliveEnabled = false;
 
   static const _serverUrlKey = 'server_url';
   static const _authTokenKey = 'auth_token';
   static const _pushEnabledKey = 'push_notifications_enabled';
+  static const _backgroundKeepAliveEnabledKey = 'background_keepalive_enabled';
 
   @override
   void initState() {
@@ -45,6 +48,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _serverUrlController.text = prefs.getString(_serverUrlKey) ?? '';
     _tokenController.text = prefs.getString(_authTokenKey) ?? '';
     _pushEnabled = prefs.getBool(_pushEnabledKey) ?? true;
+    _backgroundKeepAliveEnabled =
+      prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
     setState(() => _loading = false);
   }
 
@@ -69,6 +74,11 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final fullUrl = uri.replace(queryParameters: params).toString();
     ConnectionManager.instance.connect(fullUrl);
+
+    // 返回首页（LandingPage），清除导航栈
+    if (mounted) {
+      Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+    }
   }
 
   void _disconnect() {
@@ -77,8 +87,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _togglePushNotifications(bool value) async {
     setState(() => _pushEnabled = value);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_pushEnabledKey, value);
+    await PushWakeService.instance.setEnabled(value);
+  }
+
+  Future<void> _toggleBackgroundKeepAlive(bool value) async {
+    setState(() => _backgroundKeepAliveEnabled = value);
+    await ConnectionManager.instance.setBackgroundKeepAliveEnabled(value);
   }
 
   Future<void> _scanQrCode() async {
@@ -118,14 +132,7 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() {});
         _saveValues();
         _connect();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('正在连接...'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
+        // _connect() already navigates to LandingPage
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -334,15 +341,35 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: Text('推送通知',
                       style: TextStyle(
                           color: colors.textPrimary, fontSize: 14,),),
-                  subtitle: Text('AI 任务完成时发送通知',
-                      style: TextStyle(
-                          color: colors.textSecondary, fontSize: 13,),),
+                  subtitle: Text(
+                  'AI 任务完成时发送通知，并在点开后快速重连',
+                  style: TextStyle(
+                    color: colors.textSecondary, fontSize: 13,),
+                  ),
                   value: _pushEnabled,
                   activeTrackColor: colors.accent.withValues(alpha: 0.4),
                   activeThumbColor: colors.accent,
                   inactiveThumbColor: colors.textSecondary,
                   inactiveTrackColor: colors.border,
                   onChanged: _togglePushNotifications,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+                SwitchListTile(
+                  title: Text('后台保持连接',
+                      style: TextStyle(
+                          color: colors.textPrimary, fontSize: 14,),),
+                  subtitle: Text(
+                    '切到后台后启用常驻通知与前台服务，尽量保持 Relay 在线',
+                    style: TextStyle(
+                        color: colors.textSecondary, fontSize: 13,),
+                  ),
+                  value: _backgroundKeepAliveEnabled,
+                  activeTrackColor: colors.accent.withValues(alpha: 0.4),
+                  activeThumbColor: colors.accent,
+                  inactiveThumbColor: colors.textSecondary,
+                  inactiveTrackColor: colors.border,
+                  onChanged: _toggleBackgroundKeepAlive,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 ),
@@ -457,13 +484,23 @@ class _SettingsPageState extends State<SettingsPage> {
                                       ),
                                     ),
                                     const SizedBox(width: 6),
-                                    Text('已连接中继，等待桌面',
-                                        style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                                    Text(
+                                      '已连接中继，等待桌面',
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                        fontSize: 14,
+                                      ),
+                                    ),
                                   ],
                                 )
                               else
-                                Text('未连接',
-                                    style: TextStyle(color: colors.textMuted, fontSize: 14)),
+                                Text(
+                                  '未连接',
+                                  style: TextStyle(
+                                    color: colors.textMuted,
+                                    fontSize: 14,
+                                  ),
+                                ),
                               // Show workspace name as subtitle when available
                               StreamBuilder<WorkspaceInfo?>(
                                 stream: SessionSyncService.instance.workspaceInfoStream,

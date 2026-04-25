@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/widgets.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -11,6 +12,7 @@ import '../config/app_config.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
+import 'android_foreground_keepalive.dart';
 
 /// Singleton WebSocket connection manager for wzxClaw Android.
 ///
@@ -26,11 +28,15 @@ import '../models/ws_message.dart';
 /// This is the sole owner of the WebSocket connection. All pages subscribe
 /// to [stateStream] and [messageStream] but never create connections directly.
 class ConnectionManager with WidgetsBindingObserver {
+  static const _backgroundKeepAliveEnabledKey =
+      'background_keepalive_enabled';
+
   // -- Singleton --
   static final ConnectionManager _instance = ConnectionManager._();
   static ConnectionManager get instance => _instance;
   ConnectionManager._() {
     WidgetsBinding.instance.addObserver(this);
+    _loadBackgroundKeepAlivePreference();
   }
 
   // -- Public state streams --
@@ -107,6 +113,9 @@ class ConnectionManager with WidgetsBindingObserver {
   /// Set to true when the app enters [AppLifecycleState.paused].
   /// Used to skip the reconnect probe when only [inactive] was triggered.
   bool _wasPaused = false;
+  bool _backgroundKeepAliveEnabled = false;
+
+  bool get backgroundKeepAliveEnabled => _backgroundKeepAliveEnabled;
 
   // ============================================================
   // Public API
@@ -181,6 +190,7 @@ class ConnectionManager with WidgetsBindingObserver {
             'appVersion': '2.0',
           },
         }),);
+        _syncSelectedDesktopTarget();
       }
     }).catchError((error) {
       if (seq == _connSeq) {
@@ -193,6 +203,7 @@ class ConnectionManager with WidgetsBindingObserver {
   /// Clean disconnect.
   void disconnect() {
     _cancelAllTimers();
+    unawaited(AndroidForegroundKeepAlive.instance.stop());
     _sendQueue.clear();
     _waitingForPong = false;
     _desktops.clear();
@@ -246,25 +257,94 @@ class ConnectionManager with WidgetsBindingObserver {
     _selectedDesktopId = desktopId;
     _selectedDesktopIdController.add(desktopId);
 
+    // Persist selection so it survives app restarts.
+    SharedPreferences.getInstance().then((prefs) {
+      if (desktopId != null) {
+        prefs.setString('selected_desktop_id', desktopId);
+      } else {
+        prefs.remove('selected_desktop_id');
+      }
+    });
+
     if (_state != WsConnectionState.connected) return;
 
     if (desktopId == null) {
       _rawSend(jsonEncode({'event': WsEvents.targetClear}));
     } else {
-      _rawSend(jsonEncode({
-        'event': WsEvents.targetSelect,
-        'data': {'desktopId': desktopId},
-      }));
+      _rawSend(
+        jsonEncode({
+          'event': WsEvents.targetSelect,
+          'data': {'desktopId': desktopId},
+        }),
+      );
     }
+  }
+
+  /// Clear desktop selection and remove persisted preference.
+  void clearDesktopSelection() => selectDesktop(null);
+
+  Future<void> setBackgroundKeepAliveEnabled(bool enabled) async {
+    _backgroundKeepAliveEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_backgroundKeepAliveEnabledKey, enabled);
+    if (!enabled) {
+      await AndroidForegroundKeepAlive.instance.stop();
+    }
+  }
+
+  Future<void> connectFromSavedConfiguration() async {
+    if (_state != WsConnectionState.disconnected) {
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final serverUrl = prefs.getString('server_url');
+      if (serverUrl == null || serverUrl.isEmpty) {
+        return;
+      }
+
+      final token = prefs.getString('auth_token') ?? '';
+      final uri = Uri.parse(serverUrl);
+      final params = Map<String, String>.from(uri.queryParameters);
+      params['role'] = 'mobile';
+      if (token.isNotEmpty) {
+        params['token'] = token;
+      }
+
+      connect(uri.replace(queryParameters: params).toString());
+    } catch (e) {
+      _setError('恢复连接配置失败: $e');
+    }
+  }
+
+  Future<void> wakeAndReconnect(String reason) async {
+    _reconnectAttempt = 0;
+
+    if (_state == WsConnectionState.connected) {
+      _startHeartbeat();
+      _startIdleMonitor();
+      _syncSelectedDesktopTarget();
+      return;
+    }
+
+    if (_url != null) {
+      _forceReconnect(reason);
+      return;
+    }
+
+    await connectFromSavedConfiguration();
   }
 
   void _selectDesktop(String desktopId) {
     _selectedDesktopId = desktopId;
     _selectedDesktopIdController.add(desktopId);
-    _rawSend(jsonEncode({
-      'event': WsEvents.targetSelect,
-      'data': {'desktopId': desktopId},
-    }));
+    _rawSend(
+      jsonEncode({
+        'event': WsEvents.targetSelect,
+        'data': {'desktopId': desktopId},
+      }),
+    );
   }
 
   // ============================================================
@@ -272,25 +352,20 @@ class ConnectionManager with WidgetsBindingObserver {
   // ============================================================
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
-    switch (lifecycleState) {
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
       case AppLifecycleState.paused:
-        // Full background — heartbeat timers are useless, stop them.
         _wasPaused = true;
-        _stopHeartbeat();
-        _stopIdleMonitor();
+        _handleAppBackgrounded();
         break;
 
       case AppLifecycleState.inactive:
         // Transient state (notification shade, volume overlay, etc.).
         // Reset _wasPaused here too — some Android transitions skip resumed
         // and go paused → inactive directly when returning to foreground.
-        // Only force-reconnect if the connection was actually lost.
         if (_wasPaused) {
           _wasPaused = false;
-          if (_url != null && _state != WsConnectionState.connected) {
-            _resumeCheck();
-          }
+          _handleAppForegrounded();
         }
         break;
 
@@ -299,9 +374,7 @@ class ConnectionManager with WidgetsBindingObserver {
         // briefly inactive.  This prevents constant reconnect flicker.
         if (_wasPaused) {
           _wasPaused = false;
-          if (_url != null && _state != WsConnectionState.connected) {
-            _resumeCheck();
-          }
+          _handleAppForegrounded();
         }
         break;
 
@@ -318,6 +391,40 @@ class ConnectionManager with WidgetsBindingObserver {
     _reconnectAttempt = 0;
     _forceReconnect('app resumed from pause');
   }
+
+  void _handleAppForegrounded() {
+    unawaited(AndroidForegroundKeepAlive.instance.stop());
+    if (_url == null) return;
+
+    if (_state == WsConnectionState.connected) {
+      _startHeartbeat();
+      _startIdleMonitor();
+      _syncSelectedDesktopTarget();
+      return;
+    }
+
+    _resumeCheck();
+  }
+
+  void _handleAppBackgrounded() {
+    if (_shouldRunForegroundKeepAlive) {
+      unawaited(AndroidForegroundKeepAlive.instance.start());
+      if (_state == WsConnectionState.connected) {
+        _startHeartbeat();
+        _startIdleMonitor();
+      }
+      return;
+    }
+
+    _stopHeartbeat();
+    _stopIdleMonitor();
+  }
+
+  bool get _shouldRunForegroundKeepAlive =>
+      Platform.isAndroid &&
+      _backgroundKeepAliveEnabled &&
+      _url != null &&
+      _state != WsConnectionState.disconnected;
 
   // ============================================================
   // Message handling
@@ -380,10 +487,17 @@ class ConnectionManager with WidgetsBindingObserver {
               ..addAll(newDesktops);
             _desktopsController.add(List.from(_desktops));
           }
-          // Auto-select if only one desktop and nothing selected.
-          if (_selectedDesktopId == null && _desktops.length == 1) {
-            _selectDesktop(_desktops.first.desktopId);
-          }
+          // Restore saved selection if still available (no auto-select).
+          SharedPreferences.getInstance().then((prefs) {
+            final savedId = prefs.getString('selected_desktop_id');
+            if (_selectedDesktopId == null && savedId != null &&
+                _desktops.any((d) => d.desktopId == savedId)) {
+              _selectDesktop(savedId);
+            } else if (_selectedDesktopId != null &&
+                _desktops.any((d) => d.desktopId == _selectedDesktopId)) {
+              _syncSelectedDesktopTarget();
+            }
+          });
           // Clear selection if selected desktop is gone.
           if (_selectedDesktopId != null && !_desktops.any((d) => d.desktopId == _selectedDesktopId)) {
             _selectedDesktopId = null;
@@ -394,17 +508,20 @@ class ConnectionManager with WidgetsBindingObserver {
           final d = json['data'] as Map<String, dynamic>?;
           final desktopId = d?['desktopId'] as String?;
           if (desktopId != null && !_desktops.any((e) => e.desktopId == desktopId)) {
-            _desktops.add(DesktopInfo(
-              desktopId: desktopId,
-              name: d?['name'] as String?,
-              platform: d?['platform'] as String?,
-              connectedAt: DateTime.now().millisecondsSinceEpoch,
-            ));
+            _desktops.add(
+              DesktopInfo(
+                desktopId: desktopId,
+                name: d?['name'] as String?,
+                platform: d?['platform'] as String?,
+                connectedAt: DateTime.now().millisecondsSinceEpoch,
+              ),
+            );
             _desktopsController.add(List.from(_desktops));
           }
-          if (_selectedDesktopId == null && _desktops.length == 1) {
-            _selectDesktop(_desktops.first.desktopId);
+          if (_selectedDesktopId == desktopId) {
+            _syncSelectedDesktopTarget();
           }
+          // No auto-select: user must choose manually from LandingPage.
         } else if (event == WsEvents.systemDesktopDisconnected) {
           final d = json['data'] as Map<String, dynamic>?;
           final desktopId = d?['desktopId'] as String?;
@@ -502,8 +619,6 @@ class ConnectionManager with WidgetsBindingObserver {
     // Clear desktop state -- stale after reconnect.
     _desktops.clear();
     _desktopsController.add([]);
-    _selectedDesktopId = null;
-    _selectedDesktopIdController.add(null);
 
     // Increment sequence to invalidate stale onDone/onError callbacks
     // from the channel we are about to close.
@@ -608,6 +723,28 @@ class ConnectionManager with WidgetsBindingObserver {
       } catch (_) {
         // Channel might be closed -- ignore.
       }
+    }
+  }
+
+  void _syncSelectedDesktopTarget() {
+    if (_state != WsConnectionState.connected || _selectedDesktopId == null) {
+      return;
+    }
+    _rawSend(
+      jsonEncode({
+        'event': WsEvents.targetSelect,
+        'data': {'desktopId': _selectedDesktopId},
+      }),
+    );
+  }
+
+  Future<void> _loadBackgroundKeepAlivePreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _backgroundKeepAliveEnabled =
+          prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
+    } catch (_) {
+      _backgroundKeepAliveEnabled = false;
     }
   }
 

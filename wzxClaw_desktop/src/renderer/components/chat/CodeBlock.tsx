@@ -44,11 +44,18 @@ export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Eleme
       <div className="code-block-header">
         <span className="code-block-language">{language || 'text'}</span>
         <div className="code-block-actions">
-          <button className="code-block-btn" onClick={handleCopy}>
-            {copied ? 'Copied!' : 'Copy'}
+          <button
+            className={`code-block-btn${copied ? ' code-block-btn-success' : ''}`}
+            onClick={handleCopy}
+            aria-label={copied ? '已复制到剪贴板' : '复制代码'}
+          >
+            {copied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> 已复制</> : '复制'}
           </button>
-          <button className="code-block-btn apply-btn" onClick={handleApply}>
-            {applied ? 'Applied!' : 'Apply'}
+          <button
+            className={`code-block-btn apply-btn${applied ? ' code-block-btn-success' : ''}`}
+            onClick={handleApply}
+          >
+            {applied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> 已应用</> : '应用'}
           </button>
         </div>
       </div>

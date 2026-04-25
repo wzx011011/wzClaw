@@ -82,7 +82,7 @@ describe('RoomManager', () => {
   let roomManager;
 
   beforeEach(() => {
-    roomManager = new RoomManager();
+    roomManager = new RoomManager({ disablePersistence: true });
   });
 
   afterEach(() => {
@@ -277,35 +277,6 @@ describe('RoomManager', () => {
     assert.ok(forwarded.length >= 1);
     const msg = JSON.parse(forwarded[forwarded.length - 1]);
     assert.equal(msg.event, 'message:assistant');
-  });
-
-  it('stores FCM token from mobile via fcm:register event', () => {
-    const { ws: desktop } = createMockWs();
-    const { ws: mobile } = createMockWs();
-    roomManager.join('token-1', 'desktop', desktop);
-    roomManager.join('token-1', 'mobile', mobile);
-
-    // Mobile sends FCM token registration.
-    mobile._receive(JSON.stringify({ event: 'fcm:register', data: { token: 'test-fcm-token-123' } }));
-
-    // Verify: the fcm:register event should NOT be forwarded to desktop.
-    const { ws: desktop2, sent: desktop2Sent } = createMockWs();
-    const { ws: mobile2 } = createMockWs();
-    roomManager.join('token-2', 'desktop', desktop2);
-    roomManager.join('token-2', 'mobile', mobile2);
-    mobile2._receive(JSON.stringify({ event: 'fcm:register', data: { token: 'abc' } }));
-    assert.equal(nonSystemMessages(desktop2Sent).length, 0);
-  });
-
-  it('does not forward fcm:register events to desktop', () => {
-    const { ws: desktop, sent: desktopSent } = createMockWs();
-    const { ws: mobile } = createMockWs();
-    roomManager.join('token-1', 'desktop', desktop);
-    roomManager.join('token-1', 'mobile', mobile);
-
-    mobile._receive(JSON.stringify({ event: 'fcm:register', data: { token: 'test-token' } }));
-
-    assert.equal(nonSystemMessages(desktopSent).length, 0);
   });
 
   it('does not delete room when desktop disconnects but queue has messages', () => {

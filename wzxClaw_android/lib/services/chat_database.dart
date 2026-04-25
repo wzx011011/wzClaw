@@ -8,7 +8,7 @@ class ChatDatabase {
   ChatDatabase._();
 
   static const _dbName = 'wzxclaw_chat.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -21,6 +21,8 @@ class ChatDatabase {
           CREATE TABLE messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT,
+            desktop_id TEXT,
+            task_id TEXT,
             role INTEGER NOT NULL,
             content TEXT NOT NULL,
             tool_name TEXT,
@@ -84,6 +86,10 @@ class ChatDatabase {
           await db.execute(
               'ALTER TABLE messages ADD COLUMN tool_result_summary TEXT',);
         }
+        if (oldVersion < 5) {
+          await db.execute('ALTER TABLE messages ADD COLUMN desktop_id TEXT');
+          await db.execute('ALTER TABLE messages ADD COLUMN task_id TEXT');
+        }
       },
     );
     return _db!;
@@ -91,23 +97,36 @@ class ChatDatabase {
 
   // ---- Message CRUD ----
 
-  Future<void> insertMessage(ChatMessage msg, {String? sessionId}) async {
+  Future<void> insertMessage(
+    ChatMessage msg, {
+    String? sessionId,
+    String? desktopId,
+    String? taskId,
+  }) async {
     final db = await _ensureDb();
     final map = msg.toDbMap();
     if (sessionId != null) {
       map['session_id'] = sessionId;
     }
+    map['desktop_id'] = desktopId;
+    map['task_id'] = taskId;
     await db.insert('messages', map);
   }
 
   Future<List<ChatMessage>> getMessages({
+    String? desktopId,
+    String? taskId,
     int limit = 100,
     int offset = 0,
   }) async {
     final db = await _ensureDb();
+    final scopeFilter = desktopId != null || taskId != null;
     final rows = await db.query(
       'messages',
-      where: 'session_id IS NULL',
+      where: scopeFilter
+          ? 'session_id IS NULL AND desktop_id = ? AND task_id = ?'
+          : 'session_id IS NULL',
+      whereArgs: scopeFilter ? [desktopId, taskId] : null,
       orderBy: 'created_at ASC',
       limit: limit,
       offset: offset,

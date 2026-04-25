@@ -14,6 +14,16 @@ import fs from 'fs'
 import fsp from 'fs/promises'
 const { join } = path
 
+// ── Windows 拖拽卡顿修复 ────────────────────────────────────────────
+// `CalculateNativeWinOcclusion` 是 Chromium 在 Windows 上的窗口遮挡探测特性，
+// 实测会让主线程在窗口拖动 / 长时间运行后周期性 stall，表现为「拖拽卡顿、窗
+// 口无响应几百毫秒」。Electron 官方 issue 已多次记录，禁用后体感明显流畅。
+// 同时关闭硬件媒体键处理（与本应用无关，但偶发后台占用）。
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling')
+// 启用 GPU 栅格化 + 零拷贝合成，让窗口拖动走 GPU 通道而不是 CPU
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+
 // Ignore EPIPE errors on stdout/stderr — happens when Electron is launched from
 // a pipe (e.g. Claude Code hook) and the parent process exits while async
 // console.warn / console.log are still writing.
@@ -127,7 +137,20 @@ function createWindow(): BrowserWindow {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
+    mainWindow.focus()
   })
+
+  // Fallback: 万一 ready-to-show 因为 renderer 错误未触发，3s 后强制显示
+  // 避免出现「进程在跑但窗口看不见，只能任务管理器结束」的窘境
+  const safetyShowTimer = setTimeout(() => {
+    if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.warn('[STARTUP] ready-to-show 未触发，3s 后兜底显示窗口')
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  }, 3000)
+  mainWindow.once('show', () => clearTimeout(safetyShowTimer))
+  mainWindow.once('closed', () => clearTimeout(safetyShowTimer))
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])

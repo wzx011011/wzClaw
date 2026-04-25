@@ -31,7 +31,7 @@ function formatRelativeTime(timestamp: number): string {
 export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX.Element | null {
   const sessions = useChatStore((s) => s.sessions)
   const conversationId = useChatStore((s) => s.conversationId)
-  const loadSession = useChatStore((s) => s.loadSession)
+  const switchSession = useChatStore((s) => s.switchSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
   const renameSession = useChatStore((s) => s.renameSession)
 
@@ -58,7 +58,7 @@ export default function SessionList({ isOpen, onToggle }: SessionListProps): JSX
   if (!isOpen) return null
 
   const handleSelectSession = (sessionId: string): void => {
-    loadSession(sessionId)
+    switchSession(sessionId)
     onToggle()
   }
 

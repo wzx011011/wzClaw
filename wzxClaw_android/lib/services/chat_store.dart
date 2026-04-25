@@ -5,6 +5,7 @@ import 'dart:math';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/ws_message.dart';
+import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'connection_manager.dart';
 import 'task_service.dart';
@@ -255,7 +256,12 @@ class ChatStore {
       createdAt: DateTime.now(),
     );
     _messages.add(toolMsg);
-    ChatDatabase.instance.insertMessage(toolMsg);
+    ChatDatabase.instance.insertMessage(
+      toolMsg,
+      sessionId: _currentSessionId,
+      desktopId: ConnectionManager.instance.selectedDesktopId,
+      taskId: TaskService.instance.activeTaskId,
+    );
     _notifyListeners();
   }
 
@@ -352,7 +358,12 @@ class ChatStore {
         isStreaming: false,
       );
       _messages.add(completed);
-      ChatDatabase.instance.insertMessage(completed);
+      ChatDatabase.instance.insertMessage(
+        completed,
+        sessionId: _currentSessionId,
+        desktopId: ConnectionManager.instance.selectedDesktopId,
+        taskId: TaskService.instance.activeTaskId,
+      );
       _streamingMessage = null;
     } else {
       // Standalone error — show but don't persist to avoid clutter on restart
@@ -380,7 +391,12 @@ class ChatStore {
       createdAt: DateTime.now(),
     );
     _messages.add(msg);
-    ChatDatabase.instance.insertMessage(msg);
+    ChatDatabase.instance.insertMessage(
+      msg,
+      sessionId: _currentSessionId,
+      desktopId: ConnectionManager.instance.selectedDesktopId,
+      taskId: TaskService.instance.activeTaskId,
+    );
     _notifyListeners();
   }
 
@@ -575,6 +591,7 @@ class ChatStore {
     _currentSessionId = sessionId;
     _messages.clear();
     _streamingMessage = null;
+    _persistSessionView(sessionId);
 
     if (sessionId != null) {
       _isBrowsingHistory = true;
@@ -585,7 +602,11 @@ class ChatStore {
       _messages.addAll(messages);
     } else {
       _isBrowsingHistory = false;
-      _messages.addAll(await ChatDatabase.instance.getMessages(limit: 100));
+      _messages.addAll(await ChatDatabase.instance.getMessages(
+        desktopId: ConnectionManager.instance.selectedDesktopId,
+        taskId: TaskService.instance.activeTaskId,
+        limit: 100,
+      ));
     }
     _notifyListeners();
   }
@@ -608,6 +629,31 @@ class ChatStore {
     _notifyListeners();
   }
 
+  /// Reset desktop-scoped chat state when the selected desktop/task is cleared.
+  void resetSessionScope() {
+    _clearGeneration++;
+    _currentSessionId = null;
+    _isBrowsingHistory = false;
+    _setWaiting(false);
+    _isStreaming = false;
+    _streamingMessage = null;
+    _thinkingContent = '';
+    _todos = [];
+    _pendingMessageIds.clear();
+    _messages.clear();
+    if (!_permissionController.isClosed) {
+      _permissionController.add(null);
+    }
+    if (!_planModeController.isClosed) {
+      _planModeController.add(null);
+    }
+    if (!_askUserController.isClosed) {
+      _askUserController.add(null);
+    }
+    _thinkingController.add('');
+    _notifyListeners();
+  }
+
   Future<void> sendMessage(String text) async {
     // If browsing history, switch back to live mode
     if (_isBrowsingHistory) {
@@ -624,7 +670,12 @@ class ChatStore {
       createdAt: DateTime.now(),
     );
     _messages.add(msg);
-    await ChatDatabase.instance.insertMessage(msg, sessionId: _currentSessionId);
+    await ChatDatabase.instance.insertMessage(
+      msg,
+      sessionId: _currentSessionId,
+      desktopId: ConnectionManager.instance.selectedDesktopId,
+      taskId: TaskService.instance.activeTaskId,
+    );
     _pendingMessageIds[messageId] = true;
     // 防止累积：超过 100 条时清理最老的未确认条目
     if (_pendingMessageIds.length > 100) {
@@ -662,7 +713,11 @@ class ChatStore {
 
   Future<void> loadHistory() async {
     _messages.clear();
-    _messages.addAll(await ChatDatabase.instance.getMessages(limit: 100));
+    _messages.addAll(await ChatDatabase.instance.getMessages(
+      desktopId: ConnectionManager.instance.selectedDesktopId,
+      taskId: TaskService.instance.activeTaskId,
+      limit: 100,
+    ));
     _cleanupStaleTools();
     _notifyListeners();
   }
@@ -677,6 +732,8 @@ class ChatStore {
       );
     } else {
       older = await ChatDatabase.instance.getMessages(
+        desktopId: ConnectionManager.instance.selectedDesktopId,
+        taskId: TaskService.instance.activeTaskId,
         limit: 100,
         offset: _messages.length,
       );
@@ -756,7 +813,12 @@ class ChatStore {
     if (_streamingMessage != null) {
       final completed = _streamingMessage!.copyWith(isStreaming: false);
       _messages.add(completed);
-      ChatDatabase.instance.insertMessage(completed);
+      ChatDatabase.instance.insertMessage(
+        completed,
+        sessionId: _currentSessionId,
+        desktopId: ConnectionManager.instance.selectedDesktopId,
+        taskId: TaskService.instance.activeTaskId,
+      );
       _streamingMessage = null;
     }
   }
@@ -820,6 +882,17 @@ class ChatStore {
     if (!_streamingController.isClosed) {
       _streamingController.add(_isStreaming);
     }
+  }
+
+  void _persistSessionView(String? sessionId) {
+    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    if (desktopId == null) return;
+
+    unawaited(AppRestoreState.setLastViewedSession(
+      desktopId: desktopId,
+      taskId: TaskService.instance.activeTaskId,
+      sessionId: sessionId,
+    ));
   }
 
   void dispose() {

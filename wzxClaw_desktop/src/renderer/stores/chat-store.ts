@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import type { SessionMeta, MentionItem } from '../../shared/types'
 import { useTaskStore } from './task-store'
+import { useSettingsStore } from './settings-store'
 
 // ============================================================
 // Chat Store (per D-54, D-55, D-56)
@@ -30,6 +31,7 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[]
   isStreaming?: boolean
   usage?: { inputTokens: number; outputTokens: number }
+  model?: string
   isCompacted?: boolean
   // @-mention context files/folders (user messages only)
   mentions?: MentionItem[]
@@ -50,6 +52,8 @@ interface ChatState {
   streamingMessageId: string | null
   currentTodos: Array<{ content: string; status: string; activeForm: string }>
   todoCollapsed: boolean
+  isLoadingSession: boolean
+  loadingSessionId: string | null
 }
 
 interface ChatActions {
@@ -76,9 +80,16 @@ type ChatStore = ChatState & ChatActions
 // ============================================================
 
 const MAX_SESSIONS_CACHE_SIZE = 10
+const LAST_SESSION_RESTORE_DELAY_MS = 80
+const SESSION_LIST_WARMUP_DELAY_MS = 220
 const sessionAccessOrder: string[] = []
 let textBatchBuffer = ''
 let textBatchFrame: number | null = null
+
+function scheduleDeferredStartupTask(task: () => void, delayMs: number): () => void {
+  const timeoutId = setTimeout(task, delayMs)
+  return () => clearTimeout(timeoutId)
+}
 
 /**
  * Record access to a session and evict the least-recently-used entry
@@ -212,6 +223,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
   streamingMessageId: null,
   currentTodos: [],
   todoCollapsed: false,
+  isLoadingSession: false,
+  loadingSessionId: null,
 
   /**
    * Subscribe to all 5 stream IPC events. Returns unsubscribe function.
@@ -337,12 +350,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
           cleaned = cleaned.slice(0, -1)
         }
 
+        const modelLabel = useSettingsStore.getState().getModelLabel()
         const streamingMessageId = state.streamingMessageId
         const nextMessages = streamingMessageId
           ? updateMessageById(cleaned, streamingMessageId, (message) => ({
               ...message,
               isStreaming: false,
-              usage: payload.usage
+              usage: payload.usage,
+              model: modelLabel
             }))
           : null
 
@@ -575,23 +590,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }) ?? (() => {})
 
-    // Load session list on startup
-    get().loadSessionList()
+    // Let the IDE shell paint before restoring session state.
+    // This avoids chat hydration competing with the first visible frame.
+    const cancelRestoreLastSession = scheduleDeferredStartupTask(() => {
+      window.wzxclaw.getLastSession?.().then((result) => {
+        if (result?.sessionId) {
+          void get().switchSession(result.sessionId)
+        }
+      }).catch(() => {})
+    }, LAST_SESSION_RESTORE_DELAY_MS)
 
-    // Restore last active session from previous app run.
-    // Use pull (getLastSession) instead of relying on the push (session:restore)
-    // event which fires before React mounts and would be missed.
-    window.wzxclaw.getLastSession?.().then((result) => {
-      if (result?.sessionId) {
-        get().switchSession(result.sessionId)
-      }
-    }).catch(() => {})
+    // Session list is useful, but not required for first contentful paint.
+    const cancelWarmSessionList = scheduleDeferredStartupTask(() => {
+      void get().loadSessionList()
+    }, SESSION_LIST_WARMUP_DELAY_MS)
 
     // Keep the push listener as a fallback (e.g. if main delays the send)
     const unsubRestore = window.wzxclaw.onSessionRestore?.((payload) => {
       if (payload?.sessionId) {
         // Only restore if we haven't already loaded a non-empty session
-        if (get().messages.length === 0) {
+        if (get().messages.length === 0 && get().loadingSessionId !== payload.sessionId) {
           get().switchSession(payload.sessionId)
         }
       }
@@ -630,6 +648,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubCompacted()
       unsubContextRestored()
       unsubRetrying()
+      cancelRestoreLastSession()
+      cancelWarmSessionList()
       unsubRestore()
       unsubTodo()
       unsubDataChanged()
@@ -868,10 +888,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   switchSession: async (sessionId: string) => {
     flushTextBatch()
-    const { activeSessionId, messages, conversationId } = get()
+    const { activeSessionId, messages, conversationId, loadingSessionId } = get()
 
-    // No-op if switching to same session
-    if (activeSessionId === sessionId) return
+    // No-op if switching to same session, or the same load is already in flight.
+    if (activeSessionId === sessionId || loadingSessionId === sessionId) return
 
     // Save current messages to cache and apply LRU eviction
     let newCache = { ...get().sessionsCache }
@@ -887,20 +907,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
         conversationId: sessionId,
         activeSessionId: sessionId,
         sessionsCache: touchedCache,
-        streamingMessageId: null
+        streamingMessageId: null,
+        isLoadingSession: false,
+        loadingSessionId: null
       })
     } else {
-      // Load from IPC -- verify success before updating activeSessionId
+      // Load from IPC — show loading skeleton during IPC round-trip
+      set({
+        isLoadingSession: true,
+        loadingSessionId: sessionId,
+        messages: []
+      })
       const prevError = get().error
       await get().loadSession(sessionId)
-      // loadSession sets conversationId on success; only update activeSessionId
-      // if no new error was introduced (i.e., load succeeded)
-      if (!get().error || get().error === prevError) {
+      if (get().loadingSessionId === sessionId &&
+        (!get().error || get().error === prevError)) {
         const touchedCache = touchSession(newCache, sessionId)
         set({
           activeSessionId: sessionId,
-          sessionsCache: touchedCache
+          sessionsCache: touchedCache,
+          isLoadingSession: false,
+          loadingSessionId: null
         })
+      } else if (get().loadingSessionId === sessionId) {
+        set({ isLoadingSession: false, loadingSessionId: null })
       }
     }
 

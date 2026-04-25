@@ -6,12 +6,12 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
 import 'package:highlight/highlight.dart' show highlight;
 import 'package:markdown/markdown.dart' as md;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
+import '../services/app_restore_state.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
@@ -28,14 +28,14 @@ import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+class ChatPage extends StatefulWidget {
+  const ChatPage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<ChatPage> createState() => _ChatPageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _ChatPageState extends State<ChatPage> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -48,6 +48,16 @@ class _HomePageState extends State<HomePage> {
   // Sticky question bar
   String? _stickyQuestion;
   double _stickyScrollOffset = 0.0;
+  String? _stickyTargetKey;          // 当前 sticky 对应的用户消息 key
+  bool _isNavigatingSticky = false;
+  Timer? _stickyNavTimer;
+  /// 已点击定位过的消息 key。这些消息永不会再变成 sticky，
+  /// 除非用户重新向下滚动让它们进入视口又重新完全滚出。
+  final Set<String> _suppressedStickyKeys = {};
+  /// sticky bar 本身的 GlobalKey，用于运行时测量其实际高度。
+  final GlobalKey _stickyBarKey = GlobalKey();
+  /// 运行时测量的 sticky bar 高度；0 表示尚未测量到。
+  double _measuredStickyBarHeight = 0.0;
   final Map<String, GlobalKey> _userMsgKeys = {};
   final Map<String, double> _userMsgRecordedOffsets = {};
   // 跟踪上次渲染的会话 id，切换会话时清除遗留的 sticky 状态。
@@ -82,8 +92,10 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _autoConnect();
-    ChatStore.instance.loadHistory();
+    AppRestoreState.setLastRoute('/chat');
+    if (ConnectionManager.instance.selectedDesktopId == null) {
+      ChatStore.instance.loadHistory();
+    }
 
     _messagesSub = ChatStore.instance.messagesStream.listen((msgs) {
       if (mounted) {
@@ -95,6 +107,8 @@ class _HomePageState extends State<HomePage> {
           _userMsgRecordedOffsets.clear();
           _stickyQuestion = null;
           _stickyScrollOffset = 0.0;
+          _stickyTargetKey = null;
+          _suppressedStickyKeys.clear();
         }
         setState(() => _displayMessages = msgs);
         if (_isStreaming && !_showScrollFab) _scrollToBottom();
@@ -169,28 +183,11 @@ class _HomePageState extends State<HomePage> {
     _permissionSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
+    _stickyNavTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
-  }
-
-  Future<void> _autoConnect() async {
-    final prefs = await SharedPreferences.getInstance();
-    final serverUrl = prefs.getString('server_url');
-    if (serverUrl != null && serverUrl.isNotEmpty) {
-      final token = prefs.getString('auth_token') ?? '';
-      try {
-        final uri = Uri.parse(serverUrl);
-        final params = Map<String, String>.from(uri.queryParameters);
-        params['role'] = 'mobile';
-        if (token.isNotEmpty) params['token'] = token;
-        final fullUrl = uri.replace(queryParameters: params).toString();
-        ConnectionManager.instance.connect(fullUrl);
-      } catch (e) {
-        debugPrint('Auto-connect failed: $e');
-      }
-    }
   }
 
   void _onScroll() {
@@ -209,6 +206,8 @@ class _HomePageState extends State<HomePage> {
 
   /// 检测已滚出顶部的用户消息，更新 sticky question bar 状态
   void _updateStickyQuestion() {
+    // 导航锁：点击 sticky 后的动画期间不重算，避免中间帧闪现错误问题内容。
+    if (_isNavigatingSticky) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
 
@@ -217,12 +216,31 @@ class _HomePageState extends State<HomePage> {
       final listBox = scrollCtx.findRenderObject() as RenderBox?;
       if (listBox == null || !listBox.attached) return;
       final viewportTop = listBox.localToGlobal(Offset.zero).dy;
+      // 运行时测量 sticky bar 的实际高度（根据问题文本 1~3 行动态变化）。
+      // 未测量时使用较安全的估计值 60（与初次 build 后的测量差别很小）。
+      double stickyBarH = _measuredStickyBarHeight;
+      if (_stickyQuestion != null) {
+        final stickyCtx = _stickyBarKey.currentContext;
+        if (stickyCtx != null) {
+          final box = stickyCtx.findRenderObject() as RenderBox?;
+          if (box != null && box.attached) {
+            stickyBarH = box.size.height;
+            if (stickyBarH != _measuredStickyBarHeight) {
+              _measuredStickyBarHeight = stickyBarH;
+            }
+          }
+        }
+      }
+      // sticky bar 视觉上遮挡了 listView 顶部 stickyBarH 像素，
+      // 所以"完全滚出可视区"的边界要按 viewportTop + stickyBarH 计算。
+      final visibleTop = viewportTop + stickyBarH;
 
       final userMsgs =
           _displayMessages.where((m) => m.role == MessageRole.user).toList();
 
       String? candidateQuestion;
       double candidateOffset = 0.0;
+      String? candidateKey;
 
       for (final msg in userMsgs) {
         final keyStr = msg.createdAt.microsecondsSinceEpoch.toString();
@@ -242,27 +260,59 @@ class _HomePageState extends State<HomePage> {
                   .clamp(0.0, _scrollController.position.maxScrollExtent);
           _userMsgRecordedOffsets[keyStr] = absOffset;
 
-          if (itemBottom < viewportTop) {
-            // 完全在视口上方 — sticky 候选
-            candidateQuestion = msg.content;
-            candidateOffset = absOffset;
+          // 若该气泡至少部分进入了"sticky bar 下方的可见区"，
+          // 就把它从 suppressed 集合移除（用户重新看到了它）。
+          if (itemBottom > visibleTop && itemTop < viewportTop + listBox.size.height) {
+            _suppressedStickyKeys.remove(keyStr);
+          }
+
+          if (itemBottom < visibleTop) {
+            // 完全被 sticky bar 遮挡或在其上方 — sticky 候选
+            // 但若这条已被点击定位过且尚未重新进入可见区，则跳过。
+            if (!_suppressedStickyKeys.contains(keyStr)) {
+              candidateQuestion = msg.content;
+              candidateOffset = absOffset;
+              candidateKey = keyStr;
+            }
           } else {
-            // 进入视口或在下方 — 停止遍历
+            // 进入可见区或在下方 — 停止遍历
             break;
           }
         } else if (_userMsgRecordedOffsets.containsKey(keyStr)) {
           // 已滚出屏幕（未渲染），使用上次记录的偏移
-          candidateQuestion = msg.content;
-          candidateOffset = _userMsgRecordedOffsets[keyStr]!;
+          if (!_suppressedStickyKeys.contains(keyStr)) {
+            candidateQuestion = msg.content;
+            candidateOffset = _userMsgRecordedOffsets[keyStr]!;
+            candidateKey = keyStr;
+          }
         }
       }
 
       if (candidateQuestion != _stickyQuestion ||
-          candidateOffset != _stickyScrollOffset) {
+          candidateOffset != _stickyScrollOffset ||
+          candidateKey != _stickyTargetKey) {
+        final wasNull = _stickyQuestion == null;
         setState(() {
           _stickyQuestion = candidateQuestion;
           _stickyScrollOffset = candidateOffset;
+          _stickyTargetKey = candidateKey;
         });
+        // 首次显示 sticky bar 时（之前为 null），下一帧立刻重测真实高度，
+        // 避免依赖 fallback 60 导致点击补偿不准。
+        if (wasNull && candidateQuestion != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final ctx = _stickyBarKey.currentContext;
+            if (ctx == null) return;
+            final box = ctx.findRenderObject() as RenderBox?;
+            if (box != null && box.attached) {
+              final h = box.size.height;
+              if (h > 0 && h != _measuredStickyBarHeight) {
+                _measuredStickyBarHeight = h;
+              }
+            }
+          });
+        }
       }
     });
   }
@@ -411,6 +461,15 @@ class _HomePageState extends State<HomePage> {
         ),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
+          // 切换桃面：返回 LandingPage 重新选择
+          IconButton(
+            icon: const Icon(Icons.swap_horiz_outlined),
+            tooltip: '切换桃面端',
+            onPressed: () {
+              AppRestoreState.setLastRoute('/');
+              Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+            },
+          ),
           // Return to live chat (clear active session)
           StreamBuilder<String?>(
             stream: SessionSyncService.instance.activeSessionStream,
@@ -481,7 +540,10 @@ class _HomePageState extends State<HomePage> {
                     top: 0,
                     left: 0,
                     right: 0,
-                    child: _buildStickyQuestionBar(),
+                    child: KeyedSubtree(
+                      key: _stickyBarKey,
+                      child: _buildStickyQuestionBar(),
+                    ),
                   ),
                 // Scroll-to-bottom FAB
                 if (_showScrollFab)
@@ -773,11 +835,44 @@ class _HomePageState extends State<HomePage> {
     return StickyQuestionBar(
       question: _stickyQuestion!,
       onTap: () {
-        _scrollController.animateTo(
-          _stickyScrollOffset,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        final targetKey = _stickyTargetKey;
+        // 使用实测高度补偿；未测量时 fallback 到 60。
+        final barH = _measuredStickyBarHeight > 0 ? _measuredStickyBarHeight : 60.0;
+        // 让原气泡顶部出现在 sticky bar 下方，不被遮挡
+        final targetOffset = (_stickyScrollOffset - barH)
+            .clamp(0.0, _scrollController.position.maxScrollExtent);
+
+        // 1) 立即隐藏 sticky，并把这条消息加入 suppress 集合：
+        //    它不会再次变成 sticky，直到用户主动让它重新进入可见区后再次滚出。
+        setState(() {
+          if (targetKey != null) _suppressedStickyKeys.add(targetKey);
+          _stickyQuestion = null;
+          _stickyTargetKey = null;
+        });
+
+        // 2) 导航锁：动画期间不重算
+        _isNavigatingSticky = true;
+        _stickyNavTimer?.cancel();
+        _scrollController
+            .animateTo(
+              targetOffset,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            )
+            .then((_) {
+          if (!mounted) return;
+          _isNavigatingSticky = false;
+          _stickyNavTimer?.cancel();
+          _stickyNavTimer = null;
+          _updateStickyQuestion();
+        });
+        // 3) Fallback: 若动画被中断，500ms 后强制解锁
+        _stickyNavTimer = Timer(const Duration(milliseconds: 500), () {
+          if (!mounted) return;
+          _isNavigatingSticky = false;
+          _stickyNavTimer = null;
+          _updateStickyQuestion();
+        });
       },
     );
   }

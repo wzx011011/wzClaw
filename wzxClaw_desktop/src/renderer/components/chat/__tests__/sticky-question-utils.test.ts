@@ -112,3 +112,60 @@ describe('findLastQuestionAboveViewport', () => {
     expect(findLastQuestionAboveViewport(bubbles, 200)).toBe('有内容')
   })
 })
+
+// ============================================================
+// tolerance=0 — ChatPanel.tsx 的实际调用参数
+// 语义：气泡底部完全离开视口才显示 sticky，无重叠无间隙
+// ============================================================
+
+describe('findLastQuestionAboveViewport — tolerance=0 (no overlap, no gap)', () => {
+  it('bubble fully above viewport is shown', () => {
+    // bottom=390, viewportTop=400, tolerance=0 → 390 < 400 → true
+    const bubbles: BubbleInfo[] = [
+      { text: '完全在视口外的问题', bottom: 390 },
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 400, 0)).toBe('完全在视口外的问题')
+  })
+
+  it('bubble bottom exactly at viewport top is NOT shown', () => {
+    // bottom=400, viewportTop=400, tolerance=0 → 400 < 400? No → null
+    const bubbles: BubbleInfo[] = [
+      { text: '底部恰在边界', bottom: 400 },
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 400, 0)).toBeNull()
+  })
+
+  it('bubble one px above viewport IS shown', () => {
+    // bottom=399, viewportTop=400, tolerance=0 → 399 < 400 → true
+    const bubbles: BubbleInfo[] = [
+      { text: '刚好露出一像素', bottom: 399 },
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 400, 0)).toBe('刚好露出一像素')
+  })
+
+  it('bubble still visible in viewport is NOT shown (no overlap)', () => {
+    // bottom=420, viewportTop=400, tolerance=0 → 420 < 400? No → null
+    const bubbles: BubbleInfo[] = [
+      { text: '还在视口内', bottom: 420 },
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 400, 0)).toBeNull()
+  })
+
+  it('multi-bubble: shows last one fully outside viewport', () => {
+    // viewportTop=500, tolerance=0 → threshold = 500
+    const bubbles: BubbleInfo[] = [
+      { text: '问题一', bottom: 200 }, // < 500 → candidate
+      { text: '问题二', bottom: 490 }, // < 500 → candidate (later → wins)
+      { text: '问题三', bottom: 510 }, // >= 500 → not shown
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 500, 0)).toBe('问题二')
+  })
+
+  it('no bubbles qualify when all still visible', () => {
+    const bubbles: BubbleInfo[] = [
+      { text: '还在视口', bottom: 400 },  // == threshold, not shown
+      { text: '深在视口', bottom: 600 },
+    ]
+    expect(findLastQuestionAboveViewport(bubbles, 400, 0)).toBeNull()
+  })
+})

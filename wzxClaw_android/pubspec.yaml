@@ -21,6 +21,7 @@ dependencies:
   markdown: ^7.3.0
   google_fonts: ^6.1.0
   flutter_inappwebview: ^6.0.0
+  flutter_local_notifications: ^18.0.0
 
 dev_dependencies:
   flutter_test:
@@ -37,4 +38,3 @@ flutter_launcher_icons:
   android: "launcher_icon"
   ios: false
   image_path: "assets/icon.png"
-

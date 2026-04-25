@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react'
 import TaskHomePage from './components/tasks/TaskHomePage'
+import ErrorBoundary from './components/ErrorBoundary'
 import { useTaskStore } from './stores/task-store'
 import { useSettingsStore } from './stores/settings-store'
 import './styles/ide.css'
@@ -22,16 +23,24 @@ function App(): JSX.Element {
   }, [])
 
   if (activeTaskId) return (
-    <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
-      <IDELayout />
-    </Suspense>
+    <ErrorBoundary scope="IDELayout">
+      <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
+        <IDELayout />
+      </Suspense>
+    </ErrorBoundary>
   )
   if (viewingTaskId) return (
-    <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
-      <TaskDetailPage />
-    </Suspense>
+    <ErrorBoundary scope="TaskDetailPage">
+      <Suspense fallback={<div style={{ background: '#181818', height: '100vh' }} />}>
+        <TaskDetailPage />
+      </Suspense>
+    </ErrorBoundary>
   )
-  return <TaskHomePage />
+  return (
+    <ErrorBoundary scope="TaskHomePage">
+      <TaskHomePage />
+    </ErrorBoundary>
+  )
 }
 
 export default App

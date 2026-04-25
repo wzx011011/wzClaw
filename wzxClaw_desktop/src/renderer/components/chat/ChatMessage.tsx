@@ -49,7 +49,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
 }
 
 function ChatMessage({ message }: ChatMessageProps): JSX.Element {
-  const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions } = message
+  const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions, model } = message
 
   if (role === 'user') {
     // Show mention context blocks if present, then the display content
@@ -176,6 +176,7 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
         <div className="chat-usage-info">
           <span>In: {usage.inputTokens}</span>
           <span>Out: {usage.outputTokens}</span>
+          {model && <span className="chat-usage-model">{model}</span>}
         </div>
       )}
     </div>

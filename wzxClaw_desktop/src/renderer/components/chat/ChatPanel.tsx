@@ -17,6 +17,11 @@ import SettingsModal from './SettingsModal'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
 import ThinkingIndicator from './ThinkingIndicator'
+import {
+  getVisibleHistoryWindow,
+  INITIAL_HISTORY_RENDER_COUNT,
+  shouldWindowHistory,
+} from './history-window'
 import { findLastQuestionAboveViewportWithIndex, extractBubbleText } from './sticky-question-utils'
 import type { MentionItem } from '../../../shared/types'
 
@@ -56,6 +61,7 @@ export default function ChatPanel(): JSX.Element {
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const streamJustEnded = useChatStore((s) => s.streamJustEnded)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const isLoadingSession = useChatStore((s) => s.isLoadingSession)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)
@@ -68,12 +74,20 @@ export default function ChatPanel(): JSX.Element {
   const [mentionFilter, setMentionFilter] = useState('')
   const [showSlashPicker, setShowSlashPicker] = useState(false)
   const [slashQuery, setSlashQuery] = useState('')
+  const [historyWindowed, setHistoryWindowed] = useState(false)
+  const [historyRenderCount, setHistoryRenderCount] = useState(INITIAL_HISTORY_RENDER_COUNT)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
   const [stickyQuestion, setStickyQuestion] = useState<string | null>(null)
   const stickyQuestionElRef = useRef<HTMLElement | null>(null)
+  // 导航锁：程序触发 scrollIntoView 期间屏蔽 computeSticky，
+  // 防止 smooth scroll 中间位置重算出幽灵气泡
+  const isNavigatingRef = useRef(false)
+  const navTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previousSessionIdRef = useRef(activeSessionId)
+  const previousLoadingSessionRef = useRef(isLoadingSession)
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
@@ -138,6 +152,11 @@ export default function ChatPanel(): JSX.Element {
   const lastToolSignature = lastMessage?.toolCalls
     ?.map((toolCall) => `${toolCall.id}:${toolCall.status}:${toolCall.output?.length ?? 0}`)
     .join('|') ?? ''
+  const { visibleMessages, hiddenMessageCount } = getVisibleHistoryWindow(
+    messages,
+    historyWindowed,
+    historyRenderCount
+  )
   const scrollAnchorKey = [
     messages.length,
     lastMessage?.id ?? '',
@@ -150,10 +169,11 @@ export default function ChatPanel(): JSX.Element {
   ].join(':')
 
   // Auto-scroll to bottom when messages change — only if user hasn't scrolled up
+  // 使用 'instant' 避免会话切换/加载时出现缓慢滑动动画
   useEffect(() => {
     if (userScrolledUp) return
     const raf = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth', block: 'end' })
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
     })
     return () => cancelAnimationFrame(raf)
   }, [scrollAnchorKey, userScrolledUp, isStreaming])
@@ -164,7 +184,7 @@ export default function ChatPanel(): JSX.Element {
       setUserScrolledUp(false)
       useChatStore.setState({ streamJustEnded: false })
       requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+        messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
       })
     }
   }, [streamJustEnded])
@@ -172,17 +192,21 @@ export default function ChatPanel(): JSX.Element {
   // Track scroll position to detect user scroll-up, and compute sticky question
   // 使用 useCallback 保证 scroll handler 与 messages-change effect 都能复用同一个计算逻辑。
   const computeSticky = useCallback((): void => {
+    if (isNavigatingRef.current) return  // 导航锁：程序滚动期间跳过，防止幽灵气泡
     const container = messagesContainerRef.current
     if (!container) return
     const containerTop = container.getBoundingClientRect().top
-    const userBubbles = container.querySelectorAll<HTMLElement>('.chat-message-user')
+    const userBubbles = container.querySelectorAll<HTMLElement>(
+      '.chat-message-user:not(.sticky-question-bubble)'
+    )
     const bubbleInfos = Array.from(userBubbles).map((el) => ({
       text: extractBubbleText(el),
       bottom: el.getBoundingClientRect().bottom,
       el,
     })).filter((b) => b.text.length > 0)
     // 一次遍历同时拿 index 和 text，保证文字与 element 属于同一条气泡
-    const hit = findLastQuestionAboveViewportWithIndex(bubbleInfos, containerTop)
+    // tolerance=0：气泡底部完全离开视口才显示 sticky，确保无重叠也无空白间隙
+    const hit = findLastQuestionAboveViewportWithIndex(bubbleInfos, containerTop, 0)
     if (hit) {
       setStickyQuestion(hit.text)
       stickyQuestionElRef.current = bubbleInfos[hit.index].el
@@ -195,13 +219,23 @@ export default function ChatPanel(): JSX.Element {
   useEffect(() => {
     const container = messagesContainerRef.current
     if (!container) return
+    // 节流 scroll handler：每帧最多算一次 sticky / scrolledUp，
+    // 避免拖拽窗口或快速滚动时主线程被 getBoundingClientRect 压垮
+    let rafId = 0
     const handleScroll = (): void => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      setUserScrolledUp(distanceFromBottom > 100)
-      computeSticky()
+      if (rafId) return
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+        setUserScrolledUp(distanceFromBottom > 100)
+        computeSticky()
+      })
     }
-    container.addEventListener('scroll', handleScroll)
-    return () => container.removeEventListener('scroll', handleScroll)
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId)
+      container.removeEventListener('scroll', handleScroll)
+    }
   }, [computeSticky])
 
   // 会话切换时立即清除 sticky，避免显示上一个会话的问题。
@@ -210,11 +244,38 @@ export default function ChatPanel(): JSX.Element {
     stickyQuestionElRef.current = null
   }, [activeSessionId])
 
+  useEffect(() => {
+    if (previousSessionIdRef.current === activeSessionId) return
+
+    previousSessionIdRef.current = activeSessionId
+    setHistoryRenderCount(INITIAL_HISTORY_RENDER_COUNT)
+    setHistoryWindowed(shouldWindowHistory(messages.length))
+  }, [activeSessionId, messages.length])
+
+  useEffect(() => {
+    if (previousLoadingSessionRef.current && !isLoadingSession) {
+      setHistoryRenderCount(INITIAL_HISTORY_RENDER_COUNT)
+      setHistoryWindowed(shouldWindowHistory(messages.length))
+    }
+    previousLoadingSessionRef.current = isLoadingSession
+  }, [isLoadingSession, messages.length])
+
+  useEffect(() => {
+    if (messages.length <= INITIAL_HISTORY_RENDER_COUNT && historyWindowed) {
+      setHistoryWindowed(false)
+    }
+  }, [messages.length, historyWindowed])
+
   // messages 变化后下一帧重算 sticky，解决加载时 scroll 不触发、stale 的问题。
   useEffect(() => {
     const raf = requestAnimationFrame(computeSticky)
     return () => cancelAnimationFrame(raf)
   }, [messages.length, computeSticky])
+
+  // 清理导航锁 timeout，防止组件卸载后 setState
+  useEffect(() => () => {
+    if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
+  }, [])
 
   // Listen for plan mode events from main process
   useEffect(() => {
@@ -403,6 +464,19 @@ export default function ChatPanel(): JSX.Element {
     }
   }
 
+  const handleRevealMoreHistory = (): void => {
+    const nextCount = Math.min(messages.length, historyRenderCount + INITIAL_HISTORY_RENDER_COUNT)
+    setHistoryRenderCount(nextCount)
+    if (nextCount >= messages.length) {
+      setHistoryWindowed(false)
+    }
+  }
+
+  const handleRevealAllHistory = (): void => {
+    setHistoryRenderCount(messages.length)
+    setHistoryWindowed(false)
+  }
+
   // Compute context usage percentage
   const tokenUsage = useChatStore((s) => s.currentTokenUsage)
   const preset = DEFAULT_MODELS.find((m) => m.id === model)
@@ -422,26 +496,68 @@ export default function ChatPanel(): JSX.Element {
 
       {/* Messages */}
       <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
-        {/* Sticky question bar — 滚动读长回复时始终可见原始问题 */}
+        {/* Sticky question — 直接渲染为用户气泡样式，仿佛原始问题被 pin 在顶部 */}
         {stickyQuestion && (
-          <div
-            className="sticky-question-bar"
-            onClick={() => {
-              stickyQuestionElRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            }}
-            title="点击定位到原始问题"
-          >
-            <span className="sticky-question-label">问题</span>
-            <span className="sticky-question-text">{stickyQuestion}</span>
-            <span className="sticky-question-jump">↑</span>
+          <div className="sticky-question-wrap">
+            <div
+              className="chat-message chat-message-user sticky-question-bubble"
+              onClick={() => {
+                setStickyQuestion(null)              // 立即隐藏
+                isNavigatingRef.current = true       // 上导航锁
+                if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
+                const container = messagesContainerRef.current
+                const target = stickyQuestionElRef.current
+                const unlock = () => {               // 解锁 + 按最终位置重算
+                  isNavigatingRef.current = false
+                  if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
+                  navTimeoutRef.current = null
+                  computeSticky()
+                }
+                // scrollend 精确感知滚动停止；timeout 兜底不支持该事件的环境
+                container?.addEventListener('scrollend', unlock, { once: true })
+                navTimeoutRef.current = setTimeout(unlock, 700)
+                target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }}
+              title="点击定位到原始问题"
+            >
+              {stickyQuestion}
+            </div>
           </div>
         )}
         {messages.length === 0 ? (
-          <div className="chat-empty">
-            Start a conversation with the AI agent
-          </div>
+          isLoadingSession ? (
+            <div className="session-loading-skeleton">
+              <div className="skeleton-line skeleton-bubble-user" />
+              <div className="skeleton-line skeleton-bubble-assistant" />
+              <div className="skeleton-line skeleton-bubble-user-sm" />
+              <div className="skeleton-line skeleton-bubble-assistant-sm" />
+              <div className="skeleton-line skeleton-bubble-user" />
+              <div className="skeleton-line skeleton-bubble-assistant" />
+            </div>
+          ) : (
+            <div className="chat-empty">
+              Start a conversation with the AI agent
+            </div>
+          )
         ) : (
-          messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)
+          <>
+            {hiddenMessageCount > 0 && (
+              <div className="history-window-banner">
+                <div className="history-window-copy">
+                  已优先渲染最近 {visibleMessages.length} 条消息，另外 {hiddenMessageCount} 条历史按需展开。
+                </div>
+                <div className="history-window-actions">
+                  <button className="history-window-btn" onClick={handleRevealMoreHistory}>
+                    再加载 {Math.min(hiddenMessageCount, INITIAL_HISTORY_RENDER_COUNT)} 条
+                  </button>
+                  <button className="history-window-btn history-window-btn-secondary" onClick={handleRevealAllHistory}>
+                    展开全部
+                  </button>
+                </div>
+              </div>
+            )}
+            {visibleMessages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+          </>
         )}
         {isStreaming && isWaitingForResponse && !streamingMessageId && (
           <div className="chat-message chat-message-assistant chat-message-streaming">

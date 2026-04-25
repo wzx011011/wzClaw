@@ -12,6 +12,8 @@ import 'connection_manager.dart';
 /// Handles requesting, creating, updating, and deleting tasks on the desktop.
 /// Exposes reactive streams for the task list and active task.
 class TaskService {
+  static const _activeTaskKeyPrefix = 'active_task_id';
+
   // -- Singleton --
   static final TaskService _instance = TaskService._();
   static TaskService get instance => _instance;
@@ -35,10 +37,10 @@ class TaskService {
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
 
   StreamSubscription<WsMessage>? _wsSub;
-  StreamSubscription<bool>? _desktopOnlineSub;
+  StreamSubscription<String?>? _desktopOnlineSub;
   final _random = Random.secure();
   DateTime? _lastTaskFetchTime;
-  static const _activeTaskKey = 'active_task_id';
+  String? _currentDesktopId;
 
   /// Generate a unique request ID to correlate WS responses.
   String _newRequestId() =>
@@ -52,29 +54,13 @@ class TaskService {
       cancelOnError: false,
     );
 
-    // Auto-fetch tasks when desktop comes online.
+    // 用户选择桃面端后才请求任务列表，而不是所有桃面上线都触发。
     _desktopOnlineSub =
-        ConnectionManager.instance.desktopOnlineStream.listen((online) {
-      if (online) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (ConnectionManager.instance.desktopOnline) {
-            requestTaskList();
-          }
-        });
-      }
+        ConnectionManager.instance.selectedDesktopIdStream.listen((selectedId) {
+      _handleDesktopSelectionChanged(selectedId);
     });
 
-    // Restore persisted active task ID.
-    SharedPreferences.getInstance().then((prefs) {
-      final saved = prefs.getString(_activeTaskKey);
-      if (saved != null && _activeTaskId == null) {
-        _activeTaskId = saved;
-        _activeTaskIdController.add(saved);
-      }
-    }).catchError((e) {
-      // ignore: avoid_print
-      print('[TaskService] failed to restore active task ID: $e');
-    });
+    _handleDesktopSelectionChanged(ConnectionManager.instance.selectedDesktopId);
   }
 
   void _onMessage(WsMessage msg) {
@@ -88,6 +74,9 @@ class TaskService {
             .whereType<Map<String, dynamic>>()
             .map(TaskModel.fromJson)
             .toList();
+        if (_activeTaskId != null && !_tasks.any((task) => task.id == _activeTaskId)) {
+          setActiveTask(null);
+        }
         _tasksController.add(_tasks);
         break;
 
@@ -130,11 +119,14 @@ class TaskService {
   void setActiveTask(String? taskId) {
     _activeTaskId = taskId;
     _activeTaskIdController.add(_activeTaskId);
+    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    if (desktopId == null) return;
+
     SharedPreferences.getInstance().then((prefs) {
       if (taskId != null) {
-        prefs.setString(_activeTaskKey, taskId);
+        prefs.setString(_activeTaskKeyForDesktop(desktopId), taskId);
       } else {
-        prefs.remove(_activeTaskKey);
+        prefs.remove(_activeTaskKeyForDesktop(desktopId));
       }
     }).catchError((e) {
       // ignore: avoid_print
@@ -195,4 +187,45 @@ class TaskService {
     _loadingController.close();
     _activeTaskIdController.close();
   }
+
+  void _handleDesktopSelectionChanged(String? desktopId) {
+    if (_currentDesktopId == desktopId) {
+      if (desktopId != null) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (ConnectionManager.instance.selectedDesktopId == desktopId) {
+            requestTaskList();
+          }
+        });
+      }
+      return;
+    }
+
+    _currentDesktopId = desktopId;
+    _lastTaskFetchTime = null;
+    _tasks = [];
+    _tasksController.add([]);
+
+    SharedPreferences.getInstance().then((prefs) {
+      final restoredTaskId = desktopId == null
+          ? null
+          : prefs.getString(_activeTaskKeyForDesktop(desktopId));
+      if (_activeTaskId != restoredTaskId) {
+        _activeTaskId = restoredTaskId;
+        _activeTaskIdController.add(_activeTaskId);
+      }
+    }).catchError((e) {
+      print('[TaskService] failed to restore active task ID: $e');
+    });
+
+    if (desktopId != null) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (ConnectionManager.instance.selectedDesktopId == desktopId) {
+          requestTaskList();
+        }
+      });
+    }
+  }
+
+  static String _activeTaskKeyForDesktop(String desktopId) =>
+      '$_activeTaskKeyPrefix::$desktopId';
 }

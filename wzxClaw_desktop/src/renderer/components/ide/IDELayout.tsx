@@ -20,6 +20,14 @@ import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
 import { useTaskStore } from '../../stores/task-store'
 
+const WORKSPACE_RESTORE_DELAY_MS = 60
+const INDEX_INIT_DELAY_MS = 220
+
+function scheduleDeferredUiWork(task: () => void, delayMs: number): () => void {
+  const timeoutId = window.setTimeout(task, delayMs)
+  return () => window.clearTimeout(timeoutId)
+}
+
 /**
  * IDELayout — Chat-centric layout with right sidebar for sessions + editor.
  *
@@ -129,19 +137,30 @@ export default function IDELayout(): JSX.Element {
     return unsubscribe
   }, [initChat])
 
-  // Restore workspace on startup — load all task project folders into the file tree
+  // Restore workspace after the shell paints so ChatPanel can appear first.
   useEffect(() => {
-    if (activeTask?.projects && activeTask.projects.length > 0) {
-      setFolders(activeTask.projects)
-    } else {
-      initWorkspace()
-    }
+    const cancelDeferredWorkspaceInit = scheduleDeferredUiWork(() => {
+      if (activeTask?.projects && activeTask.projects.length > 0) {
+        void setFolders(activeTask.projects)
+      } else {
+        void initWorkspace()
+      }
+    }, WORKSPACE_RESTORE_DELAY_MS)
+
+    return cancelDeferredWorkspaceInit
   }, [activeTask?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subscribe to index progress events
+  // Index status is useful but not a first-paint dependency.
   useEffect(() => {
-    const unsubscribe = useIndexStore.getState().init()
-    return unsubscribe
+    let unsubscribeIndex: (() => void) | null = null
+    const cancelDeferredIndexInit = scheduleDeferredUiWork(() => {
+      unsubscribeIndex = useIndexStore.getState().init()
+    }, INDEX_INIT_DELAY_MS)
+
+    return () => {
+      cancelDeferredIndexInit()
+      unsubscribeIndex?.()
+    }
   }, [])
 
   // Register built-in commands

@@ -2083,3 +2083,81 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================
+   ErrorBoundary Fallback
+   ============================================================ */
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-primary, #181818);
+  color: var(--text-primary, #e0e0e0);
+  font-family: Inter, system-ui, sans-serif;
+}
+.error-boundary-card {
+  max-width: 560px;
+  width: calc(100% - 48px);
+  padding: 32px;
+  background: var(--bg-secondary, #1f1f1f);
+  border: 1px solid var(--border, #2c2c2c);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.error-boundary-icon {
+  font-size: 32px;
+  color: #f5a524;
+  margin-bottom: 8px;
+}
+.error-boundary-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.error-boundary-subtitle {
+  margin: 0 0 16px;
+  color: var(--text-secondary, #a0a0a0);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.error-boundary-detail {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  background: var(--bg-tertiary, #2a2a2a);
+  border: 1px solid var(--border, #2c2c2c);
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: #ff8a8a;
+  margin: 0 0 16px;
+}
+.error-boundary-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.error-boundary-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2c2c2c);
+  background: var(--bg-tertiary, #2a2a2a);
+  color: var(--text-primary, #e0e0e0);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.error-boundary-btn:hover {
+  background: var(--bg-elevated, #323232);
+}
+.error-boundary-btn.primary {
+  background: var(--accent, #7c6af7);
+  color: #fff;
+  border-color: var(--accent, #7c6af7);
+}
+.error-boundary-btn.primary:hover {
+  background: var(--accent-hover, #8a78ff);
+}
