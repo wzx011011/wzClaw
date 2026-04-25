@@ -97,6 +97,14 @@
   /* Mention colors */
   --mention-badge-bg: #3c3c3c;
   --mention-folder-color: #dcb67a;
+
+  /* Syntax highlight colors */
+  --syntax-keyword: #569cd6;
+
+  /* Font size scale */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
 }
 
 /* Reset & Full viewport */
@@ -123,6 +131,12 @@ html, body, #root {
 #root {
   border-radius: 10px;
   overflow: hidden;
+}
+
+/* Toast slide-in animation */
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Scrollbar styling — thin and subtle */
@@ -197,14 +211,14 @@ html, body, #root {
   height: 28px;
   border: none;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 .titlebar-action-btn:hover {
-  background: var(--bg-hover);
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
@@ -233,7 +247,7 @@ html, body, #root {
   justify-content: center;
   flex: 1;
   gap: var(--sp-3);
-  color: var(--text-tertiary);
+  color: var(--text-muted);
 }
 
 .preview-panel-icon {
@@ -262,14 +276,14 @@ html, body, #root {
 }
 
 .preview-panel-action:hover {
-  background: var(--bg-hover);
+  background: var(--hover-bg);
   border-color: var(--accent);
   color: var(--text-primary);
 }
 
 .preview-panel-desc {
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   margin: 0;
 }
 
@@ -669,6 +683,33 @@ html, body, #root {
   border-radius: 0 1px 1px 0;
 }
 
+.activity-bar-item.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.activity-bar-item.disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+/* 活动栏左侧指示条（与 ::before 互补，用于 SVG 方案） */
+.activity-bar-indicator {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 1px 1px 0;
+}
+
+/* 禁用 ::before 以避免与 .activity-bar-indicator 重复 */
+.activity-bar-item.active::before {
+  display: none;
+}
+
 .activity-bar-spacer {
   flex: 1;
 }
@@ -698,6 +739,15 @@ html, body, #root {
   flex-direction: column;
   background: var(--bg-secondary);
   overflow: hidden;
+}
+
+.sidebar-content {
+  animation: sidebar-fade-in 150ms ease-out;
+}
+
+@keyframes sidebar-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .sidebar-header {
@@ -996,6 +1046,106 @@ html, body, #root {
 .tree-icon.file-icon-git { color: #f05032; }
 .tree-icon.file-icon-config { color: #6d28d9; }
 .tree-icon.file-icon-image { color: #a855f7; }
+.tree-icon.file-icon-dart { color: #00B4AB; }
+.tree-icon.file-icon-kt { color: #A97BFF; }
+.tree-icon.file-icon-java { color: #ED8B00; }
+.tree-icon.file-icon-gradle { color: #02303A; }
+.tree-icon.file-icon-xml { color: #E44D26; }
+.tree-icon.file-icon-c { color: #555555; }
+.tree-icon.file-icon-cpp { color: #00599C; }
+.tree-icon.file-icon-cs { color: #68217A; }
+.tree-icon.file-icon-swift { color: #FA7343; }
+.tree-icon.file-icon-rb { color: #CC342D; }
+.tree-icon.file-icon-php { color: #777BB4; }
+.tree-icon.file-icon-sql { color: #336791; }
+.tree-icon.file-icon-docker { color: #2496ED; }
+
+/* Explorer toolbar */
+.explorer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.explorer-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.explorer-toolbar-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+/* Explorer search/filter */
+.explorer-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  position: relative;
+}
+
+.explorer-search svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.explorer-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.explorer-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.explorer-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.explorer-search-clear:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+/* Explorer new file/folder inline input */
+.explorer-new-item {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  gap: 4px;
+  background: var(--hover-bg);
+}
 
 .tree-label {
   overflow: hidden;
@@ -1036,7 +1186,9 @@ html, body, #root {
 }
 
 .context-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   padding: 6px var(--sp-4);
   background: none;
@@ -1052,6 +1204,32 @@ html, body, #root {
 .context-menu-item:hover {
   background: var(--accent);
   color: #ffffff;
+}
+
+.context-menu-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.context-menu-shortcut {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: var(--sp-4);
+}
+
+.context-menu-item:hover .context-menu-shortcut {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: var(--sp-1) 0;
 }
 
 /* ============================================================
