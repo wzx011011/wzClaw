@@ -935,12 +935,14 @@ app.whenReady().then(async () => {
                   const recentMessages = messages.slice(-result.keptRecentCount)
                   agentLoop.replaceMessages([summaryMsg, ...recentMessages])
                 }
-                broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens })
+                const sid = settingsManager.getLastSessionId() ?? mobileSessionId
+                broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: sid })
               }).catch((err: any) => {
                 broadcastToMobile('stream:error', { error: err.message })
               })
             } else {
-              broadcastToMobile('stream:agent:done', { usage: null })
+              const sid = settingsManager.getLastSessionId() ?? mobileSessionId
+              broadcastToMobile('stream:agent:done', { usage: null, sessionId: sid })
             }
             return
           }

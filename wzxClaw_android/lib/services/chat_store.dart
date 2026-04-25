@@ -169,7 +169,7 @@ class ChatStore {
           _handlePermissionRequest(wsMsg.data);
           break;
         case WsEvents.agentTurnEnd:
-          _handleAgentTurnEnd();
+          _handleAgentTurnEnd(wsMsg.data);
           break;
         case WsEvents.agentPlanModeEntered:
           _handlePlanModeEntered(wsMsg.data);
@@ -326,8 +326,7 @@ class ChatStore {
   }
 
   // ── stream:agent:error ─────────────────────────────────────────────
-  void _handleAgentError(dynamic data) {
-    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+  void _handleAgentError(dynamic data) {    if (_isWrongSession(data)) return;    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final errorText = map['error'] as String? ?? data.toString();
     final recoverable = map['recoverable'] as bool? ?? false;
 
@@ -369,8 +368,7 @@ class ChatStore {
   }
 
   // ── stream:agent:compacted ─────────────────────────────────────────
-  void _handleAgentCompacted(dynamic data) {
-    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+  void _handleAgentCompacted(dynamic data) {    if (_isWrongSession(data)) return;    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final before = map['beforeTokens'] as int? ?? 0;
     final after = map['afterTokens'] as int? ?? 0;
     final auto = map['auto'] as bool? ?? false;
@@ -412,7 +410,8 @@ class ChatStore {
   }
 
   // ── stream:agent:turn_end ─────────────────────────────────────────
-  void _handleAgentTurnEnd() {
+  void _handleAgentTurnEnd([dynamic data]) {
+    if (data != null && _isWrongSession(data)) return;
     _thinkingContent = '';
     _thinkingController.add('');
   }
