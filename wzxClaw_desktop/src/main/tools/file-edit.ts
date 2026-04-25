@@ -59,10 +59,15 @@ Usage:
     const { path: filePath, old_string, new_string } = parsed.data
     const absolutePath = path.resolve(context.workingDirectory, filePath)
 
-    // Workspace boundary check — block out-of-workspace edits (case-insensitive on Windows)
-    const normalizedWorkspace = path.resolve(context.workingDirectory).toLowerCase()
+    // Workspace boundary check — allow edits within any projectRoot (multi-folder Task support)
+    const allowedRoots = context.projectRoots?.length
+      ? context.projectRoots
+      : [context.workingDirectory]
     const normalizedPath = absolutePath.toLowerCase()
-    const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
+    const isWithinWorkspace = allowedRoots.some((root) => {
+      const normalized = path.resolve(root).toLowerCase()
+      return normalizedPath.startsWith(normalized + path.sep) || normalizedPath === normalized
+    })
     if (!isWithinWorkspace) {
       return { output: `Blocked: FileEdit target is outside workspace boundary: ${absolutePath}`, isError: true }
     }

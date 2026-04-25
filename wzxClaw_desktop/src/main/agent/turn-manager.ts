@@ -148,6 +148,7 @@ export class TurnManager {
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
           taskId,
+          projectRoots: config.projectRoots,
           abortSignal,
           onSubAgentEvent: sender ? (event) => {
             if (sender.isDestroyed()) return

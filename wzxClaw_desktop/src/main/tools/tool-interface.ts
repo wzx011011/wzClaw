@@ -22,6 +22,8 @@ export interface ToolExecutionContext {
   workingDirectory: string
   /** Task ID if the agent is running within a Task. Used for task-scoped storage. */
   taskId?: string
+  /** All project root directories for this context (multi-folder Task support). */
+  projectRoots?: string[]
   abortSignal?: AbortSignal
   /** 工具进度回调（可选） */
   onProgress?: (message: string) => void
