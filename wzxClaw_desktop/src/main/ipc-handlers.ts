@@ -630,11 +630,14 @@ export function registerIpcHandlers(
   // Session: list — returns all sessions for current project or task
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeTaskId?: string }) => {
-    // If activeTaskId provided, use task-scoped store; otherwise fall through
-    // to the dynamic getSessionStore() which checks agentLoop.activeTask
+    // If activeTaskId provided, look up the task's primary project root for workspace-based isolation
     if (payload?.activeTaskId) {
-      const { SessionStore } = await import('./persistence/session-store')
-      return SessionStore.forTask(payload.activeTaskId).listSessions()
+      const task = await taskStore.getTask(payload.activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        const { SessionStore } = await import('./persistence/session-store')
+        return new SessionStore(primaryRoot).listSessions()
+      }
     }
     return getSessionStore().listSessions()
   })
@@ -650,9 +653,14 @@ export function registerIpcHandlers(
     const { sessionId, activeTaskId } = result.data
     // 优先使用请求中携带的 activeTaskId（与 listSessions 保持一致），
     // 避免 agentLoop.activeTask 尚未设置时读错 store。
-    const store = activeTaskId
-      ? SessionStore.forTask(activeTaskId)
-      : getSessionStore()
+    let store = getSessionStore()
+    if (activeTaskId) {
+      const task = await taskStore.getTask(activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        store = new SessionStore(primaryRoot)
+      }
+    }
     const rawMessages = await store.loadSession(sessionId)
 
     // Reset persisted counter to match loaded message count

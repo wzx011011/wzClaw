@@ -55,7 +55,7 @@ export async function buildSystemPromptBreakdown(
     getGitContext(roots).catch(() => ''),
     loadInstructionSections(roots).catch(() => ({ instructions: '', commands: '', skills: '', merged: '' })),
     activeTask
-      ? new MemoryManager(activeTask.id).buildSystemPromptSection().catch(() => '')
+      ? new MemoryManager(roots[0]).buildSystemPromptSection().catch(() => '')
       : Promise.resolve(''),
   ])
 

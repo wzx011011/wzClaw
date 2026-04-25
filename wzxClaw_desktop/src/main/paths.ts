@@ -23,11 +23,13 @@ export function getAppDataDir(): string {
 
 // ---- 用户级子目录（~/.wzxclaw/） ----
 
-/** 任务级记忆目录：~/.wzxclaw/task-memory/{taskId}/ */
-export function getTaskMemoryDir(taskId: string): string {
-  // Sanitize taskId to prevent path traversal (H1 defense-in-depth)
-  const safe = taskId.replace(/[\/\\]/g, '_')
-  return path.join(getUserDir(), 'task-memory', safe)
+/**
+ * 项目级记忆目录：~/.wzxclaw/memory/{projectHash}/
+ * 按 workspaceRoot 路径的 SHA-256 前 16 位哈希隔离，与 session 存储一致。
+ */
+export function getProjectMemoryDir(workspaceRoot: string): string {
+  const hash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)
+  return path.join(getUserDir(), 'memory', hash)
 }
 
 /** 全局记忆文件：~/.wzxclaw/MEMORY.md（跨项目共享的个人偏好） */
@@ -98,23 +100,7 @@ export function getInsightsReportDir(): string {
  */
 export function getSessionsDir(projectHash: string): string {
   return path.join(getAppDataDir(), 'sessions', projectHash)
-}
-
-/**
- * 任务级会话目录：%APPDATA%/wzxclaw/sessions/task-{taskId}/
- * 当 session 归属于 Task 时，使用 taskId 而非 workspace hash
- */
-export function getTaskSessionsDir(taskId: string): string {
-  return path.join(getAppDataDir(), 'sessions', `task-${taskId}`)
-}
-
-/** 设置文件备份目录：%APPDATA%/wzxclaw/backups/ */
-export function getBackupsDir(): string {
-  return path.join(getAppDataDir(), 'backups')
-}
-
-/** 设置文件路径：%APPDATA%/wzxclaw/settings.json */
-export function getSettingsPath(): string {
+}ort function getSettingsPath(): string {
   return path.join(getAppDataDir(), 'settings.json')
 }
 

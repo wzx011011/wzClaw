@@ -2,7 +2,7 @@ import fs from 'fs'
 import fsp from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
-import { getSessionsDir, getTaskSessionsDir } from '../paths'
+import { getSessionsDir } from '../paths'
 
 // ============================================================
 // SessionStore — JSONL-based session persistence (per PERSIST-01 through PERSIST-06)
@@ -57,14 +57,6 @@ export class SessionStore {
     const projectHash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)
     this.sessionsDir = getSessionsDir(projectHash)
     fs.mkdirSync(this.sessionsDir, { recursive: true })
-  }
-
-  /** Create a SessionStore scoped to a Task instead of a workspace root */
-  static forTask(taskId: string): SessionStore {
-    const store = Object.create(SessionStore.prototype) as SessionStore
-    store.sessionsDir = getTaskSessionsDir(taskId)
-    fs.mkdirSync(store.sessionsDir, { recursive: true })
-    return store
   }
 
   /**

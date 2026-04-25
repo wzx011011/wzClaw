@@ -1,26 +1,27 @@
 import path from 'path'
 import fs from 'fs'
-import { getTaskMemoryDir, getGlobalMemoryPath } from '../paths'
+import { getProjectMemoryDir, getGlobalMemoryPath } from '../paths'
 
 // ============================================================
 // MemoryManager — Cross-session MEMORY.md persistence
 // ============================================================
 
 /**
- * Manages a task-scoped MEMORY.md file that persists facts across sessions.
+ * Manages a workspace-scoped MEMORY.md file that persists facts across sessions.
  *
  * Storage layout:
- *   ~/.wzxclaw/task-memory/{taskId}/MEMORY.md
+ *   ~/.wzxclaw/memory/{projectHash}/MEMORY.md
  *
- * Memory is scoped to a Task (the top-level work unit), not a workspace path.
- * This aligns with the Task → Project → Session hierarchy.
+ * Memory is scoped to the primary workspace root (SHA-256 hash, first 16 chars).
+ * This matches how SessionStore isolates sessions, and aligns with Claude Code's
+ * workspace-based design philosophy.
  */
 export class MemoryManager {
   private memoryDir: string
   private memoryPath: string
 
-  constructor(taskId: string) {
-    this.memoryDir = getTaskMemoryDir(taskId)
+  constructor(workspaceRoot: string) {
+    this.memoryDir = getProjectMemoryDir(workspaceRoot)
     this.memoryPath = path.join(this.memoryDir, 'MEMORY.md')
   }
 
