@@ -21,7 +21,7 @@ const IDE_NAME = 'wzxclaw'
 
 let _client: Langfuse | null = null
 
-function getClient(): Langfuse {
+export function getClient(): Langfuse {
   if (!_client) {
     _client = new Langfuse({
       publicKey: process.env.LANGFUSE_PUBLIC_KEY ?? 'pk-lf-53c306d4-557b-4893-a2d2-f5a2683f0d8e',

@@ -10,8 +10,12 @@
  */
 export interface AgentRuntimeConfig {
   // ---- 上下文管理 ----
-  /** 压缩触发阈值（占上下文窗口的比例）。默认 0.8 */
+  /** 压缩触发阈值（占上下文窗口的比例）。设为 0 则使用自动公式。默认 0（自动） */
   compactThreshold: number
+  /** 自动压缩安全缓冲（tokens）。阈值 = contextWindow - maxOutputTokens - safetyBuffer。默认 13000 */
+  compactSafetyBuffer: number
+  /** 连续压缩失败后停止重试的次数。默认 3 */
+  maxConsecutiveCompactFailures: number
   /** 主动压缩保留近期消息的目标比例（占上下文窗口）。默认 0.25 */
   compactKeepRatio: number
   /** 主动压缩最大保留条数。默认 10 */
@@ -40,6 +44,8 @@ export interface AgentRuntimeConfig {
   maxAgentTurns: number
   /** 子代理最大嵌套深度。默认 2 */
   maxSubAgentDepth: number
+  /** 单次 run 最大输入 token 数（0 = 不限制）。默认 0 */
+  maxBudgetTokens: number
 
   // ---- 消息管理 ----
   /** 单条消息最大字符数（防止异常工具输出撑爆内存）。默认 100000 */
@@ -48,7 +54,9 @@ export interface AgentRuntimeConfig {
 
 /** 默认配置 */
 export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
-  compactThreshold: 0.8,
+  compactThreshold: 0,           // 0 = 使用自动公式
+  compactSafetyBuffer: 13_000,    // 参考 Claude Code 的 AUTOCOMPACT_BUFFER_TOKENS
+  maxConsecutiveCompactFailures: 3,
   compactKeepRatio: 0.25,
   compactKeepMax: 10,
   compactKeepMin: 2,
@@ -63,6 +71,7 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
 
   maxAgentTurns: 25,
   maxSubAgentDepth: 2,
+  maxBudgetTokens: 0,  // 0 = 不限制
 
   maxMessageChars: 100_000,
 }

@@ -76,5 +76,6 @@ export interface AgentConfig {
   projectRoots: string[]
   conversationId: string
   maxTurns?: number // defaults to MAX_AGENT_TURNS
+  maxBudgetTokens?: number // 0 = unlimited
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
 }

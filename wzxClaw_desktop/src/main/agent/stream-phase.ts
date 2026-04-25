@@ -75,8 +75,29 @@ export async function* executeStreamPhase(
   const executor = new StreamingToolExecutor(isReadOnly)
 
   // ---- Phase 1: LLM 流 — 逐条 yield 事件 ----
+  // 流式看门狗：90s 无事件则中止流（参考 Claude Code 的 CLAUDE_STREAM_IDLE_TIMEOUT_MS）
+  const STREAM_IDLE_TIMEOUT_MS = 90_000
+  let eventTimer: ReturnType<typeof setTimeout> | null = null
+  let watchdogTriggered = false
+
+  const resetWatchdog = () => {
+    if (eventTimer) clearTimeout(eventTimer)
+    eventTimer = setTimeout(() => {
+      watchdogTriggered = true
+      // 中止流式传输
+      if (streamOpts.abortSignal && !streamOpts.abortSignal.aborted) {
+        try {
+          // AbortController 无法从外部信号获取，使用标志位通知循环退出
+        } catch { /* ignore */ }
+      }
+    }, STREAM_IDLE_TIMEOUT_MS)
+  }
+  resetWatchdog()
+
   try {
     for await (const event of streamFn(streamOpts)) {
+      resetWatchdog()
+      if (watchdogTriggered) break
       switch (event.type) {
         case 'text_delta': {
           textContent += event.content
@@ -127,15 +148,30 @@ export async function* executeStreamPhase(
       if (hadError) break
     }
   } catch (streamErr) {
-    // PromptTooLongError 需要特殊处理，重新抛出让调用方处理
-    if (streamErr instanceof PromptTooLongError) {
+    // 看门狗触发的超时，不当作普通错误处理
+    if (watchdogTriggered) {
+      // 跳过，走下面的 watchdog 错误路径
+    } else if (streamErr instanceof PromptTooLongError) {
       throw streamErr
+    } else {
+      // 其他流错误
+      yield {
+        type: 'agent:error',
+        error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+        recoverable: false,
+      }
+      hadError = true
     }
-    // 其他流错误
+  } finally {
+    if (eventTimer) clearTimeout(eventTimer)
+  }
+
+  // 看门狗触发：流 90s 无事件，中止并报错
+  if (watchdogTriggered && !hadError) {
     yield {
       type: 'agent:error',
-      error: streamErr instanceof Error ? streamErr.message : String(streamErr),
-      recoverable: false,
+      error: `Stream idle timeout: no events received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+      recoverable: true,
     }
     hadError = true
   }

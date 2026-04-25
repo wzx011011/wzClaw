@@ -46,6 +46,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
       const stream = await this.client.chat.completions.create(params, {
         signal: options.abortSignal ?? undefined,
+        timeout: options.timeoutMs ?? 600_000,
       })
 
       const toolCalls = new Map<number, ToolCallAccumulator>()

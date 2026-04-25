@@ -29,6 +29,7 @@ export class AgentLoop {
   private conversation = new ConversationManager()
   private abortController: AbortController | null = null
   private turnManager = new TurnManager()
+  private _recentOutputTokens: number[] = []
 
   /** Active task context — injected into system prompt when set */
   activeTask: Task | null = null
@@ -59,7 +60,9 @@ export class AgentLoop {
     // Langfuse：每次 run() 开启一条 trace
     startTrace(config.conversationId, config.model, config.workingDirectory)
 
-    const maxTurns = config.maxTurns ?? MAX_AGENT_TURNS
+    // 安全天花板：子 Agent 使用 config.maxTurns，主对话不设上限（靠自然终止）
+    const maxTurns = config.maxTurns  // 子 Agent 传入具体值，主对话为 undefined
+    const safetyCeiling = MAX_AGENT_TURNS  // 200，意外死循环的最后防线
     this.abortController = new AbortController()
     this.turnManager.reset()
 
@@ -108,9 +111,38 @@ export class AgentLoop {
     let turnCount = 0
 
     // ---- 主循环 ----
+    // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
+    //   1. LLM 不再调用工具 (shouldStop)
+    //   2. 上下文溢出经压缩仍无法恢复 (fatal error)
+    //   3. 用户中止 (abort)
+    //   4. 安全天花板 (200 轮) — 意外死循环的最后防线
+    // 子 Agent 仍通过 config.maxTurns 限制（默认 10，最大 20）
     let toolsDisabled = false  // 降级标志：上下文过长时禁用工具（用局部变量而非破坏原数组）
-    for (let turn = 0; turn < maxTurns; turn++) {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
       turnCount++
+
+      // 安全天花板检查
+      if (turnCount > safetyCeiling) {
+        debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
+        debugLogger.close()
+        yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
+        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
+
+      // 子 Agent 轮数限制检查
+      if (maxTurns && turnCount > maxTurns) {
+        debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
+        debugLogger.close()
+        yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
+        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
 
       // 上下文压缩检查（LLM 调用前）
       if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
@@ -134,14 +166,14 @@ export class AgentLoop {
         _eval.recordContextPressure(estTokens, ctxWindow)
       }
 
-      debugLogger.log('TURN', `start turn ${turn + 1}/${maxTurns}`)
+      debugLogger.log('TURN', `start turn ${turnCount}${maxTurns ? `/${maxTurns}` : ''}`)
 
       // 执行一轮 turn（事件通过 yield* 逐条穿透）
       let turnResult
       try {
         turnResult = yield* this.turnManager.executeTurn(
           {
-            turnIndex: turn,
+            turnIndex: turnCount - 1,
             conversation: this.conversation,
             config,
             systemPrompt,
@@ -172,7 +204,6 @@ export class AgentLoop {
           }
 
           // 不消耗 turn 槽位，重试
-          if (turn > 0) turn--
           if (turnCount > 0) turnCount--
           continue
         } else if (streamErr instanceof PromptTooLongError && !toolsDisabled) {
@@ -180,7 +211,6 @@ export class AgentLoop {
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('tools_disabled')
           toolsDisabled = true
           yield { type: 'agent:error', error: 'Context too long — retrying in text-only mode (tools disabled)', recoverable: true }
-          if (turn > 0) turn--
           if (turnCount > 0) turnCount--
           continue
         } else {
@@ -211,6 +241,33 @@ export class AgentLoop {
       // Eval: 记录 turn 输出 token
       getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
 
+      // 收益递减检测：连续 3 轮输出 <500 tokens → 可能卡住了
+      const DIMINISHING_WINDOW = 3
+      const DIMINISHING_THRESHOLD = 500
+      this._recentOutputTokens.push(turnResult.usage.outputTokens)
+      if (this._recentOutputTokens.length > DIMINISHING_WINDOW) {
+        this._recentOutputTokens.shift()
+      }
+      if (this._recentOutputTokens.length >= DIMINISHING_WINDOW &&
+          this._recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD) && turnCount > DIMINISHING_WINDOW) {
+        debugLogger.log('WARN', `diminishing returns: last ${DIMINISHING_WINDOW} turns all < ${DIMINISHING_THRESHOLD} output tokens`)
+        yield { type: 'agent:error', error: `Agent appears stuck — low output over ${DIMINISHING_WINDOW} consecutive turns`, recoverable: true }
+        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
+
+      // Token 预算检查
+      if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
+        debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
+        yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
+        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
+
       // 无工具调用 → 正常结束
       if (turnResult.shouldStop) {
         debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
@@ -221,14 +278,6 @@ export class AgentLoop {
         return
       }
     }
-
-    // 超过最大轮次
-    debugLogger.log('ERROR', `max turns exceeded (${turnCount})`)
-    debugLogger.close()
-    yield { type: 'agent:error', error: `Max agent turns exceeded (${turnCount})`, recoverable: true }
-    yield { type: 'agent:done', usage: totalUsage, turnCount }
-    endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
-    await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
   }
 
   /** 执行主动压缩，返回 compacted 事件或 null */

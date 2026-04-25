@@ -1111,7 +1111,12 @@ export function registerIpcHandlers(
     const totalEstimated = promptBreakdown.staticTokens + promptBreakdown.dynamicTokens
       + allToolTokens + conversationTokens
     const usagePercent = (totalEstimated / contextWindowSize) * 100
-    const autocompactBufferTokens = Math.floor(contextWindowSize * (contextManager.getConfig().compactThreshold ?? 0.8))
+    // 压缩缓冲：使用与 shouldCompact() 相同的公式
+    const cfg = contextManager.getConfig()
+    const threshold = cfg.compactThreshold > 0
+      ? contextWindowSize * cfg.compactThreshold
+      : contextWindowSize - (contextManager.getMaxOutputTokensForModel(model) ?? 16384) - (cfg.compactSafetyBuffer ?? 13_000)
+    const autocompactBufferTokens = Math.floor(Math.max(threshold, contextWindowSize * 0.5))
       - totalEstimated
     const freeSpaceTokens = Math.max(0, contextWindowSize - totalEstimated)
 

@@ -22,6 +22,8 @@ export interface StreamOptions {
     input_schema: Record<string, unknown>
   }>
   abortSignal?: AbortSignal
+  /** API 请求超时（毫秒）。默认 600000 (10min) */
+  timeoutMs?: number
   /** If set, tried once after the primary model exhausts its retries. */
   fallbackModel?: string
   /** Invoked before each retry attempt so callers can emit UI notifications. */

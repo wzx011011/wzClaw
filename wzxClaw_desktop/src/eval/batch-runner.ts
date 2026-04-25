@@ -11,11 +11,8 @@ import { scoreTask } from './scorer'
 import { aggregateScores } from './score-aggregator'
 import { pullAutoScores } from './auto-score-puller'
 import { ensureToolchains, isToolchainAvailable } from './toolchain-resolver'
+import { getClient as getObserverClient } from '../main/observability/langfuse-observer'
 import type { BenchmarkTask, HeadlessConfig, RunSummary, TaskEvalResult } from './types'
-
-const LANGFUSE_BASE_URL = process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000'
-const LANGFUSE_PUBLIC_KEY = process.env.LANGFUSE_PUBLIC_KEY ?? 'pk-lf-78a706ff-29b5-49a6-8e68-222b9f88962e'
-const LANGFUSE_SECRET_KEY = process.env.LANGFUSE_SECRET_KEY ?? 'sk-lf-ab1adf9a-2420-4d78-ad5e-04b81e633ffb'
 
 export interface BatchRunConfig {
   /** 数据集名称 */
@@ -46,11 +43,8 @@ export interface BatchRunConfig {
  * 执行一次批量评测
  */
 export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
-  const lf = new Langfuse({
-    publicKey: LANGFUSE_PUBLIC_KEY,
-    secretKey: LANGFUSE_SECRET_KEY,
-    baseUrl: LANGFUSE_BASE_URL,
-  })
+  // 使用与 observer 相同的 Langfuse client，确保 traces 和 scores 在同一项目
+  const lf = getObserverClient()
 
   // 检测工具链并补全 PATH
   const toolchains = ensureToolchains()

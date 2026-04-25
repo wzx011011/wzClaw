@@ -121,7 +121,16 @@ export class AnthropicAdapter implements LLMAdapter {
           betas.push('effort-2025-11-24')
         }
       }
-      const streamOptions: any = { signal: options.abortSignal }
+      // 合并用户 abortSignal 和 timeout 超时信号
+      const timeoutMs = options.timeoutMs ?? 600_000
+      const signals: AbortSignal[] = []
+      if (options.abortSignal) signals.push(options.abortSignal)
+      signals.push(AbortSignal.timeout(timeoutMs))
+      const combinedSignal = signals.length === 1
+        ? signals[0]
+        : AbortSignal.any(signals)
+
+      const streamOptions: any = { signal: combinedSignal }
       if (betas.length > 0) {
         streamOptions.headers = { 'anthropic-beta': betas.join(',') }
       }

@@ -21,6 +21,7 @@ export interface CompactResult {
  */
 export class ContextManager {
   private isCompacting = false
+  private consecutiveCompactFailures = 0
   private accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
   private config: AgentRuntimeConfig
   private compactHistory = { count: 0, lastBefore: null as number | null, lastAfter: null as number | null }
@@ -44,14 +45,41 @@ export class ContextManager {
   }
 
   /**
+   * Get max output tokens for a model from DEFAULT_MODELS presets.
+   * Returns 16384 as default for unknown models.
+   */
+  getMaxOutputTokensForModel(modelId: string): number {
+    const preset = DEFAULT_MODELS.find(m => m.id === modelId)
+    return preset?.maxTokens ?? 16384
+  }
+
+  /**
    * Check if messages exceed the compaction threshold.
-   * Returns false if already compacting (circuit breaker).
+   * 电路保护：正在压缩中或连续失败过多时返回 false。
+   *
+   * 阈值公式（参考 Claude Code）：
+   *   contextWindow - maxOutputTokens - safetyBuffer
+   * 若 compactThreshold > 0 则使用旧式比例模式。
+   * 下限 50% 防止过早触发。
    */
   shouldCompact(messages: Message[], modelId: string): boolean {
     if (this.isCompacting) return false
+    if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
+
     const tokens = countMessagesTokens(messages, modelId)
-    const limit = this.getContextWindowForModel(modelId)
-    return tokens > limit * this.config.compactThreshold
+    const contextWindow = this.getContextWindowForModel(modelId)
+
+    // 兼容旧式比例模式
+    if (this.config.compactThreshold > 0) {
+      return tokens > contextWindow * this.config.compactThreshold
+    }
+
+    // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
+    const maxOutputTokens = this.getMaxOutputTokensForModel(modelId)
+    const threshold = contextWindow - maxOutputTokens - this.config.compactSafetyBuffer
+    // 下限 50%，避免短会话也触发压缩
+    const effectiveThreshold = Math.max(threshold, contextWindow * 0.5)
+    return tokens > effectiveThreshold
   }
 
   /**
@@ -133,8 +161,12 @@ Provide a concise summary:`
       this.compactHistory.count++
       this.compactHistory.lastBefore = beforeTokens
       this.compactHistory.lastAfter = afterTokens
+      this.consecutiveCompactFailures = 0  // 成功则重置失败计数
 
       return { summary, keptRecentCount: recentCount, beforeTokens, afterTokens }
+    } catch (err) {
+      this.consecutiveCompactFailures++
+      throw err
     } finally {
       this.isCompacting = false
     }
@@ -152,6 +184,7 @@ Provide a concise summary:`
   resetUsage(): void {
     this.accumulatedUsage = { inputTokens: 0, outputTokens: 0 }
     this.compactHistory = { count: 0, lastBefore: null, lastAfter: null }
+    this.consecutiveCompactFailures = 0
   }
 
   getCompactHistory(): { count: number; lastBefore: number | null; lastAfter: number | null } {
