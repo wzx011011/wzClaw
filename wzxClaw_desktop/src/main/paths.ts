@@ -100,7 +100,15 @@ export function getInsightsReportDir(): string {
  */
 export function getSessionsDir(projectHash: string): string {
   return path.join(getAppDataDir(), 'sessions', projectHash)
-}ort function getSettingsPath(): string {
+}
+
+/** 设置文件备份目录：%APPDATA%/wzxclaw/backups/ */
+export function getBackupsDir(): string {
+  return path.join(getAppDataDir(), 'backups')
+}
+
+/** 设置文件路径：%APPDATA%/wzxclaw/settings.json */
+export function getSettingsPath(): string {
   return path.join(getAppDataDir(), 'settings.json')
 }
 
