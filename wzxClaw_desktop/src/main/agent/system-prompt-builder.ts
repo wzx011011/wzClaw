@@ -54,9 +54,7 @@ export async function buildSystemPromptBreakdown(
   const [gitContext, instructionSections, memorySection] = await Promise.all([
     getGitContext(roots).catch(() => ''),
     loadInstructionSections(roots).catch(() => ({ instructions: '', commands: '', skills: '', merged: '' })),
-    activeTask
-      ? new MemoryManager(roots[0]).buildSystemPromptSection().catch(() => '')
-      : Promise.resolve(''),
+    new MemoryManager(roots[0]).buildSystemPromptSection().catch(() => ''),
   ])
 
   const envInfo = buildEnvInfo({

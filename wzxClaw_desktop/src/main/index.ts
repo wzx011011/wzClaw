@@ -455,6 +455,17 @@ app.whenReady().then(async () => {
   let mobileSessionId: string | null = null
   // Track how many messages have already been persisted per mobile session
   const mobilePersistedMessageCounts = new Map<string, number>()
+  // Cache SessionStore instances by primaryRoot to avoid repeated mkdirSync per request
+  const sessionStoreCache = new Map<string, SessionStore>()
+
+  const getCachedSessionStore = (primaryRoot: string): SessionStore => {
+    let cached = sessionStoreCache.get(primaryRoot)
+    if (!cached) {
+      cached = new SessionStore(primaryRoot)
+      sessionStoreCache.set(primaryRoot, cached)
+    }
+    return cached
+  }
 
   /**
    * Return the appropriate SessionStore for the current context.
@@ -464,7 +475,7 @@ app.whenReady().then(async () => {
     const task = agentLoop.activeTask
     if (task) {
       const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-      return new SessionStore(primaryRoot)
+      return getCachedSessionStore(primaryRoot)
     }
     return sessionStore
   }
@@ -479,7 +490,7 @@ app.whenReady().then(async () => {
       const task = await taskStore.getTask(activeTaskId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        return new SessionStore(primaryRoot)
+        return getCachedSessionStore(primaryRoot)
       }
     }
     return getActiveSessionStore()

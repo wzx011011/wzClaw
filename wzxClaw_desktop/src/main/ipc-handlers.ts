@@ -635,7 +635,6 @@ export function registerIpcHandlers(
       const task = await taskStore.getTask(payload.activeTaskId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        const { SessionStore } = await import('./persistence/session-store')
         return new SessionStore(primaryRoot).listSessions()
       }
     }
@@ -654,9 +653,11 @@ export function registerIpcHandlers(
     // 优先使用请求中携带的 activeTaskId（与 listSessions 保持一致），
     // 避免 agentLoop.activeTask 尚未设置时读错 store。
     let store = getSessionStore()
+    let resolvedTask = agentLoop.activeTask ?? null
     if (activeTaskId) {
       const task = await taskStore.getTask(activeTaskId).catch(() => null)
       if (task) {
+        resolvedTask = task
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
       }
@@ -671,8 +672,8 @@ export function registerIpcHandlers(
     // shows the chat immediately while the (potentially slow) compaction runs.
     const config = settingsManager.getCurrentConfig()
     const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const restoreRoots = agentLoop.activeTask
-      ? agentLoop.activeTask.projects.map(p => p.path)
+    const restoreRoots = resolvedTask
+      ? resolvedTask.projects.map(p => p.path)
       : [restoreCwd]
     agentLoop.restoreContext(rawMessages, {
       model: config.model,
@@ -706,7 +707,15 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    const success = await getSessionStore().deleteSession(result.data.sessionId)
+    let store = getSessionStore()
+    if (result.data.activeTaskId) {
+      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        store = new SessionStore(primaryRoot)
+      }
+    }
+    const success = await store.deleteSession(result.data.sessionId)
     if (success) onDataChanged?.('session:changed', { action: 'deleted', sessionId: result.data.sessionId })
     return { success }
   })
@@ -719,7 +728,15 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    const success = await getSessionStore().renameSession(result.data.sessionId, result.data.title)
+    let store = getSessionStore()
+    if (result.data.activeTaskId) {
+      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        store = new SessionStore(primaryRoot)
+      }
+    }
+    const success = await store.renameSession(result.data.sessionId, result.data.title)
     if (success) onDataChanged?.('session:changed', { action: 'renamed', sessionId: result.data.sessionId, title: result.data.title })
     return { success }
   })

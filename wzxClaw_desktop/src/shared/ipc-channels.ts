@@ -208,8 +208,8 @@ export interface IpcRequestPayloads {
   'file:delete': { filePath: string }
   'session:list': void
   'session:load': { sessionId: string; activeTaskId?: string }
-  'session:delete': { sessionId: string }
-  'session:rename': { sessionId: string; title: string }
+  'session:delete': { sessionId: string; activeTaskId?: string }
+  'session:rename': { sessionId: string; title: string; activeTaskId?: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
@@ -429,11 +429,11 @@ export const IpcSchemas = {
     response: z.array(z.unknown())
   },
   'session:delete': {
-    request: z.object({ sessionId: z.string().min(1) }),
+    request: z.object({ sessionId: z.string().min(1), activeTaskId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
   },
   'session:rename': {
-    request: z.object({ sessionId: z.string().min(1), title: z.string().min(1) }),
+    request: z.object({ sessionId: z.string().min(1), title: z.string().min(1), activeTaskId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
   }
 } as const

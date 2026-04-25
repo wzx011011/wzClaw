@@ -852,7 +852,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   deleteSession: async (sessionId: string) => {
     try {
-      await window.wzxclaw.deleteSession({ sessionId })
+      const activeTaskId = useTaskStore.getState().activeTaskId
+      await window.wzxclaw.deleteSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
       const { conversationId } = get()
       if (conversationId === sessionId) {
         get().clearConversation()
@@ -969,7 +970,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   renameSession: async (sessionId: string, title: string) => {
     try {
-      await window.wzxclaw.renameSession({ sessionId, title })
+      const activeTaskId = useTaskStore.getState().activeTaskId
+      await window.wzxclaw.renameSession({ sessionId, title, ...(activeTaskId ? { activeTaskId } : {}) })
       const { sessions } = get()
       set({
         sessions: sessions.map(s =>
@@ -987,7 +989,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   deleteSessionTab: async (sessionId: string) => {
     try {
-      await window.wzxclaw.deleteSession({ sessionId })
+      const activeTaskId = useTaskStore.getState().activeTaskId
+      await window.wzxclaw.deleteSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
       const { activeSessionId, sessionsCache } = get()
 
       // Remove from cache and LRU tracking

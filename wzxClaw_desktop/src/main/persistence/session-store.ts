@@ -132,7 +132,7 @@ export class SessionStore {
       const sessions: SessionMeta[] = []
 
       for (const file of jsonlFiles) {
-        const sessionId = file.replace('.jsonl', '')
+        const sessionId = path.basename(file, '.jsonl')
         const filePath = path.join(this.sessionsDir, file)
         const content = await fsp.readFile(filePath, 'utf-8')
         const lines = content.split('\n').filter(l => l.trim())
