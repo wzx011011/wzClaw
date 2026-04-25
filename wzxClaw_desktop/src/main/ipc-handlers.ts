@@ -1115,7 +1115,7 @@ export function registerIpcHandlers(
     const cfg = contextManager.getConfig()
     const threshold = cfg.compactThreshold > 0
       ? contextWindowSize * cfg.compactThreshold
-      : contextWindowSize - (contextManager.getMaxOutputTokensForModel(model) ?? 16384) - (cfg.compactSafetyBuffer ?? 13_000)
+      : contextWindowSize - contextManager.getMaxOutputTokensForModel(model) - cfg.compactSafetyBuffer
     const autocompactBufferTokens = Math.floor(Math.max(threshold, contextWindowSize * 0.5))
       - totalEstimated
     const freeSpaceTokens = Math.max(0, contextWindowSize - totalEstimated)

@@ -66,6 +66,7 @@ export class AgentLoop {
     const safetyCeiling = MAX_AGENT_TURNS  // 200，意外死循环的最后防线
     this.abortController = new AbortController()
     this.turnManager.reset()
+    this._recentOutputTokens = []
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
@@ -110,7 +111,7 @@ export class AgentLoop {
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
     let turnCount = 0
-    let stopHookActive = false  // 防止 blockingError → stop hook → 无限循环
+    let stopHookCooldown = 0  // 防止 blockingError → stop hook → 无限循环
 
     // ---- 主循环 ----
     // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
@@ -278,7 +279,9 @@ export class AgentLoop {
       }
 
       // Stop hooks：turn 结束时执行，可阻止继续或注入提醒
-      if (this.hookRegistry && !stopHookActive) {
+      if (stopHookCooldown > 0) {
+        stopHookCooldown--
+      } else if (this.hookRegistry) {
         const WRITE_TOOLS = new Set(['FileWrite', 'FileEdit', 'Bash'])
         const hookResult = await this.hookRegistry.emit('turn-end', {
           conversationId: config.conversationId,
@@ -301,13 +304,10 @@ export class AgentLoop {
 
         if (hookResult.blockingError) {
           debugLogger.log('HOOK', `blocking error injected: ${hookResult.blockingError.substring(0, 80)}`)
-          // 注入为 user message，循环继续
           this.conversation.appendUserMessage(`[System] ${hookResult.blockingError}`)
-          stopHookActive = true
+          stopHookCooldown = 2  // 跳过 2 轮再重新评估，防止振荡
           continue
         }
-      } else {
-        stopHookActive = false  // 本轮由 blockingError 注入，下轮恢复正常
       }
 
       // 无工具调用 → 正常结束
@@ -356,6 +356,7 @@ export class AgentLoop {
     this.conversation.clear()
     this.turnManager.reset()
     this.abortController = null
+    this._recentOutputTokens = []
   }
 
   getMessages(): Message[] {

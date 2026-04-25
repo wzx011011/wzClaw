@@ -80,22 +80,24 @@ export async function* executeStreamPhase(
   let eventTimer: ReturnType<typeof setTimeout> | null = null
   let watchdogTriggered = false
 
+  // 独立 AbortController：看门狗触发时真正中止挂起的流
+  const watchdogController = new AbortController()
+  const signals: AbortSignal[] = [watchdogController.signal]
+  if (streamOpts.abortSignal) signals.push(streamOpts.abortSignal)
+  const combinedSignal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+  const streamOptsWithWatchdog = { ...streamOpts, abortSignal: combinedSignal }
+
   const resetWatchdog = () => {
     if (eventTimer) clearTimeout(eventTimer)
     eventTimer = setTimeout(() => {
       watchdogTriggered = true
-      // 中止流式传输
-      if (streamOpts.abortSignal && !streamOpts.abortSignal.aborted) {
-        try {
-          // AbortController 无法从外部信号获取，使用标志位通知循环退出
-        } catch { /* ignore */ }
-      }
+      watchdogController.abort()  // 真正中止 for await 循环
     }, STREAM_IDLE_TIMEOUT_MS)
   }
   resetWatchdog()
 
   try {
-    for await (const event of streamFn(streamOpts)) {
+    for await (const event of streamFn(streamOptsWithWatchdog)) {
       resetWatchdog()
       if (watchdogTriggered) break
       switch (event.type) {
