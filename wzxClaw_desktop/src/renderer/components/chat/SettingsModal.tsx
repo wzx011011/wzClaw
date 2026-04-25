@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
+import { useToastStore } from '../../stores/toast-store'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -102,6 +103,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       onClose()
     } catch (err) {
       console.error('Failed to save settings:', err)
+      useToastStore.getState().show('设置保存失败，请重试', 'error')
     } finally {
       setSaving(false)
     }
@@ -192,11 +194,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             placeholder="Enter relay pairing token"
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 16px' }}>
-            {relayConnecting && <span style={{ color: '#fbbf24', fontSize: 12 }}>Connecting...</span>}
-            {relayConnected && <span style={{ color: '#4ade80', fontSize: 12 }}>Relay connected</span>}
-            {relayError && <span style={{ color: '#f87171', fontSize: 12 }}>Connection failed: {relayError}</span>}
+            {relayConnecting && <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-sm)' }}>Connecting...</span>}
+            {relayConnected && <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-sm)' }}>Relay connected</span>}
+            {relayError && <span style={{ color: 'var(--error)', fontSize: 'var(--font-size-sm)' }}>Connection failed: {relayError}</span>}
             {!relayConnecting && !relayConnected && !relayError && (
-              <span style={{ color: '#666', fontSize: 12 }}>Used for mobile app pairing via relay server</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>Used for mobile app pairing via relay server</span>
             )}
           </div>
 
