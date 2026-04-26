@@ -113,6 +113,8 @@ describe('E2E: Network Layer Optimizations', () => {
   let serverModule;
 
   beforeEach(() => {
+    // 清理上次运行遗留的离线队列文件，避免测试间污染
+    try { fs.unlinkSync(QUEUE_FILE); } catch (_) {}
     process.env.AUTH_TOKEN = TEST_TOKEN;
     process.env.PORT = String(TEST_PORT);
     delete require.cache[require.resolve('../server')];
@@ -319,9 +321,9 @@ describe('E2E: Network Layer Optimizations', () => {
     const raw = fs.readFileSync(QUEUE_FILE, 'utf8');
     const queues = JSON.parse(raw);
     assert.ok(queues[TEST_TOKEN], 'Queue should have entry for test token');
-    // New format: { _format: 2, desktopQueues: { desktopId: [...] } }
+    // New format: { _format: 3, desktopQueues: { desktopId: [...] } }
     const tokenEntry = queues[TEST_TOKEN];
-    assert.equal(tokenEntry._format, 2);
+    assert.equal(tokenEntry._format, 3);
     const allQueues = Object.values(tokenEntry.desktopQueues);
     const totalMessages = allQueues.reduce((sum, q) => sum + q.length, 0);
     assert.ok(totalMessages >= 2, `Queue should have >= 2 messages, got ${totalMessages}`);

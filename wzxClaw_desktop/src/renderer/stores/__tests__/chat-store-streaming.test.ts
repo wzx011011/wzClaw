@@ -96,7 +96,7 @@ const mockWzxclaw = {
 const CLEAN_STATE = {
   messages: [],
   conversationId: 'test-session',
-  isStreaming: false,
+  isStreaming: true,
   isWaitingForResponse: false,
   error: null,
   sessions: [],

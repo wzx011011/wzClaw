@@ -3,7 +3,7 @@ import * as fsp from 'fs/promises'
 import * as path from 'path'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
-import { getTaskMemoryDir } from '../paths'
+import { getUserDir, sanitizePath } from '../paths'
 
 // ============================================================
 // TodoWrite Tool — Session task list management
@@ -118,7 +118,7 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
    * Returns empty array if no file exists or the file is corrupt.
    */
   static async loadForTask(taskId: string): Promise<TodoItem[]> {
-    const file = path.join(getTaskMemoryDir(taskId), 'todos.json')
+    const file = path.join(getUserDir(), 'tasks', sanitizePath(taskId), 'todos.json')
     try {
       const raw = await fsp.readFile(file, 'utf-8')
       const parsed = z.array(TodoItemSchema).safeParse(JSON.parse(raw))
@@ -130,7 +130,7 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
   /** Atomically write todos to disk (tmp + rename). Silently fails. */
   private async persistTodos(taskId: string, todos: TodoItem[]): Promise<void> {
-    const taskDir = getTaskMemoryDir(taskId)
+    const taskDir = path.join(getUserDir(), 'tasks', sanitizePath(taskId))
     await fsp.mkdir(taskDir, { recursive: true })
     const file = path.join(taskDir, 'todos.json')
     const tmp = `${file}.tmp`
