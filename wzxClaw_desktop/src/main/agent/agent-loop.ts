@@ -251,22 +251,22 @@ export class AgentLoop {
       // Eval: 记录 turn 输出 token
       getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
 
-      // 收益递减检测：连续 5 轮输出 <300 tokens → 可能卡住了
-      const DIMINISHING_WINDOW = 5
-      const DIMINISHING_THRESHOLD = 300
-      this._recentOutputTokens.push(turnResult.usage.outputTokens)
-      if (this._recentOutputTokens.length > DIMINISHING_WINDOW) {
-        this._recentOutputTokens.shift()
-      }
-      if (this._recentOutputTokens.length >= DIMINISHING_WINDOW &&
-          this._recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD) && turnCount > DIMINISHING_WINDOW) {
-        debugLogger.log('WARN', `diminishing returns: last ${DIMINISHING_WINDOW} turns all < ${DIMINISHING_THRESHOLD} output tokens`)
-        yield { type: 'agent:error', error: `Agent appears stuck — low output over ${DIMINISHING_WINDOW} consecutive turns`, recoverable: true }
-        yield { type: 'agent:done', usage: totalUsage, turnCount }
-        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
-        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
-        return
-      }
+      // 收益递减检测：暂时关闭
+      // const DIMINISHING_WINDOW = 5
+      // const DIMINISHING_THRESHOLD = 300
+      // this._recentOutputTokens.push(turnResult.usage.outputTokens)
+      // if (this._recentOutputTokens.length > DIMINISHING_WINDOW) {
+      //   this._recentOutputTokens.shift()
+      // }
+      // if (this._recentOutputTokens.length >= DIMINISHING_WINDOW &&
+      //     this._recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD) && turnCount > DIMINISHING_WINDOW) {
+      //   debugLogger.log('WARN', `diminishing returns: last ${DIMINISHING_WINDOW} turns all < ${DIMINISHING_THRESHOLD} output tokens`)
+      //   yield { type: 'agent:error', error: `Agent appears stuck — low output over ${DIMINISHING_WINDOW} consecutive turns`, recoverable: true }
+      //   yield { type: 'agent:done', usage: totalUsage, turnCount }
+      //   endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+      //   await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+      //   return
+      // }
 
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
