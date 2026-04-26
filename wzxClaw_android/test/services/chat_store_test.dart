@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/models/chat_message.dart';
-import 'package:wzxclaw_android/models/ws_message.dart';
 import 'package:wzxclaw_android/services/chat_store.dart';
 
 void main() {

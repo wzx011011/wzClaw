@@ -73,12 +73,6 @@ void main() {
         final containers = tester.widgetList<Container>(
           find.byType(Container),
         );
-        final hasVerticalLine = containers.any((c) {
-          final constraints = c.constraints;
-          if (constraints != null && constraints.maxWidth == 2) return true;
-          // Also check if child alignment could make it 2px wide via decoration
-          return false;
-        });
         // The widget tree should contain IntrinsicHeight (wraps the vertical line row)
         expect(find.byType(IntrinsicHeight), findsOneWidget);
       });
