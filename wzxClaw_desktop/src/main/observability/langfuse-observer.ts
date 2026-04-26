@@ -124,6 +124,10 @@ export class AgentTraceContext {
         ...(taskId ? { taskId } : {}),
       },
     })
+
+    // trace 创建后立即 flush，确保 Langfuse 先收到 trace 记录，
+    // 后续 generation/span 才能正确挂载，不会成为孤立 observation
+    getClient().flushAsync().catch(() => {/* 忽略 flush 错误 */})
   }
 
   startGeneration(turnIndex: number, model: string, input: unknown): LangfuseGeneration {
