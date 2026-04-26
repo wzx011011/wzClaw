@@ -113,15 +113,18 @@ export default function ChatPanel(): JSX.Element {
     Array<{ questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }>
   >([])
 
-  // Load permission mode from backend on mount
+  // Load permission mode from backend on mount — deferred 100ms, not first-frame critical
   useEffect(() => {
-    window.wzxclaw.getPermissionMode?.().then((result: { mode: string }) => {
-      if (result?.mode) {
-        setPermissionMode(result.mode as PermissionMode)
-      }
-    }).catch(() => {
-      useToastStore.getState().show('权限模式加载失败', 'error')
-    })
+    const timer = setTimeout(() => {
+      window.wzxclaw.getPermissionMode?.().then((result: { mode: string }) => {
+        if (result?.mode) {
+          setPermissionMode(result.mode as PermissionMode)
+        }
+      }).catch(() => {
+        useToastStore.getState().show('权限模式加载失败', 'error')
+      })
+    }, 100)
+    return () => clearTimeout(timer)
   }, [])
 
   // Close dropdowns on outside click

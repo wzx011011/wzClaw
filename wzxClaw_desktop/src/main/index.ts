@@ -298,12 +298,10 @@ app.whenReady().then(async () => {
     workspaceManager.setWorkspaceRoot(lastWsPath)
   }
 
-  // Auto-connect to relay if token is saved
+  // relay connect 推迟到 did-finish-load 后执行 — 不阻塞启动链
+  // 保存 token 供 did-finish-load 回调使用
   const savedRelayToken = settingsManager.getRelayToken()
-  if (savedRelayToken) {
-    relayClient.connect(savedRelayToken)
-  }
-  logStartup('relay connect dispatched')
+  logStartup('relay connect deferred to did-finish-load')
 
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
@@ -1341,6 +1339,11 @@ app.whenReady().then(async () => {
     const lastSessionId = settingsManager.getLastSessionId()
     if (lastSessionId) {
       mainWindow.webContents.send(IPC_CHANNELS['session:restore'], { sessionId: lastSessionId })
+    }
+    // Auto-connect to relay after renderer loads (non-blocking for first frame)
+    if (savedRelayToken) {
+      relayClient.connect(savedRelayToken)
+      logStartup('relay connect dispatched (deferred to did-finish-load)')
     }
     // Always push current relay status after renderer loads
     // (relay may have connected before renderer mounted)

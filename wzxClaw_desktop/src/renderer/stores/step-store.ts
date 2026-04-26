@@ -42,10 +42,11 @@ export const useStepStore = create<StepStore>((set, get) => ({
       })
     })
 
-    // Load initial steps
-    get().loadSteps()
+    // 步骤面板默认隐藏 — 延迟 200ms 加载初始数据，让首帧 IPC 优先处理会话恢复
+    const loadTimer = setTimeout(() => get().loadSteps(), 200)
 
     return () => {
+      clearTimeout(loadTimer)
       unsubCreated()
       unsubUpdated()
     }
