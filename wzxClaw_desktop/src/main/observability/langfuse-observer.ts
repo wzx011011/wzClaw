@@ -27,7 +27,7 @@ export function getClient(): Langfuse {
       publicKey: process.env.LANGFUSE_PUBLIC_KEY ?? 'pk-lf-53c306d4-557b-4893-a2d2-f5a2683f0d8e',
       secretKey: process.env.LANGFUSE_SECRET_KEY ?? 'sk-lf-1e84dc06-43e9-4721-b2d9-f6b3134e1cc0',
       baseUrl: process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000',
-      flushAt: 5,
+      flushAt: 1,       // 每个事件立即发送，防止短会话 generation 因 flush 未 await 而丢失
       flushInterval: 3000,
     })
   }
@@ -179,6 +179,6 @@ export class AgentTraceContext {
       })
     }
 
-    getClient().flushAsync()
+    getClient().flushAsync().catch(() => {/* 忽略 flush 错误 */})
   }
 }
