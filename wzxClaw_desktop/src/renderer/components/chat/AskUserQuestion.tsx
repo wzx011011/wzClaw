@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useToastStore } from '../../stores/toast-store'
 
 // ============================================================
 // AskUserQuestion — interactive question card rendered inline
@@ -35,7 +36,9 @@ export default function AskUserQuestion({
     if (answered) return
     setAnswered(true)
     setAnsweredWith(labels.join(', ') + (text ? ` — ${text}` : ''))
-    window.wzxclaw.answerUserQuestion({ questionId, selectedLabels: labels, customText: text }).catch(() => {})
+    window.wzxclaw.answerUserQuestion({ questionId, selectedLabels: labels, customText: text }).catch(() => {
+      useToastStore.getState().show('回答提交失败，请重试', 'error')
+    })
     setTimeout(() => onDismiss(questionId), 800)
   }
 
@@ -130,8 +133,8 @@ export default function AskUserQuestion({
               disabled={answered}
             />
             <span className="ask-user-option-content">
-              <span className="ask-user-option-label">Other</span>
-              <span className="ask-user-option-desc">Type a custom response</span>
+              <span className="ask-user-option-label">自定义</span>
+              <span className="ask-user-option-desc">输入自定义回复</span>
             </span>
           </label>
         ) : (
@@ -141,8 +144,8 @@ export default function AskUserQuestion({
               onClick={handleOtherSingle}
               disabled={answered}
             >
-              <span className="ask-user-option-label">Other</span>
-              <span className="ask-user-option-desc">Type a custom response</span>
+              <span className="ask-user-option-label">自定义</span>
+              <span className="ask-user-option-desc">输入自定义回复</span>
             </button>
           )
         )}
@@ -152,7 +155,7 @@ export default function AskUserQuestion({
         <div className="ask-user-custom">
           <input
             className="ask-user-custom-input"
-            placeholder="Type your response..."
+            placeholder="输入自定义回复..."
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             onKeyDown={(e) => {
@@ -170,7 +173,7 @@ export default function AskUserQuestion({
               onClick={handleOtherSubmit}
               disabled={answered || !customText.trim()}
             >
-              Submit
+              发送
             </button>
           )}
         </div>
@@ -183,7 +186,7 @@ export default function AskUserQuestion({
             onClick={handleMultiSubmit}
             disabled={answered || (selected.length === 0 && !customText.trim())}
           >
-            Submit
+            发送
           </button>
         </div>
       )}

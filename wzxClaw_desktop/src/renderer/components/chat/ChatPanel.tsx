@@ -7,6 +7,7 @@ import { useSettingsStore } from '../../stores/settings-store'
 import { useChatStore } from '../../stores/chat-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useStepStore } from '../../stores/step-store'
+import { useToastStore } from '../../stores/toast-store'
 import { SLASH_COMMANDS } from '../../commands/slash-commands'
 import ChatMessage from './ChatMessage'
 import DiffPreview from './DiffPreview'
@@ -118,7 +119,9 @@ export default function ChatPanel(): JSX.Element {
       if (result?.mode) {
         setPermissionMode(result.mode as PermissionMode)
       }
-    }).catch(() => {})
+    }).catch(() => {
+      useToastStore.getState().show('权限模式加载失败', 'error')
+    })
   }, [])
 
   // Close dropdowns on outside click
@@ -139,7 +142,9 @@ export default function ChatPanel(): JSX.Element {
   const handlePermissionChange = (mode: PermissionMode) => {
     setPermissionMode(mode)
     setShowPermissionDropdown(false)
-    window.wzxclaw.setPermissionMode?.({ mode }).catch(() => {})
+    window.wzxclaw.setPermissionMode?.({ mode }).catch(() => {
+      useToastStore.getState().show('权限模式切换失败', 'error')
+    })
   }
 
   const lastMessage = messages[messages.length - 1]
@@ -264,7 +269,9 @@ export default function ChatPanel(): JSX.Element {
 
   const handlePlanDecision = (approved: boolean): void => {
     setPendingPlan(null)
-    window.wzxclaw.sendPlanDecision?.({ approved }).catch(() => {})
+    window.wzxclaw.sendPlanDecision?.({ approved }).catch(() => {
+      useToastStore.getState().show('计划决策提交失败', 'error')
+    })
   }
 
   // Listen for "Open Settings" from command palette (per CMD-01)
@@ -468,7 +475,8 @@ export default function ChatPanel(): JSX.Element {
             </div>
           ) : (
             <div className="chat-empty">
-              Start a conversation with the AI agent
+              向 AI 助手发送消息开始对话
+              <span className="chat-empty-hint">按 Enter 发送，Shift+Enter 换行</span>
             </div>
           )
         ) : (
@@ -563,7 +571,13 @@ export default function ChatPanel(): JSX.Element {
       {/* TodoWrite panel — shows active session task list (Copilot style) */}
       {currentTodos.length > 0 && (
         <div className="todo-panel">
-          <div className="todo-panel-header" onClick={() => useChatStore.setState((s) => ({ todoCollapsed: !s.todoCollapsed }))}>
+          <div
+            className="todo-panel-header"
+            role="button"
+            tabIndex={0}
+            onClick={() => useChatStore.setState((s) => ({ todoCollapsed: !s.todoCollapsed }))}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); useChatStore.setState((s) => ({ todoCollapsed: !s.todoCollapsed })) } }}
+          >
             <span className={`todo-panel-collapse${todoCollapsed ? ' collapsed' : ''}`}>&#9660;</span>
             <span className="todo-panel-title">Todos ({currentTodos.filter(t => t.status === 'completed').length}/{currentTodos.length})</span>
             <button

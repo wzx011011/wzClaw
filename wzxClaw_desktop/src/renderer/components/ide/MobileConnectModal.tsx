@@ -72,7 +72,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
 
               <p className="mobile-hint">用 wzxClaw 手机端扫码连接</p>
               {relayToken && (
-                <p style={{ fontSize: 12, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>Token: <code style={{ color: '#aaa' }}>{relayToken}</code></p>
+                <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 'var(--sp-1)', wordBreak: 'break-all' }}>Token: <code style={{ color: 'var(--text-muted)' }}>{relayToken}</code></p>
               )}
             </>
           )}

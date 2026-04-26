@@ -113,10 +113,10 @@ export default function StatusBar(): JSX.Element {
               <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
               <line x1="12" y1="18" x2="12.01" y2="18" />
             </svg>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: relayStatus.mobileConnected ? '#4ade80' : '#fbbf24', display: 'inline-block', marginRight: 4 }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: relayStatus.mobileConnected ? 'var(--success)' : 'var(--warning)', display: 'inline-block', marginRight: 'var(--sp-1)' }} />
             {relayStatus.mobileConnected
-              ? <span style={{ color: '#4ade80', fontSize: 11 }}>{relayStatus.mobileIdentity ?? 'Mobile'} 已连接</span>
-              : <span style={{ color: '#fbbf24', fontSize: 11 }}>Relay 等待连接</span>}
+              ? <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-xs)' }}>{relayStatus.mobileIdentity ?? 'Mobile'} 已连接</span>
+              : <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-xs)' }}>Relay 等待连接</span>}
           </span>
         )}
       </div>

@@ -128,7 +128,7 @@ export default function EditorPanel(): JSX.Element {
             className: 'diff-added-line',
             glyphMarginClassName: 'diff-added-glyph',
             overviewRuler: {
-              color: '#89d185',
+              color: 'var(--tool-completed)',
               position: monaco.editor.OverviewRulerLane.Full
             }
           }

@@ -178,6 +178,7 @@ export interface SessionMeta {
   createdAt: number
   updatedAt: number
   messageCount: number
+  preview?: string // 第一条用户消息摘要
 }
 
 // ============================================================

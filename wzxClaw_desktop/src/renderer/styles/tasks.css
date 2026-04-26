@@ -75,6 +75,12 @@
   background: var(--bg-tertiary);
 }
 
+.task-card:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
 .task-card-header {
   display: flex;
   justify-content: space-between;

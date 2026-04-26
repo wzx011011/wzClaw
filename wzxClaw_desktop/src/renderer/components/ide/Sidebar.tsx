@@ -1,41 +1,30 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useChatStore } from '../../stores/chat-store'
 import FileExplorer from './FileExplorer'
 import SessionList from '../chat/SessionList'
+import type { SidebarPanel } from '../../stores/layout-store'
 
 /**
- * Sidebar — left panel with two tabs: file explorer and session management.
+ * Sidebar — 左侧面板，内容由 ActivityBar 驱动。
+ * 不再自行管理 tab 切换，由父组件传入 activePanel。
  */
-export default function Sidebar(): JSX.Element {
+interface SidebarProps {
+  activePanel: SidebarPanel
+}
+
+export default function Sidebar({ activePanel }: SidebarProps): JSX.Element {
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const isLoading = useWorkspaceStore((s) => s.isLoading)
   const openFolder = useWorkspaceStore((s) => s.openFolder)
-  const [activeTab, setActiveTab] = useState<'explorer' | 'sessions'>('explorer')
 
   // Extract workspace folder name from rootPath
   const workspaceName = rootPath ? rootPath.replace(/\\/g, '/').split('/').pop() : null
 
   return (
     <div className="sidebar">
-      {/* Tabs: 资源管理器 / 会话管理 */}
-      <div className="sidebar-tabs">
-        <button
-          className={`sidebar-tab${activeTab === 'explorer' ? ' active' : ''}`}
-          onClick={() => setActiveTab('explorer')}
-        >
-          资源管理器
-        </button>
-        <button
-          className={`sidebar-tab${activeTab === 'sessions' ? ' active' : ''}`}
-          onClick={() => setActiveTab('sessions')}
-        >
-          会话管理
-        </button>
-      </div>
-      {/* Tab content */}
       <div className="sidebar-content">
-        {activeTab === 'explorer' ? (
+        {activePanel === 'explorer' ? (
           !rootPath ? (
             <button className="open-folder-btn" onClick={openFolder}>
               Open Folder
@@ -64,7 +53,7 @@ export default function Sidebar(): JSX.Element {
                 </svg>
               </button>
             </div>
-            <SessionList isOpen={true} onToggle={() => {}} />
+            <SessionList />
           </div>
         )}
       </div>

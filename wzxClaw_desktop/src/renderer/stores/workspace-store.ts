@@ -20,6 +20,7 @@ interface WorkspaceActions {
   loadTree: (dirPath?: string, depth?: number) => Promise<void>
   expandNode: (dirPath: string) => Promise<void>
   collapseNode: (dirPath: string) => void
+  collapseAll: () => void
   updateNode: (path: string, changes: Partial<FileTreeNode>) => void
   handleFileChange: (filePath: string, changeType: string) => void
 }
@@ -235,6 +236,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       })
     }
     set({ tree: collapseInTree(get().tree) })
+  },
+
+  collapseAll: () => {
+    const collapseAllNodes = (nodes: FileTreeNode[]): FileTreeNode[] =>
+      nodes.map((n) => n.isDirectory
+        ? { ...n, isExpanded: false, children: undefined }
+        : n
+      )
+    set({ tree: collapseAllNodes(get().tree) })
   },
 
   updateNode: (path: string, changes: Partial<FileTreeNode>) => {

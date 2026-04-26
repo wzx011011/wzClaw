@@ -28,6 +28,7 @@ declare global {
       saveFile: (request: { filePath: string; content: string }) => Promise<void>
       renameFile: (request: { oldPath: string; newPath: string }) => Promise<{ success: boolean }>
       deleteFile: (request: { filePath: string }) => Promise<{ success: boolean }>
+      createFile: (request: { dirPath: string; name: string; type: 'file' | 'directory' }) => Promise<{ success: boolean; filePath: string }>
       getWorkspaceStatus: () => Promise<{ rootPath: string | null; isWatching: boolean }>
       onFileChanged: (cb: (p: { filePath: string; changeType: string }) => void) => () => void
       // Permissions
@@ -41,6 +42,7 @@ declare global {
       loadSession: (request: { sessionId: string }) => Promise<unknown[]>
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
+      duplicateSession: (request: { sessionId: string; activeTaskId?: string }) => Promise<{ newSessionId: string }>
       saveLastSession: (request: { sessionId: string }) => Promise<void>
       getLastSession: () => Promise<{ sessionId: string | null }>
       onSessionRestore: (cb: (p: { sessionId: string }) => void) => () => void

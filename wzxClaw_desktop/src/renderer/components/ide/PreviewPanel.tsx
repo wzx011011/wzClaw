@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
+import { useToastStore } from '../../stores/toast-store'
 
 interface BrowserState {
   running: boolean
@@ -56,7 +57,9 @@ export default function PreviewPanel(): JSX.Element {
   // launch — when the panel opens while no browser session is running.
   useEffect(() => {
     if (!browser.running) return
-    window.wzxclaw.screenshotBrowser().catch(() => {})
+    window.wzxclaw.screenshotBrowser().catch(() => {
+      useToastStore.getState().show('截图失败', 'error')
+    })
   }, [browser.running])
 
   // Sync URL input with browser URL when it changes

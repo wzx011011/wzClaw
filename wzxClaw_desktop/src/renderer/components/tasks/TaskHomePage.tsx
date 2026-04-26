@@ -168,7 +168,7 @@ export default function TaskHomePage(): JSX.Element {
               <span
                 className="status-dot"
                 style={{
-                  backgroundColor: relayConnected ? '#4ade80' : relayConnecting ? '#fbbf24' : '#666',
+                  backgroundColor: relayConnected ? 'var(--success)' : relayConnecting ? 'var(--warning)' : 'var(--text-muted)',
                 }}
               />
               <span className="connection-label">
@@ -183,7 +183,7 @@ export default function TaskHomePage(): JSX.Element {
               {relayConnected && mobiles.length === 0 && (
                 <button
                   className="task-btn-primary"
-                  style={{ fontSize: 12, padding: '4px 12px' }}
+                  style={{ fontSize: 'var(--font-size-sm)', padding: '4px 12px' }}
                   onClick={() => setShowMobileModal(true)}
                 >
                   连接手机
@@ -192,7 +192,7 @@ export default function TaskHomePage(): JSX.Element {
               {!relayConnected && !relayConnecting && (
                 <button
                   className="task-btn-primary"
-                  style={{ fontSize: 12, padding: '4px 12px' }}
+                  style={{ fontSize: 'var(--font-size-sm)', padding: '4px 12px' }}
                   onClick={() => setShowMobileModal(true)}
                 >
                   连接手机
@@ -213,7 +213,7 @@ export default function TaskHomePage(): JSX.Element {
                 mobiles.map((device) => (
                   <div key={device.deviceId} className="connection-row mobile-row">
                     <div className="connection-indicator">
-                      <span className="status-dot" style={{ backgroundColor: '#4ade80' }} />
+                      <span className="status-dot" style={{ backgroundColor: 'var(--success)' }} />
                       <div className="mobile-device-info">
                         <span className="mobile-device-name">
                           {device.name ?? 'Mobile'}
@@ -230,8 +230,8 @@ export default function TaskHomePage(): JSX.Element {
               ) : (
                 <div className="connection-row mobile-row">
                   <div className="connection-indicator">
-                    <span className="status-dot" style={{ backgroundColor: '#fbbf24' }} />
-                    <span className="connection-label" style={{ color: '#fbbf24' }}>
+                    <span className="status-dot" style={{ backgroundColor: 'var(--warning)' }} />
+                    <span className="connection-label" style={{ color: 'var(--warning)' }}>
                       等待手机连接...
                     </span>
                   </div>

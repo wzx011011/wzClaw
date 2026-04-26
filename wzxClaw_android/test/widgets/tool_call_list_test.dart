@@ -68,11 +68,6 @@ void main() {
           _toolMsg(name: 'Read', status: ToolCallStatus.done),
           _toolMsg(name: 'Bash', status: ToolCallStatus.done),
         ]));
-        // The left vertical line is a Container with width 2
-        // Find containers and verify at least one has the narrow width
-        final containers = tester.widgetList<Container>(
-          find.byType(Container),
-        );
         // The widget tree should contain IntrinsicHeight (wraps the vertical line row)
         expect(find.byType(IntrinsicHeight), findsOneWidget);
       });
