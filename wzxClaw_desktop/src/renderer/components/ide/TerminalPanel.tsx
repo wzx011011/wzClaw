@@ -156,33 +156,42 @@ export default function TerminalPanel(): JSX.Element {
     }
   }, [activeTerminalId])
 
-  // Handle resize with ResizeObserver
+  // Handle resize with ResizeObserver — 防抖 80ms，避免 Allotment 拖拽时每像素触发 IPC
   useEffect(() => {
     if (!containerRef.current) return
 
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
     const observer = new ResizeObserver(() => {
-      if (activeTerminalId) {
-        const fitAddon = fitAddonsRef.current.get(activeTerminalId)
-        if (fitAddon) {
-          try {
-            fitAddon.fit()
-            const term = terminalsRef.current.get(activeTerminalId)
-            if (term) {
-              window.wzxclaw.terminalResize({
-                terminalId: activeTerminalId,
-                cols: term.cols,
-                rows: term.rows
-              })
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        if (activeTerminalId) {
+          const fitAddon = fitAddonsRef.current.get(activeTerminalId)
+          if (fitAddon) {
+            try {
+              fitAddon.fit()
+              const term = terminalsRef.current.get(activeTerminalId)
+              if (term) {
+                window.wzxclaw.terminalResize({
+                  terminalId: activeTerminalId,
+                  cols: term.cols,
+                  rows: term.rows
+                })
+              }
+            } catch {
+              // Ignore fit errors during resize
             }
-          } catch {
-            // Ignore fit errors during resize
           }
         }
-      }
+      }, 80)
     })
 
     observer.observe(containerRef.current)
-    return () => observer.disconnect()
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      observer.disconnect()
+    }
   }, [activeTerminalId])
 
   // Cleanup terminal instances when tabs are removed

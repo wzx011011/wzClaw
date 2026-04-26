@@ -69,6 +69,27 @@ export default function IDELayout(): JSX.Element {
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = React.useState(false)
 
+  // 拖拽分割线时启用全屏 overlay，防止 Monaco/xterm 在每个像素变化时触发内部重计算
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCountRef = useRef(0)
+  const handlePaneDragStart = () => {
+    dragCountRef.current += 1
+    setIsDragging(true)
+  }
+  const handlePaneDragEnd = (sizes: number[]) => {
+    dragCountRef.current = Math.max(0, dragCountRef.current - 1)
+    if (dragCountRef.current === 0) setIsDragging(false)
+    handleAllotmentChange(sizes)
+  }
+  const handleVerticalDragStart = () => {
+    dragCountRef.current += 1
+    setIsDragging(true)
+  }
+  const handleVerticalDragEnd = () => {
+    dragCountRef.current = Math.max(0, dragCountRef.current - 1)
+    if (dragCountRef.current === 0) setIsDragging(false)
+  }
+
   // 懒加载 keep-alive 状态 — 首次打开后保持挂载，用 CSS 切换可见性
   const [editorMounted, setEditorMounted] = useState(() => rightSidebarVisible && rightSidebarTab === 'editor')
   const [previewMounted, setPreviewMounted] = useState(() => rightSidebarVisible && rightSidebarTab === 'preview')
@@ -260,7 +281,7 @@ export default function IDELayout(): JSX.Element {
       />
       <div className="ide-main">
         <div className="ide-content">
-          <Allotment onDragEnd={handleAllotmentChange}>
+          <Allotment onDragStart={handlePaneDragStart} onDragEnd={handlePaneDragEnd}>
             {/* Activity Bar — 固定 48px 图标条 */}
             <Allotment.Pane minSize={48} maxSize={48} preferredSize={48}>
               <ActivityBar />
@@ -275,7 +296,7 @@ export default function IDELayout(): JSX.Element {
 
             {/* Center — Chat + Terminal (vertical split) */}
             <Allotment.Pane>
-              <Allotment vertical defaultSizes={showTerminal ? [70, 30] : [100]}>
+              <Allotment vertical defaultSizes={showTerminal ? [70, 30] : [100]} onDragStart={handleVerticalDragStart} onDragEnd={handleVerticalDragEnd}>
                 <Allotment.Pane minSize={200}>
                   <ChatPanel />
                 </Allotment.Pane>
@@ -333,6 +354,10 @@ export default function IDELayout(): JSX.Element {
           </Allotment>
         </div>
       </div>
+      {/* 拖拽分割线时覆盖全屏，阻止 Monaco/xterm mousemove 触发内部重计算，消除拖拽卡顿 */}
+      {isDragging && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, cursor: 'col-resize' }} />
+      )}
       <StatusBar />
       <CommandPalette />
       <ToastContainer />
