@@ -251,9 +251,9 @@ export class AgentLoop {
       // Eval: 记录 turn 输出 token
       getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
 
-      // 收益递减检测：连续 3 轮输出 <500 tokens → 可能卡住了
-      const DIMINISHING_WINDOW = 3
-      const DIMINISHING_THRESHOLD = 500
+      // 收益递减检测：连续 5 轮输出 <300 tokens → 可能卡住了
+      const DIMINISHING_WINDOW = 5
+      const DIMINISHING_THRESHOLD = 300
       this._recentOutputTokens.push(turnResult.usage.outputTokens)
       if (this._recentOutputTokens.length > DIMINISHING_WINDOW) {
         this._recentOutputTokens.shift()
