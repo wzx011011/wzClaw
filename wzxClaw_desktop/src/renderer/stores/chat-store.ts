@@ -46,7 +46,6 @@ interface ChatState {
   sessions: SessionMeta[]
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
   activeSessionId: string
-  sessionsCache: Record<string, ChatMessage[]>
   pendingMentions: MentionItem[]
   streamJustEnded: boolean
   streamingMessageId: string | null
@@ -64,6 +63,7 @@ interface ChatActions {
   loadSessionList: () => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
+  duplicateSession: (sessionId: string) => Promise<void>
   createSession: () => void
   switchSession: (sessionId: string) => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
@@ -76,12 +76,14 @@ interface ChatActions {
 type ChatStore = ChatState & ChatActions
 
 // ============================================================
-// LRU eviction for sessionsCache
+// LRU eviction for sessionsCache (模块级 Map，不进 Zustand 避免额外渲染)
 // ============================================================
 
 const MAX_SESSIONS_CACHE_SIZE = 10
 const LAST_SESSION_RESTORE_DELAY_MS = 80
 const sessionAccessOrder: string[] = []
+// 会话缓存独立于 Zustand state，切换/更新缓存不触发全局重渲染
+const _sessionsCache: Record<string, ChatMessage[]> = {}
 let textBatchBuffer = ''
 let textBatchFrame: number | null = null
 
@@ -91,10 +93,10 @@ function scheduleDeferredStartupTask(task: () => void, delayMs: number): () => v
 }
 
 /**
- * Record access to a session and evict the least-recently-used entry
- * if the cache exceeds the cap. Returns a new cache object.
+ * Record access to a session in the module-level cache and evict LRU entries.
+ * 直接操作 _sessionsCache，不产生新对象，不触发 Zustand 重渲染。
  */
-function touchSession(cache: Record<string, ChatMessage[]>, sessionId: string): Record<string, ChatMessage[]> {
+function touchSession(sessionId: string): void {
   // Move session to most-recent position
   const idx = sessionAccessOrder.indexOf(sessionId)
   if (idx >= 0) {
@@ -103,16 +105,10 @@ function touchSession(cache: Record<string, ChatMessage[]>, sessionId: string): 
   sessionAccessOrder.push(sessionId)
 
   // Evict oldest entries if over cap
-  let result = cache
   while (sessionAccessOrder.length > MAX_SESSIONS_CACHE_SIZE) {
     const oldest = sessionAccessOrder.shift()!
-    if (oldest in result) {
-      const evicted = { ...result }
-      delete evicted[oldest]
-      result = evicted
-    }
+    delete _sessionsCache[oldest]
   }
-  return result
 }
 
 /**
@@ -123,6 +119,65 @@ function removeSessionFromLru(sessionId: string): void {
   if (idx >= 0) {
     sessionAccessOrder.splice(idx, 1)
   }
+  delete _sessionsCache[sessionId]
+}
+
+/**
+ * 将持久化的原始消息数组转换为 ChatMessage[]。
+ * 可被 loadSession 和 switchSession tail 共用。
+ */
+function buildChatMessagesFromRaw(rawMessages: Array<Record<string, unknown>>): ChatMessage[] {
+  const parsed = rawMessages.map((msg) => ({
+    id: (msg.id as string) || uuidv4(),
+    role: msg.role as 'user' | 'assistant' | 'tool_result',
+    content: msg.content as string,
+    thinkingContent: msg.thinkingContent as string | undefined,
+    timestamp: msg.timestamp as number,
+    toolCalls: msg.toolCalls as Array<{ id: string; name: string; input?: Record<string, unknown> }> | undefined,
+    toolCallId: msg.toolCallId as string | undefined,
+    isError: msg.isError as boolean | undefined,
+    usage: msg.usage as { inputTokens: number; outputTokens: number } | undefined,
+    isCompacted: msg.isCompacted as boolean | undefined
+  }))
+
+  const toolResultMap = new Map<string, { output: string; isError: boolean }>()
+  for (const msg of parsed) {
+    if (msg.role === 'tool_result' && msg.toolCallId) {
+      toolResultMap.set(msg.toolCallId, {
+        output: (msg.content || '').slice(0, 2000),
+        isError: !!msg.isError
+      })
+    }
+  }
+
+  const result: ChatMessage[] = []
+  for (const msg of parsed) {
+    if (msg.role === 'tool_result') continue
+    const chatMsg: ChatMessage = {
+      id: msg.id,
+      role: msg.role,
+      content: msg.content || '',
+      thinkingContent: msg.thinkingContent,
+      timestamp: msg.timestamp,
+      usage: msg.usage,
+      isCompacted: msg.isCompacted
+    }
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      chatMsg.toolCalls = msg.toolCalls.map((tc) => {
+        const result = toolResultMap.get(tc.id)
+        return {
+          id: tc.id,
+          name: tc.name,
+          status: result ? (result.isError ? 'error' as const : 'completed' as const) : 'completed' as const,
+          input: tc.input,
+          output: result?.output,
+          isError: result?.isError
+        }
+      })
+    }
+    result.push(chatMsg)
+  }
+  return result
 }
 
 function findMessageIndexById(messages: ChatMessage[], messageId: string): number {
@@ -219,7 +274,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
   sessions: [],
   currentTokenUsage: null,
   activeSessionId: initialId,
-  sessionsCache: {},
   pendingMentions: [],
   streamJustEnded: false,
   streamingMessageId: null,
@@ -764,9 +818,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
   /**
    * Load a specific session's messages into the chat.
-   * Converts persisted messages to ChatMessage format.
+   * Converts persisted messages to ChatMessage format, updates module-level cache.
+   * @param updateMessages - 若为 false，只更新模块级缓存 + 触发 agentLoop 上下文恢复，
+   *                         不更新 Zustand messages（用于 cache-hit 后的后台上下文恢复）
    */
-  loadSession: async (sessionId: string) => {
+  loadSession: async (sessionId: string, options?: { updateMessages?: boolean }) => {
+    const updateMessages = options?.updateMessages !== false
     flushTextBatch()
     try {
       const activeTaskId = useTaskStore.getState().activeTaskId
@@ -775,74 +832,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
         ...(activeTaskId ? { activeTaskId } : {})
       })
 
-      // Phase 1: Convert all raw messages to a lookup-friendly format
-      const parsed = (rawMessages as Array<Record<string, unknown>>).map((msg) => ({
-        id: (msg.id as string) || uuidv4(),
-        role: msg.role as 'user' | 'assistant' | 'tool_result',
-        content: msg.content as string,
-        thinkingContent: msg.thinkingContent as string | undefined,
-        timestamp: msg.timestamp as number,
-        toolCalls: msg.toolCalls as Array<{ id: string; name: string; input?: Record<string, unknown> }> | undefined,
-        toolCallId: msg.toolCallId as string | undefined,
-        isError: msg.isError as boolean | undefined,
-        usage: msg.usage as { inputTokens: number; outputTokens: number } | undefined,
-        isCompacted: msg.isCompacted as boolean | undefined
-      }))
+      const loadedMessages = buildChatMessagesFromRaw(rawMessages as Array<Record<string, unknown>>)
 
-      // Phase 2: Build a map of toolCallId -> tool_result data for merging
-      const toolResultMap = new Map<string, { output: string; isError: boolean }>()
-      for (const msg of parsed) {
-        if (msg.role === 'tool_result' && msg.toolCallId) {
-          toolResultMap.set(msg.toolCallId, {
-            output: (msg.content || '').slice(0, 2000), // truncate long outputs
-            isError: !!msg.isError
-          })
-        }
+      if (updateMessages) {
+        // 更新模块级缓存（不触发 Zustand 重渲染）
+        _sessionsCache[sessionId] = loadedMessages
+        touchSession(sessionId)
+        set({
+          messages: loadedMessages,
+          conversationId: sessionId,
+          error: null,
+          streamingMessageId: null
+        })
       }
-
-      // Phase 3: Build ChatMessage[], merging tool_results into assistant toolCalls
-      const loadedMessages: ChatMessage[] = []
-      for (const msg of parsed) {
-        // Skip tool_result messages — they're merged into assistant messages
-        if (msg.role === 'tool_result') continue
-
-        const chatMsg: ChatMessage = {
-          id: msg.id,
-          role: msg.role,
-          content: msg.content || '',
-          thinkingContent: msg.thinkingContent,
-          timestamp: msg.timestamp,
-          usage: msg.usage,
-          isCompacted: msg.isCompacted
-        }
-
-        // For assistant messages: merge tool result data into toolCalls
-        if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
-          chatMsg.toolCalls = msg.toolCalls.map((tc) => {
-            const result = toolResultMap.get(tc.id)
-            return {
-              id: tc.id,
-              name: tc.name,
-              status: result ? (result.isError ? 'error' as const : 'completed' as const) : 'completed' as const,
-              input: tc.input,
-              output: result?.output,
-              isError: result?.isError
-            }
-          })
-        }
-
-        loadedMessages.push(chatMsg)
-      }
-
-      set({
-        messages: loadedMessages,
-        conversationId: sessionId,
-        error: null,
-        streamingMessageId: null
-      })
+      // updateMessages:false 时只触发了 IPC，agentLoop.restoreContext 在 session:load handler 中异步执行
     } catch (err) {
       console.error('Failed to load session:', err)
-      set({ error: err instanceof Error ? err.message : String(err) })
+      if (updateMessages) {
+        set({ error: err instanceof Error ? err.message : String(err) })
+      }
     }
   },
 
@@ -864,6 +872,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }
   },
 
+  duplicateSession: async (sessionId: string) => {
+    try {
+      const activeTaskId = useTaskStore.getState().activeTaskId
+      const result = await window.wzxclaw.duplicateSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
+      await get().loadSessionList()
+      // 切换到复制后的新会话
+      await get().switchSession(result.newSessionId)
+    } catch (err) {
+      console.error('Failed to duplicate session:', err)
+    }
+  },
+
   /**
    * Create a new session. Preserves current session messages in cache,
    * generates new UUID, clears messages, and switches to new session.
@@ -873,11 +893,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const { messages, conversationId } = get()
     const newId = uuidv4()
 
-    // Cache current session messages if any exist
-    let newCache = { ...get().sessionsCache }
+    // 缓存当前会话消息（模块级 Map，不触发 Zustand 重渲染）
     if (messages.length > 0) {
-      newCache[conversationId] = messages
-      newCache = touchSession(newCache, conversationId)
+      _sessionsCache[conversationId] = messages
+      touchSession(conversationId)
     }
 
     set({
@@ -885,15 +904,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
       conversationId: newId,
       activeSessionId: newId,
       error: null,
-      sessionsCache: newCache,
       streamingMessageId: null,
       currentTodos: []
     })
   },
 
   /**
-   * Switch to a different session. Saves current messages to cache,
-   * loads target session from cache or IPC, and sets activeSessionId.
+   * Switch to a different session. Saves current messages to module-level cache,
+   * loads target from cache or via tail-first IPC, sets activeSessionId.
    * No-op if switching to the same session.
    */
   switchSession: async (sessionId: string) => {
@@ -909,10 +927,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
       try { await window.wzxclaw.stopGeneration() } catch {}
     }
 
-    // Save current messages to cache and apply LRU eviction
-    let newCache = { ...get().sessionsCache }
-    newCache[conversationId] = messages
-    newCache = touchSession(newCache, conversationId)
+    // 保存当前消息到模块级缓存（无 spread，无 Zustand 触发）
+    if (messages.length > 0) {
+      _sessionsCache[conversationId] = messages
+      touchSession(conversationId)
+    }
 
     // 完整重置所有流式和会话级状态，防止旧会话状态泄漏
     const cleanState = {
@@ -926,21 +945,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
       error: null as string | null
     }
 
-    // Check cache first
-    const cached = newCache[sessionId]
+    // 命中缓存 — 立即渲染，无 IPC 开销
+    const cached = _sessionsCache[sessionId]
     if (cached) {
-      const touchedCache = touchSession(newCache, sessionId)
+      touchSession(sessionId)
       set({
         messages: cached,
         conversationId: sessionId,
         activeSessionId: sessionId,
-        sessionsCache: touchedCache,
         isLoadingSession: false,
         loadingSessionId: null,
         ...cleanState
       })
     } else {
-      // Load from IPC — show loading skeleton during IPC round-trip
+      // 未命中缓存 — 两阶段加载：先 tail 快速显示，再完整加载恢复 agent 上下文
       set({
         isLoadingSession: true,
         loadingSessionId: sessionId,
@@ -949,15 +967,32 @@ export const useChatStore = create<ChatStore>((set, get) => {
         activeSessionId: sessionId,
         ...cleanState
       })
-      await get().loadSession(sessionId)
-      if (get().loadingSessionId === sessionId) {
-        const touchedCache = touchSession(newCache, sessionId)
-        set({
-          activeSessionId: sessionId,
-          sessionsCache: touchedCache,
-          isLoadingSession: false,
-          loadingSessionId: null
+
+      // 阶段1：tail 加载（最近 100 条）— 快速首帧
+      try {
+        const activeTaskId = useTaskStore.getState().activeTaskId
+        const tailResult = await window.wzxclaw.loadSessionTail?.({
+          sessionId,
+          tailCount: 100,
+          ...(activeTaskId ? { activeTaskId } : {})
         })
+        // 若切换期间用户再次切换，丢弃过期结果
+        if (tailResult && get().loadingSessionId === sessionId) {
+          const tailMessages = buildChatMessagesFromRaw(tailResult.messages as Array<Record<string, unknown>>)
+          set({
+            messages: tailMessages,
+            isLoadingSession: false,
+            loadingSessionId: null,
+          })
+          // 阶段2：完整加载（后台）— 触发 agentLoop.restoreContext（updateMessages:false 不覆盖已显示的 tail）
+          get().loadSession(sessionId, { updateMessages: false }).catch(() => {})
+        }
+      } catch {
+        // tail 失败则降级为完整加载
+        await get().loadSession(sessionId)
+        if (get().loadingSessionId === sessionId) {
+          set({ isLoadingSession: false, loadingSessionId: null })
+        }
       }
     }
 
@@ -991,24 +1026,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
     try {
       const activeTaskId = useTaskStore.getState().activeTaskId
       await window.wzxclaw.deleteSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
-      const { activeSessionId, sessionsCache } = get()
+      const { activeSessionId } = get()
 
-      // Remove from cache and LRU tracking
-      const newCache = { ...sessionsCache }
-      delete newCache[sessionId]
+      // 从模块级缓存和 LRU 中移除
       removeSessionFromLru(sessionId)
 
       if (activeSessionId === sessionId) {
         // Switch to another session or create new
-        const remaining = Object.keys(newCache)
+        const remaining = Object.keys(_sessionsCache)
         if (remaining.length > 0) {
           const targetId = remaining[remaining.length - 1]
-          const targetMessages = newCache[targetId]
+          const targetMessages = _sessionsCache[targetId]
           set({
             messages: targetMessages || [],
             conversationId: targetId,
             activeSessionId: targetId,
-            sessionsCache: newCache,
             streamingMessageId: null
           })
         } else {
@@ -1021,7 +1053,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
               activeSessionId: firstSession.id,
               conversationId: firstSession.id,
               messages: [],
-              sessionsCache: newCache,
               streamingMessageId: null
             })
             // Load the session data
@@ -1034,13 +1065,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
               messages: [],
               conversationId: newId,
               activeSessionId: newId,
-              sessionsCache: newCache,
               streamingMessageId: null
             })
           }
         }
-      } else {
-        set({ sessionsCache: newCache })
       }
 
       await get().loadSessionList()
@@ -1074,3 +1102,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
     set({ pendingMentions: [] })
   }
 }})
+
+// ============================================================
+// 测试专用访问器（仅供单元测试使用，生产代码请勿引用）
+// ============================================================
+export const __TEST_ONLY_sessionsCache = {
+  get(sessionId: string): ChatMessage[] | undefined { return _sessionsCache[sessionId] },
+  set(sessionId: string, messages: ChatMessage[]): void { _sessionsCache[sessionId] = messages },
+  reset(): void {
+    for (const key of Object.keys(_sessionsCache)) {
+      delete _sessionsCache[key]
+    }
+  }
+}

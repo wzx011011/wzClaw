@@ -119,6 +119,45 @@ export class SessionStore {
   }
 
   /**
+   * 加载会话的最近 N 条消息（tail），用于快速显示。
+   * 跳过首行 meta 记录。返回消息数组、总行数及是否还有更多历史。
+   * 相比 loadSession 避免全文件解析，切换大会话时首帧极快。
+   */
+  async loadSessionTail(sessionId: string, tailCount: number): Promise<{
+    messages: ChatMessageLike[]
+    totalCount: number
+    hasMore: boolean
+  }> {
+    this.validateSessionId(sessionId)
+    const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
+    try {
+      const content = await fsp.readFile(filePath, 'utf-8')
+      const allLines = content.split('\n')
+      // 跳过首行 meta（如存在）
+      let dataStart = 0
+      if (allLines.length > 0 && allLines[0].includes('"type":"meta"')) dataStart = 1
+      const dataLines = allLines.slice(dataStart).filter(l => l.trim())
+      const totalCount = dataLines.length
+      const hasMore = totalCount > tailCount
+      const tailLines = hasMore ? dataLines.slice(-tailCount) : dataLines
+      const messages: ChatMessageLike[] = []
+      for (const line of tailLines) {
+        try {
+          messages.push(JSON.parse(line))
+        } catch {
+          // 跳过损坏行
+        }
+      }
+      return { messages, totalCount, hasMore }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { messages: [], totalCount: 0, hasMore: false }
+      }
+      throw err
+    }
+  }
+
+  /**
    * List all sessions for the current project, sorted by most recently updated first.
    * Returns metadata including id, title, timestamps, and message count.
    *
@@ -139,6 +178,7 @@ export class SessionStore {
 
         // Extract title: check for meta line first, then fall back to first user message
         let title = 'Untitled'
+        let preview: string | undefined
         let messageLines = lines
         // Check if first line is a meta line
         if (lines.length > 0) {
@@ -169,13 +209,34 @@ export class SessionStore {
           }
         }
 
+        // 提取 preview：第一条用户消息摘要（与 title 独立，即使被重命名也保留）
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line)
+            if (parsed.role === 'user' && parsed.content) {
+              const text = typeof parsed.content === 'string'
+                ? parsed.content
+                : Array.isArray(parsed.content)
+                  ? (parsed.content.find((b: { type: string }) => b.type === 'text')?.text ?? '')
+                  : ''
+              if (text) {
+                preview = text.length > 80 ? text.substring(0, 80) + '...' : text
+              }
+              break
+            }
+          } catch {
+            // skip
+          }
+        }
+
         const stats = await fsp.stat(filePath)
         sessions.push({
           id: sessionId,
           title,
           createdAt: stats.birthtimeMs,
           updatedAt: stats.mtimeMs,
-          messageCount: messageLines.filter(l => l.trim()).length
+          messageCount: messageLines.filter(l => l.trim()).length,
+          preview,
         })
       }
 

@@ -78,6 +78,7 @@ const api = {
   saveFile: (request: { filePath: string; content: string }) => ipcRenderer.invoke('file:save', request),
   renameFile: (request: { oldPath: string; newPath: string }) => ipcRenderer.invoke('file:rename', request),
   deleteFile: (request: { filePath: string }) => ipcRenderer.invoke('file:delete', request),
+  createFile: (request: { dirPath: string; name: string; type: 'file' | 'directory' }) => ipcRenderer.invoke('file:create', request),
 
   // File change listener — returns unsubscribe function
   onFileChanged: (callback: (payload: { filePath: string; changeType: string }) => void) => {
@@ -102,8 +103,10 @@ const api = {
   // Sessions
   listSessions: (request?: { activeTaskId?: string }) => ipcRenderer.invoke('session:list', request),
   loadSession: (request: { sessionId: string; activeTaskId?: string }) => ipcRenderer.invoke('session:load', request),
+  loadSessionTail: (request: { sessionId: string; tailCount: number; activeTaskId?: string }) => ipcRenderer.invoke('session:load-tail', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
+  duplicateSession: (request: { sessionId: string; activeTaskId?: string }) => ipcRenderer.invoke('session:duplicate', request),
   saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
   getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
   onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {

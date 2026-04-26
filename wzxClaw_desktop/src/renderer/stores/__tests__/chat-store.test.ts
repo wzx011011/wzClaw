@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useChatStore } from '../chat-store'
+import { useChatStore, __TEST_ONLY_sessionsCache } from '../chat-store'
 import type { ChatMessage } from '../chat-store'
 
 // Mock uuid to return a predictable value
@@ -19,6 +19,7 @@ const mockWzxclaw = {
   onSessionCompacted: vi.fn().mockReturnValue(vi.fn()),
   listSessions: vi.fn().mockResolvedValue([]),
   loadSession: vi.fn().mockResolvedValue([]),
+  loadSessionTail: vi.fn().mockResolvedValue({ messages: [], totalCount: 0, hasMore: false }),
   deleteSession: vi.fn().mockResolvedValue({ success: true }),
   renameSession: vi.fn().mockResolvedValue({ success: true }),
   compactContext: vi.fn().mockResolvedValue(null)
@@ -33,12 +34,16 @@ beforeEach(() => {
     messages: [],
     conversationId: 'test-initial-id',
     isStreaming: false,
+    isLoadingSession: false,
+    loadingSessionId: null,
     error: null,
     sessions: [],
     currentTokenUsage: null,
     activeSessionId: 'test-initial-id',
-    sessionsCache: {}
   })
+
+  // 重置模块级 sessionsCache（已移出 Zustand state）
+  __TEST_ONLY_sessionsCache.reset()
 })
 
 afterEach(() => {
@@ -80,8 +85,8 @@ describe('ChatStore multi-session', () => {
       const state = useChatStore.getState()
       // New session should have empty messages
       expect(state.messages).toEqual([])
-      // But old session messages should be cached
-      expect(state.sessionsCache['old-session-id']).toEqual(existingMessages)
+      // But old session messages should be cached in module-level cache
+      expect(__TEST_ONLY_sessionsCache.get('old-session-id')).toEqual(existingMessages)
     })
   })
 
@@ -109,8 +114,8 @@ describe('ChatStore multi-session', () => {
       const state = useChatStore.getState()
       expect(state.activeSessionId).toBe('session-b')
       expect(state.conversationId).toBe('session-b')
-      // Current messages should be cached
-      expect(state.sessionsCache['session-a']).toEqual(currentMessages)
+      // Current messages should be cached in module-level cache
+      expect(__TEST_ONLY_sessionsCache.get('session-a')).toEqual(currentMessages)
     })
 
     it('should be a no-op when switching to the same session', async () => {
@@ -138,17 +143,18 @@ describe('ChatStore multi-session', () => {
         conversationId: 'session-a',
         activeSessionId: 'session-a',
         messages: [],
-        sessionsCache: {
-          'session-b': cachedMessages
-        }
       })
+      // 预填充模块级 cache（已从 Zustand state 移出）
+      __TEST_ONLY_sessionsCache.set('session-b', cachedMessages)
 
       const { switchSession } = useChatStore.getState()
       await switchSession('session-b')
 
       const state = useChatStore.getState()
+      // Cache hit: messages should be immediately available from cache
       expect(state.messages).toEqual(cachedMessages)
-      expect(getWzxclaw().loadSession).not.toHaveBeenCalled()
+      // isLoadingSession should be false immediately (no skeleton shown)
+      expect(state.isLoadingSession).toBe(false)
     })
   })
 
@@ -187,10 +193,9 @@ describe('ChatStore multi-session', () => {
           { id: 'session-a', title: 'Session A', createdAt: 1000, updatedAt: 1000, messageCount: 2 },
           { id: 'session-c', title: 'Session C', createdAt: 3000, updatedAt: 3000, messageCount: 1 }
         ],
-        sessionsCache: {
-          'session-c': [{ id: 'msg-c', role: 'user', content: 'C msg', timestamp: 3000 }]
-        }
       })
+      // 预填充模块级 cache（已从 Zustand state 移出）
+      __TEST_ONLY_sessionsCache.set('session-c', [{ id: 'msg-c', role: 'user', content: 'C msg', timestamp: 3000 }])
 
       const { deleteSessionTab } = useChatStore.getState()
       await deleteSessionTab('session-a')

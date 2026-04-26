@@ -390,11 +390,9 @@ app.whenReady().then(async () => {
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
   logStartup('AgentLoop + MCP created')
 
-  // Instantiate and connect MCP servers (tools auto-register into toolRegistry)
+  // 实例化 MCPManager（IPC 注册需要引用），但推迟 loadAndConnect 到 did-finish-load
+  // 避免外部进程启动阻塞窗口创建
   const mcpManager = new MCPManager(toolRegistry)
-  mcpManager.loadAndConnect().catch((err) =>
-    console.error('[MCP] Failed to load and connect servers:', err)
-  )
 
   // Register AgentTool (sub-agent) — must be after registry + agentLoop deps exist
   // Pass a getLatestConfig getter so sub-agents always use the current model/provider
@@ -1351,6 +1349,15 @@ app.whenReady().then(async () => {
       console.log('[main] pushing relay status to renderer after load:', JSON.stringify(status))
       mainWindow.webContents.send(IPC_CHANNELS['relay:status'], status)
     }, 500)
+
+    // MCP 服务器连接延迟到 renderer 加载后 — 避免进程启动阻塞首帧
+    // 300ms 延迟确保首批 IPC 请求（会话恢复/列表）已处理完
+    setTimeout(() => {
+      mcpManager.loadAndConnect().catch((err) =>
+        console.error('[MCP] Failed to load and connect servers:', err)
+      )
+      logStartup('MCP loadAndConnect dispatched (deferred)')
+    }, 300)
   })
 
   app.on('activate', function () {

@@ -627,6 +627,35 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // File: create — creates a new empty file or directory
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['file:create'], async (_event, request) => {
+    try {
+      const { dirPath, name, type } = request
+      const workspaceRoot = workspaceManager.getWorkspaceRoot()
+      if (!workspaceRoot) throw new Error('No workspace open')
+
+      const absoluteDir = path.isAbsolute(dirPath) ? dirPath : path.resolve(workspaceRoot, dirPath)
+      if (!isWithinWorkspace(absoluteDir, workspaceRoot)) {
+        throw new Error('Access denied: path is outside the workspace root')
+      }
+
+      const fullPath = path.join(absoluteDir, name)
+      if (type === 'directory') {
+        await fsp.mkdir(fullPath, { recursive: true })
+      } else {
+        // 确保父目录存在
+        await fsp.mkdir(absoluteDir, { recursive: true })
+        await fsp.writeFile(fullPath, '', 'utf-8')
+      }
+      return { success: true, filePath: fullPath }
+    } catch (error) {
+      console.error('Failed to create file:', error)
+      return { success: false, filePath: '' }
+    }
+  })
+
+  // ============================================================
   // Session: list — returns all sessions for current project or task
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeTaskId?: string }) => {
@@ -700,6 +729,25 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // Session: load-tail — 只返回最近 N 条消息，不触发 agentLoop 上下文恢复
+  // 用于会话切换时的快速首帧渲染（先显示 tail，再后台 load 完整会话）
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:load-tail'], async (_event, request) => {
+    const { sessionId, tailCount, activeTaskId } = request as { sessionId: string; tailCount: number; activeTaskId?: string }
+    if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) throw new Error('Invalid session ID format')
+    let store = getSessionStore()
+    if (activeTaskId) {
+      const task = await taskStore.getTask(activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        store = new SessionStore(primaryRoot)
+      }
+    }
+    const safeCount = Math.max(1, Math.min(tailCount ?? 100, 500))
+    return store.loadSessionTail(sessionId, safeCount)
+  })
+
+  // ============================================================
   // Session: delete — removes a session file
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:delete'], async (_event, request) => {
@@ -739,6 +787,37 @@ export function registerIpcHandlers(
     const success = await store.renameSession(result.data.sessionId, result.data.title)
     if (success) onDataChanged?.('session:changed', { action: 'renamed', sessionId: result.data.sessionId, title: result.data.title })
     return { success }
+  })
+
+  // ============================================================
+  // Session: duplicate — copies all messages to a new session
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:duplicate'], async (_event, request) => {
+    const result = IpcSchemas['session:duplicate'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    let store = getSessionStore()
+    if (result.data.activeTaskId) {
+      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+      if (task) {
+        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        store = new SessionStore(primaryRoot)
+      }
+    }
+    // 加载源会话的所有消息行
+    const messages = await store.loadSession(result.data.sessionId)
+    if (messages.length === 0) {
+      throw new Error('Source session is empty or not found')
+    }
+    // 创建新会话（直接复制 JSONL 内容）
+    const newId = crypto.randomUUID()
+    const jsonlContent = messages.map(m => JSON.stringify(m)).join('\n') + '\n'
+    const newPath = path.join(store.sessionDir, `${newId}.jsonl`)
+    await fsp.mkdir(store.sessionsDir, { recursive: true })
+    await fsp.writeFile(newPath, jsonlContent, 'utf-8')
+    onDataChanged?.('session:changed', { action: 'created', sessionId: newId })
+    return { newSessionId: newId }
   })
 
   // ============================================================

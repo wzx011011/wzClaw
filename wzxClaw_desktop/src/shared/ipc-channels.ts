@@ -48,14 +48,17 @@ export const IPC_CHANNELS = {
   'file:read-folder-tree': 'file:read-folder-tree',
   'file:rename': 'file:rename',
   'file:delete': 'file:delete',
+  'file:create': 'file:create',
 
   // Session channels (renderer -> main)
   'session:list': 'session:list',
   'session:load': 'session:load',
+  'session:load-tail': 'session:load-tail',
   'session:delete': 'session:delete',
   'session:rename': 'session:rename',
   'session:save-last': 'session:save-last',
   'session:get-last': 'session:get-last',
+  'session:duplicate': 'session:duplicate',
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
@@ -206,10 +209,13 @@ export interface IpcRequestPayloads {
   'file:save': { filePath: string; content: string }
   'file:rename': { oldPath: string; newPath: string }
   'file:delete': { filePath: string }
+  'file:create': { dirPath: string; name: string; type: 'file' | 'directory' }
   'session:list': void
   'session:load': { sessionId: string; activeTaskId?: string }
+  'session:load-tail': { sessionId: string; tailCount: number; activeTaskId?: string }
   'session:delete': { sessionId: string; activeTaskId?: string }
   'session:rename': { sessionId: string; title: string; activeTaskId?: string }
+  'session:duplicate': { sessionId: string; activeTaskId?: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
@@ -276,10 +282,13 @@ export interface IpcResponsePayloads {
   'file:save': void
   'file:rename': { success: boolean }
   'file:delete': { success: boolean }
+  'file:create': { success: boolean; filePath: string }
   'session:list': SessionMeta[]
   'session:load': unknown[]
+  'session:load-tail': { messages: unknown[]; totalCount: number; hasMore: boolean }
   'session:delete': { success: boolean }
   'session:rename': { success: boolean }
+  'session:duplicate': { newSessionId: string }
   'file:apply-hunk': { success: boolean }
   'file:get-history': Array<{ toolCallId: string; timestamp: number; filePath: string }>
   'file:revert': { success: boolean; error?: string }
@@ -435,5 +444,9 @@ export const IpcSchemas = {
   'session:rename': {
     request: z.object({ sessionId: z.string().min(1), title: z.string().min(1), activeTaskId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
+  },
+  'session:duplicate': {
+    request: z.object({ sessionId: z.string().min(1), activeTaskId: z.string().optional() }),
+    response: z.object({ newSessionId: z.string() })
   }
 } as const
