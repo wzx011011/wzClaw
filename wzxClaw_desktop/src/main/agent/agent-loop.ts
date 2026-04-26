@@ -58,8 +58,8 @@ export class AgentLoop {
     // 每次 run() 创建新的调试日志（session 级别）
     const debugLogger = new DebugLogger(config.conversationId)
 
-    // Langfuse：每次 run() 开启一条 trace
-    startTrace(config.conversationId, config.model, config.workingDirectory)
+    // Langfuse：每次 run() 开启一条 trace（若存在父 span 则以 nested span 模式记录）
+    startTrace(config.conversationId, config.model, userMessage, config.workingDirectory, config.langfuseParentSpan)
 
     // 安全天花板：子 Agent 使用 config.maxTurns，主对话不设上限（靠自然终止）
     const maxTurns = config.maxTurns  // 子 Agent 传入具体值，主对话为 undefined

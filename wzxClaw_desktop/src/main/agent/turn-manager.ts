@@ -150,6 +150,8 @@ export class TurnManager {
           taskId,
           projectRoots: config.projectRoots,
           abortSignal,
+          // tool:Agent span 전달 → sub-agent 의 observations 이 이 span 하위에 nested 로 기록됨
+          langfuseParentSpan: toolSpan,
           onSubAgentEvent: sender ? (event) => {
             if (sender.isDestroyed()) return
             if (event['type'] === 'agent:tool_call') {

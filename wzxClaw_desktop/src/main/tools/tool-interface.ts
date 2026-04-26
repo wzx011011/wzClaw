@@ -29,6 +29,9 @@ export interface ToolExecutionContext {
   onProgress?: (message: string) => void
   /** Sub-agent event forwarding — called by AgentTool to stream nested tool activity to the renderer */
   onSubAgentEvent?: (event: Record<string, unknown> & { type: string }) => void
+  /** 父 Agent 的 Langfuse tool:Agent span（LangfuseObjectClient），供 AgentTool spawn 子 Agent 时传入，
+   *  实现 sub-agent observations 在 Langfuse UI 中以 nested span 形式挂载到父 trace */
+  langfuseParentSpan?: unknown
 }
 
 /**

@@ -164,6 +164,8 @@ export class AgentTool implements Tool {
       maxTurns: maxTurns ?? DEFAULT_MAX_SUB_AGENT_TURNS,
       workingDirectory: context.workingDirectory,
       projectRoots: currentBase.projectRoots ?? [context.workingDirectory],
+      // 将父 tool:Agent span 传入子 Agent，子 Agent 的 generations/spans 将 nested 挂载于此 span 下
+      langfuseParentSpan: context.langfuseParentSpan,
     }
 
     // Collect the sub-agent's text output
