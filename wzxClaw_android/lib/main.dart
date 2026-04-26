@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,8 +20,7 @@ final ValueNotifier<String> accentNotifier = ValueNotifier('green');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await PushWakeService.instance.initialize();
-  // Initialize services early so they start listening
+  // Initialize services early so they start listening (lightweight — only subscribes to streams)
   SessionSyncService.instance;
   FileSyncService.instance;
   // Load persisted theme mode
@@ -33,7 +34,9 @@ void main() async {
   // Load persisted accent color
   final savedAccent = prefs.getString('accent_color') ?? 'green';
   accentNotifier.value = savedAccent;
-  await PushWakeService.instance.applyPendingWakeReconnect();
+  // PushWakeService init (notification channel setup, permission request) is not
+  // needed before the first frame — defer so runApp() is called immediately.
+  unawaited(PushWakeService.instance.initialize());
   runApp(const WzxClawApp());
 }
 

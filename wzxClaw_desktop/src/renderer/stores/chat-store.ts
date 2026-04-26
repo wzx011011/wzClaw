@@ -513,7 +513,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
           content: payload.content,
           timestamp: Date.now()
         }
-        return { messages: [...state.messages, userMsg] }
+        const assistantMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          toolCalls: []
+        }
+        return {
+          messages: [...state.messages, userMsg, assistantMsg],
+          isStreaming: true,
+          isWaitingForResponse: true,
+          error: null,
+          streamingMessageId: assistantMsg.id
+        }
       })
     }) ?? (() => {})
 

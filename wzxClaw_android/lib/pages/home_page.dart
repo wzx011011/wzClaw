@@ -79,7 +79,10 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     AppRestoreState.setLastRoute('/chat');
     if (ConnectionManager.instance.selectedDesktopId == null) {
-      ChatStore.instance.loadHistory();
+      // Defer SQLite read to after the first frame so chat UI paints first
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ChatStore.instance.loadHistory();
+      });
     }
 
     _messagesSub = ChatStore.instance.messagesStream.listen((msgs) {
