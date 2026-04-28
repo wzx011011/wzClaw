@@ -8,7 +8,6 @@ import '../models/ws_message.dart';
 import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'connection_manager.dart';
-import 'task_service.dart';
 
 /// Permission request from the desktop agent.
 class PermissionRequest {
@@ -260,7 +259,6 @@ class ChatStore {
       toolMsg,
       sessionId: _currentSessionId,
       desktopId: ConnectionManager.instance.selectedDesktopId,
-      taskId: TaskService.instance.activeTaskId,
     );
     _notifyListeners();
   }
@@ -362,7 +360,6 @@ class ChatStore {
         completed,
         sessionId: _currentSessionId,
         desktopId: ConnectionManager.instance.selectedDesktopId,
-        taskId: TaskService.instance.activeTaskId,
       );
       _streamingMessage = null;
     } else {
@@ -395,7 +392,6 @@ class ChatStore {
       msg,
       sessionId: _currentSessionId,
       desktopId: ConnectionManager.instance.selectedDesktopId,
-      taskId: TaskService.instance.activeTaskId,
     );
     _notifyListeners();
   }
@@ -627,7 +623,6 @@ class ChatStore {
       _isBrowsingHistory = false;
       _messages.addAll(await ChatDatabase.instance.getMessages(
         desktopId: ConnectionManager.instance.selectedDesktopId,
-        taskId: TaskService.instance.activeTaskId,
         limit: 100,
       ));
     }
@@ -697,7 +692,6 @@ class ChatStore {
       msg,
       sessionId: _currentSessionId,
       desktopId: ConnectionManager.instance.selectedDesktopId,
-      taskId: TaskService.instance.activeTaskId,
     );
     _pendingMessageIds[messageId] = true;
     // 防止累积：超过 100 条时清理最老的未确认条目
@@ -709,8 +703,6 @@ class ChatStore {
         'content': text,
         'messageId': messageId,
         if (_currentSessionId != null) 'sessionId': _currentSessionId,
-        if (TaskService.instance.activeTaskId != null)
-          'activeTaskId': TaskService.instance.activeTaskId,
       },),
       priority: 10,
     );
@@ -738,7 +730,6 @@ class ChatStore {
     _messages.clear();
     _messages.addAll(await ChatDatabase.instance.getMessages(
       desktopId: ConnectionManager.instance.selectedDesktopId,
-      taskId: TaskService.instance.activeTaskId,
       limit: 100,
     ));
     _cleanupStaleTools();
@@ -756,7 +747,6 @@ class ChatStore {
     } else {
       older = await ChatDatabase.instance.getMessages(
         desktopId: ConnectionManager.instance.selectedDesktopId,
-        taskId: TaskService.instance.activeTaskId,
         limit: 100,
         offset: _messages.length,
       );
@@ -840,7 +830,6 @@ class ChatStore {
         completed,
         sessionId: _currentSessionId,
         desktopId: ConnectionManager.instance.selectedDesktopId,
-        taskId: TaskService.instance.activeTaskId,
       );
       _streamingMessage = null;
     }
@@ -913,7 +902,6 @@ class ChatStore {
 
     unawaited(AppRestoreState.setLastViewedSession(
       desktopId: desktopId,
-      taskId: TaskService.instance.activeTaskId,
       sessionId: sessionId,
     ));
   }

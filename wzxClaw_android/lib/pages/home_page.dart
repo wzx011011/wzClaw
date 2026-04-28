@@ -48,6 +48,7 @@ class _ChatPageState extends State<ChatPage> {
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   String? _desktopIdentity;
+  String? _workspaceName;
   PermissionRequest? _permissionRequest;
   StreamSubscription? _messagesSub;
   StreamSubscription? _streamingSub;
@@ -59,6 +60,7 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription<WsConnectionState>? _connectionStateSub;
   StreamSubscription<String?>? _desktopIdentitySub;
   StreamSubscription<PermissionRequest?>? _permissionSub;
+  StreamSubscription<WorkspaceInfo?>? _workspaceInfoSub;
   final FocusNode _inputFocusNode = FocusNode();
 
   // Slash command autocomplete
@@ -135,6 +137,12 @@ class _ChatPageState extends State<ChatPage> {
       if (mounted) setState(() => _desktopIdentity = identity);
     });
 
+    _workspaceInfoSub =
+        SessionSyncService.instance.workspaceInfoStream.listen((info) {
+      if (mounted) setState(() => _workspaceName = info?.workspaceName);
+    });
+    _workspaceName = SessionSyncService.instance.workspaceInfo?.workspaceName;
+
     // Debounce all transient (non-connected) states so brief reconnects
     // don't flash the status bar.  We stay on the last known state until
     // the new state has been stable for 1.2 s.  Connected is always shown
@@ -164,6 +172,7 @@ class _ChatPageState extends State<ChatPage> {
     _waitingSub?.cancel();
     _voiceErrorSub?.cancel();
     _desktopIdentitySub?.cancel();
+    _workspaceInfoSub?.cancel();
     _permissionSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
@@ -396,6 +405,7 @@ class _ChatPageState extends State<ChatPage> {
                         desktopIdentity: ConnectionManager.instance.desktopIdentity,
                         desktopOnline: desktops.isNotEmpty,
                         errorMessage: errorSnap.data,
+                        workspaceName: _workspaceName,
                       );
                     },
                   );

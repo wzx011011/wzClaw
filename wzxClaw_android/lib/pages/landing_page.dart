@@ -98,8 +98,8 @@ class _LandingPageState extends State<LandingPage>
     _maybeRestoreChatRoute();
   }
 
-  /// 选择桌面端后，获取工作区列表。
-  /// 只有 1 个工作区时直接进聊天；多个工作区弹出选择。
+  /// 选择桌面端后，获取工作区列表并弹出选择器。
+  /// 无论工作区数量，始终弹出选择器让用户确认。
   void _onSelectDesktop(DesktopInfo desktop) {
     _didNavigate = false;
     ConnectionManager.instance.selectDesktop(desktop.desktopId);
@@ -111,13 +111,7 @@ class _LandingPageState extends State<LandingPage>
 
       if (!mounted) return;
 
-      if (workspaces.length <= 1) {
-        // 0 或 1 个工作区 → 直接进入聊天
-        _navigateToChat();
-        return;
-      }
-
-      // 多个工作区 → 弹出选择
+      // 无论数量多少，始终弹出工作区选择器
       _showWorkspacePicker(workspaces);
     });
 
@@ -144,6 +138,7 @@ class _LandingPageState extends State<LandingPage>
     final colors = AppColors.of(context);
     showModalBottomSheet(
       context: context,
+      isDismissible: false,
       backgroundColor: colors.bgSecondary,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -174,6 +169,23 @@ class _LandingPageState extends State<LandingPage>
               ),
             ),
             const Divider(height: 1),
+            if (workspaces.isEmpty)
+              // 空状态
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+                child: Column(
+                  children: [
+                    Icon(Icons.folder_off_outlined, size: 40, color: colors.textMuted),
+                    const SizedBox(height: 12),
+                    Text('暂无工作区',
+                        style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                    const SizedBox(height: 6),
+                    Text('请在桌面端打开项目后重试',
+                        style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                  ],
+                ),
+              )
+            else
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxHeight: MediaQuery.of(ctx).size.height * 0.45,
@@ -232,7 +244,7 @@ class _LandingPageState extends State<LandingPage>
         ),
       ),
     ).then((_) {
-      // 用户点击底部 sheet 外部关闭 → 仍然导航到聊天
+      // 用户点击跳过或底部 sheet 关闭 → 导航到聊天
       if (mounted && !_didNavigate) {
         _navigateToChat();
       }

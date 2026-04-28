@@ -134,23 +134,7 @@ class WsEvents {
   // -- AskUserQuestion response (outgoing: mobile -> desktop) --
   static const String askUserAnswer = 'ask-user:answer';
 
-  // -- Task events (outgoing: mobile -> desktop) --
-  static const String taskListRequest = 'task:list:request';
-  static const String taskGetRequest = 'task:get:request';
-  static const String taskCreateRequest = 'task:create:request';
-  static const String taskUpdateRequest = 'task:update:request';
-  static const String taskDeleteRequest = 'task:delete:request';
-
-  // -- Task events (incoming: desktop -> mobile) --
-  static const String taskListResponse = 'task:list:response';
-  static const String taskGetResponse = 'task:get:response';
-  static const String taskCreateResponse = 'task:create:response';
-  static const String taskUpdateResponse = 'task:update:response';
-  static const String taskDeleteResponse = 'task:delete:response';
-  static const String taskError = 'task:error';
-
   // -- Push notifications (desktop -> mobile, data-changed) --
-  static const String taskChanged = 'task:changed';
   static const String sessionChanged = 'session:changed';
 
   // -- Multi-desktop system events from relay --

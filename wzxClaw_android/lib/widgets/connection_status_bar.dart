@@ -17,6 +17,7 @@ class ConnectionStatusBar extends StatefulWidget {
     this.desktopIdentity,
     this.desktopOnline = false,
     this.errorMessage,
+    this.workspaceName,
   });
 
   final WsConnectionState state;
@@ -26,6 +27,7 @@ class ConnectionStatusBar extends StatefulWidget {
   final String? desktopIdentity;
   final bool desktopOnline;
   final String? errorMessage;
+  final String? workspaceName;
 
   @override
   State<ConnectionStatusBar> createState() => _ConnectionStatusBarState();
@@ -50,6 +52,9 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
     if (state == WsConnectionState.connected) {
       if (widget.desktopIdentity != null) {
         statusText = '已连接到 ${widget.desktopIdentity}';
+        if (widget.workspaceName != null && widget.workspaceName!.isNotEmpty) {
+          statusText += ' · ${widget.workspaceName}';
+        }
       } else if (desktopOnline) {
         statusText = '桌面已连接';
       } else {

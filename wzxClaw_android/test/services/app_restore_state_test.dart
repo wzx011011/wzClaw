@@ -15,46 +15,25 @@ void main() {
     expect(await AppRestoreState.getLastRoute(), '/chat');
   });
 
-  test('scopes viewed session by desktop and task', () async {
+  test('scopes viewed session by desktop', () async {
     await AppRestoreState.setLastViewedSession(
       desktopId: 'desktop-a',
-      taskId: 'task-1',
       sessionId: 'session-1',
     );
     await AppRestoreState.setLastViewedSession(
       desktopId: 'desktop-a',
-      taskId: 'task-2',
       sessionId: null,
     );
-    await AppRestoreState.setLastViewedSession(
-      desktopId: 'desktop-a',
-      taskId: null,
-      sessionId: 'session-root',
-    );
 
-    final taskOne = await AppRestoreState.getLastViewedSession(
+    final desktopA = await AppRestoreState.getLastViewedSession(
       desktopId: 'desktop-a',
-      taskId: 'task-1',
-    );
-    final taskTwo = await AppRestoreState.getLastViewedSession(
-      desktopId: 'desktop-a',
-      taskId: 'task-2',
-    );
-    final noTask = await AppRestoreState.getLastViewedSession(
-      desktopId: 'desktop-a',
-      taskId: null,
     );
     final otherDesktop = await AppRestoreState.getLastViewedSession(
       desktopId: 'desktop-b',
-      taskId: 'task-1',
     );
 
-    expect(taskOne.hasSavedSelection, isTrue);
-    expect(taskOne.sessionId, 'session-1');
-    expect(taskTwo.hasSavedSelection, isTrue);
-    expect(taskTwo.sessionId, isNull);
-    expect(noTask.hasSavedSelection, isTrue);
-    expect(noTask.sessionId, 'session-root');
+    expect(desktopA.hasSavedSelection, isTrue);
+    expect(desktopA.sessionId, isNull);
     expect(otherDesktop.hasSavedSelection, isFalse);
     expect(otherDesktop.sessionId, isNull);
   });

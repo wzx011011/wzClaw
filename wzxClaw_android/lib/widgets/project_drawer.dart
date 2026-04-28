@@ -3,17 +3,20 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
 import '../models/session_meta.dart';
-import '../models/task_model.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
-import '../services/task_service.dart';
 import 'session_list_tile.dart';
-import 'task_drawer.dart';
 
 /// Drawer widget displaying the current desktop workspace and its sessions.
-class ProjectDrawer extends StatelessWidget {
+class ProjectDrawer extends StatefulWidget {
   const ProjectDrawer({super.key});
+
+  @override
+  State<ProjectDrawer> createState() => _ProjectDrawerState();
+}
+
+class _ProjectDrawerState extends State<ProjectDrawer> {
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +31,7 @@ class ProjectDrawer extends StatelessWidget {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _buildTaskSection(context, colors),
+                _buildWorkspaceSection(context, colors),
                 Divider(color: colors.border, height: 1),
                 _buildSessionSection(context, colors),
                 Divider(color: colors.border, height: 1),
@@ -63,66 +66,73 @@ class ProjectDrawer extends StatelessWidget {
                     ? desktops.where((d) => d.desktopId == selectedId).firstOrNull
                     : null;
                 final connected = connState == WsConnectionState.connected;
-                String title;
+
+                // Build subtitle with workspace name integrated
                 String subtitle;
-                if (connected && identity != null) {
-                  title = identity;
-                  subtitle = desktop?.platform != null ? '${desktop!.platform}' : '已连接';
+                if (connected && desktop?.platform != null) {
+                  subtitle = desktop!.platform!;
                 } else if (connected) {
-                  title = 'wzxClaw';
-                  subtitle = '等待桌面端...';
+                  subtitle = '已连接';
                 } else {
-                  title = 'wzxClaw';
                   subtitle = '未连接';
                 }
-                return Container(
-                  height: 120,
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: colors.bgSecondary,
-                    border: Border(
-                      bottom: BorderSide(color: colors.accent, width: 3),
+
+                String title;
+                if (connected && identity != null) {
+                  title = identity;
+                } else {
+                  title = 'wzxClaw';
+                }
+
+                return GestureDetector(
+                  onTap: connected ? () => _showWorkspaceSwitcher(colors) : null,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    decoration: BoxDecoration(
+                      color: colors.bgSecondary,
+                      border: Border(
+                        bottom: BorderSide(color: colors.accent, width: 3),
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: connected ? Colors.green : Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: TextStyle(
-                                fontSize: 20,
-                                color: colors.textPrimary,
-                                fontWeight: FontWeight.w500,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: connected ? Colors.green : Colors.red,
+                                shape: BoxShape.circle,
                               ),
-                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        subtitle,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: colors.textSecondary,
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                title,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  color: colors.textPrimary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (connected)
+                              Icon(
+                                Icons.swap_horiz,
+                                size: 16,
+                                color: colors.textMuted,
+                              ),
+                          ],
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        _buildWorkspaceSubtitle(colors, subtitle, connected),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -133,19 +143,146 @@ class ProjectDrawer extends StatelessWidget {
     );
   }
 
-  /// Task section — top-level context showing active task and its projects.
-  /// Hierarchy: 任务 → 工程 (projects) → 会话 (below, in session section)
-  Widget _buildTaskSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<String?>(
-      stream: TaskService.instance.activeTaskIdStream,
-      initialData: TaskService.instance.activeTaskId,
-      builder: (context, activeSnap) {
-        final activeId = activeSnap.data;
-        final task = activeId != null
-            ? TaskService.instance.tasks
-                .where((t) => t.id == activeId)
-                .firstOrNull
-            : null;
+  /// Subtitle line: platform · workspaceName (integrated, not separate row)
+  Widget _buildWorkspaceSubtitle(AppColors colors, String platformInfo, bool connected) {
+    if (!connected) {
+      return Text(
+        platformInfo,
+        style: TextStyle(fontSize: 13, color: colors.textSecondary),
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    return StreamBuilder<WorkspaceInfo?>(
+      stream: SessionSyncService.instance.workspaceInfoStream,
+      initialData: SessionSyncService.instance.workspaceInfo,
+      builder: (context, wsSnap) {
+        final wsInfo = wsSnap.data;
+        final wsName = wsInfo?.workspaceName ?? '';
+        final display = wsName.isNotEmpty
+            ? '$platformInfo · $wsName'
+            : platformInfo;
+        return Text(
+          display,
+          style: TextStyle(
+            fontSize: 13,
+            color: wsName.isNotEmpty ? colors.textSecondary : colors.textMuted,
+          ),
+          overflow: TextOverflow.ellipsis,
+        );
+      },
+    );
+  }
+
+  /// 弹出工作区切换选择器
+  void _showWorkspaceSwitcher(AppColors colors) {
+    SessionSyncService.instance.fetchWorkspaces();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Text('切换工作区',
+                      style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(ctx),
+                    child: Text('关闭',
+                        style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            StreamBuilder<List<WorkspaceItem>>(
+              stream: SessionSyncService.instance.workspacesStream,
+              initialData: SessionSyncService.instance.workspaces,
+              builder: (context, snapshot) {
+                final workspaces = snapshot.data ?? [];
+                if (workspaces.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text('暂无工作区',
+                        style: TextStyle(color: colors.textMuted, fontSize: 14)),
+                  );
+                }
+                return ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(ctx).size.height * 0.4,
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: workspaces.length,
+                    itemBuilder: (ctx, i) {
+                      final ws = workspaces[i];
+                      final isCurrent = ws.isCurrent;
+                      return ListTile(
+                        leading: Icon(
+                          isCurrent ? Icons.folder_open : Icons.folder_outlined,
+                          color: isCurrent ? colors.accent : colors.textSecondary,
+                        ),
+                        title: Text(ws.name,
+                            style: TextStyle(
+                              color: isCurrent ? colors.accent : colors.textPrimary,
+                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                            )),
+                        subtitle: Text(ws.path,
+                            style: TextStyle(color: colors.textMuted, fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        trailing: isCurrent
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: colors.accent.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('当前',
+                                    style: TextStyle(
+                                        color: colors.accent, fontSize: 11)),
+                              )
+                            : null,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          if (!isCurrent) {
+                            SessionSyncService.instance.switchWorkspace(ws.path);
+                          }
+                        },
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Workspace section — replaces the old task section.
+  /// Shows the current workspace with a switch button.
+  Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
+    return StreamBuilder<WorkspaceInfo?>(
+      stream: SessionSyncService.instance.workspaceInfoStream,
+      initialData: SessionSyncService.instance.workspaceInfo,
+      builder: (context, wsSnap) {
+        final wsInfo = wsSnap.data;
+        final wsName = wsInfo?.workspaceName ?? '';
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,10 +293,10 @@ class ProjectDrawer extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 14, 12, 6),
               child: Row(
                 children: [
-                  Icon(Icons.task_alt, size: 15, color: colors.textSecondary),
+                  Icon(Icons.folder_outlined, size: 15, color: colors.textSecondary),
                   const SizedBox(width: 8),
                   Text(
-                    '任务',
+                    '工作区',
                     style: TextStyle(
                       fontSize: 13,
                       color: colors.textSecondary,
@@ -169,13 +306,7 @@ class ProjectDrawer extends StatelessWidget {
                   ),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () {
-                      final navigator = Navigator.of(context);
-                      Navigator.pop(context);
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        showTaskDrawer(navigator.context);
-                      });
-                    },
+                    onTap: () => _showWorkspaceSwitcher(colors),
                     child: Padding(
                       padding: const EdgeInsets.all(4),
                       child: Icon(
@@ -188,9 +319,35 @@ class ProjectDrawer extends StatelessWidget {
                 ],
               ),
             ),
-            // Task card or empty state
-            if (task != null)
-              _buildActiveTaskCard(context, colors, task)
+            // Workspace card or empty state
+            if (wsName.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  color: colors.accent.withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(8),
+                  border:
+                      Border.all(color: colors.accent.withValues(alpha: 0.22)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.folder_open, size: 14, color: colors.accent),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        wsName,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              )
             else
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
@@ -203,19 +360,13 @@ class ProjectDrawer extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '未选择任务',
+                      '未选择工作区',
                       style:
                           TextStyle(color: colors.textMuted, fontSize: 13),
                     ),
                     const Spacer(),
                     GestureDetector(
-                      onTap: () {
-                        final navigator = Navigator.of(context);
-                        Navigator.pop(context);
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          showTaskDrawer(navigator.context);
-                        });
-                      },
+                      onTap: () => _showWorkspaceSwitcher(colors),
                       child: Text(
                         '选择',
                         style:
@@ -231,81 +382,6 @@ class ProjectDrawer extends StatelessWidget {
     );
   }
 
-  /// Card showing the active task title and its associated projects (工程).
-  Widget _buildActiveTaskCard(
-      BuildContext context, AppColors colors, TaskModel task,) {
-    return StreamBuilder<List<TaskModel>>(
-      stream: TaskService.instance.tasksStream,
-      initialData: TaskService.instance.tasks,
-      builder: (context, snapshot) {
-        final latestTask = (snapshot.data ?? [])
-                .where((t) => t.id == task.id)
-                .firstOrNull ??
-            task;
-        return Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(8),
-            border:
-                Border.all(color: colors.accent.withValues(alpha: 0.22)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Task title row
-              Row(
-                children: [
-                  Icon(Icons.play_arrow_rounded,
-                      size: 14, color: colors.accent,),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      latestTask.title,
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              // Projects (工程) — hierarchy level below task
-              if (latestTask.projects.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                ...latestTask.projects.map(
-                  (proj) => Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: Row(
-                      children: [
-                        const SizedBox(width: 20),
-                        Icon(Icons.folder_outlined,
-                            size: 12, color: colors.textMuted,),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            proj.name,
-                            style: TextStyle(
-                              color: colors.textSecondary,
-                              fontSize: 11,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
   Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
     return ListTile(
       leading: Icon(Icons.folder_open, color: colors.textSecondary, size: 20),
@@ -322,11 +398,11 @@ class ProjectDrawer extends StatelessWidget {
   }
 
   Widget _buildSessionSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<String?>(
-      stream: TaskService.instance.activeTaskIdStream,
-      initialData: TaskService.instance.activeTaskId,
-      builder: (context, taskSnap) {
-        final hasTask = taskSnap.data != null;
+    return StreamBuilder<WorkspaceInfo?>(
+      stream: SessionSyncService.instance.workspaceInfoStream,
+      initialData: SessionSyncService.instance.workspaceInfo,
+      builder: (context, wsSnap) {
+        final hasWorkspace = wsSnap.data != null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -397,11 +473,11 @@ class ProjectDrawer extends StatelessWidget {
             ],
           ),
         ),
-        if (!hasTask)
+        if (!hasWorkspace)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Text(
-              '请先选择任务',
+              '请先选择工作区',
               style: TextStyle(color: colors.textMuted, fontSize: 13),
             ),
           )

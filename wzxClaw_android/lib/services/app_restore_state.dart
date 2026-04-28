@@ -16,7 +16,6 @@ class AppRestoreState {
   static const _lastRouteKey = 'last_route';
   static const _sessionViewPrefix = 'session_view';
   static const _liveChatSentinel = '__live__';
-  static const _noTaskSentinel = '__no_task__';
 
   static Future<void> setLastRoute(String route) async {
     final prefs = await SharedPreferences.getInstance();
@@ -30,20 +29,18 @@ class AppRestoreState {
 
   static Future<void> setLastViewedSession({
     required String desktopId,
-    required String? taskId,
     required String? sessionId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final value = sessionId ?? _liveChatSentinel;
-    await prefs.setString(_sessionViewKey(desktopId, taskId), value);
+    await prefs.setString(_sessionViewKey(desktopId), value);
   }
 
   static Future<SessionViewRestoreState> getLastViewedSession({
     required String desktopId,
-    required String? taskId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getString(_sessionViewKey(desktopId, taskId));
+    final value = prefs.getString(_sessionViewKey(desktopId));
     if (value == null) {
       return const SessionViewRestoreState(
         hasSavedSelection: false,
@@ -56,6 +53,6 @@ class AppRestoreState {
     );
   }
 
-  static String _sessionViewKey(String desktopId, String? taskId) =>
-      '$_sessionViewPrefix::$desktopId::${taskId ?? _noTaskSentinel}';
+  static String _sessionViewKey(String desktopId) =>
+      '$_sessionViewPrefix::$desktopId';
 }

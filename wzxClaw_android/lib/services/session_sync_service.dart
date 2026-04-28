@@ -8,7 +8,6 @@ import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'chat_store.dart';
 import 'connection_manager.dart';
-import 'task_service.dart';
 
 /// Workspace info pushed by the desktop when mobile connects.
 class WorkspaceInfo {
@@ -80,8 +79,6 @@ class SessionSyncService {
   StreamSubscription<WsConnectionState>? _stateSub;
   // ignore: unused_field — holds subscription reference to prevent GC
   StreamSubscription<String?>? _desktopOnlineSub;
-  // ignore: unused_field — holds subscription reference to prevent GC
-  StreamSubscription<String?>? _activeTaskSub;
   int _requestCounter = 0;
   int _fetchGeneration = 0; // 递增以丢弃过期的 fetchSessions 响应
   final Map<String, Completer<dynamic>> _pendingRequests = {};
@@ -100,26 +97,19 @@ class SessionSyncService {
         ConnectionManager.instance.stateStream.listen(_handleConnectionState);
     _desktopOnlineSub =
         ConnectionManager.instance.selectedDesktopIdStream.listen(_handleDesktopOnline);
-    // Gate session fetching on active task: when task changes, clear old
-    // sessions and re-fetch if we are connected and desktop is online.
-    _activeTaskSub =
-        TaskService.instance.activeTaskIdStream.listen(_handleActiveTaskChanged);
     _loadCachedSessions();
   }
 
   // -- Connection state handler --
   void _handleConnectionState(WsConnectionState state) {
     if (state == WsConnectionState.connected) {
-      // Only fetch sessions when a desktop and task are both selected.
-      if (!_hasSelectedDesktopTarget ||
-          TaskService.instance.activeTaskId == null) {
+      if (!_hasSelectedDesktopTarget) {
         return;
       }
       // Small delay to let identity exchange happen first
       Future.delayed(const Duration(milliseconds: 800), () {
         if (ConnectionManager.instance.state == WsConnectionState.connected &&
-            _hasSelectedDesktopTarget &&
-            TaskService.instance.activeTaskId != null) {
+            _hasSelectedDesktopTarget) {
           fetchSessions();
         }
       });
@@ -133,41 +123,11 @@ class SessionSyncService {
   // -- Desktop selection handler --
   void _handleDesktopOnline(String? selectedDesktopId) {
     if (selectedDesktopId == null) {
-      _clearDesktopScopedState(clearTask: true);
-    } else if (ConnectionManager.instance.state == WsConnectionState.connected &&
-        TaskService.instance.activeTaskId != null) {
-      // 用户选择了桌面端，延迟获取会话
-      Future.delayed(const Duration(milliseconds: 800), () {
-        if (_hasSelectedDesktopTarget &&
-            TaskService.instance.activeTaskId != null) {
-          fetchSessions();
-        }
-      });
-    }
-  }
-
-  // -- Active task change handler --
-  void _handleActiveTaskChanged(String? taskId) {
-    // Clear current sessions immediately so stale list is not shown.
-    _sessions = [];
-    _activeSessionId = null;
-    _sessionsController.add([]);
-    _activeSessionController.add(null);
-
-    // Clear chat messages — old task's messages should not be visible.
-    ChatStore.instance.resetSessionScope();
-
-    if (taskId != null) {
+      _clearDesktopScopedState();
+    } else if (ConnectionManager.instance.state == WsConnectionState.connected) {
       unawaited(_restorePersistedSessionView());
-    }
-
-    if (taskId != null &&
-        ConnectionManager.instance.state == WsConnectionState.connected &&
-        ConnectionManager.instance.selectedDesktopId != null) {
-      // Task was selected and we are already connected — fetch right away.
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (TaskService.instance.activeTaskId != null &&
-            ConnectionManager.instance.state == WsConnectionState.connected) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (_hasSelectedDesktopTarget) {
           fetchSessions();
         }
       });
@@ -223,7 +183,6 @@ class SessionSyncService {
     final workspaceName = data['workspaceName'] as String? ?? '';
     final rawSessions = data['sessions'] as List? ?? [];
     final desktopId = ConnectionManager.instance.selectedDesktopId;
-    final taskId = TaskService.instance.activeTaskId;
 
     // 快照当前 generation，用于后续判断响应是否过期
     final gen = _fetchGeneration;
@@ -237,7 +196,7 @@ class SessionSyncService {
             ),)
         .toList();
 
-    if (!_hasSelectedDesktopTarget || taskId == null || desktopId == null) {
+    if (!_hasSelectedDesktopTarget || desktopId == null) {
       _isLoading = false;
       _loadingController.add(false);
       _completePending(requestId, const <SessionMeta>[]);
@@ -267,7 +226,6 @@ class SessionSyncService {
         sessions.any((session) => session.id == currentSessionId);
     final restoreState = await AppRestoreState.getLastViewedSession(
       desktopId: desktopId,
-      taskId: taskId,
     );
 
     if (gen != _fetchGeneration) {
@@ -390,8 +348,7 @@ class SessionSyncService {
     );
     _workspaceInfoController.add(_workspaceInfo);
 
-    // Only auto-fetch sessions when a task is selected.
-    if (_hasSelectedDesktopTarget && TaskService.instance.activeTaskId != null) {
+    if (_hasSelectedDesktopTarget) {
       fetchSessions();
     }
   }
@@ -493,8 +450,7 @@ class SessionSyncService {
   /// Request session list from the connected desktop.
   void fetchSessions() {
     if (ConnectionManager.instance.state != WsConnectionState.connected ||
-        !_hasSelectedDesktopTarget ||
-        TaskService.instance.activeTaskId == null) {
+        !_hasSelectedDesktopTarget) {
       return;
     }
     // Dedup: skip if fetched within last 2 seconds.
@@ -515,7 +471,6 @@ class SessionSyncService {
       event: WsEvents.sessionListRequest,
       data: {
         'requestId': requestId,
-        'activeTaskId': TaskService.instance.activeTaskId,
       },
     ),);
     // Timeout — also clean up pending request
@@ -579,7 +534,6 @@ class SessionSyncService {
       data: {
         'requestId': requestId,
         'sessionId': sessionId,
-        'activeTaskId': TaskService.instance.activeTaskId,
         'offset': offset,
         'limit': limit,
       },
@@ -618,8 +572,7 @@ class SessionSyncService {
 
     ConnectionManager.instance.send(WsMessage(
       event: WsEvents.sessionCreateRequest,
-      data: {'requestId': requestId, if (title != null) 'title': title,
-        'activeTaskId': TaskService.instance.activeTaskId},
+      data: {'requestId': requestId, if (title != null) 'title': title},
     ),);
 
     Future.delayed(const Duration(seconds: 5), () {
@@ -650,8 +603,7 @@ class SessionSyncService {
 
     ConnectionManager.instance.send(WsMessage(
       event: WsEvents.sessionDeleteRequest,
-      data: {'requestId': requestId, 'sessionId': sessionId,
-        'activeTaskId': TaskService.instance.activeTaskId},
+      data: {'requestId': requestId, 'sessionId': sessionId},
     ),);
 
     Future.delayed(const Duration(seconds: 5), () {
@@ -682,8 +634,7 @@ class SessionSyncService {
 
     ConnectionManager.instance.send(WsMessage(
       event: WsEvents.sessionRenameRequest,
-      data: {'requestId': requestId, 'sessionId': sessionId, 'title': title,
-        'activeTaskId': TaskService.instance.activeTaskId},
+      data: {'requestId': requestId, 'sessionId': sessionId, 'title': title},
     ),);
 
     Future.delayed(const Duration(seconds: 5), () {
@@ -773,7 +724,7 @@ class SessionSyncService {
     }
   }
 
-  void _clearDesktopScopedState({bool clearTask = false}) {
+  void _clearDesktopScopedState() {
     _fetchGeneration++;
     _lastSessionFetchTime = null;
     _isLoading = false;
@@ -787,9 +738,6 @@ class SessionSyncService {
     _workspaces = [];
     _workspacesController.add([]);
     ChatStore.instance.resetSessionScope();
-    if (clearTask && TaskService.instance.activeTaskId != null) {
-      TaskService.instance.setActiveTask(null);
-    }
   }
 
   Future<void> _applySessionSelection(String sessionId, int generation) async {
@@ -810,12 +758,10 @@ class SessionSyncService {
 
   Future<void> _restorePersistedSessionView() async {
     final desktopId = ConnectionManager.instance.selectedDesktopId;
-    final taskId = TaskService.instance.activeTaskId;
-    if (desktopId == null || taskId == null) return;
+    if (desktopId == null) return;
 
     final restoreState = await AppRestoreState.getLastViewedSession(
       desktopId: desktopId,
-      taskId: taskId,
     );
     if (!restoreState.hasSavedSelection) return;
 

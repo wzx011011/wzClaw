@@ -101,7 +101,6 @@ class ChatDatabase {
     ChatMessage msg, {
     String? sessionId,
     String? desktopId,
-    String? taskId,
   }) async {
     final db = await _ensureDb();
     final map = msg.toDbMap();
@@ -109,24 +108,21 @@ class ChatDatabase {
       map['session_id'] = sessionId;
     }
     map['desktop_id'] = desktopId;
-    map['task_id'] = taskId;
     await db.insert('messages', map);
   }
 
   Future<List<ChatMessage>> getMessages({
     String? desktopId,
-    String? taskId,
     int limit = 100,
     int offset = 0,
   }) async {
     final db = await _ensureDb();
-    final scopeFilter = desktopId != null || taskId != null;
     final rows = await db.query(
       'messages',
-      where: scopeFilter
-          ? 'session_id IS NULL AND desktop_id = ? AND task_id = ?'
+      where: desktopId != null
+          ? 'session_id IS NULL AND desktop_id = ?'
           : 'session_id IS NULL',
-      whereArgs: scopeFilter ? [desktopId, taskId] : null,
+      whereArgs: desktopId != null ? [desktopId] : null,
       orderBy: 'created_at ASC',
       limit: limit,
       offset: offset,
