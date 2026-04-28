@@ -132,6 +132,7 @@ export class TurnManager {
       }
 
       // 5. 执行工具
+      let toolSpan: ReturnType<AgentTraceContext['startToolSpan']> | undefined
       try {
         await hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
 
@@ -144,7 +145,7 @@ export class TurnManager {
           }
         }
 
-        const toolSpan = getActiveTrace(config.conversationId)?.startToolSpan(toolCall.name, toolCall.input)
+        toolSpan = getActiveTrace(config.conversationId)?.startToolSpan(toolCall.name, toolCall.input)
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
           taskId,
@@ -180,7 +181,8 @@ export class TurnManager {
         // 展平输出：string 直接用，ToolResultContent[] 拼接文本
         const flatOutput = flattenToolOutput(result.output)
         const truncatedOutput = truncateToolResult(toolCall.name, flatOutput)
-        toolSpan?.end({ output: truncatedOutput.slice(0, 1000), level: result.isError ? 'ERROR' : 'DEFAULT' })
+        toolSpan?.update({ output: truncatedOutput.slice(0, 1000), level: result.isError ? 'ERROR' : 'DEFAULT' })
+        toolSpan?.end()
 
         await hookRegistry?.emit('post-tool', {
           toolName: toolCall.name,
@@ -194,6 +196,8 @@ export class TurnManager {
         return { toolCallId: toolCall.id, toolName: toolCall.name, output: flatOutput, truncatedOutput, isError: result.isError, loopDetected: false }
       } catch (err) {
         const msg = ContextManagerClass.truncateToolResult(err instanceof Error ? err.message : String(err))
+        toolSpan?.update({ output: msg.slice(0, 1000), level: 'ERROR', statusMessage: err instanceof Error ? err.message : String(err) })
+        toolSpan?.end()
         _eval?.recordToolCall(toolCall.name, true, false)
         return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: false }
       }
@@ -263,13 +267,20 @@ export class TurnManager {
     let phaseMeta: StreamPhaseMeta
     try {
       phaseMeta = yield* executeStreamPhase(trackedStream, streamOpts, isReadOnly, executeTool)
-      _generation?.end({
+      _generation?.update({
         output: phaseMeta.textContent || undefined,
-        usage: _capturedUsage,
+        usageDetails: _capturedUsage ? {
+          input: _capturedUsage.input,
+          output: _capturedUsage.output,
+          promptTokens: _capturedUsage.input,
+          completionTokens: _capturedUsage.output,
+        } : undefined,
         level: phaseMeta.hadError ? 'ERROR' : 'DEFAULT',
       })
+      _generation?.end()
     } catch (err) {
-      _generation?.end({ level: 'ERROR', statusMessage: err instanceof Error ? err.message : String(err) })
+      _generation?.update({ level: 'ERROR', statusMessage: err instanceof Error ? err.message : String(err) })
+      _generation?.end()
       throw err
     }
 

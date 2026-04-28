@@ -10,27 +10,70 @@
 //                          用于跨 IDE/模型组合对比同一任务
 // ============================================================
 
-import { Langfuse } from 'langfuse'
-import type { LangfuseObjectClient } from 'langfuse-core'
+import { NodeSDK } from '@opentelemetry/sdk-node'
+import { LangfuseSpanProcessor } from '@langfuse/otel'
+import { LangfuseClient } from '@langfuse/client'
+import {
+  propagateAttributes,
+  startObservation,
+  type LangfuseGeneration,
+  type LangfuseObservation,
+  type LangfuseSpan,
+  type LangfuseTool,
+} from '@langfuse/tracing'
 import { EvalCollector } from './eval-collector'
 import { runJudgeEval } from './eval-judge'
 import type { Message } from '../../shared/types'
 
 const IDE_NAME = 'wzxclaw'
+const DEFAULT_BASE_URL = 'http://192.168.100.78:3000'
 
-// ---- 单例 Client ----
+function getLangfuseConfig() {
+  const publicKey = process.env.LANGFUSE_PUBLIC_KEY
+  const secretKey = process.env.LANGFUSE_SECRET_KEY
+  if (!publicKey || !secretKey) {
+    return null
+  }
+  return {
+    publicKey,
+    secretKey,
+    baseUrl: process.env.LANGFUSE_BASE_URL ?? DEFAULT_BASE_URL,
+  }
+}
 
-let _client: Langfuse | null = null
+// ---- OTel SDK + API Client 单例 ----
 
-export function getClient(): Langfuse {
+let _sdk: NodeSDK | null = null
+let _client: LangfuseClient | null = null
+let _spanProcessor: LangfuseSpanProcessor | null = null
+
+export function initLangfuse(): void {
+  if (_sdk) return
+
+  const cfg = getLangfuseConfig()
+  if (!cfg) return
+
+  _spanProcessor = new LangfuseSpanProcessor({
+    ...cfg,
+    flushAt: 1,
+    flushInterval: 3,
+    // Observation-level evaluators in Langfuse Fast Mode use this OTLP ingestion
+    // version marker to enable real-time observation evaluation.
+    additionalHeaders: { 'x-langfuse-ingestion-version': '4' },
+    // v5 默认只导出 LLM / Langfuse spans；这里保留升级前「全部自定义 span」行为。
+    shouldExportSpan: () => true,
+  })
+  _sdk = new NodeSDK({
+    spanProcessors: [_spanProcessor],
+  })
+  _sdk.start()
+}
+
+export function getClient(): LangfuseClient | null {
   if (!_client) {
-    _client = new Langfuse({
-      publicKey: process.env.LANGFUSE_PUBLIC_KEY ?? 'pk-lf-53c306d4-557b-4893-a2d2-f5a2683f0d8e',
-      secretKey: process.env.LANGFUSE_SECRET_KEY ?? 'sk-lf-1e84dc06-43e9-4721-b2d9-f6b3134e1cc0',
-      baseUrl: process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000',
-      flushAt: 1,       // 每个事件立即发送，防止短会话 generation 因 flush 未 await 而丢失
-      flushInterval: 3000,
-    })
+    const cfg = getLangfuseConfig()
+    if (!cfg) return null
+    _client = new LangfuseClient(cfg)
   }
   return _client
 }
@@ -44,8 +87,9 @@ export function startTrace(
   model: string,
   userInput: string,
   workingDirectory?: string,
-  parentSpan?: unknown,   // LangfuseObjectClient 实际类型，用 unknown 避免上游引入 langfuse-core
+  parentSpan?: unknown,
 ): AgentTraceContext {
+  initLangfuse()
   const ctx = new AgentTraceContext(conversationId, model, userInput, workingDirectory, parentSpan)
   activeTraces.set(conversationId, ctx)
   return ctx
@@ -66,13 +110,12 @@ export function endTrace(
   if (!ctx) return
   ctx.end(usage, turnCount, hadError, messages)
 
-  // 异步触发 LLM Judge（不阻塞主流程）
-  // nested span 模式下 ctx.trace 为 null，judge eval 无法挂载，跳过
-  if (messages && ctx.trace && ctx.evalCollector.totalTurns >= 2) {
+  // 异步触发 LLM Judge（不阻塞主流程）。Nested 模式不单独打分。
+  if (messages && !ctx.isNestedTrace && ctx.evalCollector.totalTurns >= 2) {
     const evalCollector = ctx.evalCollector
-    const traceRef = ctx.trace
+    const traceId = ctx.traceId
     const model = ctx.model
-    runJudgeEval(evalCollector, messages, traceRef, model).catch(() => {
+    runJudgeEval(evalCollector, messages, traceId, model).catch(() => {
       // Judge 失败不影响主流程
     })
   }
@@ -80,59 +123,56 @@ export function endTrace(
   activeTraces.delete(conversationId)
 }
 
-// ---- Trace 上下文 ----
-
-type LangfuseTrace = ReturnType<Langfuse['trace']>
-type LangfuseGeneration = ReturnType<LangfuseTrace['generation']>
-type LangfuseSpan = ReturnType<LangfuseTrace['span']>
-
 function getFinalAssistantOutput(messages?: Message[]): string | undefined {
   if (!messages) return undefined
 
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (message.role !== 'assistant') continue
-
-    const content = message.content.trim()
-    if (content) return content
+    if (typeof message.content !== 'string') continue
   }
 
   return undefined
 }
 
+function toScoreValue(value: unknown): number | string {
+  return typeof value === 'number' ? value : String(value)
+}
+
 // ---- 显式 flush + 关闭（headless 评测模式需要） ----
 
 export async function flushLangfuse(): Promise<void> {
-  if (_client) {
-    await _client.flushAsync()
-  }
+  await Promise.all([
+    _client?.flush() ?? Promise.resolve(),
+    _spanProcessor?.forceFlush() ?? Promise.resolve(),
+  ])
 }
 
 export async function shutdownLangfuse(): Promise<void> {
-  if (_client) {
-    await _client.flushAsync()
-    await _client.shutdownAsync()
-    _client = null
-  }
+  await flushLangfuse()
+  await _client?.shutdown()
+  await _sdk?.shutdown()
+  _client = null
+  _sdk = null
+  _spanProcessor = null
 }
 
 export class AgentTraceContext {
-  /**
-   * Root 模式：存放创建的 LangfuseTraceClient，供 LLM Judge 使用。
-   * Nested 模式（子 Agent）：null —— 不创建新 trace。
-   */
-  readonly trace: LangfuseTrace | null
-  /**
-   * 实际用于创建 observations 的父对象。
-   * Root 模式 = trace；Nested 模式 = 父 Agent 的 tool:Agent span。
-   * 调用 .generation() 或 .span() 时 SDK 自动设置 traceId + parentObservationId。
-   */
-  private readonly parent: LangfuseObjectClient
+  /** Root 模式下的会话根 observation；Nested 模式为 null。 */
+  readonly trace: LangfuseSpan | null
+  /** 当前 observation 所属 trace id，供 score API / E2E 查询使用。 */
+  readonly traceId: string
+  /** 实际用于创建子 observations 的父对象。 */
+  private readonly parent: LangfuseObservation
   private readonly isNested: boolean
   /** EvalCollector — Agent 运行期间采集质量指标 */
   readonly evalCollector = new EvalCollector()
   /** 当前模型（供 judge 使用） */
   readonly model: string
+
+  get isNestedTrace(): boolean {
+    return this.isNested
+  }
 
   constructor(
     conversationId: string,
@@ -145,54 +185,61 @@ export class AgentTraceContext {
     this.isNested = parentSpan != null
 
     if (this.isNested) {
-      // ―― Nested 模式：子 Agent 不创建独立 trace ――
-      // 父 tool:Agent span 直接作为 parent，子 Agent 的 generations/spans
-      // 通过 SDK 自动设置的 traceId + parentObservationId 正确挂载到父 trace 下
+      // Nested 模式：子 Agent 不创建独立 trace，直接挂在父 tool:Agent observation 下。
       this.trace = null
-      this.parent = parentSpan as LangfuseObjectClient
-    } else {
-      // ―― Root 模式：创建新 trace ――
-      const tags: string[] = [IDE_NAME, model]
-      const taskId = process.env.BENCHMARK_TASK_ID
-      if (taskId) tags.push(`task:${taskId}`)
-
-      // 交互模式下每次 run 都应生成一条新 trace，Traces 列表才能按最新消息排序。
-      // 评测模式需要稳定 traceId 供后处理拉分，因此仅在 benchmark 场景固定为 conversationId。
-      const newTrace = getClient().trace({
-        ...(taskId ? { id: conversationId } : {}),
-        name: 'agent-session',
-        sessionId: conversationId,
-        tags,
-        input: userInput,
-        metadata: {
-          ide: IDE_NAME,
-          model,
-          workingDirectory,
-          ...(taskId ? { taskId } : {}),
-        },
-      })
-      this.trace = newTrace
-      this.parent = newTrace
-
-      // trace 创建后立即 flush，确保 Langfuse 先收到 trace 记录，
-      // 后续 generation/span 才能正确挂载，不会成为孤立 observation
-      getClient().flushAsync().catch(() => {/* 忽略 flush 错误 */})
+      this.parent = parentSpan as LangfuseObservation
+      this.traceId = this.parent.traceId
+      return
     }
+
+    const tags: string[] = [IDE_NAME, model]
+    const taskId = process.env.BENCHMARK_TASK_ID
+    if (taskId) tags.push(`task:${taskId}`)
+
+    const metadata: Record<string, string> = {
+      ide: IDE_NAME,
+      model,
+      ...(workingDirectory ? { workingDirectory } : {}),
+      ...(taskId ? { taskId } : {}),
+    }
+
+    // v5 中 trace 级属性通过 propagateAttributes 写入当前上下文；root observation
+    // 用 setTraceIO 兼容现有 LLM-as-Judge / trace-level input/output。
+    const root = propagateAttributes({
+      traceName: 'agent-session',
+      sessionId: conversationId,
+      tags,
+      metadata,
+    }, () => startObservation('agent-session', {
+      input: userInput,
+      metadata: {
+        ide: IDE_NAME,
+        model,
+        workingDirectory,
+        ...(taskId ? { taskId } : {}),
+      },
+    }))
+
+    root.setTraceIO({ input: userInput })
+    this.trace = root
+    this.parent = root
+    this.traceId = root.traceId
   }
 
   startGeneration(turnIndex: number, model: string, input: unknown): LangfuseGeneration {
-    return this.parent.generation({
-      name: `${this.isNested ? 'sub-' : ''}turn-${turnIndex + 1}`,
-      model,
-      input,
-    })
+    return this.parent.startObservation(
+      `${this.isNested ? 'sub-' : ''}turn-${turnIndex + 1}`,
+      { model, input },
+      { asType: 'generation' },
+    )
   }
 
-  startToolSpan(toolName: string, input: unknown): LangfuseSpan {
-    return this.parent.span({
-      name: `tool:${toolName}`,
-      input,
-    })
+  startToolSpan(toolName: string, input: unknown): LangfuseTool | LangfuseSpan {
+    return this.parent.startObservation(
+      `tool:${toolName}`,
+      { input },
+      { asType: 'tool' },
+    )
   }
 
   end(
@@ -202,16 +249,16 @@ export class AgentTraceContext {
     messages?: Message[],
   ): void {
     if (this.isNested) {
-      // Nested 模式：不更新 trace（不属于这里），不打分（无意义），只确保 flush
-      getClient().flushAsync().catch(() => {/* 忽略 flush 错误 */})
+      flushLangfuse().catch(() => {/* 忽略 flush 错误 */})
       return
     }
 
     const totalTokens = usage.inputTokens + usage.outputTokens
     const finalOutput = getFinalAssistantOutput(messages)
+    const output = hadError ? '[error]' : (finalOutput ?? `[done in ${turnCount} turns]`)
 
     this.trace!.update({
-      output: hadError ? '[error]' : (finalOutput ?? `[done in ${turnCount} turns]`),
+      output,
       metadata: {
         ide: IDE_NAME,
         totalInputTokens: usage.inputTokens,
@@ -219,24 +266,30 @@ export class AgentTraceContext {
         turnCount,
         hadError,
       },
+      level: hadError ? 'ERROR' : 'DEFAULT',
     })
+    this.trace!.setTraceIO({ output })
 
-    // Numeric scores — mirroring the proxy, makes traces filterable & comparable
-    this.trace!.score({ name: 'total_tokens', value: totalTokens, dataType: 'NUMERIC' })
-    this.trace!.score({ name: 'turns_used', value: turnCount, dataType: 'NUMERIC' })
-    if (hadError) {
-      this.trace!.score({ name: 'had_error', value: 1, dataType: 'NUMERIC' })
+    const client = getClient()
+    if (client) {
+      client.score.create({ traceId: this.traceId, name: 'total_tokens', value: totalTokens, dataType: 'NUMERIC' })
+      client.score.create({ traceId: this.traceId, name: 'turns_used', value: turnCount, dataType: 'NUMERIC' })
+      if (hadError) {
+        client.score.create({ traceId: this.traceId, name: 'had_error', value: 1, dataType: 'NUMERIC' })
+      }
+
+      // Tier 1 自动评分 — 从 EvalCollector 计算
+      for (const score of this.evalCollector.computeScores()) {
+        client.score.create({
+          traceId: this.traceId,
+          name: score.name,
+          value: toScoreValue(score.value),
+          dataType: score.dataType,
+        })
+      }
     }
 
-    // Tier 1 自动评分 — 从 EvalCollector 计算
-    for (const score of this.evalCollector.computeScores()) {
-      this.trace!.score({
-        name: score.name,
-        value: score.value,
-        dataType: score.dataType,
-      })
-    }
-
-    getClient().flushAsync().catch(() => {/* 忽略 flush 错误 */})
+    this.trace!.end()
+    flushLangfuse().catch(() => {/* 忽略 flush 错误 */})
   }
 }

@@ -113,6 +113,8 @@ const CLEAN_STATE = {
 let cleanup: (() => void) | null = null
 
 beforeEach(() => {
+  // Reset module-level batch state (not covered by CLEAN_STATE)
+  rafQueue.clear()
   ;(globalThis as Record<string, unknown>).window = { wzxclaw: { ...mockWzxclaw } }
   useChatStore.setState(CLEAN_STATE)
   cleanup = useChatStore.getState().init()
@@ -204,6 +206,7 @@ describe('onStreamText', () => {
 describe('onStreamThinking', () => {
   it('creates a new assistant message when no streamingMessageId', () => {
     cbThinking!({ content: 'Let me think...' })
+    flushRaf()  // thinking is now rAF-batched
 
     const state = useChatStore.getState()
     expect(state.messages).toHaveLength(1)
@@ -217,6 +220,7 @@ describe('onStreamThinking', () => {
     setStreamingMessage({ thinkingContent: 'Step 1. ' })
 
     cbThinking!({ content: 'Step 2.' })
+    flushRaf()  // thinking is now rAF-batched
 
     const { messages } = useChatStore.getState()
     expect(messages[0].thinkingContent).toBe('Step 1. Step 2.')
@@ -477,6 +481,7 @@ describe('Full streaming turn (E2E happy path)', () => {
   it('assembles a complete assistant message across all event types', () => {
     // Agent starts with extended thinking
     cbThinking!({ content: 'I need to read the file first.' })
+    flushRaf()  // thinking is now rAF-batched
     let state = useChatStore.getState()
     const msgId = state.streamingMessageId!
     expect(msgId).toBeTruthy()

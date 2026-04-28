@@ -8,7 +8,7 @@ echo.
 set JAVA_HOME=C:\Users\67376\jdk17\jdk-17.0.18+8
 
 echo Building APK...
-call C:\Users\67376\flutter\bin\flutter build apk --release
+call C:\Users\67376\flutter\bin\flutter build apk --release --no-pub
 if errorlevel 1 (
     echo.
     echo [ERROR] Build failed.

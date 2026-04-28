@@ -22,7 +22,7 @@ const AUTO_SCORE_NAMES = new Set([
  * 重试机制：Langfuse flush 是异步的，需要等待写入完成
  *
  * @param lf Langfuse 客户端实例
- * @param traceId trace ID（即 conversationId，需在 langfuse-observer 中通过 id 参数传入）
+ * @param traceId trace ID（benchmark / headless 模式下等于 conversationId；交互模式为独立 run trace）
  * @param maxRetries 最大重试次数
  */
 export async function pullAutoScores(

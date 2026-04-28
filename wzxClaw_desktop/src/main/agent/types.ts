@@ -78,8 +78,8 @@ export interface AgentConfig {
   maxTurns?: number // defaults to MAX_AGENT_TURNS
   maxBudgetTokens?: number // 0 = unlimited
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
-  /** Langfuse nested span 模式：父 Agent 的 tool:Agent span（LangfuseObjectClient），
+  /** Langfuse nested span 模式：父 Agent 的 tool:Agent observation，
    *  子 Agent 的 generations/spans 将挂载到该 span 下，而非创建独立的 trace。
-   *  使用 unknown 类型避免 agent/types.ts 引入 langfuse-core 依赖 */
+   *  使用 unknown 类型避免 agent/types.ts 引入具体 SDK 类型 */
   langfuseParentSpan?: unknown
 }

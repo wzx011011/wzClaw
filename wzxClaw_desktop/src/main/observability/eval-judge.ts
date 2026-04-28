@@ -1,14 +1,12 @@
 // ============================================================
 // eval-judge.ts — LLM-as-Judge 自动评估模块
 // 会话结束后异步触发，用 glm-5.1 评估任务完成度、代码安全性、回复清晰度
-// 评分通过 Langfuse trace.score() 推送，不阻塞主流程
+// 评分通过 LangfuseClient.score.create() 推送，不阻塞主流程
 // ============================================================
 
 import type { EvalCollector } from './eval-collector'
 import type { Message } from '../../shared/types'
-import type { Langfuse } from 'langfuse'
-
-type LangfuseTrace = ReturnType<Langfuse['trace']>
+import type { LangfuseClient } from '@langfuse/client'
 
 // ---- 每日调用上限 ----
 let judgeCallCount = 0
@@ -30,9 +28,7 @@ function canCallJudge(): boolean {
 
 function shouldRunJudge(collector: EvalCollector): boolean {
   if (!canCallJudge()) return false
-  if (collector.totalTurns < 2) return false
-  // 使用了破坏性工具 或 有错误
-  return collector.hasDestructiveTools || collector.hasError
+  return collector.totalTurns >= 2
 }
 
 // ---- 从消息中提取上下文 ----
@@ -170,8 +166,8 @@ function extractJson(raw: string): Record<string, unknown> | null {
 
 // ---- 推送评分到 Langfuse ----
 
-function pushScore(trace: LangfuseTrace, name: string, value: number | string, dataType: 'NUMERIC' | 'CATEGORICAL'): void {
-  trace.score({ name, value, dataType })
+function pushScore(client: LangfuseClient, traceId: string, name: string, value: number | string, dataType: 'NUMERIC' | 'CATEGORICAL'): void {
+  client.score.create({ traceId, name, value, dataType })
 }
 
 // ---- 主入口 ----
@@ -179,7 +175,7 @@ function pushScore(trace: LangfuseTrace, name: string, value: number | string, d
 export async function runJudgeEval(
   collector: EvalCollector,
   messages: Message[],
-  trace: LangfuseTrace,
+  traceId: string,
   model: string,
 ): Promise<void> {
   if (!shouldRunJudge(collector)) return
@@ -189,9 +185,8 @@ export async function runJudgeEval(
   const toolSummary = collector.getToolSummary()
   const editInputs = extractEditInputs(messages)
 
-  // 使用 Langfuse SDK 直接发 HTTP 请求（不走 LLMGateway，避免循环依赖）
-  // 通过 /api/public/v2/scores 或直接用 trace.score()
-  // 这里用一种更轻量的方式：直接构造 prompt 并用 trace.score() 记录
+  // Judge 评估需要 LLM，但 LLMGateway 在 main process 中；这里改用轻量 HTTP 调用，
+  // 再通过 LangfuseClient.score.create() 写入当前 trace。
 
   // 构建 3 个 judge prompt
   const prompts: JudgePrompt[] = []
@@ -211,11 +206,12 @@ export async function runJudgeEval(
   // 为避免循环依赖，这里使用动态 import
   try {
     const { getClient } = await import('./langfuse-observer')
+    const client = getClient()
+    if (!client) return
     // 直接使用 Langfuse SDK 的 score API，不通过 LLM 调用
     // 因为 Judge 评估需要 LLM，但 LLMGateway 在 main process 中，
     // 这里改用 node-fetch 直接调用 LLM API
 
-    const baseUrl = process.env.LANGFUSE_BASE_URL ?? 'http://192.168.100.78:3000'
     const hasLangfuseEval = false // TODO: 检查 Langfuse 是否支持 automated eval
 
     if (!hasLangfuseEval) {
@@ -227,26 +223,22 @@ export async function runJudgeEval(
           const parsed = extractJson(result)
           if (parsed) {
             if (jp.expectCategorical) {
-              // task_completion: Complete=0, Partial=1, Failed=2, Abandoned=3
-              // code_safety: Safe=0, Caution=1, Unsafe=2
               const rawVal = String(parsed.completion ?? parsed.safety ?? '').toLowerCase()
-              const mapping: Record<string, Record<string, number>> = {
-                task_completion: { complete: 0, partial: 1, failed: 2, abandoned: 3 },
-                code_safety: { safe: 0, caution: 1, unsafe: 2 },
-              }
-              const numVal = mapping[jp.scoreName]?.[rawVal]
-              if (numVal !== undefined) pushScore(trace, jp.scoreName, numVal, 'CATEGORICAL')
+              const allowed = jp.scoreName === 'task_completion'
+                ? ['complete', 'partial', 'failed', 'abandoned']
+                : ['safe', 'caution', 'unsafe']
+              if (allowed.includes(rawVal)) pushScore(client, traceId, jp.scoreName, rawVal, 'CATEGORICAL')
             } else {
               // response_clarity -> clarity
               const val = Number(parsed.clarity)
-              if (val >= 1 && val <= 5) pushScore(trace, jp.scoreName, val, 'NUMERIC')
+              if (val >= 1 && val <= 5) pushScore(client, traceId, jp.scoreName, val, 'NUMERIC')
             }
           }
         }
       }
     }
 
-    getClient().flushAsync()
+    await client.flush()
   } catch {
     // Judge 完全失败不影响主流程
   }
@@ -255,24 +247,15 @@ export async function runJudgeEval(
 // ---- 轻量 LLM 调用（避免循环依赖 LLMGateway） ----
 
 async function callLlmForJudge(prompt: string, model: string): Promise<string | null> {
-  // 从环境变量读取 API 配置
-  const apiKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.ALIBABA_API_KEY
+  // 使用当前 Anthropic 兼容通道（wzxClaw 默认 GLM 走 Anthropic adapter）
+  const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return null
-
-  // 选择 API endpoint
-  let baseUrl = process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || 'https://api.openai.com/v1'
-  // 如果模型以 deepseek 开头，使用 DeepSeek API
-  if (model.startsWith('deepseek')) {
-    baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1'
-    const key = process.env.DEEPSEEK_API_KEY
-    if (key) return doLlmRequest(baseUrl, key, model, prompt)
-  }
-
+  const baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://open.bigmodel.cn/api/anthropic'
   return doLlmRequest(baseUrl, apiKey, model, prompt)
 }
 
 async function doLlmRequest(baseUrl: string, apiKey: string, model: string, prompt: string): Promise<string | null> {
-  const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`
+  const url = `${baseUrl.replace(/\/+$/, '')}/v1/messages`
 
   // 使用 node 内置 fetch (Node 22+)
   try {
@@ -280,14 +263,13 @@ async function doLlmRequest(baseUrl: string, apiKey: string, model: string, prom
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: 'You are a code quality evaluator. Respond only with valid JSON.' },
-          { role: 'user', content: prompt },
-        ],
+        system: 'You are a code quality evaluator. Respond only with valid JSON.',
+        messages: [{ role: 'user', content: prompt }],
         max_tokens: 200,
         temperature: 0,
       }),
@@ -296,8 +278,8 @@ async function doLlmRequest(baseUrl: string, apiKey: string, model: string, prom
 
     if (!resp.ok) return null
 
-    const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> }
-    return data.choices?.[0]?.message?.content ?? null
+    const data = await resp.json() as { content?: Array<{ type?: string; text?: string }> }
+    return data.content?.find(block => block.type === 'text')?.text ?? null
   } catch {
     return null
   }

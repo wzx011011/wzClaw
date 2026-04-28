@@ -86,6 +86,8 @@ const sessionAccessOrder: string[] = []
 const _sessionsCache: Record<string, ChatMessage[]> = {}
 let textBatchBuffer = ''
 let textBatchFrame: number | null = null
+let thinkingBatchBuffer = ''
+let thinkingBatchFrame: number | null = null
 
 function scheduleDeferredStartupTask(task: () => void, delayMs: number): () => void {
   const timeoutId = setTimeout(task, delayMs)
@@ -257,12 +259,72 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
   }
 
+  // ---- Thinking batch (mirrors text batch to avoid per-token re-renders) ----
+  const flushThinkingBatch = (): void => {
+    if (thinkingBatchFrame !== null) {
+      cancelAnimationFrame(thinkingBatchFrame)
+      thinkingBatchFrame = null
+    }
+
+    const batch = thinkingBatchBuffer
+    thinkingBatchBuffer = ''
+    if (!batch) return
+
+    // 会话切换后丢弃残留的 thinking 事件，避免创建孤儿消息
+    if (!get().isStreaming && !get().streamingMessageId) return
+
+    const { messages, streamingMessageId } = get()
+    const nextMessages = streamingMessageId
+      ? updateMessageById(messages, streamingMessageId, (message) => ({
+          ...message,
+          thinkingContent: (message.thinkingContent ?? '') + batch
+        }))
+      : null
+
+    if (nextMessages) {
+      set({
+        isWaitingForResponse: false,
+        messages: nextMessages
+      })
+      return
+    }
+
+    const newMsg: ChatMessage = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: '',
+      thinkingContent: batch,
+      timestamp: Date.now(),
+      isStreaming: true,
+      toolCalls: []
+    }
+
+    set({
+      isWaitingForResponse: false,
+      streamingMessageId: newMsg.id,
+      messages: [...messages, newMsg]
+    })
+  }
+
+  const scheduleThinkingFlush = (): void => {
+    if (thinkingBatchFrame !== null) return
+    thinkingBatchFrame = requestAnimationFrame(() => {
+      thinkingBatchFrame = null
+      flushThinkingBatch()
+    })
+  }
+
   const resetTextBatch = (): void => {
     if (textBatchFrame !== null) {
       cancelAnimationFrame(textBatchFrame)
       textBatchFrame = null
     }
     textBatchBuffer = ''
+    if (thinkingBatchFrame !== null) {
+      cancelAnimationFrame(thinkingBatchFrame)
+      thinkingBatchFrame = null
+    }
+    thinkingBatchBuffer = ''
   }
 
   return {
@@ -293,41 +355,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
-      set((state) => {
-        // 会话切换后丢弃残留的 thinking 事件，避免创建孤儿消息
-        if (!state.isStreaming && !state.streamingMessageId) return state
-
-        const { messages } = state
-        const streamingMessageId = state.streamingMessageId
-        const nextMessages = streamingMessageId
-          ? updateMessageById(messages, streamingMessageId, (message) => ({
-              ...message,
-              thinkingContent: (message.thinkingContent ?? '') + payload.content
-            }))
-          : null
-
-        if (nextMessages) {
-          return {
-            isWaitingForResponse: false,
-            messages: nextMessages
-          }
-        }
-
-        const newMsg: ChatMessage = {
-          id: uuidv4(),
-          role: 'assistant',
-          content: '',
-          thinkingContent: payload.content,
-          timestamp: Date.now(),
-          isStreaming: true,
-          toolCalls: []
-        }
-        return {
-          isWaitingForResponse: false,
-          streamingMessageId: newMsg.id,
-          messages: [...messages, newMsg]
-        }
-      })
+      thinkingBatchBuffer += payload.content
+      scheduleThinkingFlush()
     }) ?? (() => {})
 
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
@@ -650,20 +679,37 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }) ?? (() => {})
 
-    const unsubSubText = window.wzxclaw.onSubStreamText?.((payload) => {
+    // Sub-agent text: batch via rAF to avoid per-token re-renders
+    let subTextBuffer = ''
+    let subTextParentId = ''
+    let subTextFrame: number | null = null
+    const flushSubText = (): void => {
+      subTextFrame = null
+      const text = subTextBuffer
+      const parentId = subTextParentId
+      subTextBuffer = ''
+      subTextParentId = ''
+      if (!text) return
       set((state) => {
         const { messages, streamingMessageId } = state
         if (!streamingMessageId) return state
         const nextMessages = updateMessageById(messages, streamingMessageId, (m) => ({
           ...m,
           toolCalls: m.toolCalls?.map((tc) =>
-            tc.id === payload.parentToolCallId
-              ? { ...tc, subText: (tc.subText ?? '') + payload.content }
+            tc.id === parentId
+              ? { ...tc, subText: (tc.subText ?? '') + text }
               : tc
           )
         }))
         return nextMessages ? { messages: nextMessages } : state
       })
+    }
+    const unsubSubText = window.wzxclaw.onSubStreamText?.((payload) => {
+      subTextBuffer += payload.content
+      subTextParentId = payload.parentToolCallId
+      if (subTextFrame === null) {
+        subTextFrame = requestAnimationFrame(flushSubText)
+      }
     }) ?? (() => {})
 
     // Let the IDE shell paint before restoring session state.
@@ -1046,42 +1092,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       removeSessionFromLru(sessionId)
 
       if (activeSessionId === sessionId) {
-        // Switch to another session or create new
-        const remaining = Object.keys(_sessionsCache)
-        if (remaining.length > 0) {
-          const targetId = remaining[remaining.length - 1]
-          const targetMessages = _sessionsCache[targetId]
-          set({
-            messages: targetMessages || [],
-            conversationId: targetId,
-            activeSessionId: targetId,
-            streamingMessageId: null
-          })
+        const { sessions } = get()
+        const fallback = sessions.find(s => s.id !== sessionId)
+        if (fallback) {
+          await get().switchSession(fallback.id)
         } else {
-          // No cached sessions — reload list and pick first, or create new
-          const sessions = await window.wzxclaw.listSessions()
-          if (sessions.length > 0) {
-            const firstSession = sessions[0]
-            set({
-              sessions,
-              activeSessionId: firstSession.id,
-              conversationId: firstSession.id,
-              messages: [],
-              streamingMessageId: null
-            })
-            // Load the session data
-            await get().loadSession(firstSession.id)
-            set({ activeSessionId: firstSession.id })
-          } else {
-            const newId = uuidv4()
-            set({
-              sessions,
-              messages: [],
-              conversationId: newId,
-              activeSessionId: newId,
-              streamingMessageId: null
-            })
-          }
+          get().clearConversation()
         }
       }
 

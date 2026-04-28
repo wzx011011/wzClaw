@@ -8,6 +8,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
+import '../services/session_sync_service.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -27,6 +28,7 @@ class _LandingPageState extends State<LandingPage>
   StreamSubscription<String?>? _selectedDesktopSub;
   bool _shouldRestoreChatRoute = false;
   bool _didAutoNavigateToChat = false;
+  bool _didNavigate = false;
 
   // 呼吸动画控制器（状态B）
   late final AnimationController _pulseController;
@@ -96,10 +98,145 @@ class _LandingPageState extends State<LandingPage>
     _maybeRestoreChatRoute();
   }
 
+  /// 选择桌面端后，获取工作区列表。
+  /// 只有 1 个工作区时直接进聊天；多个工作区弹出选择。
   void _onSelectDesktop(DesktopInfo desktop) {
+    _didNavigate = false;
     ConnectionManager.instance.selectDesktop(desktop.desktopId);
+
+    // 监听一次工作区列表响应
+    StreamSubscription<List<WorkspaceItem>>? sub;
+    sub = SessionSyncService.instance.workspacesStream.listen((workspaces) {
+      sub?.cancel();
+
+      if (!mounted) return;
+
+      if (workspaces.length <= 1) {
+        // 0 或 1 个工作区 → 直接进入聊天
+        _navigateToChat();
+        return;
+      }
+
+      // 多个工作区 → 弹出选择
+      _showWorkspacePicker(workspaces);
+    });
+
+    // 请求工作区列表
+    SessionSyncService.instance.fetchWorkspaces();
+
+    // 超时保护：3 秒后如果没收到响应，直接进聊天
+    Future.delayed(const Duration(seconds: 3), () {
+      sub?.cancel();
+      if (mounted && !_didNavigate) {
+        _navigateToChat();
+      }
+    });
+  }
+
+  void _navigateToChat() {
+    if (_didNavigate) return;
+    _didNavigate = true;
     AppRestoreState.setLastRoute('/chat');
     Navigator.pushNamed(context, '/chat');
+  }
+
+  void _showWorkspacePicker(List<WorkspaceItem> workspaces) {
+    final colors = AppColors.of(context);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Text('选择工作区',
+                      style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _navigateToChat();
+                    },
+                    child: Text('跳过',
+                        style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: workspaces.length,
+                itemBuilder: (ctx, i) {
+                  final ws = workspaces[i];
+                  final isCurrent = ws.isCurrent;
+                  return ListTile(
+                    leading: Icon(
+                      isCurrent ? Icons.folder_open : Icons.folder_outlined,
+                      color: isCurrent ? colors.accent : colors.textSecondary,
+                    ),
+                    title: Text(ws.name,
+                        style: TextStyle(
+                          color: isCurrent
+                              ? colors.accent
+                              : colors.textPrimary,
+                          fontWeight: isCurrent
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        )),
+                    subtitle: Text(ws.path,
+                        style: TextStyle(
+                            color: colors.textMuted, fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    trailing: isCurrent
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: colors.accent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text('当前',
+                                style: TextStyle(
+                                    color: colors.accent, fontSize: 11)),
+                          )
+                        : null,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      if (!isCurrent) {
+                        SessionSyncService.instance.switchWorkspace(ws.path);
+                      }
+                      _navigateToChat();
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    ).then((_) {
+      // 用户点击底部 sheet 外部关闭 → 仍然导航到聊天
+      if (mounted && !_didNavigate) {
+        _navigateToChat();
+      }
+    });
   }
 
   void _onDisconnect() {

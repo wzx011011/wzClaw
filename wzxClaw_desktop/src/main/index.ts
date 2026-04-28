@@ -84,6 +84,7 @@ import { RelayClient } from './mobile/relay-client'
 import { getMobileSessionTransition, isPathWithinWorkspace } from './mobile/mobile-session-utils'
 import { ensureAppDirs } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
+import { initLangfuse, shutdownLangfuse } from './observability/langfuse-observer'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -274,6 +275,7 @@ function handleWorkspaceOpened(rootPath: string, toolRegistry: ToolRegistry): vo
 
 app.whenReady().then(async () => {
   logStartup('app.whenReady fired')
+  initLangfuse()
   electronApp.setAppUserModelId('com.wzxclaw')
 
   // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups）
@@ -357,6 +359,9 @@ app.whenReady().then(async () => {
     planModeController.resolveDecision(request.approved)
   })
 
+  // File history manager — snapshots files before each AI write for session-scoped revert
+  const historyManager = new FileHistoryManager()
+
   // IPC handlers: file history and revert (Phase 3.3)
   ipcMain.handle(IPC_CHANNELS['file:get-history'], (_event, request: { filePath: string }) => {
     return historyManager.getEntriesForFile(request.filePath).map((e) => ({
@@ -381,9 +386,6 @@ app.whenReady().then(async () => {
   // Instantiate Hooks system and register built-in hooks
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
-
-  // File history manager — snapshots files before each AI write for session-scoped revert
-  const historyManager = new FileHistoryManager()
 
   const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
   logStartup('AgentLoop + MCP created')
@@ -1387,4 +1389,5 @@ app.on('before-quit', () => {
   terminalManager.dispose()
   workspaceManager.dispose()
   browserManager.close().catch(() => {})
+  shutdownLangfuse().catch(() => {})
 })
