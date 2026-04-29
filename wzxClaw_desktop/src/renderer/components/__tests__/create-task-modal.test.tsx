@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom'
-import CreateWorkspaceModal from '../tasks/CreateWorkspaceModal'
+import CreateWorkspaceModal from '../tasks/CreateTaskModal'
 
 describe('CreateWorkspaceModal', () => {
   const onClose = vi.fn()

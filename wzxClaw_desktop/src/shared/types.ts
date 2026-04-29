@@ -327,7 +327,7 @@ export interface AgentStep {
 }
 
 // ============================================================
-// Task Management Types — top-level user work units
+// Workspace Management Types — top-level user work units
 // ============================================================
 
 /** A folder-based code repository mounted under a Workspace */

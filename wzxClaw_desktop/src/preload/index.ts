@@ -170,20 +170,20 @@ const api = {
     return () => ipcRenderer.removeListener('step:updated', handler)
   },
 
-  // Tasks — top-level user work units
+  // Workspaces — top-level user work units
   listWorkspaces: (request?: { includeArchived?: boolean }): Promise<Workspace[]> =>
     ipcRenderer.invoke('workspace:list', request),
-  getWorkspace: (request: { taskId: string }): Promise<Workspace | null> =>
+  getWorkspace: (request: { workspaceId: string }): Promise<Workspace | null> =>
     ipcRenderer.invoke('workspace:get', request),
   createWorkspace: (request: { title: string; description?: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:create', request),
-  updateWorkspace: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Workspace> =>
+  updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:update', request),
-  deleteWorkspace: (request: { taskId: string }): Promise<void> =>
+  deleteWorkspace: (request: { workspaceId: string }): Promise<void> =>
     ipcRenderer.invoke('workspace:delete', request),
-  addTaskProject: (request: { taskId: string; folderPath: string }): Promise<Workspace> =>
+  addWorkspaceProject: (request: { workspaceId: string; folderPath: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:add-project', request),
-  removeTaskProject: (request: { taskId: string; projectId: string }): Promise<Workspace> =>
+  removeWorkspaceProject: (request: { workspaceId: string; projectId: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:remove-project', request),
 
   // Index

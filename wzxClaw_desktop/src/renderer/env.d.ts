@@ -65,14 +65,14 @@ declare global {
       listSteps: () => Promise<AgentStep[]>
       onStepCreated: (cb: (p: AgentStep) => void) => () => void
       onStepUpdated: (cb: (p: AgentStep) => void) => () => void
-      // Tasks
+      // Workspaces
       listWorkspaces: (request?: { includeArchived?: boolean }) => Promise<Workspace[]>
-      getWorkspace: (request: { taskId: string }) => Promise<Workspace | null>
+      getWorkspace: (request: { workspaceId: string }) => Promise<Workspace | null>
       createWorkspace: (request: { title: string; description?: string }) => Promise<Workspace>
-      updateWorkspace: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Workspace>
-      deleteWorkspace: (request: { taskId: string }) => Promise<void>
-      addTaskProject: (request: { taskId: string; folderPath: string }) => Promise<Workspace>
-      removeTaskProject: (request: { taskId: string; projectId: string }) => Promise<Workspace>
+      updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Workspace>
+      deleteWorkspace: (request: { workspaceId: string }) => Promise<void>
+      addWorkspaceProject: (request: { workspaceId: string; folderPath: string }) => Promise<Workspace>
+      removeWorkspaceProject: (request: { workspaceId: string; projectId: string }) => Promise<Workspace>
       // Index
       getIndexStatus: () => Promise<{ status: string; fileCount: number; currentFile: string; error?: string }>
       reindex: () => Promise<void>

@@ -11,7 +11,7 @@
 
   let ws = null
   let isGenerating = false
-  let activeTaskId = null
+  let activeWorkspaceId = null
 
   // Extract token from URL query params
   const params = new URLSearchParams(window.location.search)
@@ -27,7 +27,7 @@
       statusEl.textContent = '已连接'
       statusEl.className = 'status connected'
       // Auto-fetch task list on connect
-      requestTaskList()
+      requestWorkspaceList()
     }
 
     ws.onclose = function () {
@@ -102,25 +102,25 @@
         updateStepPanel(msg.data.todos)
         break
 
-      case 'task:list:response':
-        renderTaskList(msg.data.tasks)
+      case 'workspace:list:response':
+        renderWorkspaceList(msg.data.workspaces)
         break
 
-      case 'task:create:response':
-      case 'task:update:response':
-      case 'task:delete:response':
-      case 'task:add-project:response':
-      case 'task:remove-project:response':
-        // Refresh task list after any mutation
-        requestTaskList()
+      case 'workspace:create:response':
+      case 'workspace:update:response':
+      case 'workspace:delete:response':
+      case 'workspace:add-project:response':
+      case 'workspace:remove-project:response':
+        // Refresh workspace list after any mutation
+        requestWorkspaceList()
         break
 
-      case 'task:get:response':
-        if (msg.data.task) renderTaskDetail(msg.data.task)
+      case 'workspace:get:response':
+        if (msg.data.workspace) renderWorkspaceDetail(msg.data.workspace)
         break
 
-      case 'task:error':
-        console.error('[Task Error]', msg.data?.error)
+      case 'workspace:error':
+        console.error('[Workspace Error]', msg.data?.error)
         break
 
       case 'session:messages':
@@ -268,7 +268,7 @@
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return
 
     var payload = { content: text }
-    if (activeTaskId) payload.activeTaskId = activeTaskId
+    if (activeWorkspaceId) payload.activeWorkspaceId = activeWorkspaceId
     ws.send(JSON.stringify({ event: 'command:send', data: payload }))
     addMessage('user', text)
     inputEl.value = ''
@@ -299,46 +299,46 @@
   sendBtn.addEventListener('click', sendCommand)
   stopBtn.addEventListener('click', stopCommand)
 
-  // Task management functions
-  function requestTaskList() {
+  // Workspace management functions
+  function requestWorkspaceList() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ event: 'task:list:request', data: { requestId: Date.now().toString() } }))
+    ws.send(JSON.stringify({ event: 'workspace:list:request', data: { requestId: Date.now().toString() } }))
   }
 
-  function renderTaskList(tasks) {
-    var panel = document.getElementById('taskPanel')
+  function renderWorkspaceList(workspaces) {
+    var panel = document.getElementById('workspacePanel')
     if (!panel) {
       panel = document.createElement('div')
-      panel.id = 'taskPanel'
-      panel.className = 'task-panel'
+      panel.id = 'workspacePanel'
+      panel.className = 'workspace-panel'
       var header = document.querySelector('.header')
       if (header) header.parentNode.insertBefore(panel, header.nextSibling)
     }
-    if (!tasks || tasks.length === 0) {
-      panel.innerHTML = '<div class="task-panel-header">任务 <button class="task-panel-btn" onclick="window._wzxCreateTask()">+</button></div><div class="task-empty">无任务</div>'
+    if (!workspaces || workspaces.length === 0) {
+      panel.innerHTML = '<div class="workspace-panel-header">工作区 <button class="workspace-panel-btn" onclick="window._wzxCreateWorkspace()">+</button></div><div class="workspace-empty">无工作区</div>'
       return
     }
-    var html = '<div class="task-panel-header">任务 (' + tasks.length + ') <button class="task-panel-btn" onclick="window._wzxCreateTask()">+</button></div>'
-    html += '<ul class="task-list">'
-    tasks.forEach(function (t) {
-      var safeId = escapeHtml(t.id)
-      var isActive = activeTaskId === t.id
-      html += '<li class="task-item' + (isActive ? ' task-active' : '') + '" data-id="' + safeId + '">'
-      html += '<span class="task-name" onclick="window._wzxOpenTask(\'' + safeId + '\')">' + (isActive ? '▶ ' : '') + escapeHtml(t.title) + '</span>'
-      if (t.progressSummary) {
-        html += '<div class="task-progress">📊 ' + escapeHtml(t.progressSummary) + '</div>'
+    var html = '<div class="workspace-panel-header">工作区 (' + workspaces.length + ') <button class="workspace-panel-btn" onclick="window._wzxCreateWorkspace()">+</button></div>'
+    html += '<ul class="workspace-list">'
+    workspaces.forEach(function (w) {
+      var safeId = escapeHtml(w.id)
+      var isActive = activeWorkspaceId === w.id
+      html += '<li class="workspace-item' + (isActive ? ' workspace-active' : '') + '" data-id="' + safeId + '">'
+      html += '<span class="workspace-name" onclick="window._wzxOpenWorkspace(\'' + safeId + '\')">' + (isActive ? '▶ ' : '') + escapeHtml(w.title) + '</span>'
+      if (w.progressSummary) {
+        html += '<div class="workspace-progress">📊 ' + escapeHtml(w.progressSummary) + '</div>'
       }
-      if (t.projects.length > 0) {
-        html += '<div class="task-folders">'
-        t.projects.forEach(function (p) {
-          html += '<div class="task-folder-row">📁 <b>' + escapeHtml(p.name) + '</b> <span class="task-folder-path">' + escapeHtml(p.path) + '</span></div>'
+      if (w.projects.length > 0) {
+        html += '<div class="workspace-folders">'
+        w.projects.forEach(function (p) {
+          html += '<div class="workspace-folder-row">📁 <b>' + escapeHtml(p.name) + '</b> <span class="workspace-folder-path">' + escapeHtml(p.path) + '</span></div>'
         })
         html += '</div>'
       } else {
-        html += '<span class="task-meta">无绑定文件夹</span>'
+        html += '<span class="workspace-meta">无绑定文件夹</span>'
       }
-      html += '<button class="task-action-btn" onclick="window._wzxArchiveTask(\'' + safeId + '\')" title="归档">📦</button>'
-      html += '<button class="task-action-btn" onclick="window._wzxDeleteTask(\'' + safeId + '\')" title="删除">🗑</button>'
+      html += '<button class="workspace-action-btn" onclick="window._wzxArchiveWorkspace(\'' + safeId + '\')" title="归档">📦</button>'
+      html += '<button class="workspace-action-btn" onclick="window._wzxDeleteWorkspace(\'' + safeId + '\')" title="删除">🗑</button>'
       html += '</li>'
     })
     html += '</ul>'
@@ -351,64 +351,64 @@
     return div.innerHTML
   }
 
-  // Expose create task to inline onclick
-  window._wzxCreateTask = function () {
-    var title = prompt('任务名称:')
+  // Expose create workspace to inline onclick
+  window._wzxCreateWorkspace = function () {
+    var title = prompt('工作区名称:')
     if (title && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ event: 'task:create:request', data: { requestId: Date.now().toString(), title: title } }))
+      ws.send(JSON.stringify({ event: 'workspace:create:request', data: { requestId: Date.now().toString(), title: title } }))
     }
   }
 
-  window._wzxOpenTask = function (taskId) {
+  window._wzxOpenWorkspace = function (workspaceId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ event: 'task:get:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+    ws.send(JSON.stringify({ event: 'workspace:get:request', data: { requestId: Date.now().toString(), workspaceId: workspaceId } }))
   }
 
-  window._wzxArchiveTask = function (taskId) {
+  window._wzxArchiveWorkspace = function (workspaceId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ event: 'task:update:request', data: { requestId: Date.now().toString(), taskId: taskId, updates: { archived: true } } }))
+    ws.send(JSON.stringify({ event: 'workspace:update:request', data: { requestId: Date.now().toString(), workspaceId: workspaceId, updates: { archived: true } } }))
   }
 
-  window._wzxDeleteTask = function (taskId) {
-    if (!confirm('确定删除此任务？')) return
+  window._wzxDeleteWorkspace = function (workspaceId) {
+    if (!confirm('确定删除此工作区？')) return
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ event: 'task:delete:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+    ws.send(JSON.stringify({ event: 'workspace:delete:request', data: { requestId: Date.now().toString(), workspaceId: workspaceId } }))
   }
 
-  window._wzxSwitchTask = function (taskId) {
-    activeTaskId = taskId
-    // Re-render task list to show active state
-    requestTaskList()
-    // Also re-fetch task detail to update button
-    ws.send(JSON.stringify({ event: 'task:get:request', data: { requestId: Date.now().toString(), taskId: taskId } }))
+  window._wzxSwitchWorkspace = function (workspaceId) {
+    activeWorkspaceId = workspaceId
+    // Re-render workspace list to show active state
+    requestWorkspaceList()
+    // Also re-fetch workspace detail to update button
+    ws.send(JSON.stringify({ event: 'workspace:get:request', data: { requestId: Date.now().toString(), workspaceId: workspaceId } }))
   }
 
-  function renderTaskDetail(task) {
-    var panel = document.getElementById('taskPanel')
+  function renderWorkspaceDetail(workspace) {
+    var panel = document.getElementById('workspacePanel')
     if (!panel) return
-    var html = '<div class="task-panel-header"><button class="task-panel-btn" onclick="requestTaskList()">←</button> ' + escapeHtml(task.title) + '</div>'
-    if (task.description) {
-      html += '<div class="task-description">' + escapeHtml(task.description) + '</div>'
+    var html = '<div class="workspace-panel-header"><button class="workspace-panel-btn" onclick="requestWorkspaceList()">←</button> ' + escapeHtml(workspace.title) + '</div>'
+    if (workspace.description) {
+      html += '<div class="workspace-description">' + escapeHtml(workspace.description) + '</div>'
     }
-    if (task.progressSummary) {
-      html += '<div class="task-progress" style="margin-bottom:8px">📊 ' + escapeHtml(task.progressSummary) + '</div>'
+    if (workspace.progressSummary) {
+      html += '<div class="workspace-progress" style="margin-bottom:8px">📊 ' + escapeHtml(workspace.progressSummary) + '</div>'
     }
-    var isActive = activeTaskId === task.id
-    html += '<button class="task-switch-btn' + (isActive ? ' active' : '') + '" onclick="window._wzxSwitchTask(\'' + escapeHtml(task.id) + '\')">' + (isActive ? '✓ 当前任务' : '切换到此任务') + '</button>'
-    if (task.projects && task.projects.length > 0) {
-      html += '<div class="task-projects-title">项目:</div><ul class="task-list">'
-      task.projects.forEach(function (p) {
-        html += '<li class="task-item"><span class="task-name">' + escapeHtml(p.name) + '</span><span class="task-meta">' + escapeHtml(p.path) + '</span></li>'
+    var isActive = activeWorkspaceId === workspace.id
+    html += '<button class="workspace-switch-btn' + (isActive ? ' active' : '') + '" onclick="window._wzxSwitchWorkspace(\'' + escapeHtml(workspace.id) + '\')">' + (isActive ? '✓ 当前工作区' : '切换到此工作区') + '</button>'
+    if (workspace.projects && workspace.projects.length > 0) {
+      html += '<div class="workspace-projects-title">项目:</div><ul class="workspace-list">'
+      workspace.projects.forEach(function (p) {
+        html += '<li class="workspace-item"><span class="workspace-name">' + escapeHtml(p.name) + '</span><span class="workspace-meta">' + escapeHtml(p.path) + '</span></li>'
       })
       html += '</ul>'
     } else {
-      html += '<div class="task-empty">无挂载项目</div>'
+      html += '<div class="workspace-empty">无挂载项目</div>'
     }
     panel.innerHTML = html
   }
 
-  // Expose requestTaskList for back button
-  window.requestTaskList = requestTaskList
+  // Expose requestWorkspaceList for back button
+  window.requestWorkspaceList = requestWorkspaceList
 
   // Start connection
   connect()

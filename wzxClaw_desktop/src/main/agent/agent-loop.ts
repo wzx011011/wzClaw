@@ -32,8 +32,8 @@ export class AgentLoop {
   private turnManager = new TurnManager()
   private _recentOutputTokens: number[] = []
 
-  /** Active task context — injected into system prompt when set */
-  activeTask: Workspace | null = null
+  /** Active workspace context — injected into system prompt when set */
+  activeWorkspace: Workspace | null = null
 
   constructor(
     private gateway: LLMGateway,
@@ -70,8 +70,8 @@ export class AgentLoop {
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool && this.activeTask) {
-      const saved = await TodoWriteTool.loadForTask(this.activeTask.id)
+    if (todoTool && this.activeWorkspace) {
+      const saved = await TodoWriteTool.loadForWorkspace(this.activeWorkspace.id)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately
@@ -89,7 +89,7 @@ export class AgentLoop {
     this.conversation.appendUserMessage(userMessage)
 
     // 构建系统提示（委托给 SystemPromptBuilder）
-    const systemPrompt = await buildSystemPrompt(config, this.activeTask)
+    const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace)
     const toolDefinitions = this.toolRegistry.getDefinitions().map(t => ({
       name: t.name,
       description: t.description,
@@ -106,7 +106,7 @@ export class AgentLoop {
       config,
       this.abortController.signal,
       sender,
-      this.activeTask?.id,
+      this.activeWorkspace?.id,
     )
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }

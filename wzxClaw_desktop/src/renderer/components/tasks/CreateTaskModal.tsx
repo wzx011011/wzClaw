@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react'
 
-interface CreateTaskModalProps {
+interface CreateWorkspaceModalProps {
   onClose: () => void
   onCreate: (title: string, description?: string) => void
 }
 
-export default function CreateTaskModal({ onClose, onCreate }: CreateTaskModalProps): JSX.Element {
+export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceModalProps): JSX.Element {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -25,15 +25,15 @@ export default function CreateTaskModal({ onClose, onCreate }: CreateTaskModalPr
   }
 
   return (
-    <div className="task-modal-backdrop" onClick={onClose} onKeyDown={handleKeyDown}>
-      <div className="task-modal" onClick={(e) => e.stopPropagation()}>
-        <h2 className="task-modal-title">新建任务</h2>
+    <div className="workspace-modal-backdrop" onClick={onClose} onKeyDown={handleKeyDown}>
+      <div className="workspace-modal" onClick={(e) => e.stopPropagation()}>
+        <h2 className="workspace-modal-title">新建工作区</h2>
         <form onSubmit={handleSubmit}>
-          <div className="task-modal-field">
-            <label htmlFor="task-title">任务名称</label>
+          <div className="workspace-modal-field">
+            <label htmlFor="workspace-title">工作区名称</label>
             <input
               ref={inputRef}
-              id="task-title"
+              id="workspace-title"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -41,21 +41,21 @@ export default function CreateTaskModal({ onClose, onCreate }: CreateTaskModalPr
               autoComplete="off"
             />
           </div>
-          <div className="task-modal-field">
-            <label htmlFor="task-desc">描述（可选）</label>
+          <div className="workspace-modal-field">
+            <label htmlFor="workspace-desc">描述（可选）</label>
             <textarea
-              id="task-desc"
+              id="workspace-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="任务的详细描述..."
+              placeholder="工作区的详细描述..."
               rows={3}
             />
           </div>
-          <div className="task-modal-actions">
-            <button type="button" className="task-btn-secondary" onClick={onClose}>
+          <div className="workspace-modal-actions">
+            <button type="button" className="workspace-btn-secondary" onClick={onClose}>
               取消
             </button>
-            <button type="submit" className="task-btn-primary" disabled={!title.trim()}>
+            <button type="submit" className="workspace-btn-primary" disabled={!title.trim()}>
               创建
             </button>
           </div>

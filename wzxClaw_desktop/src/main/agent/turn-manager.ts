@@ -88,7 +88,7 @@ export class TurnManager {
     config: AgentConfig,
     abortSignal: AbortSignal,
     sender?: Electron.WebContents,
-    taskId?: string,
+    workspaceId?: string,
   ): ExecuteToolFn {
     return async (toolCall: ToolCall): Promise<ToolExecResult> => {
       const _eval = getActiveTrace(config.conversationId)?.evalCollector
@@ -150,7 +150,7 @@ export class TurnManager {
         toolSpan = getActiveTrace(config.conversationId)?.startToolSpan(toolCall.name, toolCall.input)
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
-          taskId,
+          workspaceId,
           projectRoots: config.projectRoots,
           abortSignal,
           // tool:Agent span 전달 → sub-agent 의 observations 이 이 span 하위에 nested 로 기록됨

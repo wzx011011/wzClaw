@@ -339,11 +339,11 @@ app.whenReady().then(async () => {
   toolRegistry.register(new EnterPlanModeTool(permissionManager, getPlanModeSender))
   toolRegistry.register(new ExitPlanModeTool(permissionManager, getPlanModeSender, planModeController))
 
-  // Wire TodoWrite — TaskStore progress sync
+  // Wire TodoWrite — WorkspaceStore progress sync
   const todoTool = toolRegistry.get('TodoWrite') as import('./tools/todo-write').TodoWriteTool | undefined
   if (todoTool) {
-    todoTool.setProgressCallback((taskId, summary) => {
-      workspaceStore.updateWorkspace(taskId, { progressSummary: summary }).catch(() => { /* ignore */ })
+    todoTool.setProgressCallback((workspaceId, summary) => {
+      workspaceStore.updateWorkspace(workspaceId, { progressSummary: summary }).catch(() => { /* ignore */ })
     })
   }
 
@@ -469,12 +469,12 @@ app.whenReady().then(async () => {
 
   /**
    * Return the appropriate SessionStore for the current context.
-   * Uses the task's primary project path (workspace-based isolation) when a task is active.
+   * Uses the workspace's primary project path (workspace-based isolation) when a workspace is active.
    */
   const getActiveSessionStore = (): SessionStore => {
-    const task = agentLoop.activeTask
-    if (task) {
-      const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const workspace = agentLoop.activeWorkspace
+    if (workspace) {
+      const primaryRoot = workspace.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
       return getCachedSessionStore(primaryRoot)
     }
     return sessionStore
@@ -482,8 +482,8 @@ app.whenReady().then(async () => {
 
   /**
    * Resolve the appropriate SessionStore for a mobile request.
-   * If activeWorkspaceId is provided, look up the task and use its primary project root.
-   * Falls back to agentLoop.activeTask, then workspace store.
+   * If activeWorkspaceId is provided, look up the workspace and use its primary project root.
+   * Falls back to agentLoop.activeWorkspace, then workspace store.
    */
   const getStoreForMobile = async (activeWorkspaceId: string | null): Promise<SessionStore> => {
     if (activeWorkspaceId) {
@@ -844,83 +844,83 @@ app.whenReady().then(async () => {
       return
     }
 
-    // -- Workspace management: create task --
+    // -- Workspace management: create workspace --
     if (msg.event === 'workspace:create:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await workspaceStore.createWorkspace(msg.data?.title ?? 'New Task', msg.data?.description)
-        broadcastToMobile('workspace:create:response', { requestId, task })
+        const workspace = await workspaceStore.createWorkspace(msg.data?.title ?? 'New Workspace', msg.data?.description)
+        broadcastToMobile('workspace:create:response', { requestId, workspace })
         // Notify desktop renderer
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'created', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'created', data: workspace })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Workspace management: update task --
+    // -- Workspace management: update workspace --
     if (msg.event === 'workspace:update:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await workspaceStore.updateWorkspace(msg.data?.taskId, msg.data?.updates ?? {})
-        broadcastToMobile('workspace:update:response', { requestId, task })
+        const workspace = await workspaceStore.updateWorkspace(msg.data?.workspaceId, msg.data?.updates ?? {})
+        broadcastToMobile('workspace:update:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Workspace management: delete task --
+    // -- Workspace management: delete workspace --
     if (msg.event === 'workspace:delete:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        await workspaceStore.deleteWorkspace(msg.data?.taskId)
+        await workspaceStore.deleteWorkspace(msg.data?.workspaceId)
         broadcastToMobile('workspace:delete:response', { requestId, success: true })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'deleted', data: { taskId: msg.data?.taskId } })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'deleted', data: { workspaceId: msg.data?.workspaceId } })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Workspace management: get single task --
+    // -- Workspace management: get single workspace --
     if (msg.event === 'workspace:get:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await workspaceStore.getWorkspace(msg.data?.taskId)
-        broadcastToMobile('workspace:get:response', { requestId, task })
+        const workspace = await workspaceStore.getWorkspace(msg.data?.workspaceId)
+        broadcastToMobile('workspace:get:response', { requestId, workspace })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Workspace management: add project to task --
+    // -- Workspace management: add project to workspace --
     if (msg.event === 'workspace:add-project:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await workspaceStore.addProject(msg.data?.taskId, msg.data?.folderPath)
-        broadcastToMobile('workspace:add-project:response', { requestId, task })
+        const workspace = await workspaceStore.addProject(msg.data?.workspaceId, msg.data?.folderPath)
+        broadcastToMobile('workspace:add-project:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Workspace management: remove project from task --
+    // -- Workspace management: remove project from workspace --
     if (msg.event === 'workspace:remove-project:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await workspaceStore.removeProject(msg.data?.taskId, msg.data?.projectId)
-        broadcastToMobile('workspace:remove-project:response', { requestId, task })
+        const workspace = await workspaceStore.removeProject(msg.data?.workspaceId, msg.data?.projectId)
+        broadcastToMobile('workspace:remove-project:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
-        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
+        if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
@@ -1047,8 +1047,8 @@ app.whenReady().then(async () => {
         provider: config.provider as 'openai' | 'anthropic',
         systemPrompt: config.systemPrompt,
         workingDirectory,
-        projectRoots: agentLoop.activeTask
-          ? agentLoop.activeTask.projects.map(p => p.path)
+        projectRoots: agentLoop.activeWorkspace
+          ? agentLoop.activeWorkspace.projects.map(p => p.path)
           : [workingDirectory],
         conversationId: sessionId,
         thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
@@ -1109,12 +1109,12 @@ app.whenReady().then(async () => {
           }
         } as unknown as Electron.WebContents
 
-        // Inject active task context from mobile message
+        // Inject active workspace context from mobile message
         if (msg.data.activeWorkspaceId) {
-          const task = await workspaceStore.getWorkspace(msg.data.activeWorkspaceId)
-          agentLoop.activeTask = task ?? null
+          const workspace = await workspaceStore.getWorkspace(msg.data.activeWorkspaceId)
+          agentLoop.activeWorkspace = workspace ?? null
         } else {
-          agentLoop.activeTask = null
+          agentLoop.activeWorkspace = null
         }
 
         // Concurrency guard: cancel any in-progress agent run before starting a new one.

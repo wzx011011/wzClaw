@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react'
 
-interface CreateTaskModalProps {
+interface CreateWorkspaceModalProps {
   onClose: () => void
   onCreate: (title: string, description?: string) => void
 }
 
-export default function CreateWorkspaceModal({ onClose, onCreate }: CreateTaskModalProps): JSX.Element {
+export default function CreateWorkspaceModal({ onClose, onCreate }: CreateWorkspaceModalProps): JSX.Element {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -30,10 +30,10 @@ export default function CreateWorkspaceModal({ onClose, onCreate }: CreateTaskMo
         <h2 className="workspace-modal-title">新建工作区</h2>
         <form onSubmit={handleSubmit}>
           <div className="workspace-modal-field">
-            <label htmlFor="task-title">工作区名称</label>
+            <label htmlFor="workspace-title">工作区名称</label>
             <input
               ref={inputRef}
-              id="task-title"
+              id="workspace-title"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -42,9 +42,9 @@ export default function CreateWorkspaceModal({ onClose, onCreate }: CreateTaskMo
             />
           </div>
           <div className="workspace-modal-field">
-            <label htmlFor="task-desc">描述（可选）</label>
+            <label htmlFor="workspace-desc">描述（可选）</label>
             <textarea
-              id="task-desc"
+              id="workspace-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="工作区的详细描述..."

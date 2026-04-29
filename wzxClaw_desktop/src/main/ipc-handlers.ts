@@ -104,17 +104,17 @@ export function registerIpcHandlers(
     // Build AgentConfig from current settings; use workspace root if available
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
 
-    // Inject active task context into agent loop
+    // Inject active workspace context into agent loop
     if (result.data.activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId)
-      agentLoop.activeTask = task ?? null
+      const workspace = await workspaceStore.getWorkspace(result.data.activeWorkspaceId)
+      agentLoop.activeWorkspace = workspace ?? null
     } else {
-      agentLoop.activeTask = null
+      agentLoop.activeWorkspace = null
     }
 
-    // Build projectRoots from active task or fall back to workspace root
-    const projectRoots = agentLoop.activeTask
-      ? agentLoop.activeTask.projects.map(p => p.path)
+    // Build projectRoots from active workspace or fall back to workspace root
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
       : [workingDirectory]
 
     const agentConfig: AgentConfig = {
@@ -680,14 +680,14 @@ export function registerIpcHandlers(
     }
     const { sessionId, activeWorkspaceId } = result.data
     // 优先使用请求中携带的 activeWorkspaceId（与 listSessions 保持一致），
-    // 避免 agentLoop.activeTask 尚未设置时读错 store。
+    // 避免 agentLoop.activeWorkspace 尚未设置时读错 store。
     let store = getSessionStore()
-    let resolvedTask = agentLoop.activeTask ?? null
+    let resolvedWorkspace = agentLoop.activeWorkspace ?? null
     if (activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
-      if (task) {
-        resolvedTask = task
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+      const workspace = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
+      if (workspace) {
+        resolvedWorkspace = workspace
+        const primaryRoot = workspace.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
       }
     }
@@ -701,8 +701,8 @@ export function registerIpcHandlers(
     // shows the chat immediately while the (potentially slow) compaction runs.
     const config = settingsManager.getCurrentConfig()
     const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const restoreRoots = resolvedTask
-      ? resolvedTask.projects.map(p => p.path)
+    const restoreRoots = resolvedWorkspace
+      ? resolvedWorkspace.projects.map(p => p.path)
       : [restoreCwd]
     agentLoop.restoreContext(rawMessages, {
       model: config.model,
@@ -946,43 +946,43 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Workspace management — CRUD for top-level user tasks
+  // Workspace management — CRUD for top-level user workspaces
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['workspace:list'], async (_event, payload?: { includeArchived?: boolean }) => {
     return workspaceStore.listWorkspaces(payload?.includeArchived)
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:get'], async (_event, payload: { taskId: string }) => {
-    return workspaceStore.getWorkspace(payload.taskId)
+  ipcMain.handle(IPC_CHANNELS['workspace:get'], async (_event, payload: { workspaceId: string }) => {
+    return workspaceStore.getWorkspace(payload.workspaceId)
   })
 
   ipcMain.handle(IPC_CHANNELS['workspace:create'], async (_event, payload: { title: string; description?: string }) => {
-    const task = await workspaceStore.createWorkspace(payload.title, payload.description)
-    onDataChanged?.('workspace:changed', { action: 'created', task })
-    return task
+    const workspace = await workspaceStore.createWorkspace(payload.title, payload.description)
+    onDataChanged?.('workspace:changed', { action: 'created', workspace })
+    return workspace
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
-    const task = await workspaceStore.updateWorkspace(payload.taskId, payload.updates)
-    onDataChanged?.('workspace:changed', { action: 'updated', task })
-    return task
+  ipcMain.handle(IPC_CHANNELS['workspace:update'], async (_event, payload: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
+    const workspace = await workspaceStore.updateWorkspace(payload.workspaceId, payload.updates)
+    onDataChanged?.('workspace:changed', { action: 'updated', workspace })
+    return workspace
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:delete'], async (_event, payload: { taskId: string }) => {
-    await workspaceStore.deleteWorkspace(payload.taskId)
-    onDataChanged?.('workspace:changed', { action: 'deleted', taskId: payload.taskId })
+  ipcMain.handle(IPC_CHANNELS['workspace:delete'], async (_event, payload: { workspaceId: string }) => {
+    await workspaceStore.deleteWorkspace(payload.workspaceId)
+    onDataChanged?.('workspace:changed', { action: 'deleted', workspaceId: payload.workspaceId })
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:add-project'], async (_event, payload: { taskId: string; folderPath: string }) => {
-    const task = await workspaceStore.addProject(payload.taskId, payload.folderPath)
-    onDataChanged?.('workspace:changed', { action: 'updated', task })
-    return task
+  ipcMain.handle(IPC_CHANNELS['workspace:add-project'], async (_event, payload: { workspaceId: string; folderPath: string }) => {
+    const workspace = await workspaceStore.addProject(payload.workspaceId, payload.folderPath)
+    onDataChanged?.('workspace:changed', { action: 'updated', workspace })
+    return workspace
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:remove-project'], async (_event, payload: { taskId: string; projectId: string }) => {
-    const task = await workspaceStore.removeProject(payload.taskId, payload.projectId)
-    onDataChanged?.('workspace:changed', { action: 'updated', task })
-    return task
+  ipcMain.handle(IPC_CHANNELS['workspace:remove-project'], async (_event, payload: { workspaceId: string; projectId: string }) => {
+    const workspace = await workspaceStore.removeProject(payload.workspaceId, payload.projectId)
+    onDataChanged?.('workspace:changed', { action: 'updated', workspace })
+    return workspace
   })
 
   // ============================================================
@@ -1187,8 +1187,8 @@ export function registerIpcHandlers(
 
     // 1. System prompt breakdown
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const breakdownRoots = agentLoop.activeTask
-      ? agentLoop.activeTask.projects.map(p => p.path)
+    const breakdownRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
       : [cwd]
     const promptBreakdown = await buildSystemPromptBreakdown({
       systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
@@ -1196,7 +1196,7 @@ export function registerIpcHandlers(
       projectRoots: breakdownRoots,
       model,
       provider: config.provider as 'openai' | 'anthropic',
-    }, agentLoop.activeTask)
+    }, agentLoop.activeWorkspace)
 
     // 2. Tool definitions — separate built-in vs MCP
     const allToolDefs = toolRegistry.getDefinitions()

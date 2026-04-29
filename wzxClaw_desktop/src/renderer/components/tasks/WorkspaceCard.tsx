@@ -1,19 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import type { Workspace } from '../../../shared/types'
 
-interface TaskCardProps {
-  task: Workspace
-  onOpen: (taskId: string) => void
-  onArchive: (taskId: string) => void
-  onDelete: (taskId: string) => void
-  onRename: (taskId: string, newTitle: string) => void
+interface WorkspaceCardProps {
+  workspace: Workspace
+  onOpen: (workspaceId: string) => void
+  onArchive: (workspaceId: string) => void
+  onDelete: (workspaceId: string) => void
+  onRename: (workspaceId: string, newTitle: string) => void
 }
 
-export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRename }: TaskCardProps): JSX.Element {
+export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, onRename }: WorkspaceCardProps): JSX.Element {
   const [isRenaming, setIsRenaming] = useState(false)
-  const [renameValue, setRenameValue] = useState(task.title)
+  const [renameValue, setRenameValue] = useState(workspace.title)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const timeAgo = formatTimeAgo(task.updatedAt)
+  const timeAgo = formatTimeAgo(workspace.updatedAt)
 
   // 内联确认 5 秒后自动取消，防止误点后遗留状态
   useEffect(() => {
@@ -24,8 +24,8 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
 
   const handleRenameSubmit = () => {
     const trimmed = renameValue.trim()
-    if (trimmed && trimmed !== task.title) {
-      onRename(task.id, trimmed)
+    if (trimmed && trimmed !== workspace.title) {
+      onRename(workspace.id, trimmed)
     }
     setIsRenaming(false)
   }
@@ -35,8 +35,8 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
       className="workspace-card"
       role="button"
       tabIndex={0}
-      onClick={() => { if (!isRenaming) onOpen(task.id) }}
-      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !isRenaming) { e.preventDefault(); onOpen(task.id) } }}
+      onClick={() => { if (!isRenaming) onOpen(workspace.id) }}
+      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !isRenaming) { e.preventDefault(); onOpen(workspace.id) } }}
     >
       <div className="workspace-card-header">
         {isRenaming ? (
@@ -47,13 +47,13 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
             onBlur={handleRenameSubmit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleRenameSubmit()
-              if (e.key === 'Escape') { setIsRenaming(false); setRenameValue(task.title) }
+              if (e.key === 'Escape') { setIsRenaming(false); setRenameValue(workspace.title) }
             }}
             autoFocus
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <h3 className="workspace-card-title">{task.title}</h3>
+          <h3 className="workspace-card-title">{workspace.title}</h3>
         )}
         <div className="workspace-card-actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           {!isRenaming && (
@@ -67,17 +67,17 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
           )}
           <button
             className="workspace-card-btn"
-            title={task.archived ? '取消归档' : '归档'}
-            onClick={() => onArchive(task.id)}
+            title={workspace.archived ? '取消归档' : '归档'}
+            onClick={() => onArchive(workspace.id)}
           >
-            {task.archived ? '↩' : '📦'}
+            {workspace.archived ? '↩' : '📦'}
           </button>
           {confirmingDelete ? (
             <>
               <button
                 className="workspace-card-btn workspace-card-btn-danger"
                 title="确认删除"
-                onClick={() => { onDelete(task.id); setConfirmingDelete(false) }}
+                onClick={() => { onDelete(workspace.id); setConfirmingDelete(false) }}
               >
                 ✓
               </button>
@@ -100,18 +100,18 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
           )}
         </div>
       </div>
-      {task.description && (
-        <p className="workspace-card-desc">{task.description}</p>
+      {workspace.description && (
+        <p className="workspace-card-desc">{workspace.description}</p>
       )}
-      {task.progressSummary && (
+      {workspace.progressSummary && (
         <div className="workspace-card-progress">
           <span className="workspace-card-progress-icon">📊</span>
-          <span className="workspace-card-progress-text">{task.progressSummary}</span>
+          <span className="workspace-card-progress-text">{workspace.progressSummary}</span>
         </div>
       )}
-      {task.projects.length > 0 && (
+      {workspace.projects.length > 0 && (
         <ul className="workspace-card-folders">
-          {task.projects.map((p) => (
+          {workspace.projects.map((p) => (
             <li key={p.id} className="workspace-card-folder-item" title={p.path}>
               <span className="workspace-card-folder-icon">📁</span>
               <span className="workspace-card-folder-name">{p.name}</span>
@@ -121,7 +121,7 @@ export default function WorkspaceCard({ task, onOpen, onArchive, onDelete, onRen
         </ul>
       )}
       <div className="workspace-card-meta">
-        {task.projects.length === 0 && (
+        {workspace.projects.length === 0 && (
           <span className="workspace-card-no-folder">无绑定文件夹</span>
         )}
         <span className="workspace-card-time">{timeAgo}</span>

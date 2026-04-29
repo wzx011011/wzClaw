@@ -6,7 +6,7 @@
 //   LANGFUSE_PUBLIC_KEY  - 默认 wzxClaw 项目 key
 //   LANGFUSE_SECRET_KEY  - 默认 wzxClaw 项目 key
 //   LANGFUSE_BASE_URL    - 默认 http://192.168.100.78:3000
-//   BENCHMARK_TASK_ID    - 可选，设置后所有 trace 携带 task:<id> 标签
+//   BENCHMARK_WORKSPACE_ID    - 可选，设置后所有 trace 携带 workspace:<id> 标签
 //                          用于跨 IDE/模型组合对比同一工作区
 // ============================================================
 
@@ -193,14 +193,14 @@ export class AgentTraceContext {
     }
 
     const tags: string[] = [IDE_NAME, model]
-    const taskId = process.env.BENCHMARK_TASK_ID
-    if (taskId) tags.push(`workspace:${taskId}`)
+    const workspaceId = process.env.BENCHMARK_WORKSPACE_ID
+    if (workspaceId) tags.push(`workspace:${workspaceId}`)
 
     const metadata: Record<string, string> = {
       ide: IDE_NAME,
       model,
       ...(workingDirectory ? { workingDirectory } : {}),
-      ...(taskId ? { taskId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     }
 
     // v5 中 trace 级属性通过 propagateAttributes 写入当前上下文；root observation
@@ -216,7 +216,7 @@ export class AgentTraceContext {
         ide: IDE_NAME,
         model,
         workingDirectory,
-        ...(taskId ? { taskId } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
       },
     }))
 

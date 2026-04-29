@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Workspace } from '../../shared/types'
 
-interface TaskStoreState {
+interface WorkspaceStoreState {
   tasks: Workspace[]
   activeWorkspaceId: string | null
   viewingWorkspaceId: string | null
@@ -9,22 +9,22 @@ interface TaskStoreState {
   error: string | null
 }
 
-interface TaskStoreActions {
+interface WorkspaceStoreActions {
   loadWorkspaces: () => Promise<void>
   createWorkspace: (title: string, description?: string) => Promise<Workspace>
-  updateWorkspace: (taskId: string, updates: { title?: string; description?: string; archived?: boolean }) => Promise<void>
-  deleteWorkspace: (taskId: string) => Promise<void>
-  openWorkspaceDetail: (taskId: string) => void
+  updateWorkspace: (workspaceId: string, updates: { title?: string; description?: string; archived?: boolean }) => Promise<void>
+  deleteWorkspace: (workspaceId: string) => Promise<void>
+  openWorkspaceDetail: (workspaceId: string) => void
   closeWorkspaceDetail: () => void
-  openWorkspace: (taskId: string) => void
+  openWorkspace: (workspaceId: string) => void
   closeWorkspace: () => void
-  addProject: (taskId: string, folderPath: string) => Promise<void>
-  removeProject: (taskId: string, projectId: string) => Promise<void>
+  addProject: (workspaceId: string, folderPath: string) => Promise<void>
+  removeProject: (workspaceId: string, projectId: string) => Promise<void>
   getActiveWorkspace: () => Workspace | null
   getViewingWorkspace: () => Workspace | null
 }
 
-type WorkspaceStore = TaskStoreState & TaskStoreActions
+type WorkspaceStore = WorkspaceStoreState & WorkspaceStoreActions
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   tasks: [],
@@ -44,53 +44,53 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   createWorkspace: async (title, description) => {
-    const task = await window.wzxclaw.createWorkspace({ title, description })
-    set((s) => ({ tasks: [...s.tasks, task] }))
-    return task
+    const workspace = await window.wzxclaw.createWorkspace({ title, description })
+    set((s) => ({ tasks: [...s.tasks, workspace] }))
+    return workspace
   },
 
-  updateWorkspace: async (taskId, updates) => {
-    const updated = await window.wzxclaw.updateWorkspace({ taskId, updates })
+  updateWorkspace: async (workspaceId, updates) => {
+    const updated = await window.wzxclaw.updateWorkspace({ workspaceId, updates })
     set((s) => ({
-      tasks: s.tasks.map((t) => (t.id === taskId ? updated : t))
+      tasks: s.tasks.map((t) => (t.id === workspaceId ? updated : t))
     }))
   },
 
-  deleteWorkspace: async (taskId) => {
-    await window.wzxclaw.deleteWorkspace({ taskId })
+  deleteWorkspace: async (workspaceId) => {
+    await window.wzxclaw.deleteWorkspace({ workspaceId })
     set((s) => ({
-      tasks: s.tasks.filter((t) => t.id !== taskId),
-      activeWorkspaceId: s.activeWorkspaceId === taskId ? null : s.activeWorkspaceId
+      tasks: s.tasks.filter((t) => t.id !== workspaceId),
+      activeWorkspaceId: s.activeWorkspaceId === workspaceId ? null : s.activeWorkspaceId
     }))
   },
 
-  openWorkspaceDetail: (taskId) => {
-    set({ viewingWorkspaceId: taskId })
+  openWorkspaceDetail: (workspaceId) => {
+    set({ viewingWorkspaceId: workspaceId })
   },
 
   closeWorkspaceDetail: () => {
     set({ viewingWorkspaceId: null })
   },
 
-  openWorkspace: (taskId) => {
-    set({ activeWorkspaceId: taskId, viewingWorkspaceId: null })
+  openWorkspace: (workspaceId) => {
+    set({ activeWorkspaceId: workspaceId, viewingWorkspaceId: null })
   },
 
   closeWorkspace: () => {
     set({ activeWorkspaceId: null })
   },
 
-  addProject: async (taskId, folderPath) => {
-    const updated = await window.wzxclaw.addTaskProject({ taskId, folderPath })
+  addProject: async (workspaceId, folderPath) => {
+    const updated = await window.wzxclaw.addWorkspaceProject({ workspaceId, folderPath })
     set((s) => ({
-      tasks: s.tasks.map((t) => (t.id === taskId ? updated : t))
+      tasks: s.tasks.map((t) => (t.id === workspaceId ? updated : t))
     }))
   },
 
-  removeProject: async (taskId, projectId) => {
-    const updated = await window.wzxclaw.removeTaskProject({ taskId, projectId })
+  removeProject: async (workspaceId, projectId) => {
+    const updated = await window.wzxclaw.removeWorkspaceProject({ workspaceId, projectId })
     set((s) => ({
-      tasks: s.tasks.map((t) => (t.id === taskId ? updated : t))
+      tasks: s.tasks.map((t) => (t.id === workspaceId ? updated : t))
     }))
   },
 

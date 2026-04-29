@@ -23,7 +23,7 @@ export interface TurnAttachmentContext {
   filesWritten: Map<string, number>
   /** Current turn number */
   currentTurn: number
-  /** Active tasks from CreateTask/UpdateTask */
+  /** Active workspaces from CreateWorkspace/UpdateWorkspace */
   activeWorkspaces?: Array<{ id: string; subject: string; status: string }>
 }
 
@@ -48,12 +48,12 @@ export function buildTurnAttachments(ctx: TurnAttachmentContext): string {
     ))
   }
 
-  // 2. Active tasks reminder (if tasks exist and are in progress)
+  // 2. Active workspaces reminder (if workspaces exist and are in progress)
   if (ctx.activeWorkspaces && ctx.activeWorkspaces.length > 0) {
     const inProgress = ctx.activeWorkspaces.filter(t => t.status === 'in_progress')
     const pending = ctx.activeWorkspaces.filter(t => t.status === 'pending')
     if (inProgress.length > 0 || pending.length > 0) {
-      const lines: string[] = ['Active tasks:']
+      const lines: string[] = ['Active workspaces:']
       for (const t of inProgress) {
         lines.push(`- [in_progress] ${t.subject}`)
       }

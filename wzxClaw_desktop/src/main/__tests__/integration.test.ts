@@ -238,7 +238,7 @@ describe('IPC Handler Registration', () => {
     expect(handleCalls).toContain('index:reindex')
     expect(handleCalls).toContain('index:search')
 
-    // Task IPC handlers
+    // Workspace IPC handlers
     expect(handleCalls).toContain('workspace:list')
     expect(handleCalls).toContain('workspace:get')
     expect(handleCalls).toContain('workspace:create')

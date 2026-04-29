@@ -22,16 +22,16 @@ describe('WorkspaceStore', () => {
     store = new WorkspaceStore()
   })
 
-  it('creates a task with title and description', async () => {
-    const task = await store.createWorkspace('My Task', 'Some description')
-    expect(task.id).toBeDefined()
-    expect(task.title).toBe('My Task')
-    expect(task.description).toBe('Some description')
-    expect(task.projects).toEqual([])
-    expect(task.archived).toBe(false)
+  it('creates a workspace with title and description', async () => {
+    const workspace = await store.createWorkspace('My Workspace', 'Some description')
+    expect(workspace.id).toBeDefined()
+    expect(workspace.title).toBe('My Workspace')
+    expect(workspace.description).toBe('Some description')
+    expect(workspace.projects).toEqual([])
+    expect(workspace.archived).toBe(false)
   })
 
-  it('lists non-archived tasks by default', async () => {
+  it('lists non-archived workspaces by default', async () => {
     await store.createWorkspace('Active')
     const archived = await store.createWorkspace('Archived')
     await store.updateWorkspace(archived.id, { archived: true })
@@ -41,7 +41,7 @@ describe('WorkspaceStore', () => {
     expect(list[0].title).toBe('Active')
   })
 
-  it('lists all tasks when includeArchived is true', async () => {
+  it('lists all workspaces when includeArchived is true', async () => {
     await store.createWorkspace('Active')
     const archived = await store.createWorkspace('Archived')
     await store.updateWorkspace(archived.id, { archived: true })
@@ -50,54 +50,54 @@ describe('WorkspaceStore', () => {
     expect(list).toHaveLength(2)
   })
 
-  it('gets a task by id', async () => {
-    const task = await store.createWorkspace('Test')
-    const found = await store.getWorkspace(task.id)
+  it('gets a workspace by id', async () => {
+    const workspace = await store.createWorkspace('Test')
+    const found = await store.getWorkspace(workspace.id)
     expect(found?.title).toBe('Test')
   })
 
-  it('returns null for non-existent task', async () => {
+  it('returns null for non-existent workspace', async () => {
     const found = await store.getWorkspace('nonexistent')
     expect(found).toBeNull()
   })
 
-  it('updates a task', async () => {
-    const task = await store.createWorkspace('Original')
-    const updated = await store.updateWorkspace(task.id, { title: 'Updated' })
+  it('updates a workspace', async () => {
+    const workspace = await store.createWorkspace('Original')
+    const updated = await store.updateWorkspace(workspace.id, { title: 'Updated' })
     expect(updated.title).toBe('Updated')
   })
 
-  it('deletes a task', async () => {
-    const task = await store.createWorkspace('To Delete')
-    await store.deleteWorkspace(task.id)
-    const found = await store.getWorkspace(task.id)
+  it('deletes a workspace', async () => {
+    const workspace = await store.createWorkspace('To Delete')
+    await store.deleteWorkspace(workspace.id)
+    const found = await store.getWorkspace(workspace.id)
     expect(found).toBeNull()
   })
 
-  it('throws when deleting non-existent task', async () => {
-    await expect(store.deleteWorkspace('nonexistent')).rejects.toThrow('Task not found')
+  it('throws when deleting non-existent workspace', async () => {
+    await expect(store.deleteWorkspace('nonexistent')).rejects.toThrow('Workspace not found')
   })
 
-  it('adds a project to a task', async () => {
-    const task = await store.createWorkspace('With Project')
-    const updated = await store.addProject(task.id, '/path/to/project')
+  it('adds a project to a workspace', async () => {
+    const workspace = await store.createWorkspace('With Project')
+    const updated = await store.addProject(workspace.id, '/path/to/project')
     expect(updated.projects).toHaveLength(1)
     expect(updated.projects[0].path).toBe('/path/to/project')
     expect(updated.projects[0].name).toBe('project')
   })
 
   it('deduplicates project paths', async () => {
-    const task = await store.createWorkspace('Dedup')
-    await store.addProject(task.id, '/path/to/project')
-    const updated = await store.addProject(task.id, '/path/to/project')
+    const workspace = await store.createWorkspace('Dedup')
+    await store.addProject(workspace.id, '/path/to/project')
+    const updated = await store.addProject(workspace.id, '/path/to/project')
     expect(updated.projects).toHaveLength(1)
   })
 
-  it('removes a project from a task', async () => {
-    const task = await store.createWorkspace('Remove Project')
-    const withProject = await store.addProject(task.id, '/path/to/project')
+  it('removes a project from a workspace', async () => {
+    const workspace = await store.createWorkspace('Remove Project')
+    const withProject = await store.addProject(workspace.id, '/path/to/project')
     const projectId = withProject.projects[0].id
-    const updated = await store.removeProject(task.id, projectId)
+    const updated = await store.removeProject(workspace.id, projectId)
     expect(updated.projects).toHaveLength(0)
   })
 })

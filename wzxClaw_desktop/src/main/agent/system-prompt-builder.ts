@@ -46,7 +46,7 @@ export interface SystemPromptBreakdown {
  */
 export async function buildSystemPromptBreakdown(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeTask?: Workspace | null
+  activeWorkspace?: Workspace | null
 ): Promise<SystemPromptBreakdown> {
   const roots = config.projectRoots ?? [config.workingDirectory]
 
@@ -63,7 +63,7 @@ export async function buildSystemPromptBreakdown(
     projectRoots: roots,
   })
 
-  const taskContext = activeTask ? buildTaskContext(activeTask) : ''
+  const taskContext = activeWorkspace ? buildWorkspaceContext(activeWorkspace) : ''
 
   // Count tokens per segment
   const staticTokens = countTokens(config.systemPrompt ?? '')
@@ -116,20 +116,20 @@ export async function buildSystemPromptBreakdown(
  */
 export async function buildSystemPrompt(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeTask?: Workspace | null
+  activeWorkspace?: Workspace | null
 ): Promise<string> {
-  const breakdown = await buildSystemPromptBreakdown(config, activeTask)
+  const breakdown = await buildSystemPromptBreakdown(config, activeWorkspace)
   return breakdown.systemPrompt
 }
 
-function buildTaskContext(task: Workspace): string {
-  const lines: string[] = ['# Active Task']
-  lines.push(`**${task.title}**`)
-  if (task.description) lines.push(task.description)
-  if (task.projects.length > 0) {
+function buildWorkspaceContext(workspace: Workspace): string {
+  const lines: string[] = ['# Active Workspace']
+  lines.push(`**${workspace.title}**`)
+  if (workspace.description) lines.push(workspace.description)
+  if (workspace.projects.length > 0) {
     lines.push('')
     lines.push('## Mounted Projects')
-    for (const p of task.projects) {
+    for (const p of workspace.projects) {
       lines.push(`- ${p.name}: \`${p.path}\``)
     }
   }

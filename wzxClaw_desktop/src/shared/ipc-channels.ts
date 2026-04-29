@@ -247,12 +247,12 @@ export interface IpcRequestPayloads {
   'relay:qrcode': { token?: string }
   'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
   'workspace:list': { includeArchived?: boolean }
-  'workspace:get': { taskId: string }
+  'workspace:get': { workspaceId: string }
   'workspace:create': { title: string; description?: string }
-  'workspace:update': { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
-  'workspace:delete': { taskId: string }
-  'workspace:add-project': { taskId: string; folderPath: string }
-  'workspace:remove-project': { taskId: string; projectId: string }
+  'workspace:update': { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
+  'workspace:delete': { workspaceId: string }
+  'workspace:add-project': { workspaceId: string; folderPath: string }
+  'workspace:remove-project': { workspaceId: string; projectId: string }
   'shell:open_path': { path: string }
   'shell:get_extension_paths': void
   'insights:generate': void
@@ -321,11 +321,11 @@ export interface IpcResponsePayloads {
   'ask-user:answer': void
   'workspace:list': Workspace[]
   'workspace:get': Workspace | null
-  'workspace:create': Task
-  'workspace:update': Task
+  'workspace:create': Workspace
+  'workspace:update': Workspace
   'workspace:delete': void
-  'workspace:add-project': Task
-  'workspace:remove-project': Task
+  'workspace:add-project': Workspace
+  'workspace:remove-project': Workspace
   'shell:open_path': void
   'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
   'insights:generate': { summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }

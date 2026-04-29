@@ -20,9 +20,9 @@ export interface ToolResultContent {
  */
 export interface ToolExecutionContext {
   workingDirectory: string
-  /** Task ID if the agent is running within a Task. Used for task-scoped storage. */
-  taskId?: string
-  /** All project root directories for this context (multi-folder Task support). */
+  /** Workspace ID if the agent is running within a Workspace. Used for workspace-scoped storage. */
+  workspaceId?: string
+  /** All project root directories for this context (multi-folder Workspace support). */
   projectRoots?: string[]
   abortSignal?: AbortSignal
   /** 工具进度回调（可选） */

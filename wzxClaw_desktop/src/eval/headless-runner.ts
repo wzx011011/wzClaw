@@ -44,12 +44,12 @@ export async function runBenchmarkTask(
     ownWorkspace = true
   }
 
-  // 保存旧 BENCHMARK_TASK_ID，避免并行工作区互相覆盖
-  const prevTaskId = process.env.BENCHMARK_TASK_ID
+  // 保存旧 BENCHMARK_WORKSPACE_ID，避免并行工作区互相覆盖
+  const prevWorkspaceId = process.env.BENCHMARK_WORKSPACE_ID
   try {
-    // 2. 设置 BENCHMARK_TASK_ID — Langfuse trace 自动打 tag
-    process.env.BENCHMARK_TASK_ID = task.id
-    process.env.BENCHMARK_TASK_ID = task.id
+    // 2. 设置 BENCHMARK_WORKSPACE_ID — Langfuse trace 自动打 tag
+    process.env.BENCHMARK_WORKSPACE_ID = task.id
+    process.env.BENCHMARK_WORKSPACE_ID = task.id
 
     // 3. 构建真实 LLM Gateway
     const gateway = new LLMGateway()
@@ -140,11 +140,11 @@ export async function runBenchmarkTask(
       patch: patch || undefined,
     }
   } finally {
-    // 恢复之前的 BENCHMARK_TASK_ID，避免影响并行工作区
-    if (prevTaskId !== undefined) {
-      process.env.BENCHMARK_TASK_ID = prevTaskId
+    // 恢复之前的 BENCHMARK_WORKSPACE_ID，避免影响并行工作区
+    if (prevWorkspaceId !== undefined) {
+      process.env.BENCHMARK_WORKSPACE_ID = prevWorkspaceId
     } else {
-      delete process.env.BENCHMARK_TASK_ID
+      delete process.env.BENCHMARK_WORKSPACE_ID
     }
     // 只清理自行创建的工作空间（batch-runner 管理的由 batch-runner 清理）
     if (ownWorkspace) {

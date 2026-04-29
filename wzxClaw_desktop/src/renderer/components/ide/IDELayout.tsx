@@ -50,7 +50,7 @@ export default function IDELayout(): JSX.Element {
   const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
   const showTerminal = useTerminalStore((s) => s.panelVisible)
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace)
-  const activeTask = useWorkspaceStore((s) => s.getActiveWorkspace)()
+  const activeWorkspace = useWorkspaceStore((s) => s.getActiveWorkspace)()
 
   // 布局状态 — 从 layout-store 读取（持久化到 localStorage）
   const sidebarVisible = useLayoutStore((s) => s.sidebarVisible)
@@ -215,15 +215,15 @@ export default function IDELayout(): JSX.Element {
   // Restore workspace after the shell paints so ChatPanel can appear first.
   useEffect(() => {
     const cancelDeferredWorkspaceInit = scheduleDeferredUiWork(() => {
-      if (activeTask?.projects && activeTask.projects.length > 0) {
-        void setFolders(activeTask.projects)
+      if (activeWorkspace?.projects && activeWorkspace.projects.length > 0) {
+        void setFolders(activeWorkspace.projects)
       } else {
         void initWorkspace()
       }
     }, WORKSPACE_RESTORE_DELAY_MS)
 
     return cancelDeferredWorkspaceInit
-  }, [activeTask?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeWorkspace?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Index status is useful but not a first-paint dependency.
   useEffect(() => {
@@ -277,7 +277,7 @@ export default function IDELayout(): JSX.Element {
           setRightSidebarTab('preview')
         }}
         onBackToTasks={closeWorkspace}
-        activeTaskTitle={activeTask?.title}
+        activeWorkspaceTitle={activeWorkspace?.title}
       />
       <div className="ide-main">
         <div className="ide-content">

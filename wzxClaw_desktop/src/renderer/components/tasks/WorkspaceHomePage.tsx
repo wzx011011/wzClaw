@@ -77,24 +77,25 @@ export default function WorkspaceHomePage(): JSX.Element {
   const displayWorkspaces = showArchived ? archivedWorkspaces : activeWorkspaces
 
   const handleCreate = async (title: string, description?: string) => {
-    const task = await createWorkspace(title, description)
+    const workspace = await createWorkspace(title, description)
     setShowCreateModal(false)
-    openWorkspaceDetail(task.id)
+    openWorkspaceDetail(workspace.id)
   }
 
-  const handleArchive = (taskId: string) => {
-    const task = tasks.find((t) => t.id === taskId)
-    if (task) {
-      updateWorkspace(taskId, { archived: !task.archived })
+  const handleArchive = (workspaceId: string) => {
+    const workspace = tasks.find((t) => t.id === workspaceId)
+    if (workspace) {
+      updateWorkspace(workspaceId, { archived: !workspace.archived })
     }
   }
 
-  const handleDelete = (taskId: string) => {
-    // \u5220\u9664\u786e\u8ba4\u73b0\u5728\u5728 WorkspaceCard \u5185\u8054\u5b8c\u6210\uff0c\u907f\u514d\u539f\u751f confirm() \u7a81\u5151\u7684\u4f53\u9a8c\n    deleteWorkspace(taskId)
+  const handleDelete = (workspaceId: string) => {
+    // 删除确认现在在 WorkspaceCard 内联完成，避免原生 confirm() 突兀的体验
+    deleteWorkspace(workspaceId)
   }
 
-  const handleRename = (taskId: string, newTitle: string) => {
-    updateWorkspace(taskId, { title: newTitle })
+  const handleRename = (workspaceId: string, newTitle: string) => {
+    updateWorkspace(workspaceId, { title: newTitle })
   }
 
   const handleDisconnectRelay = async () => {
@@ -132,10 +133,10 @@ export default function WorkspaceHomePage(): JSX.Element {
         </div>
       ) : (
         <div className="workspace-grid">
-          {displayWorkspaces.map((task) => (
+          {displayWorkspaces.map((workspace) => (
             <WorkspaceCard
-              key={task.id}
-              task={task}
+              key={workspace.id}
+              workspace={workspace}
               onOpen={openWorkspaceDetail}
               onArchive={handleArchive}
               onDelete={handleDelete}
