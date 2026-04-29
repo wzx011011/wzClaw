@@ -120,6 +120,35 @@ describe('MessageBuilder', () => {
       })
     })
 
+    it('preserves all tool results for parallel tool calls', () => {
+      // Bug regression: 多个并行 tool_calls 时，第 2、3 条 tool_result 会因
+      // prevHasToolCalls 只看 result 末尾（已是 tool 消息）而被错误过滤掉，
+      // 导致 API 400 "insufficient tool messages following tool_calls message"。
+      const messages: Message[] = [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            { id: 'call_a', name: 'file_read', input: { path: '/a.ts' } },
+            { id: 'call_b', name: 'file_read', input: { path: '/b.ts' } },
+            { id: 'call_c', name: 'file_read', input: { path: '/c.ts' } },
+          ],
+          timestamp: 1000
+        },
+        { role: 'tool_result', toolCallId: 'call_a', content: 'a content', isError: false, timestamp: 2000 },
+        { role: 'tool_result', toolCallId: 'call_b', content: 'b content', isError: false, timestamp: 2001 },
+        { role: 'tool_result', toolCallId: 'call_c', content: 'c content', isError: false, timestamp: 2002 },
+      ]
+      const result = builder.buildMessages(messages, 'openai')
+      // assistant + 3 tool replies = 4 messages total
+      expect(result).toHaveLength(4)
+      expect(result[0].role).toBe('assistant')
+      expect((result[0] as any).tool_calls).toHaveLength(3)
+      expect(result[1]).toEqual({ role: 'tool', tool_call_id: 'call_a', content: 'a content' })
+      expect(result[2]).toEqual({ role: 'tool', tool_call_id: 'call_b', content: 'b content' })
+      expect(result[3]).toEqual({ role: 'tool', tool_call_id: 'call_c', content: 'c content' })
+    })
+
     it('converts a multi-turn conversation', () => {
       const messages: Message[] = [
         { role: 'user', content: 'Read foo.ts', timestamp: 1000 },

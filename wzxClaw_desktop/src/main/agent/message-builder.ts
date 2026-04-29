@@ -97,11 +97,20 @@ export class MessageBuilder {
           // 上下文压缩或历史截断后可能出现孤立的 tool_result，需过滤掉，
           // 否则 API 返回 400 "Messages with role 'tool' must be a response to
           // a preceding message with 'tool_calls'"。
-          const prev = result[result.length - 1]
+          //
+          // 注意：一条 assistant 消息可能包含多个并行 tool_calls（a、b、c），
+          // 对应的多条 tool_result 会连续出现。处理第 2、3 条时 result 末尾
+          // 已经是 tool 消息，不能只看最后一条——需向上回溯找最近的 assistant。
+          let prevAssistant: (typeof result)[number] | undefined
+          for (let i = result.length - 1; i >= 0; i--) {
+            if (result[i].role === 'tool') continue      // 跳过已加入的 tool 回复
+            if (result[i].role === 'assistant') prevAssistant = result[i]
+            break
+          }
           const prevHasToolCalls =
-            prev?.role === 'assistant' &&
-            Array.isArray((prev as Record<string, unknown>).tool_calls) &&
-            ((prev as Record<string, unknown>).tool_calls as unknown[]).length > 0
+            prevAssistant !== undefined &&
+            Array.isArray((prevAssistant as Record<string, unknown>).tool_calls) &&
+            ((prevAssistant as Record<string, unknown>).tool_calls as unknown[]).length > 0
           if (!prevHasToolCalls) break  // 跳过孤立的 tool_result
 
           result.push({
