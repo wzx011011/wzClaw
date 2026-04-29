@@ -79,6 +79,7 @@ class ChatMessage {
   final String? toolInput;
   final String? toolOutput;
   final String? toolResultSummary;
+  final String? model;
 
   ChatMessage({
     this.id,
@@ -94,6 +95,7 @@ class ChatMessage {
     this.toolInput,
     this.toolOutput,
     this.toolResultSummary,
+    this.model,
   });
 
   ChatMessage copyWith({
@@ -105,6 +107,7 @@ class ChatMessage {
     TokenUsage? usage,
     String? toolOutput,
     String? toolResultSummary,
+    String? model,
   }) =>
       ChatMessage(
         id: id ?? this.id,
@@ -120,6 +123,7 @@ class ChatMessage {
         toolInput: toolInput,
         toolOutput: toolOutput ?? this.toolOutput,
         toolResultSummary: toolResultSummary ?? this.toolResultSummary,
+        model: model ?? this.model,
       );
 
   Map<String, dynamic> toDbMap() => {

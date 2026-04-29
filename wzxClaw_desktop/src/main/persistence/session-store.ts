@@ -104,7 +104,10 @@ export class SessionStore {
       for (const line of lines) {
         if (!line.trim()) continue
         try {
-          messages.push(JSON.parse(line))
+          const parsed = JSON.parse(line)
+          // 跳过 meta 行（不是真实消息），防止手机端收到幽灵空消息
+          if (parsed.type === 'meta') continue
+          messages.push(parsed)
         } catch {
           console.warn(`Skipping corrupted JSONL line: ${line.substring(0, 50)}`)
         }
@@ -133,9 +136,17 @@ export class SessionStore {
     try {
       const content = await fsp.readFile(filePath, 'utf-8')
       const allLines = content.split('\n')
-      // 跳过首行 meta（如存在）
+      // 跳过首行 meta（如存在），用 JSON.parse 检测而非字符串匹配，
+      // 防止用户消息内容中包含 "type":"meta" 子串时误判
       let dataStart = 0
-      if (allLines.length > 0 && allLines[0].includes('"type":"meta"')) dataStart = 1
+      if (allLines.length > 0) {
+        try {
+          const first = JSON.parse(allLines[0])
+          if (first?.type === 'meta') dataStart = 1
+        } catch {
+          // 首行不是合法 JSON，保持 dataStart = 0
+        }
+      }
       const dataLines = allLines.slice(dataStart).filter(l => l.trim())
       const totalCount = dataLines.length
       const hasMore = totalCount > tailCount

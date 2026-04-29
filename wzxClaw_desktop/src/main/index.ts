@@ -546,7 +546,8 @@ app.whenReady().then(async () => {
           requestId,
           workspaceName: path.basename(workspaceRoot),
           workspacePath: workspaceRoot,
-          sessions
+          sessions,
+          activeSessionId: settingsManager.getLastSessionId() ?? null
         })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
@@ -659,26 +660,32 @@ app.whenReady().then(async () => {
       return
     }
 
-    // -- Workspace: list recent workspaces --
-    if (msg.event === 'workspace:list:request') {
-      const requestId = msg.data?.requestId ?? ''
+    // -- Session sync: clear session messages --
+    if (msg.event === 'session:clear:request') {
+      const sessionId = msg.data?.sessionId
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
+      if (!store || !sessionId) {
+        broadcastToMobile('session:clear:response', { success: false })
+        return
+      }
       try {
-        const workspaces = settingsManager.getRecentWorkspaces()
-        const currentRoot = workspaceManager.getWorkspaceRoot()
-        broadcastToMobile('workspace:list:response', {
-          requestId,
-          workspaces: workspaces.map(w => ({
-            path: w,
-            name: path.basename(w),
-            isCurrent: w === currentRoot,
-          })),
+        // 重写 session JSONL 为只含 meta 行
+        const sessionPath = path.join(store.sessionDir, `${sessionId}.jsonl`)
+        const content = await fsp.readFile(sessionPath, 'utf-8').catch(() => '')
+        const metaLine = content.split('\n').find(l => {
+          try { return JSON.parse(l).type === 'meta' } catch { return false }
         })
+        await fsp.writeFile(sessionPath, metaLine ? metaLine + '\n' : '', 'utf-8')
+        mobilePersistedMessageCounts.delete(sessionId)
+        broadcastToMobile('session:clear:response', { success: true })
       } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+        broadcastToMobile('session:clear:response', { success: false })
       }
       return
     }
 
+    // -- Workspace: list recent workspaces --
     // -- Workspace: switch to a different workspace --
     if (msg.event === 'workspace:switch:request') {
       const requestId = msg.data?.requestId ?? ''
@@ -832,12 +839,27 @@ app.whenReady().then(async () => {
       return
     }
 
-    // -- Workspace management: list tasks --
+    // -- Workspace management: list workspaces (with sessions) --
     if (msg.event === 'workspace:list:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
         const tasks = await workspaceStore.listWorkspaces(msg.data?.includeArchived)
-        broadcastToMobile('workspace:list:response', { requestId, tasks })
+        // 为每个 workspace 附加最近 10 个会话
+        const enriched = await Promise.all(tasks.map(async (t: any) => {
+          const root = t.projects?.[0]?.path as string | undefined
+          let sessions: any[] = []
+          if (root) {
+            try {
+              const ss = getCachedSessionStore(root)
+              const all = await ss.listSessions()
+              sessions = all
+                .sort((a: any, b: any) => b.updatedAt - a.updatedAt)
+                .slice(0, 10)
+            } catch { /* workspace 可能还没有 sessions 目录 */ }
+          }
+          return { ...t, sessions }
+        }))
+        broadcastToMobile('workspace:list:response', { requestId, tasks: enriched })
       } catch (err: any) {
         broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
@@ -996,7 +1018,33 @@ app.whenReady().then(async () => {
             msg.data.content = `Please analyze this codebase and create a WZXCLAW.md file in the project root.\n\nFirst, explore the project to understand:\n- Package manager and key scripts\n- README and existing documentation\n- Directory structure and main source directories\n- Test setup and how to run tests\n- Any existing instruction files\n\nThen create WZXCLAW.md with ONLY:\n1. Build & Dev Commands (non-obvious only)\n2. Architecture Overview (3-5 sentences)\n3. Key Conventions (differs from defaults)\n4. Development Notes (gotchas, setup)\n\nKeep it under 100 lines. If WZXCLAW.md exists, suggest improvements.`
             break
           }
-          // Other commands pass through as regular text
+          case 'commit': {
+            msg.data.content = `Analyze the current git changes and create a commit. Look at \`git status\` and \`git diff\` to understand what changed, then stage and commit with an appropriate message. Do NOT push.`
+            break
+          }
+          case 'review': {
+            msg.data.content = `Review the current git diff for code quality issues, bugs, and improvements. Run \`git diff\` to see the changes, then provide a thorough code review.`
+            break
+          }
+          case 'help': {
+            const sid0 = settingsManager.getLastSessionId() ?? mobileSessionId
+            broadcastToMobile('stream:agent:text', { content: `**可用命令：**\n\n- /help — 显示此帮助\n- /init — 分析代码库并创建 WZXCLAW.md\n- /compact — 压缩上下文\n- /context — 查看上下文使用情况\n- /clear — 新建会话\n- /commit — 分析 git 变更并提交\n- /review — 代码审查\n- /insights — 生成代码洞察`, sessionId: sid0 })
+            broadcastToMobile('stream:agent:done', { usage: { inputTokens: 0, outputTokens: 0 }, turnCount: 0, sessionId: sid0 })
+            return
+          }
+          case 'context': {
+            const sid1 = settingsManager.getLastSessionId() ?? mobileSessionId
+            const totalUsage = contextManager.getTotalUsage()
+            const history = contextManager.getCompactHistory()
+            broadcastToMobile('stream:agent:text', { content: `**上下文使用情况：**\n\n- 输入 tokens: ${totalUsage.inputTokens}\n- 输出 tokens: ${totalUsage.outputTokens}\n- 历史压缩次数: ${history.count}${history.lastBefore != null ? `\n- 上次压缩: ${history.lastBefore} → ${history.lastAfter} tokens` : ''}`, sessionId: sid1 })
+            broadcastToMobile('stream:agent:done', { usage: { inputTokens: 0, outputTokens: 0 }, turnCount: 0, sessionId: sid1 })
+            return
+          }
+          case 'insights': {
+            msg.data.content = `Analyze the codebase and provide insights about code quality, potential issues, and improvement opportunities. Look at the project structure, key files, and recent changes.`
+            break
+          }
+          // Unknown commands pass through as regular text
         }
       }
 
@@ -1213,9 +1261,33 @@ app.whenReady().then(async () => {
 
   relayClient.on('client-message', handleClientMessage)
 
-  // Send workspace info when mobile connects via relay
-  relayClient.on('mobile-connected', () => {
+  // Send workspace info when mobile connects/reconnects via relay
+  relayClient.on('mobile-connected', async () => {
     sendWorkspaceInfoToMobile()
+    // 也推送工作区列表，让手机端能同步最新工作区状态
+    try {
+      const workspaces = settingsManager.getRecentWorkspaces()
+      const currentRoot = workspaceManager.getWorkspaceRoot()
+      broadcastToMobile('workspace:list:response', {
+        requestId: '',
+        workspaces: workspaces.map(w => ({
+          path: w,
+          name: path.basename(w),
+          isCurrent: w === currentRoot,
+        })),
+      })
+    } catch {}
+    // 如果桌面端 agent 正在运行，通知手机端当前进度
+    const agentRunning = (agentLoop as any).abortController !== null
+    if (agentRunning) {
+      const lastSessionId = settingsManager.getLastSessionId()
+      if (lastSessionId) {
+        broadcastToMobile('stream:agent:running', {
+          sessionId: lastSessionId,
+          messageCount: agentLoop.getMessages().length,
+        })
+      }
+    }
   })
 
   // Register browser + mobile IPC handlers
@@ -1292,6 +1364,8 @@ app.whenReady().then(async () => {
       sendWorkspaceInfoToMobile()
     },
     // onDataChanged: broadcast desktop CRUD changes to mobile
+    (event, data) => broadcastToMobile(event, data),
+    // onStreamEvent: broadcast desktop agent stream events to mobile
     (event, data) => broadcastToMobile(event, data)
   )
 

@@ -354,6 +354,23 @@
   min-height: 60px;
 }
 
+/* Folder picker row */
+.workspace-modal-folder-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.workspace-modal-folder-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-modal-folder-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .workspace-modal-actions {
   display: flex;
   justify-content: flex-end;

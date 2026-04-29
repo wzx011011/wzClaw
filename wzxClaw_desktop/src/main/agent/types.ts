@@ -40,6 +40,7 @@ export interface AgentDoneEvent {
   type: 'agent:done'
   usage: TokenUsage
   turnCount: number
+  model?: string
 }
 
 export interface AgentCompactedEvent {

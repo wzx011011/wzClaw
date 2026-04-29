@@ -15,7 +15,6 @@ import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
-import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useLayoutStore } from '../../stores/layout-store'
 
 // 重型组件懒加载 — 拆分 Monaco/xterm bundle，首屏不下载

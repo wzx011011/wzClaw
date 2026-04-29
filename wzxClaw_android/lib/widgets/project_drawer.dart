@@ -7,6 +7,7 @@ import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
 import 'session_list_tile.dart';
+import 'workspace_picker_card.dart';
 
 /// Drawer widget displaying the current desktop workspace and its sessions.
 class ProjectDrawer extends StatefulWidget {
@@ -85,7 +86,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 }
 
                 return GestureDetector(
-                  onTap: connected ? () => _showWorkspaceSwitcher(colors) : null,
+                  onTap: connected ? () => _showDesktopSwitcher(colors) : null,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -173,6 +174,98 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
+  /// 弹出桌面端选择器
+  void _showDesktopSwitcher(AppColors colors) {
+    final desktops = ConnectionManager.instance.desktops;
+    if (desktops.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final selectedId = ConnectionManager.instance.selectedDesktopId;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Row(
+                  children: [
+                    Text('选择桌面端',
+                        style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(
+                      icon: Icon(Icons.close, color: colors.textMuted),
+                      onPressed: () => Navigator.pop(ctx),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  itemCount: desktops.length,
+                  itemBuilder: (ctx, i) {
+                    final d = desktops[i];
+                    final isSelected = d.desktopId == selectedId;
+                    return ListTile(
+                      leading: Icon(
+                        isSelected ? Icons.computer : Icons.computer_outlined,
+                        color: isSelected ? colors.accent : colors.textSecondary,
+                      ),
+                      title: Text(
+                        d.displayLabel,
+                        style: TextStyle(
+                          color: isSelected ? colors.accent : colors.textPrimary,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      subtitle: d.platform != null
+                          ? Text(d.platform!,
+                              style: TextStyle(
+                                  color: colors.textMuted, fontSize: 11))
+                          : null,
+                      trailing: isSelected
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: colors.accent.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text('当前',
+                                  style: TextStyle(
+                                      color: colors.accent, fontSize: 11)),
+                            )
+                          : null,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        ConnectionManager.instance.selectDesktop(d.desktopId);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   /// 弹出工作区切换选择器
   void _showWorkspaceSwitcher(AppColors colors) {
     SessionSyncService.instance.fetchWorkspaces();
@@ -220,46 +313,30 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 }
                 return ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(ctx).size.height * 0.4,
+                    maxHeight: MediaQuery.of(ctx).size.height * 0.55,
                   ),
                   child: ListView.builder(
                     shrinkWrap: true,
                     itemCount: workspaces.length,
                     itemBuilder: (ctx, i) {
                       final ws = workspaces[i];
-                      final isCurrent = ws.isCurrent;
-                      return ListTile(
-                        leading: Icon(
-                          isCurrent ? Icons.folder_open : Icons.folder_outlined,
-                          color: isCurrent ? colors.accent : colors.textSecondary,
-                        ),
-                        title: Text(ws.name,
-                            style: TextStyle(
-                              color: isCurrent ? colors.accent : colors.textPrimary,
-                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            )),
-                        subtitle: Text(ws.path,
-                            style: TextStyle(color: colors.textMuted, fontSize: 11),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                        trailing: isCurrent
-                            ? Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: colors.accent.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text('当前',
-                                    style: TextStyle(
-                                        color: colors.accent, fontSize: 11)),
-                              )
-                            : null,
-                        onTap: () {
+                      return WorkspacePickerCard(
+                        workspace: ws,
+                        colors: colors,
+                        onWorkspaceTap: () {
                           Navigator.pop(ctx);
-                          if (!isCurrent) {
-                            SessionSyncService.instance.switchWorkspace(ws.path);
+                          final path = ws.primaryPath;
+                          if (path != null && path.isNotEmpty) {
+                            SessionSyncService.instance.switchWorkspace(path);
                           }
+                        },
+                        onSessionTap: (sessionId) {
+                          Navigator.pop(ctx);
+                          final path = ws.primaryPath;
+                          if (path != null && path.isNotEmpty) {
+                            SessionSyncService.instance.switchWorkspace(path);
+                          }
+                          SessionSyncService.instance.setActiveSession(sessionId);
                         },
                       );
                     },
@@ -274,8 +351,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  /// Workspace section — replaces the old task section.
-  /// Shows the current workspace with a switch button.
+  /// Workspace section — 显示当前工作区及切换按钮。
   Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
     return StreamBuilder<WorkspaceInfo?>(
       stream: SessionSyncService.instance.workspaceInfoStream,

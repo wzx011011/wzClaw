@@ -7,11 +7,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ws_message.dart';
 import 'connection_manager.dart';
+import 'session_sync_service.dart';
 
 const _pushEnabledKey = 'push_notifications_enabled';
 
 /// 通知渠道 ID
-const _channelId = 'wzx_task_done';
+const _channelId = 'wzx_workspace_notification';
 
 /// 推送唤醒服务：监听 ConnectionManager.messageStream，
 /// 当 App 在后台且收到工作区完成/出错事件时，弹出本地通知。
@@ -49,7 +50,10 @@ class PushWakeService with WidgetsBindingObserver {
     const initSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/launcher_icon'),
     );
-    await _notif.initialize(initSettings);
+    await _notif.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationTapped,
+    );
 
     // 创建通知渠道
     const channel = AndroidNotificationChannel(
@@ -89,10 +93,10 @@ class PushWakeService with WidgetsBindingObserver {
       await ConnectionManager.instance.setBackgroundKeepAliveEnabled(true);
     } else {
       _stopListening();
-      // 只有在用户也没有单独开启后台保活时才关掉
-      if (!ConnectionManager.instance.backgroundKeepAliveEnabled) {
-        await ConnectionManager.instance.setBackgroundKeepAliveEnabled(false);
-      }
+      // WR-02修复: push 关闭时无条件禁用 keep-alive。
+      // 之前的 if (!backgroundKeepAliveEnabled) 条件永远为 false（push 开启时已将其置 true），
+      // 导致 keep-alive 永不关闭，持续耗电。
+      await ConnectionManager.instance.setBackgroundKeepAliveEnabled(false);
     }
   }
 
@@ -137,10 +141,26 @@ class PushWakeService with WidgetsBindingObserver {
     if (msg.event != WsEvents.agentDone && msg.event != WsEvents.agentError) return;
 
     final isDone = msg.event == WsEvents.agentDone;
+    final data = msg.data;
+    final sessionId = data is Map ? data['sessionId'] as String? : null;
+
+    // 查找会话标题
+    String sessionTitle = '';
+    if (sessionId != null) {
+      final sessions = SessionSyncService.instance.sessions;
+      final match = sessions.where((s) => s.id == sessionId).firstOrNull;
+      if (match != null) sessionTitle = match.title;
+    }
+
+    final title = isDone ? '工作区执行完成' : '工作区执行出错';
+    final body = sessionTitle.isNotEmpty
+        ? (isDone ? '「$sessionTitle」已完成' : '「$sessionTitle」执行出错')
+        : (isDone ? '点击打开 wzxClaw 查看结果' : '点击打开 wzxClaw 查看错误信息');
+
     _notif.show(
       isDone ? 1001 : 1002,
-      isDone ? '✅ 工作区执行完成' : '❌ 工作区执行出错',
-      isDone ? '点击打开 wzxClaw 查看结果' : '点击打开 wzxClaw 查看错误信息',
+      title,
+      body,
       const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
@@ -150,7 +170,15 @@ class PushWakeService with WidgetsBindingObserver {
           priority: Priority.high,
         ),
       ),
+      payload: sessionId,
     );
+  }
+
+  void _onNotificationTapped(NotificationResponse response) {
+    final sessionId = response.payload;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      SessionSyncService.instance.setActiveSession(sessionId);
+    }
   }
 
   Future<bool> _loadEnabled() async {

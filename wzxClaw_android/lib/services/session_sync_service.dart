@@ -24,16 +24,66 @@ class WorkspaceInfo {
   });
 }
 
-class WorkspaceItem {
+/// A project folder bound to a workspace.
+class WorkspaceProject {
+  final String id;
   final String path;
   final String name;
-  final bool isCurrent;
 
-  const WorkspaceItem({
+  const WorkspaceProject({
+    required this.id,
     required this.path,
     required this.name,
-    required this.isCurrent,
   });
+}
+
+/// 轻量级会话摘要，用于工作区选择器中展示会话列表。
+class SessionSummary {
+  final String id;
+  final String title;
+  final int updatedAt;
+  final int messageCount;
+
+  const SessionSummary({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+    required this.messageCount,
+  });
+
+  factory SessionSummary.fromJson(Map<String, dynamic> json) => SessionSummary(
+        id: json['id'] as String? ?? '',
+        title: json['title'] as String? ?? 'Untitled',
+        updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+        messageCount: (json['messageCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class WorkspaceItem {
+  final String id;
+  final String title;
+  final String? description;
+  final List<WorkspaceProject> projects;
+  final bool archived;
+  final String? progressSummary;
+  final int updatedAt;
+  final List<SessionSummary> sessions;
+  final String? activeSessionId;
+
+  const WorkspaceItem({
+    required this.id,
+    required this.title,
+    this.description,
+    this.projects = const [],
+    this.archived = false,
+    this.progressSummary,
+    required this.updatedAt,
+    this.sessions = const [],
+    this.activeSessionId,
+  });
+
+  /// Convenience: first project's path (if any), for display
+  String? get primaryPath => projects.isNotEmpty ? projects.first.path : null;
 }
 
 /// Singleton service that syncs session data from the desktop wzxClaw IDE.
@@ -182,6 +232,8 @@ class SessionSyncService {
     final workspacePath = data['workspacePath'] as String? ?? '';
     final workspaceName = data['workspaceName'] as String? ?? '';
     final rawSessions = data['sessions'] as List? ?? [];
+    // 桌面端当前活跃会话（新增字段，旧桌面端可能为 null）
+    final desktopActiveSessionId = data['activeSessionId'] as String?;
     final desktopId = ConnectionManager.instance.selectedDesktopId;
 
     // 快照当前 generation，用于后续判断响应是否过期
@@ -206,17 +258,27 @@ class SessionSyncService {
     _workspaceInfo = WorkspaceInfo(
       workspaceName: workspaceName,
       workspacePath: workspacePath,
-      activeSessionId: data['activeSessionId'] as String? ??
+      activeSessionId: desktopActiveSessionId ??
           _activeSessionId ??
           (sessions.isNotEmpty ? sessions.first.id : null),
       sessionCount: sessions.length,
     );
     _workspaceInfoController.add(_workspaceInfo);
 
+    // 在更新 _sessions 之前保存旧的 messageCount 映射，用于后续判断是否有新消息
+    final oldMessageCounts = Map.fromEntries(
+      _sessions.map((s) => MapEntry(s.id, s.messageCount)),
+    );
+
     _sessions = sessions;
     _isLoading = false;
     _sessionsController.add(List.unmodifiable(_sessions));
     _loadingController.add(false);
+
+    // 持久化工作区路径，用于自动恢复
+    if (workspacePath.isNotEmpty) {
+      AppRestoreState.setLastWorkspacePath(workspacePath);
+    }
 
     // Cache to local DB
     ChatDatabase.instance.upsertSessions(sessions);
@@ -244,6 +306,35 @@ class SessionSyncService {
     if (currentSessionStillExists) {
       _activeSessionId = currentSessionId;
       _activeSessionController.add(_activeSessionId);
+
+      // 若当前会话消息数量有变化（桌面端新增了消息），且当前不在流式状态，
+      // 则强制从桌面重新拉取消息，确保手机端展示最新内容。
+      if (gen == _fetchGeneration && !ChatStore.instance.isStreaming) {
+        final newSession = sessions.firstWhere(
+          (s) => s.id == currentSessionId,
+          orElse: () => sessions.first,
+        );
+        final oldCount = oldMessageCounts[currentSessionId];
+        if (oldCount == null || newSession.messageCount != oldCount) {
+          try {
+            final result = await loadSessionMessages(
+              currentSessionId!,
+              forceRefresh: true,
+            );
+            if (gen == _fetchGeneration) {
+              ChatStore.instance.loadFetchedMessages(
+                result['messages'] as List<ChatMessage>,
+              );
+            }
+          } catch (e) {
+            // WR-03修复: async void 函数内异常不再静默丢弃；
+            // 保留现有消息可见，不影响用户体验。
+            // ignore: avoid_print
+            print('[SessionSync] force-refresh failed: $e');
+          }
+        }
+      }
+
       _completePending(requestId, sessions);
       return;
     }
@@ -357,11 +448,9 @@ class SessionSyncService {
     if (data is! Map) return;
     if (!_hasSelectedDesktopTarget) return;
     final sessionId = data['sessionId'] as String?;
-    final currentViewedSessionId = ChatStore.instance.currentSessionId;
-    if (currentViewedSessionId != null && currentViewedSessionId != sessionId) {
-      return;
-    }
+    // 同步 ChatStore 的 sessionId，防止 _isWrongSession 误判丢弃流式事件
     if (sessionId != null) {
+      ChatStore.instance.syncSessionId(sessionId);
       _activeSessionId = sessionId;
       _activeSessionController.add(_activeSessionId);
     }
@@ -429,12 +518,40 @@ class SessionSyncService {
       _completePending(requestId, const <WorkspaceItem>[]);
       return;
     }
-    final rawWorkspaces = data['workspaces'] as List? ?? [];
-    _workspaces = rawWorkspaces.whereType<Map>().map((w) => WorkspaceItem(
-      path: w['path'] as String? ?? '',
-      name: w['name'] as String? ?? '',
-      isCurrent: w['isCurrent'] as bool? ?? false,
-    ),).toList();
+    // Support both old format ({workspaces: [{path,name}]}) and new format ({tasks: [{id,title,projects}]})
+    final rawWorkspaces = (data['workspaces'] ?? data['tasks']) as List? ?? [];
+    _workspaces = rawWorkspaces.whereType<Map>().map((w) {
+      // New format: workspace objects from WorkspaceStore
+      if (w.containsKey('id') && w.containsKey('title')) {
+        final rawProjects = w['projects'] as List? ?? [];
+        final projects = rawProjects.whereType<Map>().map((p) => WorkspaceProject(
+          id: p['id'] as String? ?? '',
+          path: p['path'] as String? ?? '',
+          name: p['name'] as String? ?? '',
+        )).toList();
+        return WorkspaceItem(
+          id: w['id'] as String? ?? '',
+          title: w['title'] as String? ?? '',
+          description: w['description'] as String?,
+          projects: projects,
+          archived: w['archived'] as bool? ?? false,
+          progressSummary: w['progressSummary'] as String?,
+          updatedAt: w['updatedAt'] as int? ?? 0,
+          sessions: (w['sessions'] as List? ?? [])
+              .whereType<Map>()
+              .map((s) => SessionSummary.fromJson(Map<String, dynamic>.from(s)))
+              .toList(),
+          activeSessionId: w['activeSessionId'] as String?,
+        );
+      }
+      // Old format: folder paths (fallback)
+      return WorkspaceItem(
+        id: w['path'] as String? ?? '',
+        title: w['name'] as String? ?? '',
+        projects: w['path'] != null ? [WorkspaceProject(id: '', path: w['path'] as String, name: w['name'] as String? ?? '')] : [],
+        updatedAt: 0,
+      );
+    }).toList();
     _workspacesController.add(List.unmodifiable(_workspaces));
     _completePending(requestId, _workspaces);
   }
@@ -681,6 +798,9 @@ class SessionSyncService {
       data: {'requestId': requestId, 'workspacePath': workspacePath},
     ),);
 
+    // 持久化工作区路径，用于自动恢复
+    AppRestoreState.setLastWorkspacePath(workspacePath);
+
     Future.delayed(const Duration(seconds: 10), () {
       if (!completer.isCompleted) {
         _pendingRequests.remove(requestId);
@@ -814,9 +934,25 @@ class SessionSyncService {
     final timestamp = json['timestamp'] as int? ??
         DateTime.now().millisecondsSinceEpoch;
 
+    // 提取文本内容：优先使用 content 字段；若为空，从 contentBlocks 中拼接 text 块
+    // 这是 Anthropic interleaved 格式的兼容处理
+    String content = json['content'] as String? ?? '';
+    if (content.isEmpty && json['contentBlocks'] is List) {
+      final blocks = json['contentBlocks'] as List;
+      final textParts = blocks
+          .whereType<Map>()
+          .where((b) => b['type'] == 'text')
+          .map((b) => (b['text'] as String?) ?? '')
+          .where((t) => t.isNotEmpty)
+          .toList();
+      if (textParts.isNotEmpty) {
+        content = textParts.join('\n');
+      }
+    }
+
     return ChatMessage(
       role: messageRole,
-      content: json['content'] as String? ?? '',
+      content: content,
       createdAt: DateTime.fromMillisecondsSinceEpoch(timestamp),
       toolCalls: toolCalls,
       usage: usage,

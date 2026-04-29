@@ -11,6 +11,7 @@ import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
+import '../models/ws_message.dart';
 import '../services/app_restore_state.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
@@ -206,13 +207,15 @@ class _ChatPageState extends State<ChatPage> {
 
   void _clearSession() {
     final colors = AppColors.of(context);
+    final sessionId = ChatStore.instance.currentSessionId;
+    if (sessionId == null) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgElevated,
         title: Text('清空会话', style: TextStyle(color: colors.textPrimary)),
         content:
-            Text('确定要清空所有消息吗？', style: TextStyle(color: colors.textSecondary)),
+            Text('确定要清空当前会话所有消息吗？', style: TextStyle(color: colors.textSecondary)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -221,7 +224,11 @@ class _ChatPageState extends State<ChatPage> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              ChatStore.instance.clearSession();
+              ChatStore.instance.clearCurrentSessionMessages();
+              ConnectionManager.instance.send(WsMessage(
+                event: WsEvents.sessionClearRequest,
+                data: {'sessionId': sessionId},
+              ));
             },
             child: Text('清空', style: TextStyle(color: colors.error)),
           ),
@@ -352,19 +359,25 @@ class _ChatPageState extends State<ChatPage> {
               Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
             },
           ),
-          // Return to live chat (clear active session)
+          // 新对话：在桌面端创建新会话并切换
           StreamBuilder<String?>(
             stream: SessionSyncService.instance.activeSessionStream,
             initialData: SessionSyncService.instance.activeSessionId,
             builder: (context, snapshot) {
-              if (snapshot.data == null) return const SizedBox.shrink();
               return IconButton(
                 icon: const Icon(Icons.add_comment_outlined),
                 tooltip: '新对话',
-                onPressed: () {
+                onPressed: () async {
                   _inputFocusNode.unfocus();
-                  SessionSyncService.instance.setActiveSession(null);
-                  ChatStore.instance.switchToSession(null);
+                  final result =
+                      await SessionSyncService.instance.createSession();
+                  if (result != null) {
+                    final sessionId = result['id'] as String?;
+                    if (sessionId != null) {
+                      SessionSyncService.instance.setActiveSession(sessionId);
+                      ChatStore.instance.switchToSession(sessionId);
+                    }
+                  }
                 },
               );
             },
@@ -598,12 +611,28 @@ class _ChatPageState extends State<ChatPage> {
             _buildMarkdownBody(msg.content, isStreaming: msg.isStreaming),
             if (msg.isStreaming) const StreamingShimmer(),
             // Token usage footer
-            if (msg.usage != null)
+            if (msg.usage != null || msg.model != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
-                  style: TextStyle(color: colors.textMuted, fontSize: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    if (msg.usage != null)
+                      Text(
+                        'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
+                        style: TextStyle(color: colors.textMuted, fontSize: 10),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                    if (msg.model != null)
+                      Text(
+                        msg.model!,
+                        style: TextStyle(
+                            color: colors.textMuted,
+                            fontSize: 10,
+                            fontFamily: 'monospace'),
+                      ),
+                  ],
                 ),
               ),
           ],

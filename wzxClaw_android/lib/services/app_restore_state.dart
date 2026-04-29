@@ -14,6 +14,7 @@ class AppRestoreState {
   AppRestoreState._();
 
   static const _lastRouteKey = 'last_route';
+  static const _lastWorkspacePathKey = 'last_workspace_path';
   static const _sessionViewPrefix = 'session_view';
   static const _liveChatSentinel = '__live__';
 
@@ -25,6 +26,16 @@ class AppRestoreState {
   static Future<String?> getLastRoute() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_lastRouteKey);
+  }
+
+  static Future<void> setLastWorkspacePath(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastWorkspacePathKey, path);
+  }
+
+  static Future<String?> getLastWorkspacePath() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_lastWorkspacePathKey);
   }
 
   static Future<void> setLastViewedSession({

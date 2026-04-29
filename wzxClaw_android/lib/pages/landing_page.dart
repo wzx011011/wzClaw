@@ -9,6 +9,7 @@ import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
+import '../widgets/workspace_picker_card.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -25,10 +26,8 @@ class _LandingPageState extends State<LandingPage>
 
   StreamSubscription<WsConnectionState>? _stateSub;
   StreamSubscription<List<DesktopInfo>>? _desktopsSub;
-  StreamSubscription<String?>? _selectedDesktopSub;
-  bool _shouldRestoreChatRoute = false;
-  bool _didAutoNavigateToChat = false;
   bool _didNavigate = false;
+  String? _savedWorkspacePath;
 
   // 呼吸动画控制器（状态B）
   late final AnimationController _pulseController;
@@ -58,9 +57,6 @@ class _LandingPageState extends State<LandingPage>
       if (mounted) setState(() => _desktops = list);
     });
 
-    _selectedDesktopSub = ConnectionManager.instance.selectedDesktopIdStream
-        .listen((_) => _maybeRestoreChatRoute());
-
     _autoConnect();
   }
 
@@ -69,14 +65,13 @@ class _LandingPageState extends State<LandingPage>
     _pulseController.dispose();
     _stateSub?.cancel();
     _desktopsSub?.cancel();
-    _selectedDesktopSub?.cancel();
     super.dispose();
   }
 
   Future<void> _autoConnect() async {
     final prefs = await SharedPreferences.getInstance();
     final serverUrl = prefs.getString('server_url');
-    _shouldRestoreChatRoute = await AppRestoreState.getLastRoute() == '/chat';
+    _savedWorkspacePath = await AppRestoreState.getLastWorkspacePath();
     if (serverUrl != null && serverUrl.isNotEmpty) {
       final token = prefs.getString('auth_token') ?? '';
       try {
@@ -95,11 +90,10 @@ class _LandingPageState extends State<LandingPage>
         debugPrint('[LandingPage] auto-connect failed: $e');
       }
     }
-    _maybeRestoreChatRoute();
   }
 
-  /// 选择桌面端后，获取工作区列表并弹出选择器。
-  /// 无论工作区数量，始终弹出选择器让用户确认。
+  /// 选择桌面端后，获取工作区列表。
+  /// 单工作区或匹配已保存工作区时自动选择，否则弹出选择器。
   void _onSelectDesktop(DesktopInfo desktop) {
     _didNavigate = false;
     ConnectionManager.instance.selectDesktop(desktop.desktopId);
@@ -111,7 +105,29 @@ class _LandingPageState extends State<LandingPage>
 
       if (!mounted) return;
 
-      // 无论数量多少，始终弹出工作区选择器
+      // 单工作区 → 自动选择，跳过弹窗
+      if (workspaces.length == 1) {
+        final path = workspaces.first.primaryPath;
+        if (path != null && path.isNotEmpty) {
+          SessionSyncService.instance.switchWorkspace(path);
+        }
+        _navigateToChat();
+        return;
+      }
+
+      // 有保存的工作区且匹配 → 自动选择，跳过弹窗
+      if (_savedWorkspacePath != null) {
+        final match = workspaces
+            .where((w) => w.primaryPath == _savedWorkspacePath)
+            .firstOrNull;
+        if (match != null && match.primaryPath != null) {
+          SessionSyncService.instance.switchWorkspace(match.primaryPath!);
+          _navigateToChat();
+          return;
+        }
+      }
+
+      // 多个工作区且无匹配 → 弹出选择器
       _showWorkspacePicker(workspaces);
     });
 
@@ -188,51 +204,31 @@ class _LandingPageState extends State<LandingPage>
             else
             ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+                maxHeight: MediaQuery.of(ctx).size.height * 0.55,
               ),
               child: ListView.builder(
                 shrinkWrap: true,
                 itemCount: workspaces.length,
                 itemBuilder: (ctx, i) {
                   final ws = workspaces[i];
-                  final isCurrent = ws.isCurrent;
-                  return ListTile(
-                    leading: Icon(
-                      isCurrent ? Icons.folder_open : Icons.folder_outlined,
-                      color: isCurrent ? colors.accent : colors.textSecondary,
-                    ),
-                    title: Text(ws.name,
-                        style: TextStyle(
-                          color: isCurrent
-                              ? colors.accent
-                              : colors.textPrimary,
-                          fontWeight: isCurrent
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                        )),
-                    subtitle: Text(ws.path,
-                        style: TextStyle(
-                            color: colors.textMuted, fontSize: 11),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                    trailing: isCurrent
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: colors.accent.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text('当前',
-                                style: TextStyle(
-                                    color: colors.accent, fontSize: 11)),
-                          )
-                        : null,
-                    onTap: () {
+                  return WorkspacePickerCard(
+                    workspace: ws,
+                    colors: colors,
+                    onWorkspaceTap: () {
                       Navigator.pop(ctx);
-                      if (!isCurrent) {
-                        SessionSyncService.instance.switchWorkspace(ws.path);
+                      final path = ws.primaryPath;
+                      if (path != null && path.isNotEmpty) {
+                        SessionSyncService.instance.switchWorkspace(path);
                       }
+                      _navigateToChat();
+                    },
+                    onSessionTap: (sessionId) {
+                      Navigator.pop(ctx);
+                      final path = ws.primaryPath;
+                      if (path != null && path.isNotEmpty) {
+                        SessionSyncService.instance.switchWorkspace(path);
+                      }
+                      SessionSyncService.instance.setActiveSession(sessionId);
                       _navigateToChat();
                     },
                   );
@@ -276,22 +272,6 @@ class _LandingPageState extends State<LandingPage>
         AppRestoreState.setLastRoute('/');
         ConnectionManager.instance.disconnect();
       }
-    });
-  }
-
-  void _maybeRestoreChatRoute() {
-    if (!_shouldRestoreChatRoute || _didAutoNavigateToChat || !mounted) {
-      return;
-    }
-
-    if (ConnectionManager.instance.selectedDesktopId == null) {
-      return;
-    }
-
-    _didAutoNavigateToChat = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/chat', (_) => false);
     });
   }
 

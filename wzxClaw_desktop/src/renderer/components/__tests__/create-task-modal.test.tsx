@@ -28,7 +28,7 @@ describe('CreateWorkspaceModal', () => {
     await user.type(screen.getByLabelText(/描述/), 'Some description')
     await user.click(screen.getByRole('button', { name: '创建' }))
 
-    expect(onCreate).toHaveBeenCalledWith('My Task', 'Some description')
+    expect(onCreate).toHaveBeenCalledWith('My Task', 'Some description', undefined)
   })
 
   it('does not submit with empty title', async () => {

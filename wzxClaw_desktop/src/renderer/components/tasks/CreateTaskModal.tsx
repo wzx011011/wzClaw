@@ -2,22 +2,42 @@ import React, { useState, useRef, useEffect } from 'react'
 
 interface CreateWorkspaceModalProps {
   onClose: () => void
-  onCreate: (title: string, description?: string) => void
+  onCreate: (title: string, description?: string, folderPath?: string) => void
 }
 
 export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceModalProps): JSX.Element {
+  const [folderPath, setFolderPath] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [isPicking, setIsPicking] = useState(false)
+  const titleRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    inputRef.current?.focus()
+    titleRef.current?.focus()
   }, [])
+
+  const handlePickFolder = async () => {
+    setIsPicking(true)
+    try {
+      const result = await window.wzxclaw.openFolder()
+      if (result?.rootPath) {
+        setFolderPath(result.rootPath)
+        // 从路径中提取文件夹名作为工作区标题
+        const folderName = result.rootPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+        if (!title.trim()) {
+          setTitle(folderName)
+        }
+        titleRef.current?.focus()
+      }
+    } finally {
+      setIsPicking(false)
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
-    onCreate(title.trim(), description.trim() || undefined)
+    onCreate(title.trim(), description.trim() || undefined, folderPath || undefined)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -30,9 +50,29 @@ export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceMo
         <h2 className="workspace-modal-title">新建工作区</h2>
         <form onSubmit={handleSubmit}>
           <div className="workspace-modal-field">
+            <label>项目文件夹</label>
+            <div className="workspace-modal-folder-row">
+              <input
+                type="text"
+                value={folderPath}
+                onChange={(e) => setFolderPath(e.target.value)}
+                placeholder="点击「选择」或输入路径..."
+                className="workspace-modal-folder-input"
+              />
+              <button
+                type="button"
+                className="workspace-btn-secondary workspace-modal-folder-btn"
+                onClick={handlePickFolder}
+                disabled={isPicking}
+              >
+                {isPicking ? '...' : '选择'}
+              </button>
+            </div>
+          </div>
+          <div className="workspace-modal-field">
             <label htmlFor="workspace-title">工作区名称</label>
             <input
-              ref={inputRef}
+              ref={titleRef}
               id="workspace-title"
               type="text"
               value={title}

@@ -46,7 +46,8 @@ export function registerIpcHandlers(
   mcpManager: MCPManager,
   workspaceStore: WorkspaceStore,
   onWorkspaceOpened?: (rootPath: string) => void,
-  onDataChanged?: (event: string, data: unknown) => void
+  onDataChanged?: (event: string, data: unknown) => void,
+  onStreamEvent?: (event: string, data: unknown) => void
 ): void {
   // Mutable reference to IndexingEngine (updated when workspace opens)
   const indexingEngineRef = { current: indexingEngine }
@@ -134,15 +135,27 @@ export function registerIpcHandlers(
     }
     sender.once('destroyed', onWindowClosed)
 
-    // Run agent loop and forward events to renderer
+    // Run agent loop and forward events to renderer + mobile
     // Track tool call inputs by ID to extract file paths for agent edit notifications (per D-52)
     const toolCallInputs = new Map<string, Record<string, unknown>>()
+
+    // Helper: broadcast stream event to mobile via relay
+    const relayEvent = (eventType: string, data: Record<string, unknown>) => {
+      if (onStreamEvent) {
+        onStreamEvent(`stream:${eventType}`, { ...data, sessionId: agentConfig.conversationId })
+      }
+    }
+
+    // 桌面发起的 agent 运行开始前，通知手机端切换到当前会话，
+    // 防止 _isWrongSession 因 sessionId 不匹配而丢弃所有流式事件。
+    onStreamEvent?.('session:active', { sessionId: agentConfig.conversationId })
 
     try {
       for await (const agentEvent of agentLoop.run(result.data.content, agentConfig, sender)) {
         switch (agentEvent.type) {
           case 'agent:text':
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
+            relayEvent('agent:text', { content: agentEvent.content })
             break
           case 'agent:thinking':
             sender.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
@@ -155,6 +168,7 @@ export function registerIpcHandlers(
               name: agentEvent.toolName,
               input: agentEvent.input,
             })
+            relayEvent('agent:tool_call', { toolCallId: agentEvent.toolCallId, toolName: agentEvent.toolName, input: agentEvent.input })
             break
           case 'agent:tool_result': {
             sender.send(IPC_CHANNELS['stream:tool_use_end'], {
@@ -163,6 +177,7 @@ export function registerIpcHandlers(
               isError: agentEvent.isError,
               toolName: agentEvent.toolName,
             })
+            relayEvent('agent:tool_result', { toolCallId: agentEvent.toolCallId, toolName: agentEvent.toolName, isError: agentEvent.isError, output: agentEvent.output })
 
             // Forward file changes from agent tool execution to renderer (per D-52)
             if (!agentEvent.isError && (agentEvent.toolName === 'FileWrite' || agentEvent.toolName === 'FileEdit')) {
@@ -185,6 +200,7 @@ export function registerIpcHandlers(
           }
           case 'agent:error':
             sender.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
+            relayEvent('agent:error', { error: agentEvent.error })
             break
           case 'agent:turn_end':
             sender.send(IPC_CHANNELS['stream:turn_end'], {})
@@ -198,6 +214,7 @@ export function registerIpcHandlers(
             break
           case 'agent:done':
             sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+            relayEvent('agent:done', { usage: agentEvent.usage, turnCount: (agentEvent as any).turnCount })
             // Track cost and push usage:update to renderer (Phase 4.4)
             costTracker.addUsage(
               agentConfig.model,

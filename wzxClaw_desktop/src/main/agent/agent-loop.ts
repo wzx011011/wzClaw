@@ -130,7 +130,7 @@ export class AgentLoop {
         debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
-        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -141,7 +141,7 @@ export class AgentLoop {
         debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
-        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -262,7 +262,7 @@ export class AgentLoop {
       //     this._recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD) && turnCount > DIMINISHING_WINDOW) {
       //   debugLogger.log('WARN', `diminishing returns: last ${DIMINISHING_WINDOW} turns all < ${DIMINISHING_THRESHOLD} output tokens`)
       //   yield { type: 'agent:error', error: `Agent appears stuck — low output over ${DIMINISHING_WINDOW} consecutive turns`, recoverable: true }
-      //   yield { type: 'agent:done', usage: totalUsage, turnCount }
+      //   yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
       //   endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
       //   await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
       //   return
@@ -272,7 +272,7 @@ export class AgentLoop {
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
         debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
         yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
-        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -296,7 +296,7 @@ export class AgentLoop {
         if (hookResult.preventContinuation) {
           debugLogger.log('HOOK', 'stop hook prevented continuation')
           debugLogger.close()
-          yield { type: 'agent:done', usage: totalUsage, turnCount }
+          yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
           endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
           await this.hookRegistry.emit('session-end', { conversationId: config.conversationId })
           return
@@ -314,7 +314,7 @@ export class AgentLoop {
       if (turnResult.shouldStop) {
         debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
         debugLogger.close()
-        yield { type: 'agent:done', usage: totalUsage, turnCount }
+        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, false, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return

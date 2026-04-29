@@ -96,11 +96,13 @@ class WsEvents {
   static const String sessionCreateRequest = 'session:create:request';
   static const String sessionDeleteRequest = 'session:delete:request';
   static const String sessionRenameRequest = 'session:rename:request';
+  static const String sessionClearRequest = 'session:clear:request';
 
   // -- Session CRUD events (incoming: desktop -> mobile) --
   static const String sessionCreateResponse = 'session:create:response';
   static const String sessionDeleteResponse = 'session:delete:response';
   static const String sessionRenameResponse = 'session:rename:response';
+  static const String sessionClearResponse = 'session:clear:response';
 
   // -- Workspace events (outgoing: mobile -> desktop) --
   static const String workspaceListRequest = 'workspace:list:request';
@@ -127,6 +129,9 @@ class WsEvents {
 
   // -- Retry event (incoming: desktop -> mobile) --
   static const String streamRetrying = 'stream:retrying';
+
+  // -- Agent running notification (desktop -> mobile, on reconnect) --
+  static const String agentRunning = 'stream:agent:running';
 
   // -- AskUserQuestion events (incoming: desktop -> mobile) --
   static const String agentAskUserQuestion = 'stream:agent:ask_user_question';

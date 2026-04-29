@@ -44,6 +44,7 @@ export default function WorkspaceHomePage(): JSX.Element {
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace)
   const openWorkspaceDetail = useWorkspaceStore((s) => s.openWorkspaceDetail)
+  const addProject = useWorkspaceStore((s) => s.addProject)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
@@ -76,10 +77,19 @@ export default function WorkspaceHomePage(): JSX.Element {
   const archivedWorkspaces = tasks.filter((t) => t.archived)
   const displayWorkspaces = showArchived ? archivedWorkspaces : activeWorkspaces
 
-  const handleCreate = async (title: string, description?: string) => {
-    const workspace = await createWorkspace(title, description)
-    setShowCreateModal(false)
-    openWorkspaceDetail(workspace.id)
+  const handleCreate = async (title: string, description?: string, folderPath?: string) => {
+    try {
+      const workspace = await createWorkspace(title, description)
+      // 如果用户选择了文件夹，自动绑定为工作区项目
+      if (folderPath && workspace.id) {
+        await addProject(workspace.id, folderPath)
+      }
+      setShowCreateModal(false)
+      openWorkspaceDetail(workspace.id)
+    } catch (err) {
+      console.error('[WorkspaceHomePage] Failed to create workspace:', err)
+      // modal 保持打开，允许用户重试
+    }
   }
 
   const handleArchive = (workspaceId: string) => {

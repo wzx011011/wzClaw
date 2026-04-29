@@ -1,5 +1,6 @@
 import React from 'react'
 import { useLayoutStore, type SidebarPanel } from '../../stores/layout-store'
+import { useCommandStore } from '../../stores/command-store'
 
 // ============================================================
 // ActivityBar — VS Code 风格竖向图标活动栏
@@ -10,7 +11,7 @@ interface ActivityBarItem {
   id: SidebarPanel | 'search' | 'settings'
   label: string
   icon: React.ReactNode
-  disabled?: boolean
+  action?: () => void // 自定义点击行为（不切换 sidebar panel）
 }
 
 const ITEMS: ActivityBarItem[] = [
@@ -41,7 +42,7 @@ const ITEMS: ActivityBarItem[] = [
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
     ),
-    disabled: true,
+    action: () => useCommandStore.getState().openPalette(),
   },
   {
     id: 'settings',
@@ -52,7 +53,7 @@ const ITEMS: ActivityBarItem[] = [
         <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
       </svg>
     ),
-    disabled: true,
+    action: () => window.dispatchEvent(new CustomEvent('wzxclaw:open-settings')),
   },
 ]
 
@@ -62,21 +63,23 @@ export default function ActivityBar(): JSX.Element {
   const setActiveSidebarPanel = useLayoutStore((s) => s.setActiveSidebarPanel)
 
   const handleClick = (item: ActivityBarItem): void => {
-    if (item.disabled) return
+    if (item.action) {
+      item.action()
+      return
+    }
     setActiveSidebarPanel(item.id as SidebarPanel)
   }
 
   return (
     <div className="activity-bar">
       {ITEMS.map((item) => {
-        const isActive = !item.disabled && item.id === activeSidebarPanel && sidebarVisible
+        const isActive = !item.action && item.id === activeSidebarPanel && sidebarVisible
         return (
           <button
             key={item.id}
-            className={`activity-bar-item${isActive ? ' active' : ''}${item.disabled ? ' disabled' : ''}`}
-            title={item.disabled ? `${item.label}（即将推出）` : item.label}
+            className={`activity-bar-item${isActive ? ' active' : ''}`}
+            title={item.label}
             onClick={() => handleClick(item)}
-            disabled={item.disabled}
           >
             {item.icon}
             {isActive && <span className="activity-bar-indicator" />}

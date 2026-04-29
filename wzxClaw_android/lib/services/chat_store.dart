@@ -183,6 +183,9 @@ class ChatStore {
         case WsEvents.agentAskUserQuestion:
           _handleAskUserQuestion(wsMsg.data);
           break;
+        case WsEvents.agentRunning:
+          _handleAgentRunning(wsMsg.data);
+          break;
 
         // -- Command ack --
         case WsEvents.commandAck:
@@ -291,24 +294,48 @@ class ChatStore {
     _notifyListeners();
   }
 
+  // ── stream:agent:running ──────────────────────────────────────────
+  // 桌面端 agent 正在运行时，手机重连后收到此通知
+  void _handleAgentRunning(dynamic data) {
+    if (data is! Map<String, dynamic>) return;
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null) return;
+    // 切换到该会话并标记为 streaming 状态
+    _currentSessionId = sessionId;
+    _isStreaming = true;
+    _streamingController.add(true);
+    // 自动拉取该会话的最新消息（包含已持久化的部分）
+    ConnectionManager.instance.send(WsMessage(
+      event: WsEvents.sessionLoadRequest,
+      data: {'sessionId': sessionId},
+    ));
+  }
+
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
     if (_isWrongSession(data)) return;
     _finalizeStreamingMessage();
     _setWaiting(false);
 
-    // Extract token usage if available
+    // Extract token usage and model name if available
     if (data is Map<String, dynamic>) {
       final usageMap = data['usage'] as Map<String, dynamic>?;
-      if (usageMap != null && _messages.isNotEmpty) {
-        final usage = TokenUsage(
-          inputTokens: (usageMap['inputTokens'] as num?)?.toInt() ?? 0,
-          outputTokens: (usageMap['outputTokens'] as num?)?.toInt() ?? 0,
-        );
-        // Attach usage to the last assistant message
+      final modelName = data['model'] as String?;
+      if ((usageMap != null || modelName != null) && _messages.isNotEmpty) {
+        TokenUsage? usage;
+        if (usageMap != null) {
+          usage = TokenUsage(
+            inputTokens: (usageMap['inputTokens'] as num?)?.toInt() ?? 0,
+            outputTokens: (usageMap['outputTokens'] as num?)?.toInt() ?? 0,
+          );
+        }
+        // Attach usage + model to the last assistant message
         for (int i = _messages.length - 1; i >= 0; i--) {
           if (_messages[i].role == MessageRole.assistant) {
-            _messages[i] = _messages[i].copyWith(usage: usage);
+            _messages[i] = _messages[i].copyWith(
+              usage: usage,
+              model: modelName,
+            );
             ChatDatabase.instance.updateMessage(_messages[i]);
             break;
           }
@@ -427,6 +454,11 @@ class ChatStore {
     if (data != null && _isWrongSession(data)) return;
     _thinkingContent = '';
     _thinkingController.add('');
+  }
+
+  /// 轻量级同步 sessionId（不重置消息列表），用于 session:active 事件。
+  void syncSessionId(String? sessionId) {
+    _currentSessionId = sessionId;
   }
 
   /// Send a permission response back to the desktop.
@@ -647,7 +679,7 @@ class ChatStore {
     _notifyListeners();
   }
 
-  /// Reset desktop-scoped chat state when the selected desktop/task is cleared.
+  /// Reset desktop-scoped chat state when the selected desktop/workspace is cleared.
   void resetSessionScope() {
     _clearGeneration++;
     _currentSessionId = null;
@@ -720,6 +752,17 @@ class ChatStore {
 
   Future<void> clearSession() async {
     await ChatDatabase.instance.clearAll();
+    _messages.clear();
+    _streamingMessage = null;
+    _isStreaming = false;
+    _notifyListeners();
+  }
+
+  /// 清空当前会话的消息（仅本地，桌面端由 WS 事件单独通知）
+  Future<void> clearCurrentSessionMessages() async {
+    if (_currentSessionId != null) {
+      await ChatDatabase.instance.clearSessionMessages(_currentSessionId!);
+    }
     _messages.clear();
     _streamingMessage = null;
     _isStreaming = false;
