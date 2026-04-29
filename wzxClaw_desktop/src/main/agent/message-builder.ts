@@ -83,13 +83,37 @@ export class MessageBuilder {
           break
         }
 
-        case 'tool_result':
+        case 'tool_result': {
+          // OpenAI 要求 tool 消息必须紧跟有 tool_calls 的 assistant 消息。
+          // 上下文压缩或历史截断后可能出现孤立的 tool_result，需过滤掉，
+          // 否则 API 返回 400 "Messages with role 'tool' must be a response to
+          // a preceding message with 'tool_calls'"。
+          const prev = result[result.length - 1]
+          const prevHasToolCalls =
+            prev?.role === 'assistant' &&
+            Array.isArray((prev as Record<string, unknown>).tool_calls) &&
+            ((prev as Record<string, unknown>).tool_calls as unknown[]).length > 0
+          if (!prevHasToolCalls) break  // 跳过孤立的 tool_result
+
           result.push({
             role: 'tool',
             tool_call_id: msg.toolCallId,
             content: msg.content
           })
           break
+        }
+      }
+    }
+
+    // 尾部清理：如果最后一条是没有后续 tool 消息的 assistant(tool_calls)，
+    // OpenAI 要求每个 tool_call 必须有对应的 tool 回复，否则截掉该 assistant 消息。
+    while (result.length > 0) {
+      const last = result[result.length - 1]
+      const lastToolCalls = (last as Record<string, unknown>).tool_calls as unknown[] | undefined
+      if (last.role === 'assistant' && lastToolCalls && lastToolCalls.length > 0) {
+        result.pop()
+      } else {
+        break
       }
     }
 

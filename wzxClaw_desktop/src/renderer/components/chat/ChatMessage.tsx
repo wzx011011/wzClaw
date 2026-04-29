@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
-import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
 import CodeBlock from './CodeBlock'
@@ -9,9 +8,16 @@ import ThinkingIndicator from './ThinkingIndicator'
 import ToolCard from './ToolCard'
 
 // ============================================================
-// 模块级 Markdown 组件配置 — 稳定引用，不随每次渲染重建
-// 仅依赖 CodeBlock 等稳定 import，无闭包状态
+// 模块级稳定引用 — 不随每次渲染重建
+// 注：rehypeHighlight 已移除。MD_COMPONENTS.pre 用 extractText() 提取纯文本后
+// 传给 CodeBlock（CodeBlock 自行做语法高亮），因此 rehypeHighlight 的输出
+// 在渲染路径上被 100% 丢弃——保留它只会产生 O(content) 的无用开销。
 // ============================================================
+
+/** 唯一的 rehype 插件集：仅做基础 HTML 处理（内联 HTML 支持），不运行高亮 */
+const REHYPE_PLUGINS = [rehypeRaw] as const
+/** 稳定的 remark 插件引用 */
+const REMARK_PLUGINS = [remarkGfm] as const
 const extractText = (nodes: React.ReactNode): string => {
   if (typeof nodes === 'string') return nodes
   if (typeof nodes === 'number') return String(nodes)
@@ -155,12 +161,12 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
         </details>
       )}
 
-      {/* Content — always rendered via ReactMarkdown so streaming and final output look identical */}
+      {/* Content — always rendered via ReactMarkdown so streaming and final output look identical. */}
       {displayContent && (
         <div className={`chat-message-content${isStreaming ? ' chat-message-content-streaming' : ''}`}>
           <ReactMarkdown
-            rehypePlugins={[rehypeRaw, rehypeHighlight]}
-            remarkPlugins={[remarkGfm]}
+            rehypePlugins={REHYPE_PLUGINS}
+            remarkPlugins={REMARK_PLUGINS}
             components={MD_COMPONENTS}
           >
             {displayContent}

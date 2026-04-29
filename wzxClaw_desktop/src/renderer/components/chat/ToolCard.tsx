@@ -225,7 +225,7 @@ function extractResultSummary(toolName: string, output: string, isError?: boolea
 // Main ToolCard Component
 // ============================================================
 
-export default function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
+function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
   const prevStatusRef = useRef(toolCall.status)
   const startTimeRef = useRef(Date.now())
   const [elapsed, setElapsed] = useState(0)
@@ -579,3 +579,27 @@ export default function ToolCard({ toolCall, originalContent }: ToolCardProps): 
     </div>
   )
 }
+
+/**
+ * ToolCard memo comparator — 避免文本流更新时已完成的 ToolCard 重渲染。
+ * 当 onStreamToolResult 触发时，toolCalls.map() 会为所有 tc 创建新对象，
+ * 但实际上只有当前 tc 的 output/status 变化了。字段级比较可跳过未变更的卡片。
+ */
+function areToolCardPropsEqual(prev: ToolCardProps, next: ToolCardProps): boolean {
+  if (prev.originalContent !== next.originalContent) return false
+  const p = prev.toolCall
+  const n = next.toolCall
+  if (p === n) return true
+  return (
+    p.id === n.id &&
+    p.status === n.status &&
+    p.output === n.output &&
+    p.isError === n.isError &&
+    p.subText === n.subText &&
+    p.children === n.children
+  )
+}
+
+const MemoizedToolCard = React.memo(ToolCard, areToolCardPropsEqual)
+MemoizedToolCard.displayName = 'ToolCard'
+export default MemoizedToolCard

@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+
+/** 模块级稳定引用 — 避免 pendingPlan ReactMarkdown 每次渲染重建 unified 处理器 */
+const REMARK_PLUGINS_PLAN = [remarkGfm] as const
 import { v4 as uuidv4 } from 'uuid'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
@@ -9,7 +12,7 @@ import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useStepStore } from '../../stores/step-store'
 import { useToastStore } from '../../stores/toast-store'
 import { SLASH_COMMANDS } from '../../commands/slash-commands'
-import ChatMessage from './ChatMessage'
+import MessageList from './MessageList'
 import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import SlashCommandPicker from './SlashCommandPicker'
@@ -17,12 +20,6 @@ import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
-import ThinkingIndicator from './ThinkingIndicator'
-import {
-  getVisibleHistoryWindow,
-  INITIAL_HISTORY_RENDER_COUNT,
-  shouldWindowHistory,
-} from './history-window'
 
 import type { MentionItem } from '../../../shared/types'
 
@@ -52,17 +49,13 @@ const PERMISSION_MODES: { id: PermissionMode; label: string; desc: string }[] = 
 // ============================================================
 
 export default function ChatPanel(): JSX.Element {
-  // Chat store
-  const messages = useChatStore((s) => s.messages)
+  // Chat store — 仅订阅 ChatPanel 自身需要的字段；
+  // messages / streaming 高频更新字段已移至 MessageList，不再引起 ChatPanel 重渲。
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const isWaitingForResponse = useChatStore((s) => s.isWaitingForResponse)
-  const streamingMessageId = useChatStore((s) => s.streamingMessageId)
   const error = useChatStore((s) => s.error)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
-  const streamJustEnded = useChatStore((s) => s.streamJustEnded)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const isLoadingSession = useChatStore((s) => s.isLoadingSession)
 
   // Settings store
   const model = useSettingsStore((s) => s.model)
@@ -75,14 +68,8 @@ export default function ChatPanel(): JSX.Element {
   const [mentionFilter, setMentionFilter] = useState('')
   const [showSlashPicker, setShowSlashPicker] = useState(false)
   const [slashQuery, setSlashQuery] = useState('')
-  const [historyWindowed, setHistoryWindowed] = useState(false)
-  const [historyRenderCount, setHistoryRenderCount] = useState(INITIAL_HISTORY_RENDER_COUNT)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const [userScrolledUp, setUserScrolledUp] = useState(false)
   const previousSessionIdRef = useRef(activeSessionId)
-  const previousLoadingSessionRef = useRef(isLoadingSession)
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
@@ -150,76 +137,11 @@ export default function ChatPanel(): JSX.Element {
     })
   }
 
-  const lastMessage = messages[messages.length - 1]
-  const lastToolSignature = lastMessage?.toolCalls
-    ?.map((toolCall) => `${toolCall.id}:${toolCall.status}:${toolCall.output?.length ?? 0}`)
-    .join('|') ?? ''
-  const { visibleMessages, hiddenMessageCount } = getVisibleHistoryWindow(
-    messages,
-    historyWindowed,
-    historyRenderCount
-  )
-  const scrollAnchorKey = [
-    messages.length,
-    lastMessage?.id ?? '',
-    lastMessage?.content.length ?? 0,
-    lastMessage?.thinkingContent?.length ?? 0,
-    lastMessage?.isStreaming ? 1 : 0,
-    lastToolSignature,
-    isWaitingForResponse ? 1 : 0,
-    streamingMessageId ?? ''
-  ].join(':')
-
-  // Auto-scroll to bottom when messages change — only if user hasn't scrolled up
-  // 使用 'instant' 避免会话切换/加载时出现缓慢滑动动画
-  useEffect(() => {
-    if (userScrolledUp) return
-    const raf = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [scrollAnchorKey, userScrolledUp, isStreaming])
-
-  // Force scroll to bottom when stream ends so final results are visible
-  useEffect(() => {
-    if (streamJustEnded) {
-      setUserScrolledUp(false)
-      useChatStore.setState({ streamJustEnded: false })
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
-      })
-    }
-  }, [streamJustEnded])
-
-  // Track scroll position to detect user scroll-up
-  useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
-    let rafId = 0
-    const handleScroll = (): void => {
-      if (rafId) return
-      rafId = requestAnimationFrame(() => {
-        rafId = 0
-        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-        setUserScrolledUp(distanceFromBottom > 100)
-      })
-    }
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId)
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }, [])
-
+  // 会话切换：重置 ChatPanel 自身的 UI 状态（历史窗口/滚动由 MessageList 自行重置）
   useEffect(() => {
     if (previousSessionIdRef.current === activeSessionId) return
-
     previousSessionIdRef.current = activeSessionId
-    setHistoryRenderCount(INITIAL_HISTORY_RENDER_COUNT)
-    setHistoryWindowed(shouldWindowHistory(messages.length))
-    // 完整重置本地 UI 状态，防止旧会话的 UI 泄漏到新会话
     setInputValue('')
-    setUserScrolledUp(false)
     setPendingAskUserQuestions([])
     setPlanModeActive(false)
     setPendingPlan(null)
@@ -229,21 +151,7 @@ export default function ChatPanel(): JSX.Element {
     setSlashQuery('')
     setShowThinkingDropdown(false)
     setShowPermissionDropdown(false)
-  }, [activeSessionId, messages.length])
-
-  useEffect(() => {
-    if (previousLoadingSessionRef.current && !isLoadingSession) {
-      setHistoryRenderCount(INITIAL_HISTORY_RENDER_COUNT)
-      setHistoryWindowed(shouldWindowHistory(messages.length))
-    }
-    previousLoadingSessionRef.current = isLoadingSession
-  }, [isLoadingSession, messages.length])
-
-  useEffect(() => {
-    if (messages.length <= INITIAL_HISTORY_RENDER_COUNT && historyWindowed) {
-      setHistoryWindowed(false)
-    }
-  }, [messages.length, historyWindowed])
+  }, [activeSessionId])
 
   // Listen for plan mode events from main process
   useEffect(() => {
@@ -434,19 +342,6 @@ export default function ChatPanel(): JSX.Element {
     }
   }
 
-  const handleRevealMoreHistory = (): void => {
-    const nextCount = Math.min(messages.length, historyRenderCount + INITIAL_HISTORY_RENDER_COUNT)
-    setHistoryRenderCount(nextCount)
-    if (nextCount >= messages.length) {
-      setHistoryWindowed(false)
-    }
-  }
-
-  const handleRevealAllHistory = (): void => {
-    setHistoryRenderCount(messages.length)
-    setHistoryWindowed(false)
-  }
-
   // Compute context usage percentage
   const tokenUsage = useChatStore((s) => s.currentTokenUsage)
   const preset = DEFAULT_MODELS.find((m) => m.id === model)
@@ -464,61 +359,9 @@ export default function ChatPanel(): JSX.Element {
         </div>
       )}
 
-      {/* Messages */}
-      <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
-        {messages.length === 0 ? (
-          isLoadingSession ? (
-            <div className="session-loading-skeleton">
-              <div className="skeleton-line skeleton-bubble-user" />
-              <div className="skeleton-line skeleton-bubble-assistant" />
-              <div className="skeleton-line skeleton-bubble-user-sm" />
-              <div className="skeleton-line skeleton-bubble-assistant-sm" />
-              <div className="skeleton-line skeleton-bubble-user" />
-              <div className="skeleton-line skeleton-bubble-assistant" />
-            </div>
-          ) : (
-            <div className="chat-empty">
-              向 AI 助手发送消息开始对话
-              <span className="chat-empty-hint">按 Enter 发送，Shift+Enter 换行</span>
-            </div>
-          )
-        ) : (
-          <>
-            {hiddenMessageCount > 0 && (
-              <div className="history-window-banner">
-                <div className="history-window-copy">
-                  已优先渲染最近 {visibleMessages.length} 条消息，另外 {hiddenMessageCount} 条历史按需展开。
-                </div>
-                <div className="history-window-actions">
-                  <button className="history-window-btn" onClick={handleRevealMoreHistory}>
-                    再加载 {Math.min(hiddenMessageCount, INITIAL_HISTORY_RENDER_COUNT)} 条
-                  </button>
-                  <button className="history-window-btn history-window-btn-secondary" onClick={handleRevealAllHistory}>
-                    展开全部
-                  </button>
-                </div>
-              </div>
-            )}
-            {visibleMessages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
-          </>
-        )}
-        {isStreaming && isWaitingForResponse && !streamingMessageId && (
-          <div className="chat-message chat-message-assistant chat-message-streaming">
-            <ThinkingIndicator />
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-        <button
-          className={`scroll-to-bottom-btn${userScrolledUp ? ' visible' : ''}`}
-          onClick={() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-            setUserScrolledUp(false)
-          }}
-          title="Scroll to bottom"
-        >
-          ↓
-        </button>
-      </div>
+      {/* Messages — 消息列表已独立为 MessageList 组件，
+          ChatPanel 不再订阅 messages 数组，流式输出期间不参与重渲 */}
+      <MessageList />
 
       {/* Permission requests */}
       <PermissionRequest />
@@ -547,7 +390,7 @@ export default function ChatPanel(): JSX.Element {
             <span className="plan-approval-title">&#9998; Agent Plan — Review &amp; Approve</span>
           </div>
           <div className="plan-approval-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{pendingPlan}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS_PLAN}>{pendingPlan}</ReactMarkdown>
           </div>
           <div className="plan-approval-actions">
             <button
