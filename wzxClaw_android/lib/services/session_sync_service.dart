@@ -221,10 +221,23 @@ class SessionSyncService {
         // Desktop pushed a session change — refresh the list
         fetchSessions();
         break;
+      case WsEvents.agentRunning:
+        // Mobile reconnected while desktop agent is mid-stream — re-hydrate full
+        // message history with pagination so we don't only keep streaming deltas.
+        _handleAgentRunningSync(msg.data);
+        break;
     }
   }
 
-  // -- Response handlers --
+  /// 当桌面 agent 正在运行（手机重连场景），主动用分页重载该会话的全部历史，
+  /// 否则只会有流式增量，错过此前的消息。
+  void _handleAgentRunningSync(dynamic data) {
+    if (data is! Map) return;
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || !_hasSelectedDesktopTarget) return;
+    _fetchGeneration++;
+    unawaited(_applySessionSelection(sessionId, _fetchGeneration));
+  }
 
   void _handleSessionListResponse(dynamic data) async {
     if (data is! Map) return;
@@ -235,6 +248,10 @@ class SessionSyncService {
     // 桌面端当前活跃会话（新增字段，旧桌面端可能为 null）
     final desktopActiveSessionId = data['activeSessionId'] as String?;
     final desktopId = ConnectionManager.instance.selectedDesktopId;
+
+    // ignore: avoid_print
+    print('[SyncDiag] sessionListResponse req=$requestId workspace=$workspacePath '
+        'sessions=${rawSessions.length} activeSession=$desktopActiveSessionId');
 
     // 快照当前 generation，用于后续判断响应是否过期
     final gen = _fetchGeneration;
@@ -319,21 +336,29 @@ class SessionSyncService {
           // 若当前会话刚完成流式，messages 已正确，跳过覆盖以保留流式格式
           if (!ChatStore.instance.isRecentlyStreamed(currentSessionId!)) {
             try {
-              final result = await loadSessionMessages(
+              // ignore: avoid_print
+              print('[SyncDiag] list-response detected count change: '
+                  'old=$oldCount new=${newSession.messageCount} session=$currentSessionId');
+              final allMessages = await loadAllSessionMessages(
                 currentSessionId!,
                 forceRefresh: true,
               );
               if (gen == _fetchGeneration) {
-                ChatStore.instance.loadFetchedMessages(
-                  result['messages'] as List<ChatMessage>,
-                );
+                // ignore: avoid_print
+                print('[SyncDiag] list-response loaded ${allMessages.length} messages '
+                    'for session=$currentSessionId');
+                ChatStore.instance.loadFetchedMessages(allMessages);
               }
             } catch (e) {
               // WR-03修复: async void 函数内异常不再静默丢弃；
               // 保留现有消息可见，不影响用户体验。
               // ignore: avoid_print
-              print('[SessionSync] force-refresh failed: $e');
+              print('[SyncDiag] list-response refresh failed: $e');
             }
+          } else {
+            // ignore: avoid_print
+            print('[SyncDiag] list-response skipped refresh '
+                '(recently-streamed) session=$currentSessionId');
           }
         }
       }
@@ -379,6 +404,10 @@ class SessionSyncService {
     final total = data['total'] as int? ?? 0;
     final offset = data['offset'] as int? ?? 0;
     final hasMore = data['hasMore'] as bool? ?? false;
+
+    // ignore: avoid_print
+    print('[SyncDiag] sessionLoadResponse req=$requestId session=$sessionId '
+        'offset=$offset got=${rawMessages.length} total=$total hasMore=$hasMore');
 
     if (!_hasSelectedDesktopTarget) {
       _completePending(requestId, {
@@ -477,13 +506,20 @@ class SessionSyncService {
       unawaited(Future(() async {
         await ChatStore.instance.switchToSession(sessionId);
         try {
-          final result = await loadSessionMessages(sessionId, forceRefresh: true);
+          // ignore: avoid_print
+          print('[SyncDiag] sessionActive switch session=$sessionId');
+          final allMessages = await loadAllSessionMessages(
+            sessionId,
+            forceRefresh: true,
+          );
           if (gen == _fetchGeneration) {
-            ChatStore.instance.loadFetchedMessages(
-              result['messages'] as List<ChatMessage>,
-            );
+            // ignore: avoid_print
+            print('[SyncDiag] sessionActive loaded=${allMessages.length} session=$sessionId');
+            ChatStore.instance.loadFetchedMessages(allMessages);
           }
-        } catch (_) {
+        } catch (e) {
+          // ignore: avoid_print
+          print('[SyncDiag] sessionActive load failed: $e');
           // 加载失败时保留当前显示，不影响用户体验
         }
       }));
@@ -661,12 +697,23 @@ class SessionSyncService {
       if (cached.isNotEmpty && cached.first.isSynced) {
         final messages =
             await ChatDatabase.instance.getSessionMessages(sessionId);
-        return {
-          'messages': messages,
-          'total': messages.length,
-          'offset': 0,
-          'hasMore': false,
-        };
+        // 缓存校验：本地实际行数必须与桌面通报的 messageCount 一致，
+        // 否则视为缓存损坏/过期，直接从桌面端拉取最新内容。
+        final desktopCount = cached.first.messageCount;
+        final localCount = messages.length;
+        final cacheLooksValid = localCount == desktopCount ||
+            // desktopCount 可能为 0（旧数据/未上报），此时仅作消息非空兜底
+            (desktopCount == 0 && localCount > 0);
+        if (cacheLooksValid) {
+          return {
+            'messages': messages,
+            'total': messages.length,
+            'offset': 0,
+            'hasMore': false,
+          };
+        }
+        // 缓存与桌面计数不符 → 标记未同步，落库后走在线拉取分支。
+        await ChatDatabase.instance.markSessionUnsynced(sessionId);
       }
     }
 
@@ -713,10 +760,89 @@ class SessionSyncService {
     return {'messages': <ChatMessage>[], 'total': 0, 'offset': 0, 'hasMore': false};
   }
 
+  /// 拉取一个会话的"全部"消息：在线分页循环，直到桌面返回 hasMore=false。
+  ///
+  /// 修复：旧实现只取 `loadSessionMessages` 的第 1 页（默认 limit=50），
+  /// 长会话超过 50 条时手机就会缺消息。本方法保证手机收到与桌面一致的完整列表。
+  ///
+  /// [forceRefresh] 透传到第一页：true 表示绕过本地缓存校验。
+  Future<List<ChatMessage>> loadAllSessionMessages(
+    String sessionId, {
+    bool forceRefresh = false,
+    int pageSize = 200,
+  }) async {
+    final all = <ChatMessage>[];
+    var offset = 0;
+    var page = 0;
+    while (true) {
+      final result = await loadSessionMessages(
+        sessionId,
+        offset: offset,
+        limit: pageSize,
+        forceRefresh: forceRefresh && page == 0,
+      );
+      final pageMessages = (result['messages'] as List).cast<ChatMessage>();
+      all.addAll(pageMessages);
+      final hasMore = result['hasMore'] as bool? ?? false;
+      // ignore: avoid_print
+      print('[SyncDiag] loadAll page=$page offset=$offset got=${pageMessages.length} '
+          'hasMore=$hasMore total=${result['total']} session=$sessionId');
+      if (!hasMore || pageMessages.isEmpty) break;
+      offset += pageMessages.length;
+      page++;
+      // 安全护栏：避免无限循环
+      if (page > 200) {
+        // ignore: avoid_print
+        print('[SyncDiag] loadAll aborted: too many pages for $sessionId');
+        break;
+      }
+    }
+    return all;
+  }
+
   /// Set the active session ID (when user taps a session).
   void setActiveSession(String? sessionId) {
     _activeSessionId = sessionId;
     _activeSessionController.add(_activeSessionId);
+  }
+
+  /// 清空手机端本地的全部缓存（消息 + 会话元数据），重置内存状态，
+  /// 并在已连接桌面时立即重新拉取最新数据。
+  ///
+  /// 用于"消息和桌面对不上"的兜底：手动触发以保证下一次显示一定来自桌面。
+  Future<void> clearLocalCache() async {
+    // ignore: avoid_print
+    print('[SyncDiag] clearLocalCache: start');
+    // 1. 清空 SQLite 缓存
+    try {
+      await ChatDatabase.instance.clearAll();
+    } catch (e) {
+      // ignore: avoid_print
+      print('[SyncDiag] clearLocalCache: db error $e');
+      // ignore — 即便 DB 失败也继续重置内存状态
+    }
+
+    // 2. 失效内存中的会话与活动会话
+    _fetchGeneration++; // 让任何在途的 fetch 响应作废
+    _sessions = const [];
+    _activeSessionId = null;
+    _sessionsController.add(const []);
+    _activeSessionController.add(null);
+
+    // 3. 清空 ChatStore 视图，让 UI 立刻显示空白
+    ChatStore.instance.resetSessionScope();
+
+    // 4. 若已连接桌面，立即重新拉取
+    _lastSessionFetchTime = null; // 绕过 2s 去重
+    if (ConnectionManager.instance.state == WsConnectionState.connected &&
+        _hasSelectedDesktopTarget) {
+      // ignore: avoid_print
+      print('[SyncDiag] clearLocalCache: triggering fetchSessions');
+      fetchSessions();
+    } else {
+      // ignore: avoid_print
+      print('[SyncDiag] clearLocalCache: not connected, skip fetch');
+    }
   }
 
   /// Create a new session on the desktop.
@@ -911,11 +1037,17 @@ class SessionSyncService {
 
     if (generation != _fetchGeneration) return;
 
-    final result = await loadSessionMessages(sessionId, forceRefresh: true);
+    // ignore: avoid_print
+    print('[SyncDiag] applySessionSelection start session=$sessionId gen=$generation');
+    final allMessages = await loadAllSessionMessages(
+      sessionId,
+      forceRefresh: true,
+    );
     if (generation != _fetchGeneration) return;
 
-    final messages = result['messages'] as List<ChatMessage>;
-    ChatStore.instance.loadFetchedMessages(messages);
+    // ignore: avoid_print
+    print('[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}');
+    ChatStore.instance.loadFetchedMessages(allMessages);
   }
 
   Future<void> _restorePersistedSessionView() async {

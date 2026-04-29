@@ -303,20 +303,15 @@ class ChatStore {
   }
 
   // ── stream:agent:running ──────────────────────────────────────────
-  // 桌面端 agent 正在运行时，手机重连后收到此通知
+  // 桌面端 agent 正在运行时，手机重连后收到此通知。
+  // 仅同步 streaming 状态，分页重载历史由 SessionSyncService 监听同事件触发。
   void _handleAgentRunning(dynamic data) {
     if (data is! Map<String, dynamic>) return;
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null) return;
-    // 切换到该会话并标记为 streaming 状态
     _currentSessionId = sessionId;
     _isStreaming = true;
     _streamingController.add(true);
-    // 自动拉取该会话的最新消息（包含已持久化的部分）
-    ConnectionManager.instance.send(WsMessage(
-      event: WsEvents.sessionLoadRequest,
-      data: {'sessionId': sessionId},
-    ));
   }
 
   // ── stream:agent:done ──────────────────────────────────────────────
