@@ -3,13 +3,13 @@ import fsp from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
 import { getAppDataDir } from '../paths'
-import type { Task, Project } from '../../shared/types'
+import type { Workspace, Project } from '../../shared/types'
 
 function getTasksFilePath(): string {
-  return path.join(getAppDataDir(), 'tasks.json')
+  return path.join(getAppDataDir(), 'workspaces.json')
 }
 
-export class TaskStore {
+export class WorkspaceStore {
   private tasks: Map<string, Task> = new Map()
   private loaded = false
 
@@ -18,7 +18,7 @@ export class TaskStore {
     const filePath = getTasksFilePath()
     try {
       const raw = await fsp.readFile(filePath, 'utf-8')
-      const arr: Task[] = JSON.parse(raw)
+      const arr: Workspace[] = JSON.parse(raw)
       for (const t of arr) {
         this.tasks.set(t.id, t)
       }
@@ -36,22 +36,22 @@ export class TaskStore {
     await fsp.writeFile(filePath, JSON.stringify(arr, null, 2), 'utf-8')
   }
 
-  async listTasks(includeArchived = false): Promise<Task[]> {
+  async listWorkspaces(includeArchived = false): Promise<Workspace[]> {
     await this.load()
     const all = Array.from(this.tasks.values())
     if (includeArchived) return all
     return all.filter((t) => !t.archived)
   }
 
-  async getTask(id: string): Promise<Task | null> {
+  async getWorkspace(id: string): Promise<Workspace | null> {
     await this.load()
     return this.tasks.get(id) ?? null
   }
 
-  async createTask(title: string, description?: string): Promise<Task> {
+  async createWorkspace(title: string, description?: string): Promise<Workspace> {
     await this.load()
     const now = Date.now()
-    const task: Task = {
+    const task: Workspace = {
       id: crypto.randomUUID(),
       title,
       description,
@@ -65,10 +65,10 @@ export class TaskStore {
     return task
   }
 
-  async updateTask(
+  async updateWorkspace(
     id: string,
-    updates: Partial<Pick<Task, 'title' | 'description' | 'archived' | 'lastSessionId' | 'progressSummary'>>
-  ): Promise<Task> {
+    updates: Partial<Pick<Workspace, 'title' | 'description' | 'archived' | 'lastSessionId' | 'progressSummary'>>
+  ): Promise<Workspace> {
     await this.load()
     const task = this.tasks.get(id)
     if (!task) throw new Error(`Task not found: ${id}`)
@@ -77,13 +77,13 @@ export class TaskStore {
     return task
   }
 
-  async deleteTask(id: string): Promise<void> {
+  async deleteWorkspace(id: string): Promise<void> {
     await this.load()
     if (!this.tasks.delete(id)) throw new Error(`Task not found: ${id}`)
     await this.save()
   }
 
-  async addProject(taskId: string, folderPath: string): Promise<Task> {
+  async addProject(taskId: string, folderPath: string): Promise<Workspace> {
     await this.load()
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`Task not found: ${taskId}`)
@@ -103,7 +103,7 @@ export class TaskStore {
     return task
   }
 
-  async removeProject(taskId: string, projectId: string): Promise<Task> {
+  async removeProject(taskId: string, projectId: string): Promise<Workspace> {
     await this.load()
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`Task not found: ${taskId}`)

@@ -1,6 +1,6 @@
 // ============================================================
 // 改进变更日志 — 每次基线更新时生成完整 Markdown 报告
-// 记录 prompt diff、代码变更、任务级别改进/回退、统计噪声估计
+// 记录 prompt diff、代码变更、工作区级别改进/回退、统计噪声估计
 // ============================================================
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs'
@@ -100,7 +100,7 @@ export function writeImprovementChangelog(opts: {
   }
   lines.push('')
 
-  // 3. 任务级别变更
+  // 3. 工作区级别变更
   lines.push('## Task-Level Changes')
   lines.push('')
   for (const [ds, newSummary] of Object.entries(newTrainResults)) {

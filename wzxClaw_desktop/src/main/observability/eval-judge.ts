@@ -1,6 +1,6 @@
 // ============================================================
 // eval-judge.ts — LLM-as-Judge 自动评估模块
-// 会话结束后异步触发，用 glm-5.1 评估任务完成度、代码安全性、回复清晰度
+// 会话结束后异步触发，用 glm-5.1 评估工作区完成度、代码安全性、回复清晰度
 // 评分通过 LangfuseClient.score.create() 推送，不阻塞主流程
 // ============================================================
 
@@ -81,7 +81,7 @@ function buildTaskCompletionPrompt(userMsg: string, assistantText: string, toolS
   return {
     scoreName: 'task_completion',
     expectCategorical: true,
-    prompt: `评估 AI 编程助手的会话质量。判断任务是否完成。
+    prompt: `评估 AI 编程助手的会话质量。判断工作区是否完成。
 
 用户请求: ${userMsg}
 
@@ -94,9 +94,9 @@ function buildTaskCompletionPrompt(userMsg: string, assistantText: string, toolS
 - 会话状态: ${hadError ? '出错结束' : '正常结束'}
 
 判断标准:
-- complete: 任务完全完成，代码正确可用
+- complete: 工作区完全完成，代码正确可用
 - partial: 部分完成，但有些问题未解决或代码有小错
-- failed: 尝试了但未能完成任务
+- failed: 尝试了但未能完成工作区
 - abandoned: 放弃或超时，没有实质进展
 
 只输出 JSON: {"completion": "complete|partial|failed|abandoned", "reasoning": "一句话"}`

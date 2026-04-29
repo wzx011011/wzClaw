@@ -1,21 +1,21 @@
 import { lazy, Suspense, useEffect } from 'react'
-import TaskHomePage from './components/tasks/TaskHomePage'
+import WorkspaceHomePage from './components/tasks/WorkspaceHomePage'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toast from './components/Toast'
-import { useTaskStore } from './stores/task-store'
+import { useWorkspaceStore } from './stores/workspace-store'
 import { useSettingsStore } from './stores/settings-store'
 import './styles/ide.css'
 import './styles/chat.css'
-import './styles/tasks.css'
+import './styles/workspaces.css'
 import 'highlight.js/styles/vs2015.css'
 
-// 懒加载：IDELayout 拉入 monaco/xterm/allotment 等重量级模块；TaskDetailPage 也按需加载
+// 懒加载：IDELayout 拉入 monaco/xterm/allotment 等重量级模块；WorkspaceDetailPage 也按需加载
 const IDELayout = lazy(() => import('./components/ide/IDELayout'))
-const TaskDetailPage = lazy(() => import('./components/tasks/TaskDetailPage'))
+const WorkspaceDetailPage = lazy(() => import('./components/tasks/WorkspaceDetailPage'))
 
 function App(): JSX.Element {
-  const activeTaskId = useTaskStore((s) => s.activeTaskId)
-  const viewingTaskId = useTaskStore((s) => s.viewingTaskId)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const viewingWorkspaceId = useWorkspaceStore((s) => s.viewingWorkspaceId)
   const loadSettings = useSettingsStore((s) => s.loadSettings)
 
   // 启动时从主进程加载已保存的设置，确保 store 不停留在默认值
@@ -23,7 +23,7 @@ function App(): JSX.Element {
     loadSettings()
   }, [])
 
-  if (activeTaskId) return (
+  if (activeWorkspaceId) return (
     <ErrorBoundary scope="IDELayout">
       <Suspense fallback={<div style={{ background: 'var(--bg-primary)', height: '100vh' }} />}>
         <IDELayout />
@@ -31,17 +31,17 @@ function App(): JSX.Element {
       <Toast />
     </ErrorBoundary>
   )
-  if (viewingTaskId) return (
-    <ErrorBoundary scope="TaskDetailPage">
+  if (viewingWorkspaceId) return (
+    <ErrorBoundary scope="WorkspaceDetailPage">
       <Suspense fallback={<div style={{ background: 'var(--bg-primary)', height: '100vh' }} />}>
-        <TaskDetailPage />
+        <WorkspaceDetailPage />
       </Suspense>
       <Toast />
     </ErrorBoundary>
   )
   return (
-    <ErrorBoundary scope="TaskHomePage">
-      <TaskHomePage />
+    <ErrorBoundary scope="WorkspaceHomePage">
+      <WorkspaceHomePage />
       <Toast />
     </ErrorBoundary>
   )

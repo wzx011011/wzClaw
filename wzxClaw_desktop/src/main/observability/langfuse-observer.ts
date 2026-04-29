@@ -7,7 +7,7 @@
 //   LANGFUSE_SECRET_KEY  - 默认 wzxClaw 项目 key
 //   LANGFUSE_BASE_URL    - 默认 http://192.168.100.78:3000
 //   BENCHMARK_TASK_ID    - 可选，设置后所有 trace 携带 task:<id> 标签
-//                          用于跨 IDE/模型组合对比同一任务
+//                          用于跨 IDE/模型组合对比同一工作区
 // ============================================================
 
 import { NodeSDK } from '@opentelemetry/sdk-node'
@@ -194,7 +194,7 @@ export class AgentTraceContext {
 
     const tags: string[] = [IDE_NAME, model]
     const taskId = process.env.BENCHMARK_TASK_ID
-    if (taskId) tags.push(`task:${taskId}`)
+    if (taskId) tags.push(`workspace:${taskId}`)
 
     const metadata: Record<string, string> = {
       ide: IDE_NAME,

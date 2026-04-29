@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import type { SessionMeta, MentionItem } from '../../shared/types'
-import { useTaskStore } from './task-store'
+import { useWorkspaceStore } from './workspace-store'
 import { useSettingsStore } from './settings-store'
 
 // ============================================================
@@ -746,7 +746,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubDataChanged = window.wzxclaw.onDataChanged?.(({ entity }) => {
       if (entity === 'task') {
         if (taskRefreshTimer) clearTimeout(taskRefreshTimer)
-        taskRefreshTimer = setTimeout(() => useTaskStore.getState().loadTasks(), 300)
+        taskRefreshTimer = setTimeout(() => useWorkspaceStore.getState().loadWorkspaces(), 300)
       }
       if (entity === 'session') {
         if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
@@ -825,7 +825,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeTaskId: useTaskStore.getState().activeTaskId ?? undefined })
+      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined })
     } catch (err) {
       set({
         isStreaming: false,
@@ -868,8 +868,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   loadSessionList: async () => {
     try {
-      const { activeTaskId } = useTaskStore.getState()
-      const sessions = await window.wzxclaw.listSessions(activeTaskId ? { activeTaskId } : undefined)
+      const { activeWorkspaceId } = useWorkspaceStore.getState()
+      const sessions = await window.wzxclaw.listSessions(activeWorkspaceId ? { activeWorkspaceId } : undefined)
       set({ sessions })
     } catch (err) {
       console.error('Failed to load session list:', err)
@@ -886,10 +886,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const updateMessages = options?.updateMessages !== false
     flushTextBatch()
     try {
-      const activeTaskId = useTaskStore.getState().activeTaskId
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
       const rawMessages = await window.wzxclaw.loadSession({
         sessionId,
-        ...(activeTaskId ? { activeTaskId } : {})
+        ...(activeWorkspaceId ? { activeWorkspaceId } : {})
       })
 
       const loadedMessages = buildChatMessagesFromRaw(rawMessages as Array<Record<string, unknown>>)
@@ -920,8 +920,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   deleteSession: async (sessionId: string) => {
     try {
-      const activeTaskId = useTaskStore.getState().activeTaskId
-      await window.wzxclaw.deleteSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      await window.wzxclaw.deleteSession({ sessionId, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
       const { conversationId } = get()
       if (conversationId === sessionId) {
         get().clearConversation()
@@ -934,8 +934,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
   duplicateSession: async (sessionId: string) => {
     try {
-      const activeTaskId = useTaskStore.getState().activeTaskId
-      const result = await window.wzxclaw.duplicateSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      const result = await window.wzxclaw.duplicateSession({ sessionId, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
       await get().loadSessionList()
       // 切换到复制后的新会话
       await get().switchSession(result.newSessionId)
@@ -1030,11 +1030,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
       // 阶段1：tail 加载（最近 100 条）— 快速首帧
       try {
-        const activeTaskId = useTaskStore.getState().activeTaskId
+        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
         const tailResult = await window.wzxclaw.loadSessionTail?.({
           sessionId,
           tailCount: 100,
-          ...(activeTaskId ? { activeTaskId } : {})
+          ...(activeWorkspaceId ? { activeWorkspaceId } : {})
         })
         // 若切换期间用户再次切换，丢弃过期结果
         if (tailResult && get().loadingSessionId === sessionId) {
@@ -1065,8 +1065,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   renameSession: async (sessionId: string, title: string) => {
     try {
-      const activeTaskId = useTaskStore.getState().activeTaskId
-      await window.wzxclaw.renameSession({ sessionId, title, ...(activeTaskId ? { activeTaskId } : {}) })
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      await window.wzxclaw.renameSession({ sessionId, title, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
       const { sessions } = get()
       set({
         sessions: sessions.map(s =>
@@ -1084,8 +1084,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   deleteSessionTab: async (sessionId: string) => {
     try {
-      const activeTaskId = useTaskStore.getState().activeTaskId
-      await window.wzxclaw.deleteSession({ sessionId, ...(activeTaskId ? { activeTaskId } : {}) })
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+      await window.wzxclaw.deleteSession({ sessionId, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
       const { activeSessionId } = get()
 
       // 从模块级缓存和 LRU 中移除

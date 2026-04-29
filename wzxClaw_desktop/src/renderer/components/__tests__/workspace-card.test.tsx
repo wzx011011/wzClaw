@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom'
-import TaskCard from '../tasks/TaskCard'
-import type { Task } from '../../../../shared/types'
+import WorkspaceCard from '../tasks/WorkspaceCard'
+import type { Workspace } from '../../../../shared/types'
 
-function makeTask(overrides: Partial<Task> = {}): Task {
+function makeTask(overrides: Partial<Workspace> = {}): Task {
   return {
     id: 'task-1',
     title: 'Test Task',
@@ -19,7 +19,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   }
 }
 
-describe('TaskCard', () => {
+describe('WorkspaceCard', () => {
   const onOpen = vi.fn()
   const onArchive = vi.fn()
   const onDelete = vi.fn()
@@ -30,18 +30,18 @@ describe('TaskCard', () => {
   })
 
   it('renders task title', () => {
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
     expect(screen.getByText('Test Task')).toBeInTheDocument()
   })
 
   it('renders description when present', () => {
-    render(<TaskCard task={makeTask({ description: 'A description' })} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask({ description: 'A description' })} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
     expect(screen.getByText('A description')).toBeInTheDocument()
   })
 
   it('calls onOpen when clicking card body', async () => {
     const user = userEvent.setup()
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
     await user.click(screen.getByText('Test Task'))
     expect(onOpen).toHaveBeenCalledWith('task-1')
@@ -49,7 +49,7 @@ describe('TaskCard', () => {
 
   it('calls onArchive when clicking archive button', async () => {
     const user = userEvent.setup()
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
     await user.click(screen.getByTitle('归档'))
     expect(onArchive).toHaveBeenCalledWith('task-1')
@@ -57,7 +57,7 @@ describe('TaskCard', () => {
 
   it('calls onDelete when clicking delete button', async () => {
     const user = userEvent.setup()
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
     // First click triggers inline confirmation; second click confirms.
     await user.click(screen.getByTitle('删除'))
@@ -67,7 +67,7 @@ describe('TaskCard', () => {
 
   it('enters rename mode and calls onRename on Enter', async () => {
     const user = userEvent.setup()
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
     await user.click(screen.getByTitle('重命名'))
     const input = screen.getByDisplayValue('Test Task')
@@ -79,7 +79,7 @@ describe('TaskCard', () => {
 
   it('cancels rename on Escape without calling onRename', async () => {
     const user = userEvent.setup()
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
 
     await user.click(screen.getByTitle('重命名'))
     const input = screen.getByDisplayValue('Test Task')
@@ -90,7 +90,7 @@ describe('TaskCard', () => {
   })
 
   it('renders progress summary when present', () => {
-    render(<TaskCard task={makeTask({ progressSummary: '3/5 完成' })} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask({ progressSummary: '3/5 完成' })} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
     expect(screen.getByText('3/5 完成')).toBeInTheDocument()
   })
 
@@ -98,12 +98,12 @@ describe('TaskCard', () => {
     const task = makeTask({
       projects: [{ id: 'p1', path: '/home/user/project', name: 'project', addedAt: Date.now() }],
     })
-    render(<TaskCard task={task} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={task} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
     expect(screen.getByText('project')).toBeInTheDocument()
   })
 
   it('shows no-folder hint when no projects bound', () => {
-    render(<TaskCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
+    render(<WorkspaceCard task={makeTask()} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
     expect(screen.getByText('无绑定文件夹')).toBeInTheDocument()
   })
 })

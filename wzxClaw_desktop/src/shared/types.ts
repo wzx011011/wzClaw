@@ -330,7 +330,7 @@ export interface AgentStep {
 // Task Management Types — top-level user work units
 // ============================================================
 
-/** A folder-based code repository mounted under a Task */
+/** A folder-based code repository mounted under a Workspace */
 export interface Project {
   id: string           // uuid
   path: string         // absolute folder path
@@ -339,7 +339,7 @@ export interface Project {
 }
 
 /** Top-level user work unit — can have 0-N Projects (folders) */
-export interface Task {
+export interface Workspace {
   id: string           // uuid
   title: string
   description?: string

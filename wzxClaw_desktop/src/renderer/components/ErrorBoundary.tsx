@@ -14,7 +14,7 @@ interface ErrorBoundaryState {
 /**
  * Catches render-time errors in descendant React components and shows a
  * graceful fallback instead of a blank white page. Wrap the app shell
- * (IDELayout, TaskDetailPage…) so a single buggy subtree doesn't kill the UI.
+ * (IDELayout, WorkspaceDetailPage…) so a single buggy subtree doesn't kill the UI.
  */
 export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null, info: null }

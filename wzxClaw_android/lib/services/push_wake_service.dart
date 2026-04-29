@@ -14,7 +14,7 @@ const _pushEnabledKey = 'push_notifications_enabled';
 const _channelId = 'wzx_task_done';
 
 /// 推送唤醒服务：监听 ConnectionManager.messageStream，
-/// 当 App 在后台且收到任务完成/出错事件时，弹出本地通知。
+/// 当 App 在后台且收到工作区完成/出错事件时，弹出本地通知。
 ///
 /// 依赖链：
 ///   启用通知 → 同时开启后台保活 → 前台 Service 保持进程存活
@@ -54,8 +54,8 @@ class PushWakeService with WidgetsBindingObserver {
     // 创建通知渠道
     const channel = AndroidNotificationChannel(
       _channelId,
-      'wzxClaw 任务通知',
-      description: '任务完成或出错时弹出提醒',
+      'wzxClaw 工作区通知',
+      description: '工作区完成或出错时弹出提醒',
       importance: Importance.high,
     );
     await _notif
@@ -139,13 +139,13 @@ class PushWakeService with WidgetsBindingObserver {
     final isDone = msg.event == WsEvents.agentDone;
     _notif.show(
       isDone ? 1001 : 1002,
-      isDone ? '✅ 任务执行完成' : '❌ 任务执行出错',
+      isDone ? '✅ 工作区执行完成' : '❌ 工作区执行出错',
       isDone ? '点击打开 wzxClaw 查看结果' : '点击打开 wzxClaw 查看错误信息',
       const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
-          'wzxClaw 任务通知',
-          channelDescription: '任务完成或出错时弹出提醒',
+          'wzxClaw 工作区通知',
+          channelDescription: '工作区完成或出错时弹出提醒',
           importance: Importance.high,
           priority: Priority.high,
         ),

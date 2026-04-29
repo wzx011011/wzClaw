@@ -465,7 +465,7 @@ export class IterationEngine {
     for (const summary of Object.values(trainResults)) {
       allResults.push(...summary.perTaskResults)
 
-      // 对每个失败且有 traceData 的任务进行分析
+      // 对每个失败且有 traceData 的工作区进行分析
       const failed = summary.perTaskResults.filter(r => r.testPassed === false && r.traceData)
       for (const result of failed) {
         const cls = await analyzeTaskFailure(

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UserMessageSchema, TokenUsageSchema } from './types'
-import type { FileTreeNode, SessionMeta, AgentStep, Task } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -140,14 +140,14 @@ export const IPC_CHANNELS = {
   // Todo panel (main -> renderer push)
   'todo:updated': 'todo:updated',
 
-  // Task management channels (renderer -> main)
-  'task:list': 'task:list',
-  'task:get': 'task:get',
-  'task:create': 'task:create',
-  'task:update': 'task:update',
-  'task:delete': 'task:delete',
-  'task:add-project': 'task:add-project',
-  'task:remove-project': 'task:remove-project',
+  // Workspace management channels (renderer -> main)
+  'workspace:list': 'workspace:list',
+  'workspace:get': 'workspace:get',
+  'workspace:create': 'workspace:create',
+  'workspace:update': 'workspace:update',
+  'workspace:delete': 'workspace:delete',
+  'workspace:add-project': 'workspace:add-project',
+  'workspace:remove-project': 'workspace:remove-project',
 
   // Shell utility (renderer -> main)
   'shell:open_path': 'shell:open_path',
@@ -181,7 +181,7 @@ export interface IpcRequestPayloads {
   'agent:send_message': {
     conversationId: string
     content: string
-    activeTaskId?: string
+    activeWorkspaceId?: string
   }
   'agent:stop': void
   'agent:permission_response': {
@@ -211,11 +211,11 @@ export interface IpcRequestPayloads {
   'file:delete': { filePath: string }
   'file:create': { dirPath: string; name: string; type: 'file' | 'directory' }
   'session:list': void
-  'session:load': { sessionId: string; activeTaskId?: string }
-  'session:load-tail': { sessionId: string; tailCount: number; activeTaskId?: string }
-  'session:delete': { sessionId: string; activeTaskId?: string }
-  'session:rename': { sessionId: string; title: string; activeTaskId?: string }
-  'session:duplicate': { sessionId: string; activeTaskId?: string }
+  'session:load': { sessionId: string; activeWorkspaceId?: string }
+  'session:load-tail': { sessionId: string; tailCount: number; activeWorkspaceId?: string }
+  'session:delete': { sessionId: string; activeWorkspaceId?: string }
+  'session:rename': { sessionId: string; title: string; activeWorkspaceId?: string }
+  'session:duplicate': { sessionId: string; activeWorkspaceId?: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
@@ -246,13 +246,13 @@ export interface IpcRequestPayloads {
   'relay:get_status': void
   'relay:qrcode': { token?: string }
   'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
-  'task:list': { includeArchived?: boolean }
-  'task:get': { taskId: string }
-  'task:create': { title: string; description?: string }
-  'task:update': { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
-  'task:delete': { taskId: string }
-  'task:add-project': { taskId: string; folderPath: string }
-  'task:remove-project': { taskId: string; projectId: string }
+  'workspace:list': { includeArchived?: boolean }
+  'workspace:get': { taskId: string }
+  'workspace:create': { title: string; description?: string }
+  'workspace:update': { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
+  'workspace:delete': { taskId: string }
+  'workspace:add-project': { taskId: string; folderPath: string }
+  'workspace:remove-project': { taskId: string; projectId: string }
   'shell:open_path': { path: string }
   'shell:get_extension_paths': void
   'insights:generate': void
@@ -319,13 +319,13 @@ export interface IpcResponsePayloads {
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
   'ask-user:answer': void
-  'task:list': Task[]
-  'task:get': Task | null
-  'task:create': Task
-  'task:update': Task
-  'task:delete': void
-  'task:add-project': Task
-  'task:remove-project': Task
+  'workspace:list': Workspace[]
+  'workspace:get': Workspace | null
+  'workspace:create': Task
+  'workspace:update': Task
+  'workspace:delete': void
+  'workspace:add-project': Task
+  'workspace:remove-project': Task
   'shell:open_path': void
   'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
   'insights:generate': { summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }
@@ -377,7 +377,7 @@ export const IpcSchemas = {
     request: z.object({
       conversationId: z.string(),
       content: z.string().min(1),
-      activeTaskId: z.string().optional()
+      activeWorkspaceId: z.string().optional()
     }),
     response: z.undefined()
   },
@@ -434,19 +434,19 @@ export const IpcSchemas = {
   'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),
   'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) }),
   'session:load': {
-    request: z.object({ sessionId: z.string().min(1), activeTaskId: z.string().optional() }),
+    request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.array(z.unknown())
   },
   'session:delete': {
-    request: z.object({ sessionId: z.string().min(1), activeTaskId: z.string().optional() }),
+    request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
   },
   'session:rename': {
-    request: z.object({ sessionId: z.string().min(1), title: z.string().min(1), activeTaskId: z.string().optional() }),
+    request: z.object({ sessionId: z.string().min(1), title: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
   },
   'session:duplicate': {
-    request: z.object({ sessionId: z.string().min(1), activeTaskId: z.string().optional() }),
+    request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ newSessionId: z.string() })
   }
 } as const

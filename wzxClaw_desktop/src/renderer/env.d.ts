@@ -1,10 +1,10 @@
-import type { FileTreeNode, SessionMeta, AgentStep, Task } from '../shared/types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace } from '../shared/types'
 
 declare global {
   interface Window {
     wzxclaw: {
       // Agent
-      sendMessage: (request: { conversationId: string; content: string; activeTaskId?: string }) => Promise<void>
+      sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string }) => Promise<void>
       stopGeneration: () => Promise<void>
       // Stream listeners
       onStreamText: (cb: (p: { content: string }) => void) => () => void
@@ -38,11 +38,11 @@ declare global {
       getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string }>
       updateSettings: (request: Record<string, unknown>) => Promise<void>
       // Sessions
-      listSessions: (request?: { activeTaskId?: string }) => Promise<SessionMeta[]>
+      listSessions: (request?: { activeWorkspaceId?: string }) => Promise<SessionMeta[]>
       loadSession: (request: { sessionId: string }) => Promise<unknown[]>
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
-      duplicateSession: (request: { sessionId: string; activeTaskId?: string }) => Promise<{ newSessionId: string }>
+      duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => Promise<{ newSessionId: string }>
       saveLastSession: (request: { sessionId: string }) => Promise<void>
       getLastSession: () => Promise<{ sessionId: string | null }>
       onSessionRestore: (cb: (p: { sessionId: string }) => void) => () => void
@@ -66,13 +66,13 @@ declare global {
       onStepCreated: (cb: (p: AgentStep) => void) => () => void
       onStepUpdated: (cb: (p: AgentStep) => void) => () => void
       // Tasks
-      listTasks: (request?: { includeArchived?: boolean }) => Promise<Task[]>
-      getTask: (request: { taskId: string }) => Promise<Task | null>
-      createTask: (request: { title: string; description?: string }) => Promise<Task>
-      updateTask: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Task>
-      deleteTask: (request: { taskId: string }) => Promise<void>
-      addTaskProject: (request: { taskId: string; folderPath: string }) => Promise<Task>
-      removeTaskProject: (request: { taskId: string; projectId: string }) => Promise<Task>
+      listWorkspaces: (request?: { includeArchived?: boolean }) => Promise<Workspace[]>
+      getWorkspace: (request: { taskId: string }) => Promise<Workspace | null>
+      createWorkspace: (request: { title: string; description?: string }) => Promise<Workspace>
+      updateWorkspace: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Workspace>
+      deleteWorkspace: (request: { taskId: string }) => Promise<void>
+      addTaskProject: (request: { taskId: string; folderPath: string }) => Promise<Workspace>
+      removeTaskProject: (request: { taskId: string; projectId: string }) => Promise<Workspace>
       // Index
       getIndexStatus: () => Promise<{ status: string; fileCount: number; currentFile: string; error?: string }>
       reindex: () => Promise<void>

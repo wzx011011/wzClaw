@@ -73,8 +73,8 @@ export default function TitleBar({
     <div className="ide-titlebar">
       {/* Back to tasks */}
       {onBackToTasks && (
-        <button className="task-back-btn" onClick={onBackToTasks} title="返回任务列表">
-          ← {activeTaskTitle || '任务'}
+        <button className="workspace-back-btn" onClick={onBackToTasks} title="返回工作区列表">
+          ← {activeTaskTitle || '工作区'}
         </button>
       )}
 

@@ -10,7 +10,7 @@
 import type { LLMGateway } from '../llm/gateway'
 import type { ToolRegistry } from '../tools/tool-registry'
 import type { PermissionManager } from '../permission/permission-manager'
-import type { Message, Task } from '../../shared/types'
+import type { Message, Workspace } from '../../shared/types'
 import { MAX_AGENT_TURNS } from '../../shared/constants'
 import { ContextManager } from '../context/context-manager'
 import type { HookRegistry } from '../hooks/hook-registry'
@@ -33,7 +33,7 @@ export class AgentLoop {
   private _recentOutputTokens: number[] = []
 
   /** Active task context — injected into system prompt when set */
-  activeTask: Task | null = null
+  activeTask: Workspace | null = null
 
   constructor(
     private gateway: LLMGateway,

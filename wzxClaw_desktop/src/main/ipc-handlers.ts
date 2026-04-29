@@ -30,7 +30,7 @@ import { handleSymbolResult } from './tools/symbol-nav'
 import type { IndexingEngine } from './indexing/indexing-engine'
 import { getGitStatusShort } from './git/git-context'
 import type { MCPManager } from './mcp/mcp-manager'
-import type { TaskStore } from './tasks/task-store'
+import type { WorkspaceStore } from './tasks/workspace-store'
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -44,7 +44,7 @@ export function registerIpcHandlers(
   indexingEngine: IndexingEngine | null,
   settingsManager: SettingsManager,
   mcpManager: MCPManager,
-  taskStore: TaskStore,
+  workspaceStore: WorkspaceStore,
   onWorkspaceOpened?: (rootPath: string) => void,
   onDataChanged?: (event: string, data: unknown) => void
 ): void {
@@ -105,8 +105,8 @@ export function registerIpcHandlers(
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
 
     // Inject active task context into agent loop
-    if (result.data.activeTaskId) {
-      const task = await taskStore.getTask(result.data.activeTaskId)
+    if (result.data.activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId)
       agentLoop.activeTask = task ?? null
     } else {
       agentLoop.activeTask = null
@@ -658,10 +658,10 @@ export function registerIpcHandlers(
   // ============================================================
   // Session: list — returns all sessions for current project or task
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeTaskId?: string }) => {
-    // If activeTaskId provided, look up the task's primary project root for workspace-based isolation
-    if (payload?.activeTaskId) {
-      const task = await taskStore.getTask(payload.activeTaskId).catch(() => null)
+  ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
+    // If activeWorkspaceId provided, look up the task's primary project root for workspace-based isolation
+    if (payload?.activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(payload.activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         return new SessionStore(primaryRoot).listSessions()
@@ -678,13 +678,13 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    const { sessionId, activeTaskId } = result.data
-    // 优先使用请求中携带的 activeTaskId（与 listSessions 保持一致），
+    const { sessionId, activeWorkspaceId } = result.data
+    // 优先使用请求中携带的 activeWorkspaceId（与 listSessions 保持一致），
     // 避免 agentLoop.activeTask 尚未设置时读错 store。
     let store = getSessionStore()
     let resolvedTask = agentLoop.activeTask ?? null
-    if (activeTaskId) {
-      const task = await taskStore.getTask(activeTaskId).catch(() => null)
+    if (activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
       if (task) {
         resolvedTask = task
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
@@ -733,11 +733,11 @@ export function registerIpcHandlers(
   // 用于会话切换时的快速首帧渲染（先显示 tail，再后台 load 完整会话）
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:load-tail'], async (_event, request) => {
-    const { sessionId, tailCount, activeTaskId } = request as { sessionId: string; tailCount: number; activeTaskId?: string }
+    const { sessionId, tailCount, activeWorkspaceId } = request as { sessionId: string; tailCount: number; activeWorkspaceId?: string }
     if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) throw new Error('Invalid session ID format')
     let store = getSessionStore()
-    if (activeTaskId) {
-      const task = await taskStore.getTask(activeTaskId).catch(() => null)
+    if (activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
@@ -756,8 +756,8 @@ export function registerIpcHandlers(
       throw new Error(`Invalid request: ${result.error.message}`)
     }
     let store = getSessionStore()
-    if (result.data.activeTaskId) {
-      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+    if (result.data.activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
@@ -777,8 +777,8 @@ export function registerIpcHandlers(
       throw new Error(`Invalid request: ${result.error.message}`)
     }
     let store = getSessionStore()
-    if (result.data.activeTaskId) {
-      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+    if (result.data.activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
@@ -798,8 +798,8 @@ export function registerIpcHandlers(
       throw new Error(`Invalid request: ${result.error.message}`)
     }
     let store = getSessionStore()
-    if (result.data.activeTaskId) {
-      const task = await taskStore.getTask(result.data.activeTaskId).catch(() => null)
+    if (result.data.activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         store = new SessionStore(primaryRoot)
@@ -946,42 +946,42 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Task management — CRUD for top-level user tasks
+  // Workspace management — CRUD for top-level user tasks
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['task:list'], async (_event, payload?: { includeArchived?: boolean }) => {
-    return taskStore.listTasks(payload?.includeArchived)
+  ipcMain.handle(IPC_CHANNELS['workspace:list'], async (_event, payload?: { includeArchived?: boolean }) => {
+    return workspaceStore.listWorkspaces(payload?.includeArchived)
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:get'], async (_event, payload: { taskId: string }) => {
-    return taskStore.getTask(payload.taskId)
+  ipcMain.handle(IPC_CHANNELS['workspace:get'], async (_event, payload: { taskId: string }) => {
+    return workspaceStore.getWorkspace(payload.taskId)
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:create'], async (_event, payload: { title: string; description?: string }) => {
-    const task = await taskStore.createTask(payload.title, payload.description)
-    onDataChanged?.('task:changed', { action: 'created', task })
+  ipcMain.handle(IPC_CHANNELS['workspace:create'], async (_event, payload: { title: string; description?: string }) => {
+    const task = await workspaceStore.createWorkspace(payload.title, payload.description)
+    onDataChanged?.('workspace:changed', { action: 'created', task })
     return task
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
-    const task = await taskStore.updateTask(payload.taskId, payload.updates)
-    onDataChanged?.('task:changed', { action: 'updated', task })
+  ipcMain.handle(IPC_CHANNELS['workspace:update'], async (_event, payload: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
+    const task = await workspaceStore.updateWorkspace(payload.taskId, payload.updates)
+    onDataChanged?.('workspace:changed', { action: 'updated', task })
     return task
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:delete'], async (_event, payload: { taskId: string }) => {
-    await taskStore.deleteTask(payload.taskId)
-    onDataChanged?.('task:changed', { action: 'deleted', taskId: payload.taskId })
+  ipcMain.handle(IPC_CHANNELS['workspace:delete'], async (_event, payload: { taskId: string }) => {
+    await workspaceStore.deleteWorkspace(payload.taskId)
+    onDataChanged?.('workspace:changed', { action: 'deleted', taskId: payload.taskId })
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:add-project'], async (_event, payload: { taskId: string; folderPath: string }) => {
-    const task = await taskStore.addProject(payload.taskId, payload.folderPath)
-    onDataChanged?.('task:changed', { action: 'updated', task })
+  ipcMain.handle(IPC_CHANNELS['workspace:add-project'], async (_event, payload: { taskId: string; folderPath: string }) => {
+    const task = await workspaceStore.addProject(payload.taskId, payload.folderPath)
+    onDataChanged?.('workspace:changed', { action: 'updated', task })
     return task
   })
 
-  ipcMain.handle(IPC_CHANNELS['task:remove-project'], async (_event, payload: { taskId: string; projectId: string }) => {
-    const task = await taskStore.removeProject(payload.taskId, payload.projectId)
-    onDataChanged?.('task:changed', { action: 'updated', task })
+  ipcMain.handle(IPC_CHANNELS['workspace:remove-project'], async (_event, payload: { taskId: string; projectId: string }) => {
+    const task = await workspaceStore.removeProject(payload.taskId, payload.projectId)
+    onDataChanged?.('workspace:changed', { action: 'updated', task })
     return task
   })
 

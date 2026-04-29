@@ -1,5 +1,5 @@
 // ============================================================
-// Expert-Executor — 对可恢复的失败任务生成纠正策略并重试
+// Expert-Executor — 对可恢复的失败工作区生成纠正策略并重试
 // 策略累积到 StrategyBook，跨迭代复用
 // ============================================================
 
@@ -35,7 +35,7 @@ export class ExpertExecutor {
   }
 
   /**
-   * 对可恢复的失败任务执行 Expert-Executor 重试
+   * 对可恢复的失败工作区执行 Expert-Executor 重试
    * 返回成功重试的 task IDs
    */
   async retryRecoverable(

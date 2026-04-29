@@ -1,5 +1,5 @@
 // ============================================================
-// 失败聚类器 — 按根因分组失败任务，输出优先级排序的修复列表
+// 失败聚类器 — 按根因分组失败工作区，输出优先级排序的修复列表
 // ============================================================
 
 import type { FailureClassification, FailureCluster, TaskEvalResult } from './types'
@@ -32,7 +32,7 @@ export function clusterFailures(
   for (const [key, items] of groups) {
     const [taxonomy, failureMode] = key.split('::')
 
-    // 计算硬任务比例
+    // 计算硬工作区比例
     const hardCount = items.filter(cls => {
       const diff = difficultyMap.get(cls.taskId)
       return diff === 'hard' || diff === 'medium'

@@ -62,7 +62,7 @@ export function compareRuns(summaryA: RunSummary, summaryB: RunSummary): Compari
 }
 
 /**
- * 将任务结果映射为可比较的分数（0-3）
+ * 将工作区结果映射为可比较的分数（0-3）
  * 3 = test passed + judge >= 4
  * 2 = test passed or judge >= 3
  * 1 = test failed but agent tried (turns > 1)
@@ -75,7 +75,7 @@ function taskScore(r: TaskEvalResult): number {
     return judge >= 4 ? 3 : 2
   }
   if (r.testPassed === false) return r.turnCount > 1 ? 1 : 0
-  // 没有测试的任务：用 judge 分
+  // 没有测试的工作区：用 judge 分
   const judge = r.judgeScores['task_completion'] ?? 0
   return judge >= 4 ? 3 : judge >= 3 ? 2 : judge >= 1 ? 1 : 0
 }

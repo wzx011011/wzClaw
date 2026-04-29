@@ -3,9 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom'
-import CreateTaskModal from '../tasks/CreateTaskModal'
+import CreateWorkspaceModal from '../tasks/CreateWorkspaceModal'
 
-describe('CreateTaskModal', () => {
+describe('CreateWorkspaceModal', () => {
   const onClose = vi.fn()
   const onCreate = vi.fn()
 
@@ -14,17 +14,17 @@ describe('CreateTaskModal', () => {
   })
 
   it('renders modal title and form fields', () => {
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
-    expect(screen.getByText('新建任务')).toBeInTheDocument()
-    expect(screen.getByLabelText('任务名称')).toBeInTheDocument()
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
+    expect(screen.getByText('新建工作区')).toBeInTheDocument()
+    expect(screen.getByLabelText('工作区名称')).toBeInTheDocument()
     expect(screen.getByLabelText(/描述/)).toBeInTheDocument()
   })
 
   it('calls onCreate with title and description on submit', async () => {
     const user = userEvent.setup()
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
 
-    await user.type(screen.getByLabelText('任务名称'), 'My Task')
+    await user.type(screen.getByLabelText('工作区名称'), 'My Task')
     await user.type(screen.getByLabelText(/描述/), 'Some description')
     await user.click(screen.getByRole('button', { name: '创建' }))
 
@@ -33,7 +33,7 @@ describe('CreateTaskModal', () => {
 
   it('does not submit with empty title', async () => {
     const user = userEvent.setup()
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
 
     await user.click(screen.getByRole('button', { name: '创建' }))
     expect(onCreate).not.toHaveBeenCalled()
@@ -41,7 +41,7 @@ describe('CreateTaskModal', () => {
 
   it('calls onClose when clicking cancel button', async () => {
     const user = userEvent.setup()
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
 
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(onClose).toHaveBeenCalled()
@@ -49,29 +49,29 @@ describe('CreateTaskModal', () => {
 
   it('calls onClose when clicking backdrop', async () => {
     const user = userEvent.setup()
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
 
-    const backdrop = document.querySelector('.task-modal-backdrop')!
+    const backdrop = document.querySelector('.workspace-modal-backdrop')!
     await user.click(backdrop)
     expect(onClose).toHaveBeenCalled()
   })
 
   it('calls onClose on Escape key', () => {
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
-    fireEvent.keyDown(document.querySelector('.task-modal-backdrop')!, { key: 'Escape' })
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
+    fireEvent.keyDown(document.querySelector('.workspace-modal-backdrop')!, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
   })
 
   it('submit button is disabled when title is empty', () => {
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
     expect(screen.getByRole('button', { name: '创建' })).toBeDisabled()
   })
 
   it('submit button is enabled when title has text', async () => {
     const user = userEvent.setup()
-    render(<CreateTaskModal onClose={onClose} onCreate={onCreate} />)
+    render(<CreateWorkspaceModal onClose={onClose} onCreate={onCreate} />)
 
-    await user.type(screen.getByLabelText('任务名称'), 'Task')
+    await user.type(screen.getByLabelText('工作区名称'), 'Task')
     expect(screen.getByRole('button', { name: '创建' })).toBeEnabled()
   })
 })

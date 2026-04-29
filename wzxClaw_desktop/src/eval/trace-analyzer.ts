@@ -1,7 +1,7 @@
 // ============================================================
-// 逐任务轨迹分析器 — 从 TaskTraceData 中检测失败模式
+// 逐工作区轨迹分析器 — 从 TaskTraceData 中检测失败模式
 // Tier 1: 基于规则（零 LLM 开销），7 种 SWE-bench 风格失败模式
-// Tier 2: LLM 深度分析（仅用于规则无法分类的失败任务）
+// Tier 2: LLM 深度分析（仅用于规则无法分类的失败工作区）
 // ============================================================
 
 import type { TaskTraceData, TaskEvalResult, FailureClassification } from './types'
@@ -23,7 +23,7 @@ export function classifyFailureRuleBased(
   trace: TaskTraceData,
   result: TaskEvalResult,
 ): RuleClassification | null {
-  // 只分析测试失败的任务
+  // 只分析测试失败的工作区
   if (result.testPassed === true || result.testPassed === null) return null
 
   const { toolCallSequence, firstEditAttempt, ranTestBeforeDone, readsBeforeFirstEdit, errorCount, hitMaxTurns } = trace
@@ -288,7 +288,7 @@ function validateTaxonomy(val: unknown): FailureClassification['taxonomy'] {
 }
 
 /**
- * 便捷入口：对单个失败任务运行两层分析
+ * 便捷入口：对单个失败工作区运行两层分析
  */
 export async function analyzeTaskFailure(
   taskDescription: string,

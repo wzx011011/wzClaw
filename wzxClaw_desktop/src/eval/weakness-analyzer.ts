@@ -88,7 +88,7 @@ export function analyzeWeaknesses(summary: RunSummary): WeaknessReport {
     }
   }
 
-  // ---- 规则 6: 错误任务 ----
+  // ---- 规则 6: 错误工作区 ----
   const errorTasks = results.filter(r => r.error)
   if (errorTasks.length > 0) {
     categories.push({

@@ -1,5 +1,5 @@
 // ============================================================
-// 批量运行器 — 顺序执行数据集中的所有任务
+// 批量运行器 — 顺序执行数据集中的所有工作区
 // ============================================================
 
 import { readFileSync } from 'fs'
@@ -33,7 +33,7 @@ export interface BatchRunConfig {
   }
   /** 是否保留工作空间（用于调试） */
   keepWorkspaces?: boolean
-  /** 只运行指定 split 的任务（'train' | 'test'） */
+  /** 只运行指定 split 的工作区（'train' | 'test'） */
   splitFilter?: 'train' | 'test'
   /** 是否保存 trace 摘要到 TaskEvalResult（迭代模式需要） */
   storeTraceData?: boolean
@@ -80,7 +80,7 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
     const task = tasks[i]
     console.log(`[${i + 1}/${tasks.length}] ${task.id} (${task.language}/${task.difficulty})...`)
 
-    // 跳过工具链不可用的任务（不浪费 API 调用）
+    // 跳过工具链不可用的工作区（不浪费 API 调用）
     if (!isToolchainAvailable(task.language)) {
       console.log(`  -> SKIP (${task.language} toolchain not installed)`)
       results.push({
@@ -163,7 +163,7 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
 
       results.push(evalResult)
 
-      // 提取 trace 摘要（迭代模式需要，用于逐任务失败分析）
+      // 提取 trace 摘要（迭代模式需要，用于逐工作区失败分析）
       if (config.storeTraceData) {
         evalResult.traceData = extractTraceData(
           runResult.events,
@@ -182,7 +182,7 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
         await workspace.cleanup().catch(() => {})
       }
 
-      // 任务间延迟（避免限流）
+      // 工作区间延迟（避免限流）
       const delay = config.agentConfig.interTaskDelay ?? 3000
       if (i < tasks.length - 1 && delay > 0) {
         await new Promise(r => setTimeout(r, delay))

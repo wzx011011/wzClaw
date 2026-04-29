@@ -9,7 +9,7 @@ import type { RunSummary, WeaknessReport, ComparisonReport, TaskEvalResult } fro
 const REPORTS_DIR = '.eval-reports'
 
 /**
- * 生成摘要报告（每个任务一行）
+ * 生成摘要报告（每个工作区一行）
  */
 export function generateSummaryReport(summary: RunSummary): string {
   const lines: string[] = []
@@ -27,17 +27,17 @@ export function generateSummaryReport(summary: RunSummary): string {
   lines.push(`| Metric | Value |`)
   lines.push(`|--------|-------|`)
   lines.push(`| Test Pass Rate | **${(summary.testPassRate * 100).toFixed(0)}%** |`)
-  lines.push(`| Avg Turns/Task | ${summary.avgTurnsPerTask.toFixed(1)} |`)
+  lines.push(`| Avg Turns/Workspace | ${summary.avgTurnsPerTask.toFixed(1)} |`)
   lines.push(`| Avg Tool Success Rate | ${(summary.avgToolSuccessRate * 100).toFixed(0)}% |`)
   lines.push(`| Avg Edit Success Rate | ${(summary.avgEditSuccessRate * 100).toFixed(0)}% |`)
-  lines.push(`| Avg Judge: Task Completion | ${summary.avgJudgeTaskCompletion.toFixed(1)}/5 |`)
+  lines.push(`| Avg Judge: Workspace Completion | ${summary.avgJudgeTaskCompletion.toFixed(1)}/5 |`)
   lines.push(`| Avg Judge: Efficiency | ${summary.avgJudgeEfficiency.toFixed(1)}/5 |`)
   lines.push(``)
 
-  // 每个任务详情
+  // 每个工作区详情
   lines.push(`## Task Results`)
   lines.push(``)
-  lines.push(`| Task | Lang | Diff | Test | Turns | Duration | Judge |`)
+  lines.push(`| Workspace | Lang | Diff | Test | Turns | Duration | Judge |`)
   lines.push(`|------|------|------|------|-------|----------|-------|`)
 
   for (const r of summary.perTaskResults) {

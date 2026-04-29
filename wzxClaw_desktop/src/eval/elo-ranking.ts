@@ -58,7 +58,7 @@ export class ELORanking {
 
   /**
    * 从两次运行结果生成对局并更新排名
-   * 逐任务对比：A 通过 B 不通过 → A 赢，反之亦然，都通过/都不通过 → 平局
+   * 逐工作区对比：A 通过 B 不通过 → A 赢，反之亦然，都通过/都不通过 → 平局
    */
   recordRunComparison(
     playerAId: string, summaryA: RunSummary,
@@ -253,7 +253,7 @@ function indexByTaskId(results: TaskEvalResult[]): Record<string, TaskEvalResult
 }
 
 /**
- * 任务评分（0-3），与 comparison-report.ts 保持一致
+ * 工作区评分（0-3），与 comparison-report.ts 保持一致
  */
 function taskScore(r: TaskEvalResult): number {
   if (r.error) return 0

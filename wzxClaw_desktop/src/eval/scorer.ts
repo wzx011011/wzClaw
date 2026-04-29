@@ -148,7 +148,7 @@ Respond ONLY with valid JSON:
     const parsed = JSON.parse(jsonMatch[0])
     return {
       scores: {
-        task_completion: Number(parsed.task_completion) || 0,
+        task_completion: Number(parsed.workspace-completion) || 0,
         code_quality: Number(parsed.code_quality) || 0,
         efficiency: Number(parsed.efficiency) || 0,
         error_handling: Number(parsed.error_handling) || 0,

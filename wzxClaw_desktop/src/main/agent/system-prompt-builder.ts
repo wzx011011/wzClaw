@@ -3,7 +3,7 @@
 // 从 AgentLoop.run() 中提取，独立测试和复用
 // ============================================================
 
-import type { LLMProvider, Task } from '../../shared/types'
+import type { LLMProvider, Workspace } from '../../shared/types'
 import type { AgentConfig } from './types'
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 import { getGitContext } from '../git/git-context'
@@ -35,7 +35,7 @@ export interface SystemPromptBreakdown {
   skillsTokens: number
   /** MEMORY.md 部分 token 数 */
   memoryTokens: number
-  /** 活跃任务上下文 token 数 */
+  /** 活跃工作区上下文 token 数 */
   taskContextTokens: number
   /** 所有动态部分 token 总数 */
   dynamicTokens: number
@@ -46,7 +46,7 @@ export interface SystemPromptBreakdown {
  */
 export async function buildSystemPromptBreakdown(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeTask?: Task | null
+  activeTask?: Workspace | null
 ): Promise<SystemPromptBreakdown> {
   const roots = config.projectRoots ?? [config.workingDirectory]
 
@@ -116,13 +116,13 @@ export async function buildSystemPromptBreakdown(
  */
 export async function buildSystemPrompt(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeTask?: Task | null
+  activeTask?: Workspace | null
 ): Promise<string> {
   const breakdown = await buildSystemPromptBreakdown(config, activeTask)
   return breakdown.systemPrompt
 }
 
-function buildTaskContext(task: Task): string {
+function buildTaskContext(task: Workspace): string {
   const lines: string[] = ['# Active Task']
   lines.push(`**${task.title}**`)
   if (task.description) lines.push(task.description)

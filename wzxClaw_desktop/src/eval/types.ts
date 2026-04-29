@@ -2,7 +2,7 @@
 // 评测系统共享类型定义
 // ============================================================
 
-/** 评测数据集中的单个任务 */
+/** 评测数据集中的单个工作区 */
 export interface BenchmarkTask {
   id: string
   source: 'aider-polyglot' | 'swebench-verified'
@@ -35,7 +35,7 @@ export interface HeadlessConfig {
   maxTurns?: number
   /** 自定义 system prompt（留空使用默认） */
   systemPrompt?: string
-  /** 任务间延迟（毫秒） */
+  /** 工作区间延迟（毫秒） */
   interTaskDelay?: number
 }
 
@@ -66,7 +66,7 @@ export interface MessageRecord {
   toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
 }
 
-/** 逐任务 trace 摘要（从事件流提取，用于失败分析） */
+/** 逐工作区 trace 摘要（从事件流提取，用于失败分析） */
 export interface TaskTraceData {
   /** 工具调用序列 */
   toolCallSequence: Array<{ tool: string; turn: number; isError: boolean }>
@@ -118,19 +118,19 @@ export interface FailureCluster {
   priority: number
 }
 
-/** 跨任务诊断指标 */
+/** 跨工作区诊断指标 */
 export interface TraceMetrics {
-  /** 失败任务中没跑测试的比例 */
+  /** 失败工作区中没跑测试的比例 */
   noTestRunRate: number
-  /** 失败任务中第一次编辑出错的比例 */
+  /** 失败工作区中第一次编辑出错的比例 */
   firstEditFailRate: number
-  /** 失败任务中触达最大轮次的比例 */
+  /** 失败工作区中触达最大轮次的比例 */
   maxTurnsRate: number
-  /** 失败任务中盲目编辑的比例 */
+  /** 失败工作区中盲目编辑的比例 */
   blindEditRate: number
-  /** 成功任务平均编辑前读取次数 */
+  /** 成功工作区平均编辑前读取次数 */
   avgReadsBeforeEditSuccess: number
-  /** 失败任务平均编辑前读取次数 */
+  /** 失败工作区平均编辑前读取次数 */
   avgReadsBeforeEditFailure: number
   /** 有工具错误时最终恢复的比例 */
   toolErrorRecoveryRate: number
@@ -145,7 +145,7 @@ export interface OptimizationHistoryEntry {
   kept: boolean
 }
 
-/** 单个任务的完整评测结果 */
+/** 单个工作区的完整评测结果 */
 export interface TaskEvalResult {
   taskId: string
   taskSource: string
@@ -165,7 +165,7 @@ export interface TaskEvalResult {
   traceId: string
   patch?: string
   error?: string
-  /** 逐任务 trace 摘要（迭代模式下填充） */
+  /** 逐工作区 trace 摘要（迭代模式下填充） */
   traceData?: TaskTraceData
 }
 export interface RunSummary {
@@ -184,7 +184,7 @@ export interface RunSummary {
   /** Layer C */
   avgJudgeTaskCompletion: number
   avgJudgeEfficiency: number
-  /** 所有任务结果 */
+  /** 所有工作区结果 */
   perTaskResults: TaskEvalResult[]
 }
 

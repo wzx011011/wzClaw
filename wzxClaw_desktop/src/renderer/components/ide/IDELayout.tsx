@@ -15,7 +15,7 @@ import { useCommandStore } from '../../stores/command-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
-import { useTaskStore } from '../../stores/task-store'
+import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useLayoutStore } from '../../stores/layout-store'
 
 // 重型组件懒加载 — 拆分 Monaco/xterm bundle，首屏不下载
@@ -49,8 +49,8 @@ export default function IDELayout(): JSX.Element {
   const openPalette = useCommandStore((s) => s.openPalette)
   const registerBuiltInCommands = useCommandStore((s) => s.registerBuiltInCommands)
   const showTerminal = useTerminalStore((s) => s.panelVisible)
-  const closeTask = useTaskStore((s) => s.closeTask)
-  const activeTask = useTaskStore((s) => s.getActiveTask)()
+  const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace)
+  const activeTask = useWorkspaceStore((s) => s.getActiveWorkspace)()
 
   // 布局状态 — 从 layout-store 读取（持久化到 localStorage）
   const sidebarVisible = useLayoutStore((s) => s.sidebarVisible)
@@ -276,7 +276,7 @@ export default function IDELayout(): JSX.Element {
         onOpenBrowser={() => {
           setRightSidebarTab('preview')
         }}
-        onBackToTasks={closeTask}
+        onBackToTasks={closeWorkspace}
         activeTaskTitle={activeTask?.title}
       />
       <div className="ide-main">

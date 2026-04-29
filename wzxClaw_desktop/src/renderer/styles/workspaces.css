@@ -3,7 +3,7 @@
    ============================================================ */
 
 /* Task Home Page */
-.task-home {
+.workspace-home {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -15,7 +15,7 @@
 }
 
 /* Transparent drag region — allows window dragging from the top (titleBarStyle: hidden) */
-.task-home-dragbar {
+.workspace-home-dragbar {
   position: fixed;
   top: 0;
   left: 0;
@@ -25,26 +25,26 @@
   z-index: 100;
 }
 
-.task-home-header {
+.workspace-home-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--sp-6);
 }
 
-.task-home-title {
+.workspace-home-title {
   font-size: 24px;
   font-weight: 600;
   margin: 0;
   font-family: 'Inter', sans-serif;
 }
 
-.task-home-actions {
+.workspace-home-actions {
   display: flex;
   gap: var(--sp-2);
 }
 
-.task-home-empty {
+.workspace-home-empty {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -54,14 +54,14 @@
 }
 
 /* Task Grid */
-.task-grid {
+.workspace-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--sp-4);
 }
 
 /* Task Card */
-.task-card {
+.workspace-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -70,25 +70,25 @@
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.task-card:hover {
+.workspace-card:hover {
   border-color: var(--accent);
   background: var(--bg-tertiary);
 }
 
-.task-card:focus-visible {
+.workspace-card:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
   border-color: var(--accent);
 }
 
-.task-card-header {
+.workspace-card-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: var(--sp-2);
 }
 
-.task-card-title {
+.workspace-card-title {
   font-size: 15px;
   font-weight: 500;
   margin: 0;
@@ -96,7 +96,7 @@
   word-break: break-word;
 }
 
-.task-card-rename-input {
+.workspace-card-rename-input {
   font-size: 15px;
   font-weight: 500;
   line-height: 1.4;
@@ -111,18 +111,18 @@
   font-family: 'Inter', sans-serif;
 }
 
-.task-card-actions {
+.workspace-card-actions {
   display: flex;
   gap: var(--sp-1);
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.task-card:hover .task-card-actions {
+.workspace-card:hover .workspace-card-actions {
   opacity: 1;
 }
 
-.task-card-btn {
+.workspace-card-btn {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -132,16 +132,16 @@
   border-radius: var(--radius-sm);
 }
 
-.task-card-btn:hover {
+.workspace-card-btn:hover {
   background: var(--hover-bg);
   color: var(--text-primary);
 }
 
-.task-card-btn-danger:hover {
+.workspace-card-btn-danger:hover {
   color: var(--error);
 }
 
-.task-card-desc {
+.workspace-card-desc {
   font-size: 13px;
   color: var(--text-secondary);
   margin: 0 0 var(--sp-3) 0;
@@ -153,7 +153,7 @@
 }
 
 /* Progress summary on task card */
-.task-card-progress {
+.workspace-card-progress {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -165,17 +165,17 @@
   border-radius: 4px;
 }
 
-.task-card-progress-icon {
+.workspace-card-progress-icon {
   flex-shrink: 0;
 }
 
-.task-card-progress-text {
+.workspace-card-progress-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-card-meta {
+.workspace-card-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -184,7 +184,7 @@
 }
 
 /* Folder list on task card */
-.task-card-folders {
+.workspace-card-folders {
   list-style: none;
   margin: 0 0 var(--sp-2) 0;
   padding: 0;
@@ -193,7 +193,7 @@
   gap: 2px;
 }
 
-.task-card-folder-item {
+.workspace-card-folder-item {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
@@ -202,12 +202,12 @@
   overflow: hidden;
 }
 
-.task-card-folder-icon {
+.workspace-card-folder-icon {
   flex-shrink: 0;
   font-size: 11px;
 }
 
-.task-card-folder-name {
+.workspace-card-folder-name {
   font-weight: 500;
   color: var(--text-primary);
   flex-shrink: 0;
@@ -217,7 +217,7 @@
   white-space: nowrap;
 }
 
-.task-card-folder-path {
+.workspace-card-folder-path {
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -225,14 +225,14 @@
   font-size: 11px;
 }
 
-.task-card-no-folder {
+.workspace-card-no-folder {
   font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
 }
 
 /* Buttons */
-.task-btn-primary {
+.workspace-btn-primary {
   background: var(--accent);
   color: #fff;
   border: none;
@@ -245,16 +245,16 @@
   font-family: 'Inter', sans-serif;
 }
 
-.task-btn-primary:hover {
+.workspace-btn-primary:hover {
   background: var(--accent-hover);
 }
 
-.task-btn-primary:disabled {
+.workspace-btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.task-btn-secondary {
+.workspace-btn-secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border: 1px solid var(--border);
@@ -266,11 +266,11 @@
   font-family: 'Inter', sans-serif;
 }
 
-.task-btn-secondary:hover {
+.workspace-btn-secondary:hover {
   background: var(--hover-bg);
 }
 
-.task-filter-btn {
+.workspace-filter-btn {
   background: none;
   color: var(--text-secondary);
   border: 1px solid var(--border);
@@ -282,18 +282,18 @@
   font-family: 'Inter', sans-serif;
 }
 
-.task-filter-btn:hover {
+.workspace-filter-btn:hover {
   color: var(--text-primary);
   border-color: var(--text-secondary);
 }
 
-.task-filter-btn.active {
+.workspace-filter-btn.active {
   color: var(--accent);
   border-color: var(--accent);
 }
 
 /* Create Task Modal */
-.task-modal-backdrop {
+.workspace-modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
@@ -303,7 +303,7 @@
   z-index: 1000;
 }
 
-.task-modal {
+.workspace-modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -312,25 +312,25 @@
   max-width: 90vw;
 }
 
-.task-modal-title {
+.workspace-modal-title {
   font-size: 18px;
   font-weight: 600;
   margin: 0 0 var(--sp-5) 0;
 }
 
-.task-modal-field {
+.workspace-modal-field {
   margin-bottom: var(--sp-4);
 }
 
-.task-modal-field label {
+.workspace-modal-field label {
   display: block;
   font-size: 13px;
   color: var(--text-secondary);
   margin-bottom: var(--sp-1);
 }
 
-.task-modal-field input,
-.task-modal-field textarea {
+.workspace-modal-field input,
+.workspace-modal-field textarea {
   width: 100%;
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -344,17 +344,17 @@
   box-sizing: border-box;
 }
 
-.task-modal-field input:focus,
-.task-modal-field textarea:focus {
+.workspace-modal-field input:focus,
+.workspace-modal-field textarea:focus {
   border-color: var(--accent);
 }
 
-.task-modal-field textarea {
+.workspace-modal-field textarea {
   resize: vertical;
   min-height: 60px;
 }
 
-.task-modal-actions {
+.workspace-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
@@ -362,7 +362,7 @@
 }
 
 /* Back button in IDE layout when task is active */
-.task-back-btn {
+.workspace-back-btn {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
@@ -377,7 +377,7 @@
   -webkit-app-region: no-drag;
 }
 
-.task-back-btn:hover {
+.workspace-back-btn:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
 }
@@ -385,7 +385,7 @@
 /* ============================================================
    Task Detail Page
    ============================================================ */
-.task-detail-page {
+.workspace-detail-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -394,7 +394,7 @@
   overflow-y: auto;
 }
 
-.task-detail-header {
+.workspace-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -407,7 +407,7 @@
   z-index: 10;
 }
 
-.task-detail-back {
+.workspace-detail-back {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -419,17 +419,17 @@
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.task-detail-back:hover {
+.workspace-detail-back:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
 }
 
-.task-detail-enter-btn {
+.workspace-detail-enter-btn {
   font-size: 14px;
   padding: var(--sp-2) var(--sp-5);
 }
 
-.task-detail-body {
+.workspace-detail-body {
   padding: var(--sp-8);
   max-width: 760px;
   width: 100%;
@@ -439,26 +439,26 @@
   gap: var(--sp-8);
 }
 
-.task-detail-info {
+.workspace-detail-info {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
 }
 
-.task-detail-title-row {
+.workspace-detail-title-row {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
 }
 
-.task-detail-title {
+.workspace-detail-title {
   font-size: 28px;
   font-weight: 700;
   margin: 0;
   font-family: 'Inter', sans-serif;
 }
 
-.task-detail-rename-input {
+.workspace-detail-rename-input {
   font-size: 28px;
   font-weight: 700;
   margin: 0;
@@ -472,39 +472,39 @@
   font-family: 'Inter', sans-serif;
 }
 
-.task-detail-description {
+.workspace-detail-description {
   font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
 }
 
-.task-detail-meta {
+.workspace-detail-meta {
   display: flex;
   gap: var(--sp-5);
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.task-detail-section {
+.workspace-detail-section {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
 }
 
-.task-detail-section-header {
+.workspace-detail-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.task-detail-section-title {
+.workspace-detail-section-title {
   font-size: 16px;
   font-weight: 600;
   margin: 0;
 }
 
-.task-detail-empty {
+.workspace-detail-empty {
   font-size: 13px;
   color: var(--text-muted);
   padding: var(--sp-5);
@@ -513,7 +513,7 @@
   text-align: center;
 }
 
-.task-detail-projects {
+.workspace-detail-projects {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -522,7 +522,7 @@
   gap: var(--sp-2);
 }
 
-.task-detail-project-item {
+.workspace-detail-project-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -533,19 +533,19 @@
   gap: var(--sp-3);
 }
 
-.task-detail-project-info {
+.workspace-detail-project-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-.task-detail-project-name {
+.workspace-detail-project-name {
   font-size: 14px;
   font-weight: 500;
 }
 
-.task-detail-project-path {
+.workspace-detail-project-path {
   font-size: 12px;
   color: var(--text-muted);
   font-family: 'JetBrains Mono', monospace;
@@ -558,20 +558,20 @@
    Task Home — Connected Devices & Theme Selector
    ============================================================ */
 
-.task-home-section {
+.workspace-home-section {
   margin-top: var(--sp-8);
   padding-top: var(--sp-6);
   border-top: 1px solid var(--border);
 }
 
-.task-home-section-header {
+.workspace-home-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--sp-4);
 }
 
-.task-home-section-title {
+.workspace-home-section-title {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-secondary);

@@ -26,7 +26,7 @@ const DEFAULT_SPLIT_CONFIG: SplitConfig = {
  * 分析当前数据集的 train/test 分割质量
  */
 export function analyzeSplit(dataFile: string): SplitAnalysis {
-  const tasks = loadTasks(dataFile)
+  const tasks = loadWorkspaces(dataFile)
   const train = tasks.filter(t => t.metadata.split === 'train')
   const test = tasks.filter(t => t.metadata.split === 'test')
   const unassigned = tasks.filter(t => !t.metadata.split)
@@ -77,7 +77,7 @@ export function analyzeSplit(dataFile: string): SplitAnalysis {
  */
 export function resplitDataset(dataFile: string, config: Partial<SplitConfig> = {}): { trainCount: number; testCount: number } {
   const cfg = { ...DEFAULT_SPLIT_CONFIG, ...config }
-  const tasks = loadTasks(dataFile)
+  const tasks = loadWorkspaces(dataFile)
 
   // 分层分组
   const strata = new Map<string, BenchmarkTask[]>()
@@ -201,7 +201,7 @@ export interface SplitAnalysis {
 
 // ---- Helpers ----
 
-function loadTasks(dataFile: string): BenchmarkTask[] {
+function loadWorkspaces(dataFile: string): BenchmarkTask[] {
   const raw = readFileSync(resolve(dataFile), 'utf-8')
   const parsed = JSON.parse(raw)
   return Array.isArray(parsed) ? parsed : parsed.tasks ?? []

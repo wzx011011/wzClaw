@@ -15,7 +15,7 @@ import type { AgentEvent, AgentConfig } from '../main/agent/types'
 import type { BenchmarkTask, HeadlessConfig, HeadlessRunResult, TaskTraceData } from './types'
 
 /**
- * 运行单个评测任务
+ * 运行单个评测工作区
  *
  * 流程：构建 AgentLoop → 收集事件 → 提取 patch
  * 工作空间由调用方（batch-runner）管理，避免重复创建
@@ -44,7 +44,7 @@ export async function runBenchmarkTask(
     ownWorkspace = true
   }
 
-  // 保存旧 BENCHMARK_TASK_ID，避免并行任务互相覆盖
+  // 保存旧 BENCHMARK_TASK_ID，避免并行工作区互相覆盖
   const prevTaskId = process.env.BENCHMARK_TASK_ID
   try {
     // 2. 设置 BENCHMARK_TASK_ID — Langfuse trace 自动打 tag
@@ -116,7 +116,7 @@ export async function runBenchmarkTask(
       }
     }
 
-    // 10. 确保 Langfuse 评分写入（单任务 flush，不等全部跑完）
+    // 10. 确保 Langfuse 评分写入（单工作区 flush，不等全部跑完）
     await flushLangfuse()
 
     // 11. 提取工作空间的 git diff（agent 的修改）
@@ -140,7 +140,7 @@ export async function runBenchmarkTask(
       patch: patch || undefined,
     }
   } finally {
-    // 恢复之前的 BENCHMARK_TASK_ID，避免影响并行任务
+    // 恢复之前的 BENCHMARK_TASK_ID，避免影响并行工作区
     if (prevTaskId !== undefined) {
       process.env.BENCHMARK_TASK_ID = prevTaskId
     } else {
@@ -165,7 +165,7 @@ const READ_TOOLS = new Set(['FileRead', 'Grep', 'Glob'])
 
 /**
  * 从事件流和消息记录中提取结构化 trace 摘要
- * 用于逐任务失败分析，替代存储完整原始事件
+ * 用于逐工作区失败分析，替代存储完整原始事件
  */
 export function extractTraceData(
   events: HeadlessRunResult['events'],

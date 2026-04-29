@@ -342,7 +342,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       style: TextStyle(
                           color: colors.textPrimary, fontSize: 14,),),
                   subtitle: Text(
-                  'AI 任务完成时发送通知，并在点开后快速重连',
+                  'AI 工作区完成时发送通知，并在点开后快速重连',
                   style: TextStyle(
                     color: colors.textSecondary, fontSize: 13,),
                   ),

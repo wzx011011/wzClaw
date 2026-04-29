@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentStep, Task } from '../shared/types'
+import type { AgentStep, Workspace } from '../shared/types'
 
 const api = {
   // Agent
-  sendMessage: (request: { conversationId: string; content: string; activeTaskId?: string }) =>
+  sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string }) =>
     ipcRenderer.invoke('agent:send_message', request),
   stopGeneration: () => ipcRenderer.invoke('agent:stop'),
 
@@ -101,12 +101,12 @@ const api = {
   updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
 
   // Sessions
-  listSessions: (request?: { activeTaskId?: string }) => ipcRenderer.invoke('session:list', request),
-  loadSession: (request: { sessionId: string; activeTaskId?: string }) => ipcRenderer.invoke('session:load', request),
-  loadSessionTail: (request: { sessionId: string; tailCount: number; activeTaskId?: string }) => ipcRenderer.invoke('session:load-tail', request),
+  listSessions: (request?: { activeWorkspaceId?: string }) => ipcRenderer.invoke('session:list', request),
+  loadSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:load', request),
+  loadSessionTail: (request: { sessionId: string; tailCount: number; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:load-tail', request),
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
-  duplicateSession: (request: { sessionId: string; activeTaskId?: string }) => ipcRenderer.invoke('session:duplicate', request),
+  duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:duplicate', request),
   saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
   getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
   onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {
@@ -171,20 +171,20 @@ const api = {
   },
 
   // Tasks — top-level user work units
-  listTasks: (request?: { includeArchived?: boolean }): Promise<Task[]> =>
-    ipcRenderer.invoke('task:list', request),
-  getTask: (request: { taskId: string }): Promise<Task | null> =>
-    ipcRenderer.invoke('task:get', request),
-  createTask: (request: { title: string; description?: string }): Promise<Task> =>
-    ipcRenderer.invoke('task:create', request),
-  updateTask: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Task> =>
-    ipcRenderer.invoke('task:update', request),
-  deleteTask: (request: { taskId: string }): Promise<void> =>
-    ipcRenderer.invoke('task:delete', request),
-  addTaskProject: (request: { taskId: string; folderPath: string }): Promise<Task> =>
-    ipcRenderer.invoke('task:add-project', request),
-  removeTaskProject: (request: { taskId: string; projectId: string }): Promise<Task> =>
-    ipcRenderer.invoke('task:remove-project', request),
+  listWorkspaces: (request?: { includeArchived?: boolean }): Promise<Workspace[]> =>
+    ipcRenderer.invoke('workspace:list', request),
+  getWorkspace: (request: { taskId: string }): Promise<Workspace | null> =>
+    ipcRenderer.invoke('workspace:get', request),
+  createWorkspace: (request: { title: string; description?: string }): Promise<Workspace> =>
+    ipcRenderer.invoke('workspace:create', request),
+  updateWorkspace: (request: { taskId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Workspace> =>
+    ipcRenderer.invoke('workspace:update', request),
+  deleteWorkspace: (request: { taskId: string }): Promise<void> =>
+    ipcRenderer.invoke('workspace:delete', request),
+  addTaskProject: (request: { taskId: string; folderPath: string }): Promise<Workspace> =>
+    ipcRenderer.invoke('workspace:add-project', request),
+  removeTaskProject: (request: { taskId: string; projectId: string }): Promise<Workspace> =>
+    ipcRenderer.invoke('workspace:remove-project', request),
 
   // Index
   getIndexStatus: () => ipcRenderer.invoke('index:status'),

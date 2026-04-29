@@ -1,119 +1,120 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useWorkspaceStore } from '../workspace-store'
-import type { FileTreeNode } from '../../../shared/types'
 
 describe('WorkspaceStore', () => {
-  const sampleTree: FileTreeNode[] = [
-    {
-      name: 'src',
-      path: '/src',
-      isDirectory: true,
-      isExpanded: true,
-      children: [
-        { name: 'auth.ts', path: '/src/auth.ts', isDirectory: false },
-        {
-          name: 'utils',
-          path: '/src/utils',
-          isDirectory: true,
-          isExpanded: true,
-          children: [
-            { name: 'helpers.ts', path: '/src/utils/helpers.ts', isDirectory: false }
-          ]
-        }
-      ]
-    },
-    { name: 'package.json', path: '/package.json', isDirectory: false }
-  ]
-
   beforeEach(() => {
     useWorkspaceStore.setState({
-      rootPath: '/project',
-      tree: JSON.parse(JSON.stringify(sampleTree)),
+      tasks: [
+        { id: 't-1', title: 'Task One', description: 'First task', archived: false, projects: [] },
+        { id: 't-2', title: 'Task Two', description: 'Second task', archived: false, projects: [] }
+      ],
+      activeWorkspaceId: null,
+      viewingWorkspaceId: null,
       isLoading: false,
       error: null
     })
     vi.restoreAllMocks()
     ;(globalThis as any).window = {
       wzxclaw: {
-        openFolder: vi.fn(),
-        setFolder: vi.fn(),
-        getDirectoryTree: vi.fn().mockResolvedValue([]),
-        getWorkspaceStatus: vi.fn().mockResolvedValue(null)
+        listWorkspaces: vi.fn().mockResolvedValue([]),
+        createWorkspace: vi.fn().mockImplementation(({ title, description }) =>
+          Promise.resolve({ id: 't-new', title, description, archived: false, projects: [] })
+        ),
+        updateWorkspace: vi.fn().mockImplementation(({ taskId, updates }) =>
+          Promise.resolve({ id: taskId, ...updates })
+        ),
+        deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+        addTaskProject: vi.fn().mockResolvedValue({ id: 't-1', projects: [] }),
+        removeTaskProject: vi.fn().mockResolvedValue({ id: 't-1', projects: [] })
       }
     }
   })
 
-  describe('collapseNode', () => {
-    it('should set isExpanded=false and children=undefined on target directory', () => {
-      const { collapseNode } = useWorkspaceStore.getState()
-      collapseNode('/src')
+  describe('openWorkspace / closeWorkspace', () => {
+    it('should set activeWorkspaceId and clear viewingWorkspaceId on openWorkspace', () => {
+      const { openWorkspace } = useWorkspaceStore.getState()
+      useWorkspaceStore.setState({ viewingWorkspaceId: 't-2' })
 
-      const tree = useWorkspaceStore.getState().tree
-      const srcNode = tree.find((n) => n.path === '/src')!
-      expect(srcNode.isExpanded).toBe(false)
-      expect(srcNode.children).toBeUndefined()
+      openWorkspace('t-1')
+      expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('t-1')
+      expect(useWorkspaceStore.getState().viewingWorkspaceId).toBeNull()
     })
 
-    it('should work on nested nodes', () => {
-      const { collapseNode } = useWorkspaceStore.getState()
-      collapseNode('/src/utils')
+    it('should set activeWorkspaceId to null on closeWorkspace', () => {
+      useWorkspaceStore.setState({ activeWorkspaceId: 't-1' })
 
-      const tree = useWorkspaceStore.getState().tree
-      const srcNode = tree.find((n) => n.path === '/src')!
-      const utilsNode = srcNode.children!.find((n) => n.path === '/src/utils')!
-      expect(utilsNode.isExpanded).toBe(false)
-      expect(utilsNode.children).toBeUndefined()
-
-      // Parent should remain unchanged
-      expect(srcNode.isExpanded).toBe(true)
-      expect(srcNode.children).toBeDefined()
+      const { closeWorkspace } = useWorkspaceStore.getState()
+      closeWorkspace()
+      expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull()
     })
   })
 
-  describe('updateNode', () => {
-    it('should merge changes into target node', () => {
-      const { updateNode } = useWorkspaceStore.getState()
-      updateNode('/src/auth.ts', { name: 'auth.new.ts' })
+  describe('openWorkspaceDetail / closeWorkspaceDetail', () => {
+    it('should set viewingWorkspaceId on openWorkspaceDetail', () => {
+      const { openWorkspaceDetail } = useWorkspaceStore.getState()
+      openWorkspaceDetail('t-2')
+      expect(useWorkspaceStore.getState().viewingWorkspaceId).toBe('t-2')
+    })
 
-      const tree = useWorkspaceStore.getState().tree
-      const srcNode = tree.find((n) => n.path === '/src')!
-      const authNode = srcNode.children!.find((n) => n.path === '/src/auth.ts')!
-      expect(authNode.name).toBe('auth.new.ts')
-      // Other properties unchanged
-      expect(authNode.isDirectory).toBe(false)
+    it('should clear viewingWorkspaceId on closeWorkspaceDetail', () => {
+      useWorkspaceStore.setState({ viewingWorkspaceId: 't-2' })
+
+      const { closeWorkspaceDetail } = useWorkspaceStore.getState()
+      closeWorkspaceDetail()
+      expect(useWorkspaceStore.getState().viewingWorkspaceId).toBeNull()
     })
   })
 
-  describe('handleFileChange', () => {
-    it('should remove node from tree on "deleted" changeType', () => {
-      const { handleFileChange } = useWorkspaceStore.getState()
-      handleFileChange('/src/auth.ts', 'deleted')
+  describe('getActiveWorkspace', () => {
+    it('should return correct task when activeWorkspaceId is set', () => {
+      useWorkspaceStore.setState({ activeWorkspaceId: 't-1' })
 
-      const tree = useWorkspaceStore.getState().tree
-      const srcNode = tree.find((n) => n.path === '/src')!
-      const authNode = srcNode.children!.find((n) => n.path === '/src/auth.ts')
-      expect(authNode).toBeUndefined()
+      const task = useWorkspaceStore.getState().getActiveWorkspace()
+      expect(task).not.toBeNull()
+      expect(task!.id).toBe('t-1')
+      expect(task!.title).toBe('Task One')
     })
 
-    it('should add node to correct parent on "created" changeType', () => {
-      const { handleFileChange } = useWorkspaceStore.getState()
-      handleFileChange('/src/new-file.ts', 'created')
-
-      const tree = useWorkspaceStore.getState().tree
-      const srcNode = tree.find((n) => n.path === '/src')!
-      const newNode = srcNode.children!.find((n) => n.path === '/src/new-file.ts')
-      expect(newNode).toBeDefined()
-      expect(newNode!.name).toBe('new-file.ts')
-      expect(newNode!.isDirectory).toBe(false)
+    it('should return null when no active task', () => {
+      const task = useWorkspaceStore.getState().getActiveWorkspace()
+      expect(task).toBeNull()
     })
+  })
 
-    it('should not change tree on "modified" changeType', () => {
-      const before = JSON.parse(JSON.stringify(useWorkspaceStore.getState().tree))
+  describe('getViewingWorkspace', () => {
+    it('should return correct task when viewingWorkspaceId is set', () => {
+      useWorkspaceStore.setState({ viewingWorkspaceId: 't-2' })
 
-      const { handleFileChange } = useWorkspaceStore.getState()
-      handleFileChange('/src/auth.ts', 'modified')
+      const task = useWorkspaceStore.getState().getViewingWorkspace()
+      expect(task).not.toBeNull()
+      expect(task!.id).toBe('t-2')
+      expect(task!.title).toBe('Task Two')
+    })
+  })
 
-      expect(useWorkspaceStore.getState().tree).toEqual(before)
+  describe('deleteWorkspace', () => {
+    it('should clear activeWorkspaceId when deleting the active task', async () => {
+      useWorkspaceStore.setState({ activeWorkspaceId: 't-1' })
+
+      const { deleteWorkspace } = useWorkspaceStore.getState()
+      await deleteWorkspace('t-1')
+
+      const state = useWorkspaceStore.getState()
+      expect(state.tasks).toHaveLength(1)
+      expect(state.tasks[0].id).toBe('t-2')
+      expect(state.activeWorkspaceId).toBeNull()
+    })
+  })
+
+  describe('createWorkspace', () => {
+    it('should append new task to tasks array', async () => {
+      const { createWorkspace } = useWorkspaceStore.getState()
+      const task = await createWorkspace('New Task', 'A new task')
+
+      expect(task.id).toBe('t-new')
+      expect(task.title).toBe('New Task')
+      expect(useWorkspaceStore.getState().tasks).toHaveLength(3)
+      expect(useWorkspaceStore.getState().tasks[2].id).toBe('t-new')
     })
   })
 })
