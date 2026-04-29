@@ -65,7 +65,8 @@ export class MessageBuilder {
         case 'assistant': {
           const openaiMsg: Record<string, unknown> = {
             role: 'assistant',
-            content: msg.content
+            // tool_calls 时 content 为空字符串，OpenAI/DeepSeek API 要求传 null 而非 ""
+            content: msg.content || null
           }
 
           // DeepSeek 扩展思考：reasoning_content 必须原样回传给 API，否则 400

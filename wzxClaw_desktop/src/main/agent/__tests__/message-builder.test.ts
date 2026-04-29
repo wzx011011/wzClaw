@@ -52,7 +52,7 @@ describe('MessageBuilder', () => {
       const result = builder.buildMessages(messages, 'openai')
       expect(result[0]).toEqual({
         role: 'assistant',
-        content: '',
+        content: null,
         tool_calls: [
           {
             id: 'call_1',

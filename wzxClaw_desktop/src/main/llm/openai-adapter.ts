@@ -21,6 +21,18 @@ export class OpenAIAdapter implements LLMAdapter {
 
   async *stream(options: StreamOptions): AsyncGenerator<StreamEvent> {
     try {
+      const isDeepSeekV4 = options.model.startsWith('deepseek-v4')
+      const isDeepSeekReasoner = options.model === 'deepseek-reasoner'
+      const isOpenAIReasoner = options.model.startsWith('o1') || options.model.startsWith('o3') || options.model.startsWith('o4')
+
+      // deepseek-v4 thinking mode：若历史消息含 reasoning_content，说明之前在 thinking mode，
+      // 必须在本次请求也显式开启，否则 API 400 "reasoning_content must be passed back"
+      const hasReasoningHistory = (options.messages as Array<Record<string, unknown>>)
+        .some(m => m['role'] === 'assistant' && m['reasoning_content'])
+      const enableDeepSeekV4Thinking = isDeepSeekV4 && (
+        (options.thinkingDepth && options.thinkingDepth !== 'none') || hasReasoningHistory
+      )
+
       const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
         model: options.model,
         messages: options.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -39,9 +51,28 @@ export class OpenAIAdapter implements LLMAdapter {
             function: { name: t.name, description: t.description, parameters: t.input_schema },
           })),
         }),
-        ...(options.thinkingDepth && options.thinkingDepth !== 'none'
-          && (options.model.startsWith('o1') || options.model.startsWith('o3') || options.model.startsWith('o4'))
+        // deepseek-v4-pro/flash：显式启用 thinking mode + reasoning_effort
+        ...(enableDeepSeekV4Thinking && {
+          thinking: { type: 'enabled' } as any,
+          reasoning_effort: (options.thinkingDepth && options.thinkingDepth !== 'none')
+            ? options.thinkingDepth
+            : 'high',
+        }),
+        // OpenAI o-series：只传 reasoning_effort
+        ...(isOpenAIReasoner && options.thinkingDepth && options.thinkingDepth !== 'none'
           && { reasoning_effort: options.thinkingDepth }),
+      }
+
+      // deepseek-reasoner 多轮对话：reasoning_content 不能传回 API，否则 400
+      if (isDeepSeekReasoner) {
+        params.messages = (params.messages as Array<Record<string, unknown>>).map(m => {
+          if (m['role'] === 'assistant' && m['reasoning_content']) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { reasoning_content: _rc, ...rest } = m
+            return rest
+          }
+          return m
+        }) as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
       }
 
       const stream = await this.client.chat.completions.create(params, {
