@@ -10,6 +10,7 @@ import { safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { getSettingsPath, getKeysPath, getBackupsDir } from './paths'
+import { DEEPSEEK_ANTHROPIC_BASE_URL } from '../shared/constants'
 
 interface StoredSettings {
   provider: string
@@ -288,13 +289,18 @@ export class SettingsManager {
    * Get full configuration for LLM gateway (includes API key).
    */
   getCurrentConfig(): FullConfig {
-    const provider = this.settings.provider
-    const baseURL = this.settings.baseURL
-      || (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
+    const isDeepSeekV4 = this.settings.model?.startsWith('deepseek-v4')
+    const provider = isDeepSeekV4 ? 'anthropic' : this.settings.provider
+    const baseURL = isDeepSeekV4
+      ? DEEPSEEK_ANTHROPIC_BASE_URL
+      : this.settings.baseURL || (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
+    const apiKey = isDeepSeekV4
+      ? this.getApiKey(this.settings.provider) ?? this.getApiKey('openai') ?? this.getApiKey('anthropic')
+      : this.getApiKey(provider)
     return {
       provider,
       model: this.settings.model,
-      apiKey: this.getApiKey(provider),
+      apiKey,
       baseURL,
       systemPrompt: this.settings.systemPrompt,
       thinkingDepth: this.settings.thinkingDepth

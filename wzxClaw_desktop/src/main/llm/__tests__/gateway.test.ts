@@ -14,6 +14,12 @@ describe('LLMGateway', () => {
     expect((gateway as any).detectProvider('deepseek-reasoner')).toBe('openai')
   })
 
+  it('detects anthropic provider for DeepSeek V4 models', () => {
+    const gateway = new LLMGateway()
+    expect((gateway as any).detectProvider('deepseek-v4-pro')).toBe('anthropic')
+    expect((gateway as any).detectProvider('deepseek-v4-flash')).toBe('anthropic')
+  })
+
   it('detects anthropic provider for claude models', () => {
     const gateway = new LLMGateway()
     expect((gateway as any).detectProvider('claude-sonnet-4-20250514')).toBe('anthropic')

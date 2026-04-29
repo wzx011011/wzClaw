@@ -9,9 +9,10 @@ export class AnthropicAdapter implements LLMAdapter {
 
   constructor(config: ProviderConfig) {
     const isRealAnthropic = !config.baseURL || config.baseURL.includes('anthropic.com')
+    const isDeepSeekAnthropic = config.baseURL?.includes('api.deepseek.com/anthropic')
     const clientOptions: Record<string, unknown> = {}
-    if (isRealAnthropic) {
-      // Real Anthropic: use x-api-key header
+    if (isRealAnthropic || isDeepSeekAnthropic) {
+      // Real Anthropic and DeepSeek Anthropic-compatible API: use x-api-key header
       clientOptions.apiKey = config.apiKey
     } else {
       // Third-party Anthropic-compatible (e.g. bigmodel.cn): use Authorization: Bearer
@@ -96,12 +97,15 @@ export class AnthropicAdapter implements LLMAdapter {
 
       // Inject thinking + effort params based on thinkingDepth setting
       // Only apply to real Anthropic API — third-party endpoints may not support these
+      const isDeepSeekAnthropic = this.client.baseURL?.includes('api.deepseek.com/anthropic')
       const isRealAnthropic = !options.model.startsWith('deepseek') &&
         (!this.client.baseURL || this.client.baseURL.includes('anthropic.com'))
       const depth = options.thinkingDepth
-      if (depth && depth !== 'none' && isRealAnthropic) {
-        params.output_config = { effort: depth }
-        if (depth === 'medium' || depth === 'high') {
+      if (depth && depth !== 'none' && (isRealAnthropic || isDeepSeekAnthropic)) {
+        params.output_config = { effort: depth === 'high' ? 'high' : 'high' }
+        if (isDeepSeekAnthropic) {
+          params.thinking = { type: 'enabled' }
+        } else if (depth === 'medium' || depth === 'high') {
           // Use reasonable fixed budget — not max_tokens-1 which leaves zero room for output
           const budgetMap = { medium: 8192, high: 16384 }
           params.thinking = { type: 'enabled', budget_tokens: budgetMap[depth] }

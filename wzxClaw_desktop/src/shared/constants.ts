@@ -18,8 +18,8 @@ export const DEFAULT_MODELS: ModelPreset[] = [
   { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'openai', maxTokens: 8192, contextWindowSize: 128000 },
   { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', maxTokens: 16384, contextWindowSize: 128000 },
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4 Pro', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4 Flash', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4 Pro', provider: 'anthropic', maxTokens: 8192, contextWindowSize: 64000 },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4 Flash', provider: 'anthropic', maxTokens: 8192, contextWindowSize: 64000 },
   { id: 'deepseek-chat', name: 'DeepSeek-V3', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
   { id: 'deepseek-reasoner', name: 'DeepSeek-R1', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
   { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', maxTokens: 8192, contextWindowSize: 200000 },
@@ -148,4 +148,5 @@ export const WEB_FETCH_CACHE_MAX_ENTRIES = 100
 // OpenAI-compatible endpoints
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
+export const DEEPSEEK_ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
 export const GLM_BASE_URL = 'https://open.bigmodel.cn/api/anthropic'
