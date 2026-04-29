@@ -138,6 +138,8 @@ export class AnthropicAdapter implements LLMAdapter {
 
       // Track tool call accumulators: contentBlockIndex -> accumulated JSON
       const toolAccumulators = new Map<number, { id: string; name: string; json: string }>()
+      // 累积 Anthropic thinking block 内容（含 signature），以便回传
+      const thinkingAccumulators = new Map<number, { thinking: string; signature?: string }>()
 
       for await (const event of stream) {
         switch (event.type) {
@@ -154,8 +156,9 @@ export class AnthropicAdapter implements LLMAdapter {
                 name: event.content_block.name,
               }
             }
-            // Thinking block — emit empty thinking_delta so UI shows thinking state
+            // Thinking block — 初始化累积器，并发 empty delta 让 UI 进入 thinking 状态
             if ((event.content_block as any).type === 'thinking') {
+              thinkingAccumulators.set(event.index, { thinking: '' })
               yield { type: 'thinking_delta', content: '' }
             }
             break
@@ -165,9 +168,17 @@ export class AnthropicAdapter implements LLMAdapter {
             if (event.delta.type === 'text_delta') {
               yield { type: 'text_delta', content: event.delta.text }
             }
-            // Thinking delta — forward thinking content to UI
+            // Thinking delta — 流式转发给 UI，同时累积完整内容
             if ((event.delta as any).type === 'thinking_delta') {
-              yield { type: 'thinking_delta', content: (event.delta as any).thinking }
+              const text: string = (event.delta as any).thinking
+              const acc = thinkingAccumulators.get(event.index)
+              if (acc) acc.thinking += text
+              yield { type: 'thinking_delta', content: text }
+            }
+            // Anthropic 返回的 signature delta（不透明字符串，必须回传）
+            if ((event.delta as any).type === 'signature_delta') {
+              const acc = thinkingAccumulators.get(event.index)
+              if (acc) acc.signature = (acc.signature ?? '') + (event.delta as any).signature
             }
             if (event.delta.type === 'input_json_delta') {
               const acc = toolAccumulators.get(event.index)
@@ -187,6 +198,16 @@ export class AnthropicAdapter implements LLMAdapter {
               } catch {
                 yield { type: 'error', error: `Failed to parse tool input JSON: ${acc.json.slice(0, 100)}` }
               }
+            }
+            // Thinking block 结束 — 发出完整 thinking block（含 signature）供 stream-phase 存入 contentBlocks
+            const thinkAcc = thinkingAccumulators.get(event.index)
+            if (thinkAcc) {
+              yield {
+                type: 'thinking_block_done',
+                thinking: thinkAcc.thinking,
+                signature: thinkAcc.signature,
+              }
+              thinkingAccumulators.delete(event.index)
             }
             break
           }

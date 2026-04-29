@@ -122,6 +122,12 @@ export async function* executeStreamPhase(
           break
         }
 
+        case 'thinking_block_done': {
+          // Anthropic extended thinking block 结束 — 存入 contentBlocks 以便下次请求回传
+          contentBlocks.push({ type: 'thinking', thinking: event.thinking, signature: event.signature })
+          break
+        }
+
         case 'tool_use_start': {
           toolNameMap.set(event.id, event.name)
           break

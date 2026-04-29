@@ -143,6 +143,10 @@ export class MessageBuilder {
               if (block.type === 'text') {
                 return { type: 'text', text: block.text }
               }
+              if (block.type === 'thinking') {
+                // Anthropic 要求原样回传 thinking block（含 signature）
+                return { type: 'thinking', thinking: block.thinking, signature: block.signature }
+              }
               return { type: 'tool_use', id: block.id, name: block.name, input: block.input ?? {} }
             })
             // Anthropic API rejects empty content arrays

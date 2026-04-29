@@ -16,7 +16,14 @@ export interface ToolUseContentBlock {
   input: Record<string, unknown>
 }
 
-export type ContentBlock = TextContentBlock | ToolUseContentBlock
+export interface ThinkingContentBlock {
+  type: 'thinking'
+  thinking: string
+  /** Anthropic returns an opaque signature that must be passed back verbatim */
+  signature?: string
+}
+
+export type ContentBlock = TextContentBlock | ToolUseContentBlock | ThinkingContentBlock
 
 // ============================================================
 // Message Types
@@ -91,6 +98,13 @@ export interface ThinkingDeltaEvent {
   content: string
 }
 
+export interface ThinkingBlockDoneEvent {
+  type: 'thinking_block_done'
+  thinking: string
+  /** Opaque signature from Anthropic — must be echoed back in subsequent requests */
+  signature?: string
+}
+
 export interface ToolUseStartEvent {
   type: 'tool_use_start'
   id: string
@@ -129,6 +143,7 @@ export interface StreamDoneEvent {
 export type StreamEvent =
   | TextDeltaEvent
   | ThinkingDeltaEvent
+  | ThinkingBlockDoneEvent
   | ToolUseStartEvent
   | ToolUseDeltaEvent
   | ToolUseEndEvent
@@ -267,6 +282,7 @@ export const TokenUsageSchema = z.object({
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text_delta'), content: z.string() }),
   z.object({ type: z.literal('thinking_delta'), content: z.string() }),
+  z.object({ type: z.literal('thinking_block_done'), thinking: z.string(), signature: z.string().optional() }),
   z.object({ type: z.literal('tool_use_start'), id: z.string(), name: z.string() }),
   z.object({ type: z.literal('tool_use_delta'), id: z.string(), partialJson: z.string() }),
   z.object({ type: z.literal('tool_use_end'), id: z.string(), parsedInput: z.record(z.unknown()) }),
