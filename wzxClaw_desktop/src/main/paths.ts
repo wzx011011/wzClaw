@@ -42,6 +42,31 @@ export function getMcpConfigPath(): string {
   return path.join(getUserDir(), 'mcp.json')
 }
 
+/** 首次运行时创建默认 MCP 配置（幂等，不覆盖已有配置） */
+export async function ensureMcpConfig(): Promise<void> {
+  const configPath = getMcpConfigPath()
+  try {
+    await fs.access(configPath)
+    // 已存在，跳过
+  } catch {
+    const defaultConfig = JSON.stringify({
+      mcpServers: {
+        fetch: {
+          command: 'npx',
+          args: ['-y', '@anthropic/mcp-fetch'],
+          transport: 'stdio'
+        },
+        memory: {
+          command: 'npx',
+          args: ['-y', '@anthropic/mcp-memory'],
+          transport: 'stdio'
+        }
+      }
+    }, null, 2)
+    await fs.writeFile(configPath, defaultConfig + '\n', 'utf-8').catch(() => { /* ignore */ })
+  }
+}
+
 /** 缓存目录：~/.wzxclaw/cache/ */
 export function getCacheDir(): string {
   return path.join(getUserDir(), 'cache')

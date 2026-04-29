@@ -57,25 +57,25 @@ describe('IPC Channels', () => {
 // Test 2: Tool registry wiring
 // ============================================================
 describe('Default Tool Registry', () => {
-  it('should register all 9 base tools', () => {
+  it('should register all 11 base tools', () => {
     const registry = createDefaultTools(process.cwd())
     const tools = registry.getAll()
 
-    expect(tools).toHaveLength(9)
+    expect(tools).toHaveLength(11)
 
     const toolNames = tools.map((t) => t.name).sort()
     expect(toolNames).toEqual([
       'Bash', 'FileEdit', 'FileRead', 'FileWrite', 'Glob', 'Grep',
-      'SemanticSearch', 'WebFetch', 'WebSearch'
+      'LS', 'MultiEdit', 'SemanticSearch', 'WebFetch', 'WebSearch'
     ])
   })
 
-  it('should have exactly 3 approval-required tools', () => {
+  it('should have exactly 4 approval-required tools', () => {
     const registry = createDefaultTools(process.cwd())
     const approvalRequired = registry.getApprovalRequired()
 
-    expect(approvalRequired).toHaveLength(3)
-    expect(approvalRequired.sort()).toEqual(['Bash', 'FileEdit', 'FileWrite'])
+    expect(approvalRequired).toHaveLength(4)
+    expect(approvalRequired.sort()).toEqual(['Bash', 'FileEdit', 'FileWrite', 'MultiEdit'])
   })
 
   it('should have valid JSON Schema for each tool', () => {
@@ -94,7 +94,7 @@ describe('Default Tool Registry', () => {
     const registry = createDefaultTools(process.cwd())
     const definitions = registry.getDefinitions()
 
-    expect(definitions).toHaveLength(9)
+    expect(definitions).toHaveLength(11)
 
     for (const def of definitions) {
       expect(def.name).toBeTruthy()
@@ -195,11 +195,11 @@ describe('IPC Handler Registration', () => {
     } as unknown
 
     const mockTaskStore = {
-      listTasks: vi.fn(() => []),
-      getTask: vi.fn(),
-      createTask: vi.fn(),
-      updateTask: vi.fn(),
-      deleteTask: vi.fn(),
+      listWorkspaces: vi.fn(() => []),
+      getWorkspace: vi.fn(),
+      createWorkspace: vi.fn(),
+      updateWorkspace: vi.fn(),
+      deleteWorkspace: vi.fn(),
       addProject: vi.fn(),
       removeProject: vi.fn(),
     } as unknown
@@ -221,7 +221,7 @@ describe('IPC Handler Registration', () => {
         null, // indexingEngine (optional)
         mockSettingsManager as any,
         mockMcpManager as any,
-        mockTaskStore as import('../tasks/task-store').TaskStore,
+        mockTaskStore as import('../tasks/workspace-store').WorkspaceStore,
       )
     }).not.toThrow()
 
@@ -239,13 +239,13 @@ describe('IPC Handler Registration', () => {
     expect(handleCalls).toContain('index:search')
 
     // Task IPC handlers
-    expect(handleCalls).toContain('task:list')
-    expect(handleCalls).toContain('task:get')
-    expect(handleCalls).toContain('task:create')
-    expect(handleCalls).toContain('task:update')
-    expect(handleCalls).toContain('task:delete')
-    expect(handleCalls).toContain('task:add-project')
-    expect(handleCalls).toContain('task:remove-project')
+    expect(handleCalls).toContain('workspace:list')
+    expect(handleCalls).toContain('workspace:get')
+    expect(handleCalls).toContain('workspace:create')
+    expect(handleCalls).toContain('workspace:update')
+    expect(handleCalls).toContain('workspace:delete')
+    expect(handleCalls).toContain('workspace:add-project')
+    expect(handleCalls).toContain('workspace:remove-project')
   })
 })
 
@@ -276,26 +276,26 @@ describe('IPC Zod Schemas', () => {
     expect(result.success).toBe(false)
   })
 
-  it('should accept agent:send_message with optional activeTaskId', () => {
+  it('should accept agent:send_message with optional activeWorkspaceId', () => {
     const result = IpcSchemas['agent:send_message'].request.safeParse({
       conversationId: 'test-123',
       content: 'Hello!',
-      activeTaskId: 'task-abc',
+      activeWorkspaceId: 'task-abc',
     })
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.activeTaskId).toBe('task-abc')
+      expect(result.data.activeWorkspaceId).toBe('task-abc')
     }
   })
 
-  it('should accept agent:send_message without activeTaskId', () => {
+  it('should accept agent:send_message without activeWorkspaceId', () => {
     const result = IpcSchemas['agent:send_message'].request.safeParse({
       conversationId: 'test-123',
       content: 'Hello!',
     })
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.activeTaskId).toBeUndefined()
+      expect(result.data.activeWorkspaceId).toBeUndefined()
     }
   })
 })

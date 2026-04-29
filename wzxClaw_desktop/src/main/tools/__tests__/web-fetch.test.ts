@@ -4,15 +4,13 @@ import { WebFetchTool } from '../web-fetch'
 describe('WebFetchTool', () => {
   let tool: WebFetchTool
 
-  // No beforeEach -- rate limit state is shared, so create once
-  // and use long timeout in tests
   beforeAll(() => {
     tool = new WebFetchTool()
   })
 
   it('has correct name, description, and requiresApproval', () => {
     expect(tool.name).toBe('WebFetch')
-    expect(tool.description).toContain('Fetch a web page')
+    expect(tool.description).toContain('Markdown')
     expect(tool.requiresApproval).toBe(false)
   })
 
@@ -21,6 +19,7 @@ describe('WebFetchTool', () => {
     expect(schema.required).toContain('url')
     expect(schema.properties).toHaveProperty('url')
     expect(schema.properties).toHaveProperty('maxLength')
+    expect(schema.properties).toHaveProperty('prompt')
   })
 
   it('rejects non-http URLs', async () => {
@@ -35,10 +34,11 @@ describe('WebFetchTool', () => {
     expect(result.output).toContain('Invalid input')
   })
 
-  it('strips HTML tags and decodes entities', async () => {
-    const html = `<html><head><style>body{color:red}</style></head><body><p>Hello &amp; World</p><script>alert('x')</script></body></html>`
+  it('converts HTML to Markdown', async () => {
+    const html = `<html><body><h1>Title</h1><p>Hello &amp; World</p><ul><li>item1</li><li>item2</li></ul></body></html>`
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: () => 'text/html' },
       text: () => Promise.resolve(html)
     })
     vi.stubGlobal('fetch', mockFetch)
@@ -50,20 +50,21 @@ describe('WebFetchTool', () => {
     expect(result.isError).toBe(false)
     expect(result.output).toContain('Hello & World')
     expect(result.output).not.toContain('<p>')
-    expect(result.output).not.toContain('<script>')
-    expect(result.output).not.toContain('alert')
+    // turndown 转换后应保留 Markdown 结构
+    expect(result.output).toContain('# Title')
   })
 
   it('truncates content at max length', async () => {
     const longContent = '<p>' + 'A'.repeat(20000) + '</p>'
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: () => 'text/html' },
       text: () => Promise.resolve(longContent)
     })
     vi.stubGlobal('fetch', mockFetch)
 
     const result = await tool.execute(
-      { url: 'https://example.com', maxLength: 1000 },
+      { url: 'https://example.com/long-page', maxLength: 1000 },
       { workingDirectory: '/tmp' }
     )
     expect(result.isError).toBe(false)
@@ -74,6 +75,7 @@ describe('WebFetchTool', () => {
   it('prepends source URL', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: () => 'text/html' },
       text: () => Promise.resolve('<p>Some content</p>')
     })
     vi.stubGlobal('fetch', mockFetch)
@@ -84,6 +86,38 @@ describe('WebFetchTool', () => {
     )
     expect(result.isError).toBe(false)
     expect(result.output).toMatch(/^Source: https:\/\/example\.com\/page/)
+  })
+
+  it('includes prompt in output when provided', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'text/html' },
+      text: () => Promise.resolve('<p>Installation instructions here</p>')
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await tool.execute(
+      { url: 'https://example.com', prompt: 'Extract installation steps' },
+      { workingDirectory: '/tmp' }
+    )
+    expect(result.isError).toBe(false)
+    expect(result.output).toContain('Focus: Extract installation steps')
+  })
+
+  it('rejects binary content types', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/pdf' },
+      text: () => Promise.resolve('binary data')
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await tool.execute(
+      { url: 'https://example.com/binary-file.pdf' },
+      { workingDirectory: '/tmp' }
+    )
+    expect(result.isError).toBe(true)
+    expect(result.output).toContain('binary content')
   })
 
   it('returns error on non-200 status', async () => {
@@ -108,7 +142,7 @@ describe('WebFetchTool', () => {
     vi.stubGlobal('fetch', mockFetch)
 
     const result = await tool.execute(
-      { url: 'https://example.com' },
+      { url: 'https://example.com/fail-network' },
       { workingDirectory: '/tmp' }
     )
     expect(result.isError).toBe(true)

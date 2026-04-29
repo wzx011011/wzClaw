@@ -137,8 +137,10 @@ export class TurnManager {
         await hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
 
         // 文件快照（写入前）
-        if (historyManager && (toolCall.name === 'FileWrite' || toolCall.name === 'FileEdit')) {
-          const rawPath = String(toolCall.input.path ?? '')
+        if (historyManager && (toolCall.name === 'FileWrite' || toolCall.name === 'FileEdit' || toolCall.name === 'MultiEdit')) {
+          const rawPath = toolCall.name === 'MultiEdit'
+            ? String(toolCall.input.file_path ?? '')
+            : String(toolCall.input.path ?? '')
           if (rawPath) {
             const absolutePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(config.workingDirectory, rawPath)
             await historyManager.snapshot(absolutePath, toolCall.id)
@@ -226,7 +228,7 @@ export class TurnManager {
     if (input.turnIndex > 0) {
       const attachmentText = buildTurnAttachments({
         ...this.fileTracker.getContext(),
-        activeTasks: undefined,
+        activeWorkspaces: undefined,
       })
       if (attachmentText) {
         input.conversation.appendSystemReminder(attachmentText)
@@ -314,10 +316,12 @@ export class TurnManager {
           const absPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(input.config.workingDirectory, rawPath)
           this.fileTracker.recordRead(absPath)
         }
-      } else if ((result.toolName === 'FileWrite' || result.toolName === 'FileEdit') && !result.isError) {
+      } else if ((result.toolName === 'FileWrite' || result.toolName === 'FileEdit' || result.toolName === 'MultiEdit') && !result.isError) {
         const tc = phaseMeta.toolCalls.find(t => t.id === result.toolCallId)
-        if (tc?.input?.path) {
-          const rawPath = String(tc.input.path)
+        const rawPath = result.toolName === 'MultiEdit'
+          ? String(tc?.input?.file_path ?? '')
+          : String(tc?.input?.path ?? '')
+        if (rawPath) {
           const absPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(input.config.workingDirectory, rawPath)
           this.fileTracker.recordWrite(absPath)
         }

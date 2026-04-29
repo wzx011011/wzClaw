@@ -55,7 +55,7 @@ import { SessionStore } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
 import { StepManager } from './steps/step-manager'
-import { TaskStore } from './tasks/task-store'
+import { WorkspaceStore } from './tasks/workspace-store'
 import { HookRegistry } from './hooks/hook-registry'
 import { registerBuiltInHooks } from './hooks/built-in-hooks'
 import { CreateStepTool } from './tools/create-step'
@@ -82,7 +82,7 @@ import {
 } from './tools/browser-tools'
 import { RelayClient } from './mobile/relay-client'
 import { getMobileSessionTransition, isPathWithinWorkspace } from './mobile/mobile-session-utils'
-import { ensureAppDirs } from './paths'
+import { ensureAppDirs, ensureMcpConfig } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
 import { initLangfuse, shutdownLangfuse } from './observability/langfuse-observer'
 
@@ -90,7 +90,7 @@ const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
 const terminalManager = new TerminalManager()
 const stepManager = new StepManager()
-const taskStore = new TaskStore()
+const workspaceStore = new WorkspaceStore()
 // These services are initialized lazily inside app.whenReady() to speed up startup
 let browserManager!: BrowserManager
 let relayClient!: RelayClient
@@ -139,7 +139,7 @@ function createWindow(): BrowserWindow {
   })
 
   // Fallback: 万一 ready-to-show 因为 renderer 错误未触发，3s 后强制显示
-  // 避免出现「进程在跑但窗口看不见，只能任务管理器结束」的窘境
+  // 避免出现「进程在跑但窗口看不见，只能工作区管理器结束」的窘境
   const safetyShowTimer = setTimeout(() => {
     if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       console.warn('[STARTUP] ready-to-show 未触发，3s 后兜底显示窗口')
@@ -281,6 +281,8 @@ app.whenReady().then(async () => {
   // 创建所有运行时所需目录（cache/debug/paste-cache/shell-snapshots/backups）
   await ensureAppDirs()
   logStartup('ensureAppDirs done')
+  // 首次运行创建默认 MCP 配置（幂等，不覆盖）
+  await ensureMcpConfig()
   // 清理 7 天以上的旧文件（一次性，非热路径）
   cleanOldDebugFiles().catch(() => {})
   cleanOldMediaFiles().catch(() => {})
@@ -341,7 +343,7 @@ app.whenReady().then(async () => {
   const todoTool = toolRegistry.get('TodoWrite') as import('./tools/todo-write').TodoWriteTool | undefined
   if (todoTool) {
     todoTool.setProgressCallback((taskId, summary) => {
-      taskStore.updateTask(taskId, { progressSummary: summary }).catch(() => { /* ignore */ })
+      workspaceStore.updateWorkspace(taskId, { progressSummary: summary }).catch(() => { /* ignore */ })
     })
   }
 
@@ -480,12 +482,12 @@ app.whenReady().then(async () => {
 
   /**
    * Resolve the appropriate SessionStore for a mobile request.
-   * If activeTaskId is provided, look up the task and use its primary project root.
+   * If activeWorkspaceId is provided, look up the task and use its primary project root.
    * Falls back to agentLoop.activeTask, then workspace store.
    */
-  const getStoreForMobile = async (activeTaskId: string | null): Promise<SessionStore> => {
-    if (activeTaskId) {
-      const task = await taskStore.getTask(activeTaskId).catch(() => null)
+  const getStoreForMobile = async (activeWorkspaceId: string | null): Promise<SessionStore> => {
+    if (activeWorkspaceId) {
+      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
         return getCachedSessionStore(primaryRoot)
@@ -531,8 +533,8 @@ app.whenReady().then(async () => {
     // -- Session sync: list sessions --
     if (msg.event === 'session:list:request') {
       const requestId = msg.data?.requestId ?? ''
-      const activeTaskId = msg.data?.activeTaskId ?? null
-      const store = await getStoreForMobile(activeTaskId)
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
       const workspaceRoot = workspaceManager.getWorkspaceRoot()
       if (!workspaceRoot || !store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
@@ -555,8 +557,8 @@ app.whenReady().then(async () => {
     // -- Session sync: load session messages (with pagination) --
     if (msg.event === 'session:load:request') {
       const { requestId = '', sessionId, offset = 0, limit = 50 } = msg.data ?? {}
-      const activeTaskId = msg.data?.activeTaskId ?? null
-      const store = await getStoreForMobile(activeTaskId)
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
       if (!store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
@@ -582,8 +584,8 @@ app.whenReady().then(async () => {
     // -- Session sync: create session --
     if (msg.event === 'session:create:request') {
       const requestId = msg.data?.requestId ?? ''
-      const activeTaskId = msg.data?.activeTaskId ?? null
-      const store = await getStoreForMobile(activeTaskId)
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
       if (!store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
@@ -613,8 +615,8 @@ app.whenReady().then(async () => {
     if (msg.event === 'session:delete:request') {
       const requestId = msg.data?.requestId ?? ''
       const sessionId = msg.data?.sessionId
-      const activeTaskId = msg.data?.activeTaskId ?? null
-      const store = await getStoreForMobile(activeTaskId)
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
       if (!store || !sessionId) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace or session ID', code: 'NO_WORKSPACE' })
         return
@@ -639,8 +641,8 @@ app.whenReady().then(async () => {
       const requestId = msg.data?.requestId ?? ''
       const sessionId = msg.data?.sessionId
       const title = msg.data?.title
-      const activeTaskId = msg.data?.activeTaskId ?? null
-      const store = await getStoreForMobile(activeTaskId)
+      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const store = await getStoreForMobile(activeWorkspaceId)
       if (!store || !sessionId || !title) {
         broadcastToMobile('session:error', { requestId, error: 'Missing parameters', code: 'BAD_REQUEST' })
         return
@@ -830,97 +832,97 @@ app.whenReady().then(async () => {
       return
     }
 
-    // -- Task management: list tasks --
-    if (msg.event === 'task:list:request') {
+    // -- Workspace management: list tasks --
+    if (msg.event === 'workspace:list:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const tasks = await taskStore.listTasks(msg.data?.includeArchived)
-        broadcastToMobile('task:list:response', { requestId, tasks })
+        const tasks = await workspaceStore.listWorkspaces(msg.data?.includeArchived)
+        broadcastToMobile('workspace:list:response', { requestId, tasks })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: create task --
-    if (msg.event === 'task:create:request') {
+    // -- Workspace management: create task --
+    if (msg.event === 'workspace:create:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await taskStore.createTask(msg.data?.title ?? 'New Task', msg.data?.description)
-        broadcastToMobile('task:create:response', { requestId, task })
+        const task = await workspaceStore.createWorkspace(msg.data?.title ?? 'New Task', msg.data?.description)
+        broadcastToMobile('workspace:create:response', { requestId, task })
         // Notify desktop renderer
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'created', data: task })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: update task --
-    if (msg.event === 'task:update:request') {
+    // -- Workspace management: update task --
+    if (msg.event === 'workspace:update:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await taskStore.updateTask(msg.data?.taskId, msg.data?.updates ?? {})
-        broadcastToMobile('task:update:response', { requestId, task })
+        const task = await workspaceStore.updateWorkspace(msg.data?.taskId, msg.data?.updates ?? {})
+        broadcastToMobile('workspace:update:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: delete task --
-    if (msg.event === 'task:delete:request') {
+    // -- Workspace management: delete task --
+    if (msg.event === 'workspace:delete:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        await taskStore.deleteTask(msg.data?.taskId)
-        broadcastToMobile('task:delete:response', { requestId, success: true })
+        await workspaceStore.deleteWorkspace(msg.data?.taskId)
+        broadcastToMobile('workspace:delete:response', { requestId, success: true })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'deleted', data: { taskId: msg.data?.taskId } })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: get single task --
-    if (msg.event === 'task:get:request') {
+    // -- Workspace management: get single task --
+    if (msg.event === 'workspace:get:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await taskStore.getTask(msg.data?.taskId)
-        broadcastToMobile('task:get:response', { requestId, task })
+        const task = await workspaceStore.getWorkspace(msg.data?.taskId)
+        broadcastToMobile('workspace:get:response', { requestId, task })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: add project to task --
-    if (msg.event === 'task:add-project:request') {
+    // -- Workspace management: add project to task --
+    if (msg.event === 'workspace:add-project:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await taskStore.addProject(msg.data?.taskId, msg.data?.folderPath)
-        broadcastToMobile('task:add-project:response', { requestId, task })
+        const task = await workspaceStore.addProject(msg.data?.taskId, msg.data?.folderPath)
+        broadcastToMobile('workspace:add-project:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
 
-    // -- Task management: remove project from task --
-    if (msg.event === 'task:remove-project:request') {
+    // -- Workspace management: remove project from task --
+    if (msg.event === 'workspace:remove-project:request') {
       const requestId = msg.data?.requestId ?? ''
       try {
-        const task = await taskStore.removeProject(msg.data?.taskId, msg.data?.projectId)
-        broadcastToMobile('task:remove-project:response', { requestId, task })
+        const task = await workspaceStore.removeProject(msg.data?.taskId, msg.data?.projectId)
+        broadcastToMobile('workspace:remove-project:response', { requestId, task })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'task', action: 'updated', data: task })
       } catch (err: any) {
-        broadcastToMobile('task:error', { requestId, error: err.message })
+        broadcastToMobile('workspace:error', { requestId, error: err.message })
       }
       return
     }
@@ -1108,8 +1110,8 @@ app.whenReady().then(async () => {
         } as unknown as Electron.WebContents
 
         // Inject active task context from mobile message
-        if (msg.data.activeTaskId) {
-          const task = await taskStore.getTask(msg.data.activeTaskId)
+        if (msg.data.activeWorkspaceId) {
+          const task = await workspaceStore.getWorkspace(msg.data.activeWorkspaceId)
           agentLoop.activeTask = task ?? null
         } else {
           agentLoop.activeTask = null
@@ -1278,7 +1280,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers(
     gateway, agentLoop, permissionManager, workspaceManager, getActiveSessionStore,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
-    mcpManager, taskStore,
+    mcpManager, workspaceStore,
     (rootPath) => {
       handleWorkspaceOpened(rootPath, toolRegistry)
       // Persist last workspace path

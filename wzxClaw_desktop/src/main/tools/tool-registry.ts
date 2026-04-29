@@ -15,6 +15,8 @@ import { CreateStepTool } from './create-step'
 import { UpdateStepTool } from './update-step'
 import { SemanticSearchTool } from './semantic-search'
 import { TodoWriteTool } from './todo-write'
+import { LsTool } from './ls'
+import { MultiEditTool } from './multi-edit'
 import type { StepManager } from '../steps/step-manager'
 import type { IndexingEngine } from '../indexing/indexing-engine'
 
@@ -23,7 +25,7 @@ export class ToolRegistry {
 
   // Tools known to be read-only (no side effects)
   private static readonly READ_ONLY_TOOLS = new Set([
-    'FileRead', 'Grep', 'Glob', 'WebSearch', 'WebFetch',
+    'FileRead', 'Grep', 'Glob', 'LS', 'WebSearch', 'WebFetch',
     'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
     'CreateStep', 'UpdateStep'
   ])
@@ -75,6 +77,7 @@ export function createDefaultTools(
   registry.register(new FileReadTool())
   registry.register(new GrepTool())
   registry.register(new GlobTool())
+  registry.register(new LsTool())
 
   // Semantic search tool (read-only, requires IndexingEngine)
   const semanticSearch = new SemanticSearchTool()
@@ -108,6 +111,7 @@ export function createDefaultTools(
   // Destructive tools (requires approval per D-32)
   registry.register(new FileWriteTool())
   registry.register(new FileEditTool())
+  registry.register(new MultiEditTool())
   registry.register(new BashTool(workingDirectory, terminalManager))
 
   return registry

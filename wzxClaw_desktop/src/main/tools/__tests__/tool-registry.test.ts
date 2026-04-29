@@ -69,16 +69,16 @@ describe('ToolRegistry', () => {
 })
 
 describe('createDefaultTools', () => {
-  it('creates a registry with 9 tools (6 core + SemanticSearch + 2 web, no symbol tools without getWebContents)', () => {
+  it('creates a registry with 11 tools (7 core + SemanticSearch + 2 web + LS, no symbol tools without getWebContents)', () => {
     const registry = createDefaultTools('/test/project')
     const tools = registry.getAll()
-    expect(tools.length).toBe(9)
+    expect(tools.length).toBe(11)
   })
 
-  it('creates a registry with 12 tools when getWebContents is provided', () => {
+  it('creates a registry with 15 tools when getWebContents is provided', () => {
     const registry = createDefaultTools('/test/project', undefined, () => null)
     const tools = registry.getAll()
-    expect(tools.length).toBe(13)
+    expect(tools.length).toBe(15)
   })
 
   it('registers FileRead tool', () => {
@@ -117,8 +117,8 @@ describe('createDefaultTools', () => {
     expect(registry.get('Bash')?.requiresApproval).toBe(true)
   })
 
-  it('3 tools require approval (FileWrite, FileEdit, Bash)', () => {
+  it('4 tools require approval (FileWrite, FileEdit, MultiEdit, Bash)', () => {
     const registry = createDefaultTools('/test/project')
-    expect(registry.getApprovalRequired()).toEqual(['FileWrite', 'FileEdit', 'Bash'])
+    expect(registry.getApprovalRequired()).toEqual(['FileWrite', 'FileEdit', 'MultiEdit', 'Bash'])
   })
 })

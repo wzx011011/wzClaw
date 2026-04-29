@@ -139,6 +139,9 @@ export const TERMINAL_DEFAULT_ROWS = 24
 export const WEB_CONTENT_MAX_CHARS = 15000
 export const WEB_FETCH_TIMEOUT_MS = 15000
 export const WEB_SEARCH_RATE_LIMIT_MS = 3000
+export const WEB_SEARCH_TIMEOUT_MS = 15000
+export const WEB_FETCH_CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
+export const WEB_FETCH_CACHE_MAX_ENTRIES = 100
 
 // OpenAI-compatible endpoints
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
