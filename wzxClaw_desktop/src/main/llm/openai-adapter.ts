@@ -23,15 +23,17 @@ export class OpenAIAdapter implements LLMAdapter {
     try {
       const isDeepSeekV4 = options.model.startsWith('deepseek-v4')
       const isDeepSeekReasoner = options.model === 'deepseek-reasoner'
+      const isDeepSeekThinkingModel = isDeepSeekV4 || isDeepSeekReasoner
       const isOpenAIReasoner = options.model.startsWith('o1') || options.model.startsWith('o3') || options.model.startsWith('o4')
 
       // deepseek-v4 thinking mode：若历史消息含 reasoning_content，说明之前在 thinking mode，
       // 必须在本次请求也显式开启，否则 API 400 "reasoning_content must be passed back"
       const hasReasoningHistory = (options.messages as Array<Record<string, unknown>>)
         .some(m => m['role'] === 'assistant' && m['reasoning_content'])
-      const enableDeepSeekV4Thinking = isDeepSeekV4 && (
+      const enableDeepSeekThinking = isDeepSeekThinkingModel && (
         (options.thinkingDepth && options.thinkingDepth !== 'none') || hasReasoningHistory
       )
+      const deepSeekReasoningEffort = 'high'
 
       const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
         model: options.model,
@@ -51,22 +53,22 @@ export class OpenAIAdapter implements LLMAdapter {
             function: { name: t.name, description: t.description, parameters: t.input_schema },
           })),
         }),
-        // deepseek-v4-pro/flash：显式启用 thinking mode + reasoning_effort
-        ...(enableDeepSeekV4Thinking && {
+        // DeepSeek OpenAI 兼容接口（Node SDK）：extra_body 不是本 SDK 字段，直接作为 body 顶层字段传。
+        ...(enableDeepSeekThinking && {
           thinking: { type: 'enabled' } as any,
-          reasoning_effort: (options.thinkingDepth && options.thinkingDepth !== 'none')
-            ? options.thinkingDepth
-            : 'high',
+          reasoning_effort: deepSeekReasoningEffort,
         }),
         // OpenAI o-series：只传 reasoning_effort
         ...(isOpenAIReasoner && options.thinkingDepth && options.thinkingDepth !== 'none'
           && { reasoning_effort: options.thinkingDepth }),
       }
 
-      // deepseek-reasoner 多轮对话：reasoning_content 不能传回 API，否则 400
+      // deepseek-reasoner 普通多轮：无 tool_calls 的 reasoning_content 可移除。
+      // 但 DeepSeek V4 thinking + tool calls 要求 reasoning_content 在所有后续请求中保留。
       if (isDeepSeekReasoner) {
         params.messages = (params.messages as Array<Record<string, unknown>>).map(m => {
-          if (m['role'] === 'assistant' && m['reasoning_content']) {
+          const hasToolCalls = Array.isArray(m['tool_calls']) && m['tool_calls'].length > 0
+          if (m['role'] === 'assistant' && m['reasoning_content'] && !hasToolCalls) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { reasoning_content: _rc, ...rest } = m
             return rest

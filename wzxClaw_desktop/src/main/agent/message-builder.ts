@@ -69,9 +69,12 @@ export class MessageBuilder {
             content: msg.content || null
           }
 
-          // DeepSeek 扩展思考：reasoning_content 必须原样回传给 API，否则 400
-          if ((msg as Record<string, unknown>).reasoningContent) {
-            openaiMsg.reasoning_content = (msg as Record<string, unknown>).reasoningContent
+          // DeepSeek 扩展思考：兼容内部 camelCase 和历史/SDK 原始 snake_case。
+          const reasoningContent =
+            (msg as Record<string, unknown>).reasoningContent ??
+            (msg as Record<string, unknown>).reasoning_content
+          if (typeof reasoningContent === 'string' && reasoningContent.length > 0) {
+            openaiMsg.reasoning_content = reasoningContent
           }
 
           if ((msg.toolCalls?.length ?? 0) > 0) {

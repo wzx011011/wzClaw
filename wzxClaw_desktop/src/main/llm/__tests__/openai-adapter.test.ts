@@ -193,4 +193,70 @@ describe('OpenAIAdapter', () => {
     expect(callArgs.tools[0].type).toBe('function')
     expect(callArgs.tools[0].function.name).toBe('read_file')
   })
+
+  it('passes DeepSeek V4 thinking toggle in request body', async () => {
+    mockCreate.mockImplementation(async function* () {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    })
+
+    const adapter = new OpenAIAdapter({ provider: 'openai', apiKey: 'test-key', baseURL: 'https://api.deepseek.com' })
+    const events = []
+    for await (const event of adapter.stream({
+      model: 'deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'hi' }],
+      thinkingDepth: 'high',
+    })) {
+      events.push(event)
+    }
+
+    const callArgs = mockCreate.mock.calls[0][0]
+    expect(callArgs.thinking).toEqual({ type: 'enabled' })
+    expect(callArgs.reasoning_effort).toBe('high')
+  })
+
+  it('keeps reasoning_content on deepseek-reasoner assistant tool-call messages', async () => {
+    mockCreate.mockImplementation(async function* () {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    })
+
+    const adapter = new OpenAIAdapter({ provider: 'openai', apiKey: 'test-key', baseURL: 'https://api.deepseek.com' })
+    const events = []
+    for await (const event of adapter.stream({
+      model: 'deepseek-reasoner',
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'Need a date first.',
+          tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_date', arguments: '{}' } }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '2026-04-30' },
+      ] as any,
+    })) {
+      events.push(event)
+    }
+
+    const callArgs = mockCreate.mock.calls[0][0]
+    expect(callArgs.messages[0].reasoning_content).toBe('Need a date first.')
+  })
+
+  it('strips reasoning_content on deepseek-reasoner assistant messages without tool calls', async () => {
+    mockCreate.mockImplementation(async function* () {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    })
+
+    const adapter = new OpenAIAdapter({ provider: 'openai', apiKey: 'test-key', baseURL: 'https://api.deepseek.com' })
+    const events = []
+    for await (const event of adapter.stream({
+      model: 'deepseek-reasoner',
+      messages: [
+        { role: 'assistant', content: 'final answer', reasoning_content: 'private CoT' },
+      ] as any,
+    })) {
+      events.push(event)
+    }
+
+    const callArgs = mockCreate.mock.calls[0][0]
+    expect(callArgs.messages[0].reasoning_content).toBeUndefined()
+  })
 })
