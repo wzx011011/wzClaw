@@ -45,9 +45,6 @@ export interface AssistantMessage {
   /** Interleaved content blocks preserving original text/tool ordering.
    *  When present, message-builder uses this instead of content+toolCalls. */
   contentBlocks?: ContentBlock[]
-  /** DeepSeek extended thinking: reasoning_content from the API response.
-   *  Must be passed back verbatim in subsequent API calls when present. */
-  reasoningContent?: string
   timestamp: number
 }
 

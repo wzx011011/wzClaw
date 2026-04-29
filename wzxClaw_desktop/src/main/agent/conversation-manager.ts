@@ -41,14 +41,12 @@ export class ConversationManager {
     content: string,
     toolCalls: ToolCall[],
     contentBlocks?: ContentBlock[],
-    reasoningContent?: string,
   ): Message {
     const msg: Message = {
       role: 'assistant',
       content,
       toolCalls,
       contentBlocks,
-      reasoningContent,
       timestamp: Date.now(),
     }
     this.messages.push(msg)

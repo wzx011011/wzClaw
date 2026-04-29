@@ -52,7 +52,7 @@ describe('MessageBuilder', () => {
       const result = builder.buildMessages(messages, 'openai')
       expect(result[0]).toEqual({
         role: 'assistant',
-        content: null,
+        content: '',
         tool_calls: [
           {
             id: 'call_1',
@@ -63,35 +63,6 @@ describe('MessageBuilder', () => {
             }
           }
         ]
-      })
-    })
-
-    it('preserves snake_case reasoning_content for restored DeepSeek messages', () => {
-      const messages = [
-        {
-          role: 'assistant',
-          content: '',
-          reasoning_content: 'Need to inspect the file before editing.',
-          toolCalls: [
-            { id: 'call_1', name: 'file_read', input: { path: '/foo.ts' } }
-          ],
-          timestamp: 1000
-        },
-        {
-          role: 'tool_result',
-          toolCallId: 'call_1',
-          content: 'file contents',
-          isError: false,
-          timestamp: 2000
-        }
-      ] as unknown as Message[]
-
-      const result = builder.buildMessages(messages, 'openai')
-
-      expect(result[0]).toMatchObject({
-        role: 'assistant',
-        content: null,
-        reasoning_content: 'Need to inspect the file before editing.',
       })
     })
 

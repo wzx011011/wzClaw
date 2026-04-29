@@ -2,15 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AnthropicAdapter } from '../anthropic-adapter'
 
 const mockStream = vi.fn()
-const mockAnthropicConstructor = vi.fn()
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class MockAnthropic {
-    baseURL?: string
-    constructor(options?: { baseURL?: string }) {
-      this.baseURL = options?.baseURL
-      mockAnthropicConstructor(options)
-    }
     messages = {
       stream: mockStream,
     }
@@ -20,25 +14,11 @@ vi.mock('@anthropic-ai/sdk', () => ({
 describe('AnthropicAdapter', () => {
   beforeEach(() => {
     mockStream.mockReset()
-    mockAnthropicConstructor.mockReset()
   })
 
   it('has provider anthropic', () => {
     const adapter = new AnthropicAdapter({ provider: 'anthropic', apiKey: 'test-key' })
     expect(adapter.provider).toBe('anthropic')
-  })
-
-  it('uses x-api-key auth for DeepSeek Anthropic-compatible endpoint', () => {
-    new AnthropicAdapter({
-      provider: 'anthropic',
-      apiKey: 'deepseek-key',
-      baseURL: 'https://api.deepseek.com/anthropic',
-    })
-
-    expect(mockAnthropicConstructor).toHaveBeenCalledWith({
-      apiKey: 'deepseek-key',
-      baseURL: 'https://api.deepseek.com/anthropic',
-    })
   })
 
   it('streams text_delta events from Anthropic stream', async () => {
