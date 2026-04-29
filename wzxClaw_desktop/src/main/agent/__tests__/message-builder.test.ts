@@ -31,6 +31,7 @@ describe('MessageBuilder', () => {
     })
 
     it('converts AssistantMessage with tool calls', () => {
+      // assistant with tool_calls must be followed by a tool_result to not be trimmed as dangling tail
       const messages: Message[] = [
         {
           role: 'assistant',
@@ -39,45 +40,55 @@ describe('MessageBuilder', () => {
             { id: 'call_1', name: 'file_read', input: { path: '/foo.ts' } }
           ],
           timestamp: 1000
+        },
+        {
+          role: 'tool_result',
+          toolCallId: 'call_1',
+          content: 'file contents',
+          isError: false,
+          timestamp: 2000
         }
       ]
       const result = builder.buildMessages(messages, 'openai')
-      expect(result).toEqual([
-        {
-          role: 'assistant',
-          content: '',
-          tool_calls: [
-            {
-              id: 'call_1',
-              type: 'function',
-              function: {
-                name: 'file_read',
-                arguments: JSON.stringify({ path: '/foo.ts' })
-              }
+      expect(result[0]).toEqual({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'file_read',
+              arguments: JSON.stringify({ path: '/foo.ts' })
             }
-          ]
-        }
-      ])
+          }
+        ]
+      })
     })
 
     it('converts ToolResultMessage', () => {
+      // tool_result must be preceded by a matching assistant with tool_calls to avoid orphan filter
       const messages: Message[] = [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', name: 'file_read', input: { path: '/foo.ts' } }],
+          timestamp: 1000
+        },
         {
           role: 'tool_result',
           toolCallId: 'call_1',
           content: 'file contents here',
           isError: false,
-          timestamp: 1000
+          timestamp: 2000
         }
       ]
       const result = builder.buildMessages(messages, 'openai')
-      expect(result).toEqual([
-        {
-          role: 'tool',
-          tool_call_id: 'call_1',
-          content: 'file contents here'
-        }
-      ])
+      expect(result[1]).toEqual({
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: 'file contents here'
+      })
     })
 
     it('converts a multi-turn conversation', () => {
