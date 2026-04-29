@@ -12,6 +12,8 @@ import path from 'path'
 import { getSettingsPath, getKeysPath, getBackupsDir } from './paths'
 import { DEEPSEEK_ANTHROPIC_BASE_URL } from '../shared/constants'
 
+const DEEPSEEK_KEY_PROVIDER = 'deepseek'
+
 interface StoredSettings {
   provider: string
   model: string
@@ -181,10 +183,11 @@ export class SettingsManager {
    * Get settings for the renderer (no API key exposed).
    */
   getSettings(): SettingsResponse {
+    const isDeepSeekV4 = this.isDeepSeekV4Model()
     return {
       provider: this.settings.provider,
       model: this.settings.model,
-      hasApiKey: !!this.getApiKey(this.settings.provider),
+      hasApiKey: isDeepSeekV4 ? !!this.getDeepSeekApiKey() : !!this.getApiKey(this.settings.provider),
       baseURL: this.settings.baseURL,
       systemPrompt: this.settings.systemPrompt,
       relayToken: this.settings.relayToken,
@@ -213,7 +216,8 @@ export class SettingsManager {
     if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']
 
     if (request.apiKey) {
-      this.decryptedKeys.set(this.settings.provider, request.apiKey)
+      const keyProvider = this.isDeepSeekV4Model() ? DEEPSEEK_KEY_PROVIDER : this.settings.provider
+      this.decryptedKeys.set(keyProvider, request.apiKey)
     }
 
     this.save()
@@ -226,13 +230,27 @@ export class SettingsManager {
    *   openai:    OPENAI_API_KEY
    */
   getApiKey(provider: string): string | undefined {
-    const stored = this.decryptedKeys.get(provider)
+    const stored = this.getStoredApiKey(provider)
     if (stored) return stored
     // Env var fallback
     if (provider === 'anthropic') {
       return process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY
     }
     return process.env.OPENAI_API_KEY
+  }
+
+  private getStoredApiKey(provider: string): string | undefined {
+    return this.decryptedKeys.get(provider)
+  }
+
+  private getDeepSeekApiKey(): string | undefined {
+    return this.getStoredApiKey(DEEPSEEK_KEY_PROVIDER)
+      ?? process.env.DEEPSEEK_API_KEY
+      ?? this.getStoredApiKey('openai')
+  }
+
+  private isDeepSeekV4Model(model = this.settings.model): boolean {
+    return model?.startsWith('deepseek-v4') ?? false
   }
 
   getRelayToken(): string | undefined {
@@ -289,14 +307,12 @@ export class SettingsManager {
    * Get full configuration for LLM gateway (includes API key).
    */
   getCurrentConfig(): FullConfig {
-    const isDeepSeekV4 = this.settings.model?.startsWith('deepseek-v4')
+    const isDeepSeekV4 = this.isDeepSeekV4Model()
     const provider = isDeepSeekV4 ? 'anthropic' : this.settings.provider
     const baseURL = isDeepSeekV4
       ? DEEPSEEK_ANTHROPIC_BASE_URL
       : this.settings.baseURL || (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : undefined)
-    const apiKey = isDeepSeekV4
-      ? this.getApiKey(this.settings.provider) ?? this.getApiKey('openai') ?? this.getApiKey('anthropic')
-      : this.getApiKey(provider)
+    const apiKey = isDeepSeekV4 ? this.getDeepSeekApiKey() : this.getApiKey(provider)
     return {
       provider,
       model: this.settings.model,
