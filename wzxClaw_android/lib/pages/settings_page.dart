@@ -95,6 +95,51 @@ class _SettingsPageState extends State<SettingsPage> {
     await ConnectionManager.instance.setBackgroundKeepAliveEnabled(value);
   }
 
+  Future<void> _confirmAndClearCache() async {
+    final colors = AppColors.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.bgPrimary,
+        title: Text('清空本地缓存？',
+            style: TextStyle(color: colors.textPrimary),),
+        content: Text(
+          '将清除手机端所有已缓存的会话与消息。'
+          '若当前已连接桌面，会立即重新同步；否则下次连接时再同步。',
+          style: TextStyle(color: colors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('取消',
+                style: TextStyle(color: colors.textSecondary),),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('清空',
+                style: TextStyle(color: colors.accent),),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    try {
+      await SessionSyncService.instance.clearLocalCache();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本地缓存已清空')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('清空失败：$e')),
+      );
+    }
+  }
+
   Future<void> _scanQrCode() async {
     final result = await Navigator.push<String>(
       context,
@@ -372,6 +417,38 @@ class _SettingsPageState extends State<SettingsPage> {
                   onChanged: _toggleBackgroundKeepAlive,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+                const SizedBox(height: 24),
+
+                // -- Clear local cache --
+                Text(
+                  '本地数据',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.bgSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListTile(
+                    leading: Icon(Icons.cleaning_services_outlined,
+                        color: colors.accent,),
+                    title: Text(
+                      '清空本地缓存',
+                      style: TextStyle(
+                          color: colors.textPrimary, fontSize: 14,),
+                    ),
+                    subtitle: Text(
+                      '清除手机端缓存的消息和会话元数据；下次打开会从桌面端重新同步',
+                      style: TextStyle(
+                          color: colors.textSecondary, fontSize: 12,),
+                    ),
+                    onTap: _confirmAndClearCache,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 24),
 

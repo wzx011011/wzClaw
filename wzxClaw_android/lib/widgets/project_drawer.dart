@@ -605,12 +605,12 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     SessionSyncService.instance.setActiveSession(session.id);
 
     try {
-      final result =
-          await SessionSyncService.instance.loadSessionMessages(session.id);
-      final messages = result['messages'] as List<dynamic>? ?? [];
+      // 修复：长会话超过 50 条时只取首页会丢消息；改用全量分页拉取
+      final messages = await SessionSyncService.instance
+          .loadAllSessionMessages(session.id, forceRefresh: true);
       ChatStore.instance.switchToSession(session.id, userInitiated: true);
       if (messages.isNotEmpty) {
-        ChatStore.instance.loadFetchedMessages(messages.cast());
+        ChatStore.instance.loadFetchedMessages(messages);
       }
     } catch (_) {
       ChatStore.instance.switchToSession(session.id, userInitiated: true);

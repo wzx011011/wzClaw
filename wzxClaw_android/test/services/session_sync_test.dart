@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/services/session_sync_service.dart';
+import 'package:wzxclaw_android/services/chat_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -221,24 +222,95 @@ void main() {
   });
 
   group('WorkspaceItem', () {
-    test('stores all fields correctly', () {
+    test('stores required fields correctly', () {
       const item = WorkspaceItem(
-        path: '/home/user/project',
-        name: 'My Project',
-        isCurrent: true,
+        id: 'workspace-1',
+        title: 'My Project',
+        updatedAt: 1234567890,
       );
-      expect(item.path, equals('/home/user/project'));
-      expect(item.name, equals('My Project'));
-      expect(item.isCurrent, isTrue);
+      expect(item.id, equals('workspace-1'));
+      expect(item.title, equals('My Project'));
+      expect(item.updatedAt, equals(1234567890));
     });
 
-    test('isCurrent defaults correctly', () {
+    test('optional fields default correctly', () {
       const item = WorkspaceItem(
-        path: '/other',
-        name: 'Other',
-        isCurrent: false,
+        id: 'ws-2',
+        title: 'Other',
+        updatedAt: 0,
       );
-      expect(item.isCurrent, isFalse);
+      expect(item.description, isNull);
+      expect(item.archived, isFalse);
+      expect(item.activeSessionId, isNull);
+      expect(item.sessions, isEmpty);
+      expect(item.projects, isEmpty);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // Bug 3 fix: _handleSessionActive uses userManuallySwitched
+  // ══════════════════════════════════════════════════════════════════
+  group('SessionSyncService + ChatStore: session active interaction', () {
+    test('ChatStore.userManuallySwitched starts false after resetSessionScope', () {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+      expect(store.userManuallySwitched, isFalse);
+    });
+
+    test('userManuallySwitched false after system switchToSession', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      try {
+        await store.switchToSession('system-auto-session');
+      } catch (_) {}
+
+      expect(store.userManuallySwitched, isFalse,
+          reason: 'System-driven switchToSession must leave userManuallySwitched false');
+    });
+
+    test('userManuallySwitched true after user-initiated switchToSession', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      try {
+        await store.switchToSession('user-chose-session', userInitiated: true);
+      } catch (_) {}
+
+      expect(store.userManuallySwitched, isTrue,
+          reason: 'User-initiated switchToSession must set userManuallySwitched true');
+    });
+
+    test('userManuallySwitched cleared to false after resetSessionScope', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      try {
+        await store.switchToSession('user-session', userInitiated: true);
+      } catch (_) {}
+
+      expect(store.userManuallySwitched, isTrue);
+      store.resetSessionScope();
+      expect(store.userManuallySwitched, isFalse);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // Bug 1 fix: _applySessionSelection uses forceRefresh: true
+  // Validates that isRecentlyStreamed is accessible on ChatStore
+  // ══════════════════════════════════════════════════════════════════
+  group('SessionSyncService: isRecentlyStreamed guard', () {
+    test('ChatStore.isRecentlyStreamed returns false for unknown session', () {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+      expect(store.isRecentlyStreamed('some-session'), isFalse);
+    });
+
+    test('ChatStore.isRecentlyStreamed returns false after resetSessionScope', () {
+      final store = ChatStore.instance;
+      // Even if something was streamed before, reset clears it
+      store.resetSessionScope();
+      expect(store.isRecentlyStreamed('any-session'), isFalse);
     });
   });
 }

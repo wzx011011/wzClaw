@@ -192,7 +192,7 @@ void main() {
       // Step 1: Clear to set a baseline generation
       store.loadFetchedMessages([]);
 
-      // Step 2: Send a user message — sets _lastUserMsgGen = _clearGeneration.
+      // Step 2: Send a user message — sets _lastUserMsgGen = _clearGeneration + 1 (Bug 4 fix).
       // sendMessage internally calls ChatDatabase.insertMessage which needs
       // sqflite. In test env, wrap in try-catch since the generation side-effect
       // is set before the DB call.
@@ -203,10 +203,9 @@ void main() {
       }
 
       // Step 3: Try to load fetched messages without clearing first.
-      // Since _lastUserMsgGen == _clearGeneration (no intermediate clear),
-      // the guard condition _lastUserMsgGen > _clearGeneration is false,
-      // so the messages SHOULD be loaded.
-      // This tests the case where the user hasn't triggered a clear.
+      // After Bug 4 fix: _lastUserMsgGen = _clearGeneration + 1, so
+      // _lastUserMsgGen > _clearGeneration is TRUE — the guard fires
+      // and rejects the stale fetch.
       final fetched = [
         ChatMessage(
           role: MessageRole.assistant,
@@ -216,8 +215,8 @@ void main() {
       ];
       store.loadFetchedMessages(fetched);
 
-      // Messages should be loaded (no guard triggered because generations are equal)
-      expect(store.messages.any((m) => m.content == 'AI response'), isTrue);
+      // Messages should be REJECTED (guard now correctly fires after user sends a message)
+      expect(store.messages.any((m) => m.content == 'AI response'), isFalse);
     });
   });
 
@@ -377,6 +376,181 @@ void main() {
       final store = ChatStore.instance;
       store.currentSessionId = null;
       expect(store.currentSessionId, isNull);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // Bug 1+2 fix: isRecentlyStreamed + _lastStreamedSessionId
+  // ══════════════════════════════════════════════════════════════════
+  group('ChatStore isRecentlyStreamed', () {
+    test('returns false for any session before any agent:done', () {
+      final store = ChatStore.instance;
+      // Reset by switching away from any session
+      store.currentSessionId = null;
+      store.currentSessionId = 'session-abc';
+      expect(store.isRecentlyStreamed('session-abc'), isFalse);
+    });
+
+    test('syncSessionId + resetSessionScope clears _lastStreamedSessionId', () {
+      final store = ChatStore.instance;
+      store.currentSessionId = 'session-xyz';
+      // syncSessionId just sets _currentSessionId — no effect on _lastStreamedSessionId
+      store.syncSessionId('session-xyz');
+      store.resetSessionScope();
+      // After reset, isRecentlyStreamed should be false for any id
+      expect(store.isRecentlyStreamed('session-xyz'), isFalse);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // Bug 3 fix: userManuallySwitched — only true when userInitiated: true
+  // ══════════════════════════════════════════════════════════════════
+  group('ChatStore userManuallySwitched', () {
+    test('starts as false', () {
+      // After any resetSessionScope, should be false
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+      expect(store.userManuallySwitched, isFalse);
+    });
+
+    test('remains false when switchToSession called without userInitiated', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      // System-initiated switch (default userInitiated: false)
+      try {
+        await store.switchToSession('sys-session-1');
+      } catch (_) {
+        // sqflite not available — that's fine; the flag is set before DB calls
+      }
+
+      expect(store.userManuallySwitched, isFalse,
+          reason: 'System-initiated switch must not set userManuallySwitched');
+    });
+
+    test('becomes true when switchToSession called with userInitiated: true', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      try {
+        await store.switchToSession('user-session-1', userInitiated: true);
+      } catch (_) {
+        // sqflite not available
+      }
+
+      expect(store.userManuallySwitched, isTrue,
+          reason: 'User-initiated switch must set userManuallySwitched');
+    });
+
+    test('reset to false after resetSessionScope', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      try {
+        await store.switchToSession('user-session-2', userInitiated: true);
+      } catch (_) {}
+
+      expect(store.userManuallySwitched, isTrue);
+      store.resetSessionScope();
+      expect(store.userManuallySwitched, isFalse);
+    });
+
+    test('reset to false after system switchToSession', () async {
+      final store = ChatStore.instance;
+      store.resetSessionScope();
+
+      // User manually switches to A
+      try {
+        await store.switchToSession('user-session-A', userInitiated: true);
+      } catch (_) {}
+      expect(store.userManuallySwitched, isTrue);
+
+      // System switches to B — clears the flag
+      try {
+        await store.switchToSession('sys-session-B');
+      } catch (_) {}
+      expect(store.userManuallySwitched, isFalse,
+          reason: 'System switch must clear userManuallySwitched so desktop can lead again');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // Bug 4 fix: loadFetchedMessages guard with corrected +1 generation
+  // ══════════════════════════════════════════════════════════════════
+  group('ChatStore loadFetchedMessages guard (Bug 4 fix)', () {
+    test('messages ARE loaded when no user message sent after clear', () {
+      final store = ChatStore.instance;
+      store.loadFetchedMessages([]);
+
+      final fetched = [
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: 'auto-sync result',
+          createdAt: DateTime.now(),
+        ),
+      ];
+      store.loadFetchedMessages(fetched);
+      expect(store.messages.any((m) => m.content == 'auto-sync result'), isTrue);
+    });
+
+    test('messages ARE rejected when user sent message after clear (guard works)', () async {
+      final store = ChatStore.instance;
+
+      // Clear — sets baseline generation N
+      store.loadFetchedMessages([]);
+
+      // User sends message — now _lastUserMsgGen = N + 1
+      try {
+        await store.sendMessage('user input');
+      } catch (_) {
+        // sqflite unavailable; generation side-effect already applied
+      }
+
+      // A delayed fetch arrives — should be rejected because user sent a message
+      final staleFetch = [
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: 'stale fetch should be rejected',
+          createdAt: DateTime.now(),
+        ),
+      ];
+      store.loadFetchedMessages(staleFetch);
+
+      // The stale fetch must NOT replace the messages (user message is in flight)
+      expect(
+        store.messages.any((m) => m.content == 'stale fetch should be rejected'),
+        isFalse,
+        reason: 'loadFetchedMessages should reject stale fetch when user already sent a message',
+      );
+    });
+
+    test('messages ARE loaded again after second clear following user message', () async {
+      final store = ChatStore.instance;
+
+      // Clear N
+      store.loadFetchedMessages([]);
+      // User sends → _lastUserMsgGen = N+1
+      try {
+        await store.sendMessage('user input 2');
+      } catch (_) {}
+      // Clear again → generation = N+1, then N+2 (depending on sequence)
+      // Either way, _lastUserMsgGen <= _clearGeneration after this
+      store.loadFetchedMessages([]); // clears and increments
+
+      final freshFetch = [
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: 'fresh fetch after second clear',
+          createdAt: DateTime.now(),
+        ),
+      ];
+      store.loadFetchedMessages(freshFetch);
+
+      expect(
+        store.messages.any((m) => m.content == 'fresh fetch after second clear'),
+        isTrue,
+        reason: 'After second clear, fresh fetch should be accepted',
+      );
     });
   });
 }

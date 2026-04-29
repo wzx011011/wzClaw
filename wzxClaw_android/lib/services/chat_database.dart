@@ -140,6 +140,7 @@ class ChatDatabase {
   Future<void> clearAll() async {
     final db = await _ensureDb();
     await db.delete('messages');
+    await db.delete('sessions');
   }
 
   Future<void> updateMessage(ChatMessage msg) async {
@@ -253,6 +254,13 @@ class ChatDatabase {
   Future<void> markSessionSynced(String sessionId) async {
     final db = await _ensureDb();
     await db.update('sessions', {'is_synced': 1},
+        where: 'id = ?', whereArgs: [sessionId],);
+  }
+
+  /// 标记会话为未同步状态，用于校验失败时强制下次重新拉取。
+  Future<void> markSessionUnsynced(String sessionId) async {
+    final db = await _ensureDb();
+    await db.update('sessions', {'is_synced': 0},
         where: 'id = ?', whereArgs: [sessionId],);
   }
 }
