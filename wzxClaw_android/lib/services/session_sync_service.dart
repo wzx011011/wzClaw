@@ -132,6 +132,8 @@ class SessionSyncService {
   int _requestCounter = 0;
   int _fetchGeneration = 0; // 递增以丢弃过期的 fetchSessions 响应
   final Map<String, Completer<dynamic>> _pendingRequests = {};
+  // 同一个 sessionId 的并发 loadAll 请求合并为一次，避免重复写 DB。
+  final Map<String, Future<List<ChatMessage>>> _inflightLoadAll = {};
 
   List<SessionMeta> get sessions => List.unmodifiable(_sessions);
   String? get activeSessionId => _activeSessionId;
@@ -334,13 +336,13 @@ class SessionSyncService {
         final oldCount = oldMessageCounts[currentSessionId];
         if (oldCount == null || newSession.messageCount != oldCount) {
           // 若当前会话刚完成流式，messages 已正确，跳过覆盖以保留流式格式
-          if (!ChatStore.instance.isRecentlyStreamed(currentSessionId!)) {
+          if (!ChatStore.instance.isRecentlyStreamed(currentSessionId)) {
             try {
               // ignore: avoid_print
               print('[SyncDiag] list-response detected count change: '
                   'old=$oldCount new=${newSession.messageCount} session=$currentSessionId');
               final allMessages = await loadAllSessionMessages(
-                currentSessionId!,
+                currentSessionId,
                 forceRefresh: true,
               );
               if (gen == _fetchGeneration) {
@@ -427,22 +429,9 @@ class SessionSyncService {
       }
     }
 
-    // Cache messages locally
-    if (offset == 0) {
-      // First page: clear existing and insert fresh
-      ChatDatabase.instance.clearSessionMessages(sessionId).then((_) {
-        ChatDatabase.instance.insertSessionMessages(sessionId, messages);
-        if (!hasMore) {
-          ChatDatabase.instance.markSessionSynced(sessionId);
-        }
-      });
-    } else {
-      // Subsequent pages: append
-      ChatDatabase.instance.insertSessionMessages(sessionId, messages);
-      if (!hasMore) {
-        ChatDatabase.instance.markSessionSynced(sessionId);
-      }
-    }
+    // 注意：不要在此处写 DB。多页响应 + 多触发路径并发会导致缓存重复写入
+    // （观察到同一条消息被插入 8~12 次）。
+    // DB 缓存的写入由 [loadAllSessionMessages] 在 await 链上序列化处理。
 
     _completePending(requestId, {
       'messages': messages,
@@ -765,15 +754,41 @@ class SessionSyncService {
   /// 修复：旧实现只取 `loadSessionMessages` 的第 1 页（默认 limit=50），
   /// 长会话超过 50 条时手机就会缺消息。本方法保证手机收到与桌面一致的完整列表。
   ///
+  /// 同一 sessionId 的并发调用会被合并到同一个 Future，避免多个调用方
+  /// （applySessionSelection / listResponse / drawer tap 等）同时写库造成重复行。
+  ///
   /// [forceRefresh] 透传到第一页：true 表示绕过本地缓存校验。
   Future<List<ChatMessage>> loadAllSessionMessages(
     String sessionId, {
     bool forceRefresh = false,
     int pageSize = 200,
+  }) {
+    final existing = _inflightLoadAll[sessionId];
+    if (existing != null) {
+      // ignore: avoid_print
+      print('[SyncDiag] loadAll dedup hit for session=$sessionId');
+      return existing;
+    }
+    final fut = _loadAllSessionMessagesImpl(
+      sessionId,
+      forceRefresh: forceRefresh,
+      pageSize: pageSize,
+    ).whenComplete(() {
+      _inflightLoadAll.remove(sessionId);
+    });
+    _inflightLoadAll[sessionId] = fut;
+    return fut;
+  }
+
+  Future<List<ChatMessage>> _loadAllSessionMessagesImpl(
+    String sessionId, {
+    required bool forceRefresh,
+    required int pageSize,
   }) async {
     final all = <ChatMessage>[];
     var offset = 0;
     var page = 0;
+    var didClear = false;
     while (true) {
       final result = await loadSessionMessages(
         sessionId,
@@ -782,11 +797,24 @@ class SessionSyncService {
         forceRefresh: forceRefresh && page == 0,
       );
       final pageMessages = (result['messages'] as List).cast<ChatMessage>();
-      all.addAll(pageMessages);
       final hasMore = result['hasMore'] as bool? ?? false;
       // ignore: avoid_print
       print('[SyncDiag] loadAll page=$page offset=$offset got=${pageMessages.length} '
           'hasMore=$hasMore total=${result['total']} session=$sessionId');
+
+      // 仅当确实是从桌面拉取（offset 在响应里跟请求一致）且第一页时清空旧缓存。
+      // 缓存命中分支会返回 offset=0/hasMore=false 且消息已是本地内容，跳过清空。
+      final responseOffset = result['offset'] as int? ?? 0;
+      final fromDesktop = responseOffset == offset && (hasMore || offset > 0 || pageMessages.length >= pageSize);
+      if (page == 0 && !didClear && fromDesktop) {
+        await ChatDatabase.instance.clearSessionMessages(sessionId);
+        didClear = true;
+      }
+      if (didClear && pageMessages.isNotEmpty) {
+        await ChatDatabase.instance.insertSessionMessages(sessionId, pageMessages);
+      }
+
+      all.addAll(pageMessages);
       if (!hasMore || pageMessages.isEmpty) break;
       offset += pageMessages.length;
       page++;
@@ -796,6 +824,9 @@ class SessionSyncService {
         print('[SyncDiag] loadAll aborted: too many pages for $sessionId');
         break;
       }
+    }
+    if (didClear) {
+      await ChatDatabase.instance.markSessionSynced(sessionId);
     }
     return all;
   }
