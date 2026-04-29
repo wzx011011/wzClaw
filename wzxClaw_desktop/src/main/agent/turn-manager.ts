@@ -295,6 +295,7 @@ export class TurnManager {
       phaseMeta.textContent,
       phaseMeta.toolCalls,
       phaseMeta.contentBlocks.length > 0 ? phaseMeta.contentBlocks : undefined,
+      phaseMeta.reasoningContent,
     )
 
     // 7. 无工具调用 → 结束

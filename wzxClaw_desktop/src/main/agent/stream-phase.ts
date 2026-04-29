@@ -22,6 +22,8 @@ export interface StreamPhaseMeta {
   toolCalls: ToolCall[]
   /** 交错内容块（保留 text/tool_use 原始顺序） */
   contentBlocks: ContentBlock[]
+  /** DeepSeek 扩展思考：流中累积的 reasoning_content，需原样回传给 API */
+  reasoningContent?: string
   /** 本轮 token 用量 */
   usage: TokenUsage
   /** 是否遇到不可恢复的错误 */
@@ -65,6 +67,7 @@ export async function* executeStreamPhase(
   let textContent = ''
   const toolCalls: ToolCall[] = []
   const contentBlocks: ContentBlock[] = []
+  let reasoningContent = ''
   let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
   let hadError = false
 
@@ -114,6 +117,7 @@ export async function* executeStreamPhase(
         }
 
         case 'thinking_delta': {
+          reasoningContent += event.content
           yield { type: 'agent:thinking', content: event.content }
           break
         }
@@ -235,6 +239,7 @@ export async function* executeStreamPhase(
     textContent,
     toolCalls,
     contentBlocks,
+    reasoningContent: reasoningContent || undefined,
     usage,
     hadError,
     loopDetected,

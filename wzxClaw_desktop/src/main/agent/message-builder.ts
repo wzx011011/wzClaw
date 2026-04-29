@@ -68,6 +68,11 @@ export class MessageBuilder {
             content: msg.content
           }
 
+          // DeepSeek 扩展思考：reasoning_content 必须原样回传给 API，否则 400
+          if ((msg as Record<string, unknown>).reasoningContent) {
+            openaiMsg.reasoning_content = (msg as Record<string, unknown>).reasoningContent
+          }
+
           if ((msg.toolCalls?.length ?? 0) > 0) {
             openaiMsg.tool_calls = msg.toolCalls.map(tc => ({
               id: tc.id,

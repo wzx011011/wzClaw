@@ -63,6 +63,12 @@ export class OpenAIAdapter implements LLMAdapter {
           yield { type: 'text_delta', content: delta.content }
         }
 
+        // DeepSeek reasoning_content（扩展思考模式）— 作为 thinking_delta 发出
+        const anyDelta = delta as Record<string, unknown> | undefined
+        if (anyDelta?.['reasoning_content'] && typeof anyDelta['reasoning_content'] === 'string') {
+          yield { type: 'thinking_delta', content: anyDelta['reasoning_content'] }
+        }
+
         // Tool call deltas — accumulate partial JSON
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
