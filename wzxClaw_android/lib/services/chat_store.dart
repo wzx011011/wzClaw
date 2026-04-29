@@ -88,6 +88,12 @@ class ChatStore {
   int _clearGeneration = 0;     // 每次 loadFetchedMessages([]) 清空时递增
   int _lastUserMsgGen = 0;      // 用户最后发消息时的 generation
 
+  // -- 流式完成追踪 --
+  String? _lastStreamedSessionId; // agent:done 时记录，防止 session:changed 覆盖流式消息
+
+  // -- 用户主动切换追踪 --
+  bool _userManuallySwitched = false; // 只有用户从 UI 主动点会话时为 true
+
   // -- Thinking state --
   static const _maxThinkingChars = 50000; // 约 50KB 上限，防止无限累积
   String _thinkingContent = '';
@@ -108,6 +114,8 @@ class ChatStore {
   String? get currentSessionId => _currentSessionId;
   set currentSessionId(String? id) => _currentSessionId = id;
   bool get isBrowsingHistory => _isBrowsingHistory;
+  bool get userManuallySwitched => _userManuallySwitched;
+  bool isRecentlyStreamed(String sessionId) => _lastStreamedSessionId == sessionId;
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
 
@@ -314,6 +322,7 @@ class ChatStore {
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
     if (_isWrongSession(data)) return;
+    _lastStreamedSessionId = _currentSessionId; // 记录刚完成流式的会话，防止后续 fetch 覆盖
     _finalizeStreamingMessage();
     _setWaiting(false);
 
@@ -614,13 +623,21 @@ class ChatStore {
 
   /// Switch to a specific session (for browsing history).
   /// Pass null to return to the live/default chat.
-  Future<void> switchToSession(String? sessionId) async {
+  /// [userInitiated]: true 当且仅当用户从 UI 主动点击了会话，false 表示系统自动切换。
+  Future<void> switchToSession(String? sessionId, {bool userInitiated = false}) async {
+    // 用户主动切换时立即更新标志（即使 same-session 提前返回也需生效）
+    if (userInitiated) _userManuallySwitched = true;
+
     if (sessionId == _currentSessionId) return;
 
     // Finalize any in-progress streaming before switching
-    if (_isStreaming && sessionId != _currentSessionId) {
+    if (_isStreaming) {
       _finalizeStreamingMessage();
     }
+
+    // 系统切换时重置手动标志；并使流式保护失效（切换到新会话不需要保护旧流式）
+    if (!userInitiated) _userManuallySwitched = false;
+    _lastStreamedSessionId = null;
 
     // 完整重置所有流式和会话级状态（与 resetSessionScope 对齐）
     _isStreaming = false;
@@ -690,6 +707,8 @@ class ChatStore {
     _thinkingContent = '';
     _todos = [];
     _pendingMessageIds.clear();
+    _userManuallySwitched = false;
+    _lastStreamedSessionId = null;
     _messages.clear();
     if (!_permissionController.isClosed) {
       _permissionController.add(null);
@@ -711,7 +730,9 @@ class ChatStore {
     }
 
     // 记录用户发消息时的 generation，防止后续 fetch 响应覆盖
-    _lastUserMsgGen = _clearGeneration;
+    // +1 确保 > 判断真正生效（= 永远不大于自身）
+    _lastUserMsgGen = _clearGeneration + 1;
+    _userManuallySwitched = false; // 发消息 = 回到实时模式，允许系统跟随桌面
 
     final messageId = '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1000000)}';
     final msg = ChatMessage(

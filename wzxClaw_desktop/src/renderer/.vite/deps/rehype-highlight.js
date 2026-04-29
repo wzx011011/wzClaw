@@ -31254,7 +31254,7 @@ function sqf(hljs) {
     "createSimpleTask",
     "createSite",
     "createSoundSource",
-    "createTask",
+    "createWorkspace",
     "createTeam",
     "createTrigger",
     "createUnit",

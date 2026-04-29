@@ -55,6 +55,7 @@ export class LLMGateway {
     // Fallback: prefix-based heuristics for custom model names
     if (model.startsWith('claude')) return 'anthropic'
     if (model.startsWith('glm-5')) return 'anthropic'
+    console.warn('[LLMGateway] unknown model "%s", defaulting to openai provider', model)
     return 'openai'
   }
 

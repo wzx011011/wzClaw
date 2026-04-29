@@ -851,13 +851,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * Clear all messages and reset conversation ID.
    */
   clearConversation: () => {
-    flushTextBatch()
+    resetTextBatch()
     const newId = uuidv4()
     set({
       messages: [],
       conversationId: newId,
       activeSessionId: newId,
       error: null,
+      isStreaming: false,
+      isWaitingForResponse: false,
       streamingMessageId: null,
       currentTodos: []
     })

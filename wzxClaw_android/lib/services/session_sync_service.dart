@@ -316,21 +316,24 @@ class SessionSyncService {
         );
         final oldCount = oldMessageCounts[currentSessionId];
         if (oldCount == null || newSession.messageCount != oldCount) {
-          try {
-            final result = await loadSessionMessages(
-              currentSessionId!,
-              forceRefresh: true,
-            );
-            if (gen == _fetchGeneration) {
-              ChatStore.instance.loadFetchedMessages(
-                result['messages'] as List<ChatMessage>,
+          // 若当前会话刚完成流式，messages 已正确，跳过覆盖以保留流式格式
+          if (!ChatStore.instance.isRecentlyStreamed(currentSessionId!)) {
+            try {
+              final result = await loadSessionMessages(
+                currentSessionId!,
+                forceRefresh: true,
               );
+              if (gen == _fetchGeneration) {
+                ChatStore.instance.loadFetchedMessages(
+                  result['messages'] as List<ChatMessage>,
+                );
+              }
+            } catch (e) {
+              // WR-03修复: async void 函数内异常不再静默丢弃；
+              // 保留现有消息可见，不影响用户体验。
+              // ignore: avoid_print
+              print('[SessionSync] force-refresh failed: $e');
             }
-          } catch (e) {
-            // WR-03修复: async void 函数内异常不再静默丢弃；
-            // 保留现有消息可见，不影响用户体验。
-            // ignore: avoid_print
-            print('[SessionSync] force-refresh failed: $e');
           }
         }
       }
@@ -448,11 +451,50 @@ class SessionSyncService {
     if (data is! Map) return;
     if (!_hasSelectedDesktopTarget) return;
     final sessionId = data['sessionId'] as String?;
+    if (sessionId == null) return;
+
     // 同步 ChatStore 的 sessionId，防止 _isWrongSession 误判丢弃流式事件
-    if (sessionId != null) {
-      ChatStore.instance.syncSessionId(sessionId);
-      _activeSessionId = sessionId;
-      _activeSessionController.add(_activeSessionId);
+    ChatStore.instance.syncSessionId(sessionId);
+
+    final previousActiveId = _activeSessionId;
+    _activeSessionId = sessionId;
+    _activeSessionController.add(_activeSessionId);
+
+    // 若桌面端切换到了不同会话，且手机端未在手动浏览其他历史会话，
+    // 则切换视图并从桌面强制重新拉取该会话的消息，确保两端一致。
+    final currentId = ChatStore.instance.currentSessionId;
+    // 使用 userManuallySwitched 而非 isBrowsingHistory：
+    // isBrowsingHistory 在系统自动加载时也会被置 true，语义不将准。
+    // userManuallySwitched 只在用户从 UI 主动点击会话时置 true。
+    final isBrowsingDifferentSession =
+        ChatStore.instance.userManuallySwitched &&
+        currentId != null &&
+        currentId != sessionId;
+
+    if (!isBrowsingDifferentSession && currentId != sessionId) {
+      // 会话发生切换：重新加载该会话消息（前台加载，不阻塞调用方）
+      final gen = _fetchGeneration; // 在 await 之前捕获，用于过期检测
+      unawaited(Future(() async {
+        await ChatStore.instance.switchToSession(sessionId);
+        try {
+          final result = await loadSessionMessages(sessionId, forceRefresh: true);
+          if (gen == _fetchGeneration) {
+            ChatStore.instance.loadFetchedMessages(
+              result['messages'] as List<ChatMessage>,
+            );
+          }
+        } catch (_) {
+          // 加载失败时保留当前显示，不影响用户体验
+        }
+      }));
+    } else if (previousActiveId != sessionId) {
+      // 桌面仅标记会话 active（同一会话重连），不切换视图但可触发 fetchSessions 刷新计数
+      // fetchSessions 会通过 messageCount 对比决定是否 forceRefresh
+      if (!_isLoading) {
+        unawaited(Future.delayed(const Duration(milliseconds: 200), () {
+          if (_hasSelectedDesktopTarget) fetchSessions();
+        }));
+      }
     }
   }
 
@@ -869,7 +911,7 @@ class SessionSyncService {
 
     if (generation != _fetchGeneration) return;
 
-    final result = await loadSessionMessages(sessionId);
+    final result = await loadSessionMessages(sessionId, forceRefresh: true);
     if (generation != _fetchGeneration) return;
 
     final messages = result['messages'] as List<ChatMessage>;

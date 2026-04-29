@@ -137,9 +137,9 @@ export class TurnManager {
         await hookRegistry?.emit('pre-tool', { toolName: toolCall.name, toolInput: toolCall.input, conversationId: config.conversationId })
 
         // 文件快照（写入前）
-        if (historyManager && (toolCall.name === 'FileWrite' || toolCall.name === 'FileEdit' || toolCall.name === 'MultiEdit')) {
-          const rawPath = toolCall.name === 'MultiEdit'
-            ? String(toolCall.input.file_path ?? '')
+        if (historyManager && tool.requiresSnapshot) {
+          const rawPath = toolCall.input.file_path != null
+            ? String(toolCall.input.file_path)
             : String(toolCall.input.path ?? '')
           if (rawPath) {
             const absolutePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(config.workingDirectory, rawPath)

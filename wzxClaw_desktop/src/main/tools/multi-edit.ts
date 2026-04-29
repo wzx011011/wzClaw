@@ -41,6 +41,7 @@ function countOccurrences(content: string, search: string): number {
 
 export class MultiEditTool implements Tool {
   readonly name = 'MultiEdit'
+  readonly requiresSnapshot = true
   readonly description = [
     'Perform multiple find-and-replace operations on a single file atomically.',
     'All edits are applied sequentially to the same content buffer.',

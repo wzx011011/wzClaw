@@ -30,7 +30,6 @@ export class AgentLoop {
   private conversation = new ConversationManager()
   private abortController: AbortController | null = null
   private turnManager = new TurnManager()
-  private _recentOutputTokens: number[] = []
 
   /** Active workspace context — injected into system prompt when set */
   activeWorkspace: Workspace | null = null
@@ -66,7 +65,6 @@ export class AgentLoop {
     const safetyCeiling = MAX_AGENT_TURNS  // 200，意外死循环的最后防线
     this.abortController = new AbortController()
     this.turnManager.reset()
-    this._recentOutputTokens = []
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
@@ -251,23 +249,6 @@ export class AgentLoop {
       // Eval: 记录 turn 输出 token
       getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
 
-      // 收益递减检测：暂时关闭
-      // const DIMINISHING_WINDOW = 5
-      // const DIMINISHING_THRESHOLD = 300
-      // this._recentOutputTokens.push(turnResult.usage.outputTokens)
-      // if (this._recentOutputTokens.length > DIMINISHING_WINDOW) {
-      //   this._recentOutputTokens.shift()
-      // }
-      // if (this._recentOutputTokens.length >= DIMINISHING_WINDOW &&
-      //     this._recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD) && turnCount > DIMINISHING_WINDOW) {
-      //   debugLogger.log('WARN', `diminishing returns: last ${DIMINISHING_WINDOW} turns all < ${DIMINISHING_THRESHOLD} output tokens`)
-      //   yield { type: 'agent:error', error: `Agent appears stuck — low output over ${DIMINISHING_WINDOW} consecutive turns`, recoverable: true }
-      //   yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-      //   endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
-      //   await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
-      //   return
-      // }
-
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
         debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
@@ -356,7 +337,6 @@ export class AgentLoop {
     this.conversation.clear()
     this.turnManager.reset()
     this.abortController = null
-    this._recentOutputTokens = []
   }
 
   getMessages(): Message[] {

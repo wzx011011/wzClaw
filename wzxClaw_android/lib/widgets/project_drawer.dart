@@ -507,7 +507,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                       final sessionId = result['id'] as String?;
                       if (sessionId != null) {
                         SessionSyncService.instance.setActiveSession(sessionId);
-                        ChatStore.instance.switchToSession(sessionId);
+                        ChatStore.instance.switchToSession(sessionId, userInitiated: true);
                         if (context.mounted) Navigator.pop(context);
                       }
                     }
@@ -608,12 +608,12 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
       final result =
           await SessionSyncService.instance.loadSessionMessages(session.id);
       final messages = result['messages'] as List<dynamic>? ?? [];
-      ChatStore.instance.switchToSession(session.id);
+      ChatStore.instance.switchToSession(session.id, userInitiated: true);
       if (messages.isNotEmpty) {
         ChatStore.instance.loadFetchedMessages(messages.cast());
       }
     } catch (_) {
-      ChatStore.instance.switchToSession(session.id);
+      ChatStore.instance.switchToSession(session.id, userInitiated: true);
     }
 
     if (context.mounted) Navigator.pop(context);

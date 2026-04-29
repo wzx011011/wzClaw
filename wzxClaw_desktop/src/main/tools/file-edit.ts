@@ -15,6 +15,7 @@ const FileEditSchema = z.object({
 
 export class FileEditTool implements Tool {
   readonly name = 'FileEdit'
+  readonly requiresSnapshot = true
   readonly description = `Edit a file by replacing an exact string match.
 
 Usage:

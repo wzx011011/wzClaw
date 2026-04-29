@@ -527,7 +527,7 @@ var require_react_development = __commonJS({
         thrownErrors: [],
         getCurrentStack: null,
         recentlyCreatedOwnerStacks: 0
-      }, hasOwnProperty = Object.prototype.hasOwnProperty, createTask = console.createTask ? console.createTask : function() {
+      }, hasOwnProperty = Object.prototype.hasOwnProperty, createWorkspace = console.createWorkspace ? console.createWorkspace : function() {
         return null;
       };
       deprecatedAPIs = {
@@ -541,7 +541,7 @@ var require_react_development = __commonJS({
         deprecatedAPIs,
         UnknownOwner
       )();
-      var unknownOwnerDebugTask = createTask(getTaskName(UnknownOwner));
+      var unknownOwnerDebugTask = createWorkspace(getTaskName(UnknownOwner));
       var didWarnAboutMaps = false, userProvidedKeyEscapeRegex = /\/+/g, reportGlobalError = "function" === typeof reportError ? reportError : function(error) {
         if ("object" === typeof window && "function" === typeof window.ErrorEvent) {
           var event = new window.ErrorEvent("error", {
@@ -790,7 +790,7 @@ var require_react_development = __commonJS({
           i,
           getOwner(),
           propName ? Error("react-stack-top-frame") : unknownOwnerDebugStack,
-          propName ? createTask(getTaskName(type)) : unknownOwnerDebugTask
+          propName ? createWorkspace(getTaskName(type)) : unknownOwnerDebugTask
         );
       };
       exports.createRef = function() {
@@ -839,7 +839,7 @@ var require_react_development = __commonJS({
           value: null,
           owner: null,
           debugStack: Error("react-stack-top-frame"),
-          debugTask: console.createTask ? console.createTask("lazy()") : null
+          debugTask: console.createWorkspace ? console.createWorkspace("lazy()") : null
         };
         ctor._ioInfo = ioInfo;
         lazyType._debugInfo = [{ awaited: ioInfo }];

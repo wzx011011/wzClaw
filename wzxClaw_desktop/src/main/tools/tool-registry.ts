@@ -26,8 +26,7 @@ export class ToolRegistry {
   // Tools known to be read-only (no side effects)
   private static readonly READ_ONLY_TOOLS = new Set([
     'FileRead', 'Grep', 'Glob', 'LS', 'WebSearch', 'WebFetch',
-    'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols',
-    'CreateStep', 'UpdateStep'
+    'SemanticSearch', 'GoToDefinition', 'FindReferences', 'SearchSymbols'
   ])
 
   register(tool: Tool): void {

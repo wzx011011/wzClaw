@@ -14,6 +14,7 @@ const FileWriteSchema = z.object({
 
 export class FileWriteTool implements Tool {
   readonly name = 'FileWrite'
+  readonly requiresSnapshot = true
   readonly description = `Create or overwrite a file with the given content. Creates parent directories if they do not exist.
 
 Usage:

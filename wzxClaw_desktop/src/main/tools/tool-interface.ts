@@ -69,6 +69,8 @@ export interface Tool {
   readonly inputSchema: Record<string, unknown>
   readonly requiresApproval: boolean
   readonly isReadOnly?: boolean
+  /** 设为 true 时，turn-manager 在工具执行前自动对目标文件拍快照（用于撤销）*/
+  readonly requiresSnapshot?: boolean
   execute(
     input: Record<string, unknown>,
     context: ToolExecutionContext

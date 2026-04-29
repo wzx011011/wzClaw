@@ -39,6 +39,9 @@ export class RelayClient extends EventEmitter {
   private _mobileConnected = false
   private _mobileIdentity: string | null = null
   private _mobiles: MobileDevice[] = []
+  // 重连期间待发消息缓冲（上限 50 条，超出丢弃最旧的）
+  private _outboundQueue: string[] = []
+  private static readonly MAX_QUEUE = 50
 
   get connected(): boolean {
     return this._connected
@@ -54,6 +57,7 @@ export class RelayClient extends EventEmitter {
     this._mobileConnected = false
     this._mobileIdentity = null
     this._mobiles = []
+    this._outboundQueue = []
     this.reconnectAttempt = 0
     this._clearTimers()
     this._closeWs()
@@ -91,10 +95,11 @@ export class RelayClient extends EventEmitter {
     this._updateState(false, true)
     this.emitStatus()
 
-    const url = `${RELAY_URL}?role=desktop&token=${encodeURIComponent(this.token)}`
+    const url = `${RELAY_URL}?role=desktop`
 
     try {
-      this.ws = new WebSocket(url)
+      // 通过 Sec-WebSocket-Protocol 传递 token，避免 token 出现在 URL（日志/代理暴露风险）
+      this.ws = new WebSocket(url, [`wzxclaw-${this.token}`])
     } catch {
       this._scheduleReconnect()
       return
@@ -106,6 +111,8 @@ export class RelayClient extends EventEmitter {
       this.reconnectAttempt = 0
       this._startHeartbeat()
       this.emitStatus()
+      // 重连后先刷出缓冲队列
+      this._drainQueue()
       // Announce desktop identity to mobile
       this._send(JSON.stringify({
         event: 'identity:announce',
@@ -212,6 +219,23 @@ export class RelayClient extends EventEmitter {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(data)
+      } catch {
+        // ignore
+      }
+    } else {
+      // 重连期间将消息放入出站队列，避免永久丢失
+      if (this._outboundQueue.length >= RelayClient.MAX_QUEUE) {
+        this._outboundQueue.shift() // 丢弃最旧的
+      }
+      this._outboundQueue.push(data)
+    }
+  }
+
+  private _drainQueue(): void {
+    const queued = this._outboundQueue.splice(0)
+    for (const msg of queued) {
+      try {
+        this.ws?.send(msg)
       } catch {
         // ignore
       }

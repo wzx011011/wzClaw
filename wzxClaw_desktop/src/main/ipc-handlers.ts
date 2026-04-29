@@ -239,6 +239,8 @@ export function registerIpcHandlers(
                 }
                 await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
                 persistedMessageCount = allMessages.length
+                // 通知手机端：会话消息有更新，触发 fetchSessions → messageCount 对比 → forceRefresh
+                onDataChanged?.('session:changed', { action: 'updated', sessionId: agentConfig.conversationId })
               }
             } catch (saveErr) {
               console.error('Failed to auto-save session:', saveErr)

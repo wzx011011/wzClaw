@@ -375,7 +375,7 @@ class _ChatPageState extends State<ChatPage> {
                     final sessionId = result['id'] as String?;
                     if (sessionId != null) {
                       SessionSyncService.instance.setActiveSession(sessionId);
-                      ChatStore.instance.switchToSession(sessionId);
+                      ChatStore.instance.switchToSession(sessionId, userInitiated: true);
                     }
                   }
                 },
