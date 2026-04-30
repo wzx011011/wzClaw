@@ -49,6 +49,7 @@ import { createDefaultTools } from './tools/tool-registry'
 import { AgentTool } from './tools/agent-tool'
 import { PermissionManager } from './permission/permission-manager'
 import { AgentLoop } from './agent/agent-loop'
+import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import type { AgentConfig } from './agent/types'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore } from './persistence/session-store'
@@ -389,7 +390,12 @@ app.whenReady().then(async () => {
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
 
-  const agentLoop = new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
+  const agentLoopFactory = () => new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
+  // Per-session AgentLoop 运行时管理器。
+  const runtimes = new SessionRuntimeManager(agentLoopFactory)
+  // 默认 / 退退使用的 AgentLoop 实例：作为"全局 workspace"镜像（agentLoop.activeWorkspace）以及部分老接口读取。
+  // 实际会话 run() 调用走 runtimes；该实例不被 .run()。
+  const agentLoop = agentLoopFactory()
   logStartup('AgentLoop + MCP created')
 
   // 实例化 MCPManager（IPC 注册需要引用），但推迟 loadAndConnect 到 did-finish-load
@@ -501,6 +507,15 @@ app.whenReady().then(async () => {
     relayClient.broadcast(event, data)
   }
 
+  // 订阅 running 状态变化，推送给渲染进程 + 手机端（Phase B: session:running_changed）
+  runtimes.onRunningChanged((sessionId, isRunning) => {
+    const wc = BrowserWindow.getAllWindows()[0]?.webContents
+    if (wc && !wc.isDestroyed()) {
+      wc.send(IPC_CHANNELS['session:running_changed'], { sessionId, isRunning })
+    }
+    broadcastToMobile('stream:agent:running_changed', { sessionId, isRunning })
+  })
+
   // Helper: send workspace info to mobile
   const sendWorkspaceInfoToMobile = async () => {
     const workspaceRoot = workspaceManager.getWorkspaceRoot()
@@ -547,6 +562,7 @@ app.whenReady().then(async () => {
           workspaceName: path.basename(workspaceRoot),
           workspacePath: workspaceRoot,
           sessions,
+          runningSessionIds: runtimes.listRunning(),
           activeSessionId: settingsManager.getLastSessionId() ?? null
         })
       } catch (err: any) {
@@ -702,6 +718,9 @@ app.whenReady().then(async () => {
         // Trigger workspace open — reuses the existing onWorkspaceOpened flow
         workspaceManager.setWorkspaceRoot(workspacePath)
         handleWorkspaceOpened(workspacePath, toolRegistry)
+        // 切换工作区：取消所有运行中的会话（workspace 跨会话资源已变）
+        runtimes.clear()
+        agentLoop.activeWorkspace = null
         agentLoop.reset()
         sessionStore = new SessionStore(workspacePath)
         mobileSessionId = null
@@ -975,10 +994,12 @@ app.whenReady().then(async () => {
 
         switch (cmdName) {
           case 'compact': {
-            // Trigger manual context compaction
-            const messages = agentLoop.getMessages()
+            // Trigger manual context compaction — 仅针对当前手机会话生效
+            const compactSid = mobileSessionId
+            const compactRuntime = compactSid ? runtimes.getOrCreate(compactSid) : null
+            const messages = compactRuntime ? compactRuntime.getMessages() : []
             const compactConfig = settingsManager.getCurrentConfig()
-            if (messages.length > 0) {
+            if (messages.length > 0 && compactRuntime) {
               contextManager.compact(
                 messages,
                 gateway,
@@ -993,7 +1014,7 @@ app.whenReady().then(async () => {
                     timestamp: Date.now()
                   }
                   const recentMessages = messages.slice(-result.keptRecentCount)
-                  agentLoop.replaceMessages([summaryMsg, ...recentMessages])
+                  compactRuntime.replaceMessages([summaryMsg, ...recentMessages])
                 }
                 const sid = settingsManager.getLastSessionId() ?? mobileSessionId
                 broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: sid })
@@ -1007,9 +1028,9 @@ app.whenReady().then(async () => {
             return
           }
           case 'clear': {
-            // Create new session and reset agent loop
+            // Discard the mobile-current session runtime and start fresh on next send
+            if (mobileSessionId) runtimes.delete(mobileSessionId)
             mobileSessionId = null
-            agentLoop.reset()
             broadcastToMobile('session:create:response', { success: true })
             return
           }
@@ -1052,16 +1073,15 @@ app.whenReady().then(async () => {
       const requestedSessionId = typeof msg.data.sessionId === 'string' && msg.data.sessionId.length > 0
         ? msg.data.sessionId
         : null
+      // Per-session runtime 下，不同 sessionId 自然隔离，不再需要 reset-context 语义。
+      // 仅保留 sessionId 生成逻辑。
       const sessionTransition = getMobileSessionTransition({
         requestedSessionId,
-        activeSessionId: mobileSessionId,
-        hasMessages: agentLoop.getMessages().length > 0,
+        activeSessionId: mobileSessionId ?? settingsManager.getLastSessionId(),
+        hasMessages: false,
         generatedSessionId: crypto.randomUUID(),
       })
       const sessionId = sessionTransition.sessionId
-      if (sessionTransition.shouldResetContext) {
-        agentLoop.reset()
-      }
       mobileSessionId = sessionId
       const toolCallInputs = new Map<string, Record<string, unknown>>()
 
@@ -1105,13 +1125,13 @@ app.whenReady().then(async () => {
       // Broadcast the assigned session ID back to mobile so it can track it
       broadcastToMobile('session:active', { sessionId })
 
-      // If resuming an existing mobile session, restore chat history into agentLoop
+      // If resuming an existing mobile session, restore chat history into the per-session runtime
       if (sessionTransition.shouldRestoreHistory) {
         try {
           const activeStore = getActiveSessionStore()
           const rawMessages = await activeStore.loadSession(sessionId)
           if (rawMessages.length > 0) {
-            await agentLoop.restoreContext(rawMessages, agentConfig)
+            await runtimes.getOrCreate(sessionId).restoreContext(rawMessages, agentConfig)
           }
           mobilePersistedMessageCounts.set(sessionId, rawMessages.length)
         } catch {
@@ -1119,13 +1139,20 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Send the mobile user's message to renderer so it appears in the chat
-      const wc0 = BrowserWindow.getAllWindows()[0]?.webContents
-      if (wc0) {
-        wc0.send(IPC_CHANNELS['stream:mobile_user_message'], {
-          content: msg.data.content,
-          source: 'mobile'
-        })
+      // 只有移动端会话与桌面当前会话相同时，才将用户消息和流式事件转发到渲染器。
+      // 若不同会话，渲染器展示的是桌面会话内容，移动端的回答不应干扰其显示。
+      const desktopCurrentSessionId = settingsManager.getLastSessionId()
+      const shouldForwardToRenderer = !desktopCurrentSessionId || desktopCurrentSessionId === sessionId
+
+      // Send the mobile user's message to renderer so it appears in the chat (same-session only)
+      if (shouldForwardToRenderer) {
+        const wc0 = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wc0) {
+          wc0.send(IPC_CHANNELS['stream:mobile_user_message'], {
+            content: msg.data.content,
+            source: 'mobile'
+          })
+        }
       }
 
       // Acknowledge receipt back to mobile.
@@ -1138,21 +1165,29 @@ app.whenReady().then(async () => {
         const mobileSender = {
           isDestroyed: () => wcForMobile?.isDestroyed() ?? true,
           send: (channel: string, ...args: unknown[]) => {
-            if (wcForMobile && !wcForMobile.isDestroyed()) wcForMobile.send(channel, ...args)
+            const showToolSteps = settingsManager.getShowToolSteps()
+            // 仅在手机会话与桌面当前会话一致时，才将次要事件（retrying/sub-tool/ask-user）推给渲染器。
+            if (shouldForwardToRenderer && wcForMobile && !wcForMobile.isDestroyed()) {
+              // Skip tool step events to renderer when showToolSteps is off
+              const isToolChannel = channel === IPC_CHANNELS['stream:tool_use_start'] || channel === IPC_CHANNELS['stream:tool_use_end'] || channel === IPC_CHANNELS['stream:thinking_delta'] || channel === IPC_CHANNELS['stream:sub_tool_use_start'] || channel === IPC_CHANNELS['stream:sub_tool_use_end'] || channel === IPC_CHANNELS['stream:sub_text']
+              if (showToolSteps || !isToolChannel) {
+                wcForMobile.send(channel, ...args)
+              }
+            }
             if (channel === IPC_CHANNELS['stream:retrying']) {
-              relayClient.broadcast('stream:retrying', args[0] ?? {})
+              if (showToolSteps) relayClient.broadcast('stream:retrying', args[0] ?? {})
             }
             if (channel === IPC_CHANNELS['ask-user:question']) {
               relayClient.broadcast('stream:agent:ask_user_question', args[0])
             }
             if (channel === IPC_CHANNELS['stream:sub_tool_use_start']) {
-              relayClient.broadcast('stream:sub:tool_call', args[0] ?? {})
+              if (showToolSteps) relayClient.broadcast('stream:sub:tool_call', args[0] ?? {})
             }
             if (channel === IPC_CHANNELS['stream:sub_tool_use_end']) {
-              relayClient.broadcast('stream:sub:tool_result', args[0] ?? {})
+              if (showToolSteps) relayClient.broadcast('stream:sub:tool_result', args[0] ?? {})
             }
             if (channel === IPC_CHANNELS['stream:sub_text']) {
-              relayClient.broadcast('stream:sub:text', args[0] ?? {})
+              if (showToolSteps) relayClient.broadcast('stream:sub:text', args[0] ?? {})
             }
           }
         } as unknown as Electron.WebContents
@@ -1165,14 +1200,22 @@ app.whenReady().then(async () => {
           agentLoop.activeWorkspace = null
         }
 
-        // Concurrency guard: cancel any in-progress agent run before starting a new one.
-        agentLoop.cancel()
-        // Yield to let the previous generator unwind before starting a new run.
-        await new Promise(r => setTimeout(r, 0))
+        // 取出 per-session runtime 并同步当前 workspace。
+        const runtime = runtimes.getOrCreate(sessionId)
+        runtime.activeWorkspace = agentLoop.activeWorkspace
 
-        for await (const agentEvent of agentLoop.run(msg.data.content, agentConfig, mobileSender)) {
-          // Forward stream events to renderer
-          const wc = BrowserWindow.getAllWindows()[0]?.webContents
+        // 并发保护：仅在同一 sessionId 上重发时取消上一次；
+        // 不再跨会话 cancel 全局，让多会话可并发运行。
+        if (runtime.isRunning) {
+          runtime.cancel()
+          await new Promise(r => setTimeout(r, 0))
+        }
+
+        runtimes.notifyRunningChanged(sessionId, true)
+        try {
+        for await (const agentEvent of runtime.run(msg.data.content, agentConfig, mobileSender)) {
+          // Forward stream events to renderer — only when mobile session matches desktop's current session
+          const wc = shouldForwardToRenderer ? BrowserWindow.getAllWindows()[0]?.webContents : null
           if (wc) {
             switch (agentEvent.type) {
               case 'agent:text':
@@ -1214,7 +1257,7 @@ app.whenReady().then(async () => {
                 try {
                   const activeStore = getActiveSessionStore()
                   if (activeStore) {
-                    const allMsgs = agentLoop.getMessages()
+                    const allMsgs = runtime.getMessages()
                     const persistedCount = mobilePersistedMessageCounts.get(sessionId) ?? 0
                     const newMessages = allMsgs.slice(persistedCount)
                     if (newMessages.length > 0) {
@@ -1236,7 +1279,13 @@ app.whenReady().then(async () => {
             }
           }
           // 串台修复: 在所有流式事件中携带 sessionId，手机端可据此过滤非当前会话的事件
-          relayClient.broadcast(`stream:${agentEvent.type}`, { ...agentEvent, sessionId })
+          // When showToolSteps is off, skip tool step events for mobile
+          const isToolStepEvent = agentEvent.type === 'agent:tool_call' || agentEvent.type === 'agent:tool_result' || agentEvent.type === 'agent:thinking'
+          if (isToolStepEvent && !settingsManager.getShowToolSteps()) {
+            // Skip broadcasting tool step events to mobile
+          } else {
+            relayClient.broadcast(`stream:${agentEvent.type}`, { ...agentEvent, sessionId })
+          }
           // Forward TodoWrite structured todo list to mobile
           if (agentEvent.type === 'agent:tool_result' && agentEvent.toolName === 'TodoWrite' && !agentEvent.isError) {
             const todoTool = toolRegistry.get('TodoWrite') as { getCurrentTodos?: () => unknown[] } | undefined
@@ -1245,6 +1294,9 @@ app.whenReady().then(async () => {
             }
           }
         }
+        } finally {
+          runtimes.notifyRunningChanged(sessionId, false)
+        }
       } catch (err: any) {
         relayClient.broadcast('stream:error', { error: err.message })
       }
@@ -1252,7 +1304,8 @@ app.whenReady().then(async () => {
     }
 
     if (msg.event === 'command:stop') {
-      agentLoop.cancel()
+      // 仅取消当前手机会话（不会跨会话误杀）
+      if (mobileSessionId) runtimes.cancel(mobileSessionId)
     }
     } catch (topErr: any) {
       console.error('[handleClientMessage] UNCAUGHT ERROR:', topErr)
@@ -1277,16 +1330,12 @@ app.whenReady().then(async () => {
         })),
       })
     } catch {}
-    // 如果桌面端 agent 正在运行，通知手机端当前进度
-    const agentRunning = (agentLoop as any).abortController !== null
-    if (agentRunning) {
-      const lastSessionId = settingsManager.getLastSessionId()
-      if (lastSessionId) {
-        broadcastToMobile('stream:agent:running', {
-          sessionId: lastSessionId,
-          messageCount: agentLoop.getMessages().length,
-        })
-      }
+    // 广播所有正在运行的会话状态，让手机端同步“其他会话仍在跑”的跟踪
+    for (const sid of runtimes.listRunning()) {
+      broadcastToMobile('stream:agent:running', {
+        sessionId: sid,
+        messageCount: runtimes.getOrCreate(sid).getMessages().length,
+      })
     }
   })
 
@@ -1350,7 +1399,7 @@ app.whenReady().then(async () => {
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
-    gateway, agentLoop, permissionManager, workspaceManager, getActiveSessionStore,
+    gateway, agentLoop, runtimes, permissionManager, workspaceManager, getActiveSessionStore,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
     mcpManager, workspaceStore,
     (rootPath) => {

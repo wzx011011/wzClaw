@@ -15,7 +15,8 @@ describe('getMobileSessionTransition', () => {
     })
   })
 
-  it('resets and restores when switching to a different requested session', () => {
+  it('resets context when mobile sends to new session but activeSessionId is the desktop fallback (mobileSessionId was null)', () => {
+    // Per-session runtime 下 shouldResetContext 恒为 false；历史恢复由 runtime 自己加载。
     expect(getMobileSessionTransition({
       requestedSessionId: 'session-b',
       activeSessionId: 'session-a',
@@ -23,7 +24,21 @@ describe('getMobileSessionTransition', () => {
       generatedSessionId: 'generated-id',
     })).toEqual({
       sessionId: 'session-b',
-      shouldResetContext: true,
+      shouldResetContext: false,
+      shouldRestoreHistory: true,
+    })
+  })
+
+  it('resets and restores when switching to a different requested session', () => {
+    // Per-session runtime 下 shouldResetContext 恒为 false；shouldRestoreHistory 依旧正确。
+    expect(getMobileSessionTransition({
+      requestedSessionId: 'session-b',
+      activeSessionId: 'session-a',
+      hasMessages: true,
+      generatedSessionId: 'generated-id',
+    })).toEqual({
+      sessionId: 'session-b',
+      shouldResetContext: false,
       shouldRestoreHistory: true,
     })
   })

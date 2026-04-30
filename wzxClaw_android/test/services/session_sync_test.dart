@@ -294,23 +294,4 @@ void main() {
       expect(store.userManuallySwitched, isFalse);
     });
   });
-
-  // ══════════════════════════════════════════════════════════════════
-  // Bug 1 fix: _applySessionSelection uses forceRefresh: true
-  // Validates that isRecentlyStreamed is accessible on ChatStore
-  // ══════════════════════════════════════════════════════════════════
-  group('SessionSyncService: isRecentlyStreamed guard', () {
-    test('ChatStore.isRecentlyStreamed returns false for unknown session', () {
-      final store = ChatStore.instance;
-      store.resetSessionScope();
-      expect(store.isRecentlyStreamed('some-session'), isFalse);
-    });
-
-    test('ChatStore.isRecentlyStreamed returns false after resetSessionScope', () {
-      final store = ChatStore.instance;
-      // Even if something was streamed before, reset clears it
-      store.resetSessionScope();
-      expect(store.isRecentlyStreamed('any-session'), isFalse);
-    });
-  });
 }

@@ -1,11 +1,30 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/chat_message.dart';
 import '../models/session_meta.dart';
 
 class ChatDatabase {
-  static final ChatDatabase _instance = ChatDatabase._();
+  static ChatDatabase _instance = ChatDatabase._();
   static ChatDatabase get instance => _instance;
   ChatDatabase._();
+
+  /// 仅测试使用：子类（如 FakeChatDatabase）继承时使用的可见构造器。
+  /// 产品代码不应调用。
+  @visibleForTesting
+  ChatDatabase.forTest();
+
+  /// 仅测试使用：注入一个替代实现（如内存伪实现）。
+  /// 产品代码中不调用。
+  @visibleForTesting
+  static void setInstanceForTest(ChatDatabase db) {
+    _instance = db;
+  }
+
+  /// 仅测试使用：重置为生产 sqflite 实现。
+  @visibleForTesting
+  static void resetInstanceForTest() {
+    _instance = ChatDatabase._();
+  }
 
   static const _dbName = 'wzxclaw_chat.db';
   static const _dbVersion = 5;

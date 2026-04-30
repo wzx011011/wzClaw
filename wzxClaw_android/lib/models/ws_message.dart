@@ -133,6 +133,16 @@ class WsEvents {
   // -- Agent running notification (desktop -> mobile, on reconnect) --
   static const String agentRunning = 'stream:agent:running';
 
+  // -- Agent running state changed (desktop -> mobile, per-session real-time update) --
+  static const String agentRunningChanged = 'stream:agent:running_changed';
+
+  // -- Desktop user message (desktop -> mobile, user question from desktop) --
+  static const String desktopUserMessage = 'stream:desktop_user_message';
+
+  // -- Agent started on desktop (desktop -> mobile, new protocol Phase 1) --
+  // 桌面自发的 agent 启动通知：手机更新活跃会话 ID 但不强制切换视图。
+  static const String desktopAgentStarted = 'desktop:agent:started';
+
   // -- AskUserQuestion events (incoming: desktop -> mobile) --
   static const String agentAskUserQuestion = 'stream:agent:ask_user_question';
 

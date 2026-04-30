@@ -87,7 +87,7 @@ const mockWzxclaw = {
   onSessionRestore:         vi.fn().mockReturnValue(vi.fn()),
   onTodoUpdated:            vi.fn().mockReturnValue(vi.fn()),
   onDataChanged:            vi.fn().mockReturnValue(vi.fn()),
-  listSessions:  vi.fn().mockResolvedValue([]),
+  listSessions:  vi.fn().mockResolvedValue({ sessions: [], runningSessionIds: [] }),
   loadSession:   vi.fn().mockResolvedValue([]),
   deleteSession: vi.fn().mockResolvedValue({ success: true }),
   renameSession: vi.fn().mockResolvedValue({ success: true }),

@@ -20,6 +20,7 @@ import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { FileChangeTracker, buildTurnAttachments } from '../context/turn-attachments'
 import { truncateToolResult, enforceContextBudget, ToolResultEntry } from '../context/tool-result-budget'
+import { maybePersistLargeToolResult, ToolResultReplacementState } from '../context/tool-result-storage'
 import { ContextManager as ContextManagerClass } from '../context/context-manager'
 import { executeStreamPhase, type StreamPhaseMeta, type ExecuteToolFn, type StreamFn } from './stream-phase'
 import { ConversationManager } from './conversation-manager'
@@ -46,6 +47,8 @@ export interface TurnInput {
   abortSignal: AbortSignal
   /** Electron WebContents（用于权限请求） */
   sender?: Electron.WebContents
+  /** 工具结果替换决策冻结状态（Anthropic prompt cache 专属，非 Anthropic 时传 undefined） */
+  replacementState?: ToolResultReplacementState
 }
 
 /**
@@ -89,6 +92,7 @@ export class TurnManager {
     abortSignal: AbortSignal,
     sender?: Electron.WebContents,
     workspaceId?: string,
+    replacementState?: ToolResultReplacementState,
   ): ExecuteToolFn {
     return async (toolCall: ToolCall): Promise<ToolExecResult> => {
       const _eval = getActiveTrace(config.conversationId)?.evalCollector
@@ -181,8 +185,11 @@ export class TurnManager {
         })
 
         // 展平输出：string 直接用，ToolResultContent[] 拼接文本
-        const flatOutput = flattenToolOutput(result.output)
-        const truncatedOutput = truncateToolResult(toolCall.name, flatOutput)
+        const rawOutput = flattenToolOutput(result.output)
+        // 空结果占位符：防止模型出现 turn-boundary 混淆
+        const flatOutput = rawOutput.trim() === '' ? `(${toolCall.name} completed with no output)` : rawOutput
+        // 截断时传入 per-tool 上限（Tool 接口声明的 maxResultSizeChars）
+        const truncatedOutput = truncateToolResult(toolCall.name, flatOutput, undefined, tool.maxResultSizeChars)
         toolSpan?.update({ output: truncatedOutput.slice(0, 1000), level: result.isError ? 'ERROR' : 'DEFAULT' })
         toolSpan?.end()
 
@@ -328,9 +335,28 @@ export class TurnManager {
       }
 
       // 通过 ConversationManager 追加 tool_result 消息
+      // 持久化检查：超大工具结果写入磁盘，对话中保留引用 + 2KB 预览
+      // replacementState 冻结决策（Anthropic prompt cache 稳定性）
+      let finalContent: string
+      const cached = input.replacementState?.getCachedDecision(result.toolCallId)
+      if (cached !== undefined) {
+        // 已有冻结决策：直接重放（string = 替换, null = 保留原始截断内容）
+        finalContent = cached ?? result.truncatedOutput
+      } else {
+        // 首次决策：尝试持久化
+        const persistedRef = await maybePersistLargeToolResult(
+          result.toolName,
+          result.toolCallId,
+          result.output,
+          input.config.conversationId,
+        )
+        finalContent = persistedRef ?? result.truncatedOutput
+        // 冻结决策供后续轮次重放
+        input.replacementState?.recordDecision(result.toolCallId, persistedRef)
+      }
       input.conversation.appendToolResult(
         result.toolCallId,
-        result.truncatedOutput,
+        finalContent,
         result.isError,
       )
     }

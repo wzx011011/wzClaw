@@ -113,6 +113,8 @@ export const MAX_DIFF_FILE_LINES = 1000 // files with more lines skip inline dif
 export const DIFF_CONTEXT_LINES = 3     // context lines around each hunk
 export const MAX_TOOL_RESULT_CHARS = 30000
 export const MAX_FILE_READ_LINES = 2000
+/** FileRead 读取前的文件大小上限（stat 预检查）。超过此大小的文件建议使用 offset/limit 分段读取。*/
+export const MAX_FILE_READ_BYTES = 1024 * 1024 // 1 MB
 // 主对话安全天花板：正常对话靠 compaction + shouldStop 自然终止，
 // 不会达到此限制。仅作为意外死循环的最后防线（参考 Claude Code 主对话不设上限）。
 export const MAX_AGENT_TURNS = 200

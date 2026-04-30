@@ -25,14 +25,21 @@ import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
 import { maybeTimeBasedMicrocompact } from '../context/microcompact'
+import { ToolResultReplacementState } from '../context/tool-result-storage'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
   private abortController: AbortController | null = null
   private turnManager = new TurnManager()
+  private _running: boolean = false
 
   /** Active workspace context — injected into system prompt when set */
   activeWorkspace: Workspace | null = null
+
+  /** 当前是否正在运行（run() 进入到 finally 退出之间为 true） */
+  get isRunning(): boolean {
+    return this._running
+  }
 
   constructor(
     private gateway: LLMGateway,
@@ -52,6 +59,8 @@ export class AgentLoop {
     config: AgentConfig,
     sender?: Electron.WebContents
   ): AsyncGenerator<AgentEvent> {
+    this._running = true
+    try {
     await this.hookRegistry?.emit('session-start', { conversationId: config.conversationId })
 
     // 每次 run() 创建新的调试日志（session 级别）
@@ -95,6 +104,8 @@ export class AgentLoop {
     }))
 
     // 创建工具执行函数（闭包捕获所有依赖）
+    // Anthropic provider 用 ToolResultReplacementState 冻结持久化决策，维护 prompt cache 稳定性
+    const replacementState = config.provider === 'anthropic' ? new ToolResultReplacementState() : undefined
     const executeTool = this.turnManager.createExecuteToolFn(
       this.toolRegistry,
       this.permissionManager,
@@ -105,6 +116,7 @@ export class AgentLoop {
       this.abortController.signal,
       sender,
       this.activeWorkspace?.id,
+      replacementState,
     )
 
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
@@ -188,6 +200,7 @@ export class AgentLoop {
             toolDefinitions: toolsDisabled ? [] : toolDefinitions,
             abortSignal: this.abortController.signal,
             sender,
+            replacementState,
           },
           this.gateway,
           executeTool,
@@ -301,6 +314,9 @@ export class AgentLoop {
         return
       }
     }
+    } finally {
+      this._running = false
+    }
   }
 
   /** 执行主动压缩，返回 compacted 事件或 null */
@@ -314,7 +330,27 @@ export class AgentLoop {
 
     if (result.summary) {
       const recentMessages = messages.slice(-result.keptRecentCount)
-      this.conversation.replaceWithSummary(result.summary, recentMessages)
+      this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
+
+      // 压缩后注入当前 todo 列表，确保 LLM 知道还有哪些未完成任务
+      const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
+      if (todoTool) {
+        const currentTodos = todoTool.getCurrentTodos()
+        const unfinished = currentTodos.filter(t => t.status !== 'completed')
+        if (unfinished.length > 0) {
+          const todoLines = currentTodos.map(t => {
+            const icon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'
+            return `${icon} [${t.status}] ${t.content}`
+          })
+          const todoReminderMsg: import('../../shared/types').Message = {
+            role: 'user',
+            content: `<system-reminder>\nTask list at time of context compaction:\n${todoLines.join('\n')}\n\nThere are ${unfinished.length} unfinished task(s). Resume from where work stopped — do NOT ask the user to repeat the requirements.\n</system-reminder>`,
+            timestamp: Date.now(),
+          }
+          // 追加到压缩后的对话末尾（不重置，直接 push）
+          this.conversation.getMutableMessages().push(todoReminderMsg)
+        }
+      }
 
       return {
         type: 'agent:compacted',
@@ -331,6 +367,7 @@ export class AgentLoop {
   cancel(): void {
     this.abortController?.abort()
     this.turnManager.reset()
+    this._running = false
   }
 
   reset(): void {
@@ -365,7 +402,7 @@ export class AgentLoop {
       )
       if (result.summary) {
         const recentMessages = messages.slice(-result.keptRecentCount)
-        this.conversation.replaceWithSummary(result.summary, recentMessages)
+        this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
         const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
         return { messageCount: this.conversation.length, compacted: true, beforeTokens, afterTokens }
       }

@@ -40,17 +40,27 @@ class SessionListTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    session.title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color:
-                          isActive ? colors.textPrimary : colors.textSecondary,
-                      fontWeight:
-                          isActive ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                  Row(
+                    children: [
+                      if (session.isRunning) ...[
+                        _RunningDot(),
+                        const SizedBox(width: 5),
+                      ],
+                      Expanded(
+                        child: Text(
+                          session.title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color:
+                                isActive ? colors.textPrimary : colors.textSecondary,
+                            fontWeight:
+                                isActive ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Row(
@@ -219,6 +229,56 @@ class SessionListTile extends StatelessWidget {
             child: Text('删除', style: TextStyle(color: colors.error)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 绿色脉冲圆点，表示会话正在运行。
+class _RunningDot extends StatefulWidget {
+  const _RunningDot();
+
+  @override
+  State<_RunningDot> createState() => _RunningDotState();
+}
+
+class _RunningDotState extends State<_RunningDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 1.0, end: 0.4).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Opacity(
+        opacity: _anim.value,
+        child: Container(
+          width: 7,
+          height: 7,
+          decoration: const BoxDecoration(
+            color: Color(0xFF4CAF50),
+            shape: BoxShape.circle,
+          ),
+        ),
       ),
     );
   }

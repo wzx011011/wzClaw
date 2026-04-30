@@ -17,7 +17,7 @@ const mockWzxclaw = {
   onStreamEnd: vi.fn().mockReturnValue(vi.fn()),
   onStreamError: vi.fn().mockReturnValue(vi.fn()),
   onSessionCompacted: vi.fn().mockReturnValue(vi.fn()),
-  listSessions: vi.fn().mockResolvedValue([]),
+  listSessions: vi.fn().mockResolvedValue({ sessions: [], runningSessionIds: [] }),
   loadSession: vi.fn().mockResolvedValue([]),
   loadSessionTail: vi.fn().mockResolvedValue({ messages: [], totalCount: 0, hasMore: false }),
   deleteSession: vi.fn().mockResolvedValue({ success: true }),
@@ -161,9 +161,9 @@ describe('ChatStore multi-session', () => {
   describe('deleteSessionTab', () => {
     it('should remove session from sessions array', async () => {
       getWzxclaw().deleteSession.mockResolvedValueOnce({ success: true })
-      getWzxclaw().listSessions.mockResolvedValueOnce([
+      getWzxclaw().listSessions.mockResolvedValueOnce({ sessions: [
         { id: 'session-a', title: 'Session A', createdAt: 1000, updatedAt: 1000, messageCount: 2 }
-      ])
+      ], runningSessionIds: [] })
 
       useChatStore.setState({
         conversationId: 'session-a',
@@ -182,9 +182,9 @@ describe('ChatStore multi-session', () => {
 
     it('should switch to last remaining session if active session is deleted', async () => {
       getWzxclaw().deleteSession.mockResolvedValueOnce({ success: true })
-      getWzxclaw().listSessions.mockResolvedValueOnce([
+      getWzxclaw().listSessions.mockResolvedValueOnce({ sessions: [
         { id: 'session-c', title: 'Session C', createdAt: 3000, updatedAt: 3000, messageCount: 1 }
-      ])
+      ], runningSessionIds: [] })
 
       useChatStore.setState({
         conversationId: 'session-a',

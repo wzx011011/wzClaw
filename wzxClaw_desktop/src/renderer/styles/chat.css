@@ -1360,6 +1360,25 @@
   text-overflow: ellipsis;
   max-width: 200px;
   cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 运行中指示点（绿色脉冲动画） */
+.session-item-running-dot {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #4caf50;
+  animation: session-running-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes session-running-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.75); }
 }
 
 .session-item-title-input {

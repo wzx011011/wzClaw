@@ -31,12 +31,20 @@ function strategyForTool(toolName: string): TruncationStrategy {
 
 /**
  * Truncate a single tool result string using the tool-specific strategy.
+ * toolMaxChars: per-tool override from Tool.maxResultSizeChars (takes precedence over global default).
  */
 export function truncateToolResult(
   toolName: string,
   result: string,
-  maxChars: number = DEFAULT_RUNTIME_CONFIG.maxToolResultChars
+  maxChars: number = DEFAULT_RUNTIME_CONFIG.maxToolResultChars,
+  toolMaxChars?: number
 ): string {
+  // Per-tool limit takes precedence; still bounded by global default from below.
+  // Infinity means the tool manages its own limits — skip truncation entirely.
+  if (toolMaxChars !== undefined) {
+    if (toolMaxChars === Infinity) return result
+    maxChars = Math.min(toolMaxChars, maxChars)
+  }
   if (result.length <= maxChars) return result
 
   const total = result.length

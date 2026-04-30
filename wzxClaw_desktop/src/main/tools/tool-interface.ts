@@ -71,6 +71,11 @@ export interface Tool {
   readonly isReadOnly?: boolean
   /** 设为 true 时，turn-manager 在工具执行前自动对目标文件拍快照（用于撤销）*/
   readonly requiresSnapshot?: boolean
+  /**
+   * 单条工具结果的最大字符数。未声明时使用全局默认值（runtime-config.maxToolResultChars）。
+   * 设为 Infinity 可豁免通用截断（如 FileRead 使用自己的行数/token 限制）。
+   */
+  readonly maxResultSizeChars?: number
   execute(
     input: Record<string, unknown>,
     context: ToolExecutionContext

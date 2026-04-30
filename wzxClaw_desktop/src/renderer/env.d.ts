@@ -38,7 +38,7 @@ declare global {
       getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string }>
       updateSettings: (request: Record<string, unknown>) => Promise<void>
       // Sessions
-      listSessions: (request?: { activeWorkspaceId?: string }) => Promise<SessionMeta[]>
+      listSessions: (request?: { activeWorkspaceId?: string }) => Promise<{ sessions: SessionMeta[]; runningSessionIds: string[] }>
       loadSession: (request: { sessionId: string }) => Promise<unknown[]>
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
@@ -48,6 +48,7 @@ declare global {
       onSessionRestore: (cb: (p: { sessionId: string }) => void) => () => void
       onSessionCompacted: (cb: (p: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => () => void
       onSessionContextRestored: (cb: (p: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => void) => () => void
+      onSessionRunningChanged: (cb: (p: { sessionId: string; isRunning: boolean }) => void) => () => void
       compactContext: () => Promise<{ beforeTokens: number; afterTokens: number } | null>
       // Diff
       applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) => Promise<{ success: boolean }>

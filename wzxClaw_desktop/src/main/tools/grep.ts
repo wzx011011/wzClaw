@@ -28,6 +28,8 @@ Usage:
 - Skips hidden files/directories and node_modules automatically.
 - Use this instead of Bash with grep/rg — this tool is optimized for the workspace.`
   readonly requiresApproval = false
+  // 匹配结果行数可能极多，比全局默认 30K 更严格
+  readonly maxResultSizeChars = 20_000
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
     properties: {

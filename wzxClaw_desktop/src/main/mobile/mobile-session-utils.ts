@@ -17,7 +17,9 @@ export function getMobileSessionTransition(params: {
 
   return {
     sessionId,
-    shouldResetContext: switchingSessions && params.hasMessages,
+    // Per-session runtime 下各会话天然隔离，不再需要 reset-context。
+    // 保留字段是为了接口向后兼容（调用方已忽略此值）。
+    shouldResetContext: false,
     shouldRestoreHistory: Boolean(requestedSessionId) && (!params.hasMessages || switchingSessions),
   }
 }

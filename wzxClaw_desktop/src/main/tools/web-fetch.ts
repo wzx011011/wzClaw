@@ -82,6 +82,8 @@ export class WebFetchTool implements Tool {
   ].join(' ')
   readonly requiresApproval = false
   readonly isReadOnly = true
+  // 网页内容较长，允许比全局默认高的上限
+  readonly maxResultSizeChars = 50_000
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
     properties: {

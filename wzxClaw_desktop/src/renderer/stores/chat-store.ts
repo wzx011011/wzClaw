@@ -44,6 +44,7 @@ interface ChatState {
   isWaitingForResponse: boolean
   error: string | null
   sessions: SessionMeta[]
+  runningSessionIds: Set<string>
   currentTokenUsage: { inputTokens: number; outputTokens: number } | null
   activeSessionId: string
   pendingMentions: MentionItem[]
@@ -180,6 +181,21 @@ function buildChatMessagesFromRaw(rawMessages: Array<Record<string, unknown>>): 
     result.push(chatMsg)
   }
   return result
+}
+
+/**
+ * Strip toolCalls from ChatMessage[] when showToolSteps is off.
+ * Only keeps user messages, assistant text (no tools), and compacted notices.
+ */
+function stripToolSteps(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((msg) => {
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      // Drop toolCalls, keep only text content
+      const { toolCalls, ...rest } = msg
+      return rest
+    }
+    return msg
+  })
 }
 
 function findMessageIndexById(messages: ChatMessage[], messageId: string): number {
@@ -334,6 +350,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
   isWaitingForResponse: false,
   error: null,
   sessions: [],
+  runningSessionIds: new Set<string>(),
   currentTokenUsage: null,
   activeSessionId: initialId,
   pendingMentions: [],
@@ -355,11 +372,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
+      // Skip thinking display when showToolSteps is off
+      if (!useSettingsStore.getState().showToolSteps) return
       thinkingBatchBuffer += payload.content
       scheduleThinkingFlush()
     }) ?? (() => {})
 
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
+      // Skip tool step UI when showToolSteps is off
+      if (!useSettingsStore.getState().showToolSteps) return
       flushTextBatch()
       set((state) => {
         // 会话切换后丢弃残留的 tool_start 事件，避免创建孤儿消息
@@ -401,6 +422,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubToolResult = window.wzxclaw.onStreamToolResult((payload) => {
+      // Skip tool step UI when showToolSteps is off
+      if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
         const { messages, streamingMessageId } = state
         // Tool results always arrive before turn_end, so streamingMessageId is still set.
@@ -594,6 +617,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }) ?? (() => {})
 
+    // Session running state changed — update runningSessionIds set (Phase B)
+    const unsubRunningChanged = window.wzxclaw.onSessionRunningChanged?.((payload) => {
+      set((state) => {
+        const next = new Set(state.runningSessionIds)
+        if (payload.isRunning) next.add(payload.sessionId)
+        else next.delete(payload.sessionId)
+        return { runningSessionIds: next }
+      })
+    }) ?? (() => {})
+
     // Retry notifications from the LLM retry wrapper
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
       flushTextBatch()
@@ -630,6 +663,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Sub-agent tool calls: attach children to the parent Agent ToolCall
     const unsubSubToolStart = window.wzxclaw.onSubStreamToolStart?.((payload) => {
+      if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
         const { messages, streamingMessageId } = state
         if (!streamingMessageId) return state
@@ -652,6 +686,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubSubToolResult = window.wzxclaw.onSubStreamToolResult?.((payload) => {
+      if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
         const { messages, streamingMessageId } = state
         if (!streamingMessageId) return state
@@ -705,6 +740,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }
     const unsubSubText = window.wzxclaw.onSubStreamText?.((payload) => {
+      if (!useSettingsStore.getState().showToolSteps) return
       subTextBuffer += payload.content
       subTextParentId = payload.parentToolCallId
       if (subTextFrame === null) {
@@ -767,6 +803,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubMobileMsg()
       unsubCompacted()
       unsubContextRestored()
+      unsubRunningChanged()
       unsubRetrying()
       cancelRestoreLastSession()
       unsubRestore()
@@ -871,8 +908,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
   loadSessionList: async () => {
     try {
       const { activeWorkspaceId } = useWorkspaceStore.getState()
-      const sessions = await window.wzxclaw.listSessions(activeWorkspaceId ? { activeWorkspaceId } : undefined)
-      set({ sessions })
+      const result = await window.wzxclaw.listSessions(activeWorkspaceId ? { activeWorkspaceId } : undefined)
+      set({ sessions: result.sessions, runningSessionIds: new Set(result.runningSessionIds) })
     } catch (err) {
       console.error('Failed to load session list:', err)
     }
@@ -894,7 +931,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
         ...(activeWorkspaceId ? { activeWorkspaceId } : {})
       })
 
-      const loadedMessages = buildChatMessagesFromRaw(rawMessages as Array<Record<string, unknown>>)
+      let loadedMessages = buildChatMessagesFromRaw(rawMessages as Array<Record<string, unknown>>)
+      // Strip tool step data when showToolSteps is off
+      if (!useSettingsStore.getState().showToolSteps) {
+        loadedMessages = stripToolSteps(loadedMessages)
+      }
 
       if (updateMessages) {
         // 更新模块级缓存（不触发 Zustand 重渲染）
@@ -1040,7 +1081,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
         })
         // 若切换期间用户再次切换，丢弃过期结果
         if (tailResult && get().loadingSessionId === sessionId) {
-          const tailMessages = buildChatMessagesFromRaw(tailResult.messages as Array<Record<string, unknown>>)
+          let tailMessages = buildChatMessagesFromRaw(tailResult.messages as Array<Record<string, unknown>>)
+          // Strip tool step data when showToolSteps is off
+          if (!useSettingsStore.getState().showToolSteps) {
+            tailMessages = stripToolSteps(tailMessages)
+          }
           set({
             messages: tailMessages,
             isLoadingSession: false,

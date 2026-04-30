@@ -97,6 +97,14 @@ export function getPasteCacheDir(): string {
   return path.join(getUserDir(), 'paste-cache')
 }
 
+/**
+ * 工具结果持久化目录：~/.wzxclaw/tool-results/{sessionId}/
+ * 超大工具结果写入此目录，对话中保留路径引用 + 2KB 预览。
+ */
+export function getToolResultsDir(sessionId: string): string {
+  return path.join(getUserDir(), 'tool-results', sessionId)
+}
+
 /** Shell 环境快照目录：~/.wzxclaw/shell-snapshots/ */
 export function getShellSnapshotsDir(): string {
   return path.join(getUserDir(), 'shell-snapshots')

@@ -84,6 +84,7 @@ export class WebSearchTool implements Tool {
   ].join(' ')
   readonly requiresApproval = false
   readonly isReadOnly = true
+  readonly maxResultSizeChars = 50_000
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
     properties: {

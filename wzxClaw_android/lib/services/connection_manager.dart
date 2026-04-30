@@ -13,6 +13,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import 'android_foreground_keepalive.dart';
+import 'ws_transport.dart';
 
 /// Singleton WebSocket connection manager for wzxClaw Android.
 ///
@@ -27,7 +28,7 @@ import 'android_foreground_keepalive.dart';
 ///
 /// This is the sole owner of the WebSocket connection. All pages subscribe
 /// to [stateStream] and [messageStream] but never create connections directly.
-class ConnectionManager with WidgetsBindingObserver {
+class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   static const _backgroundKeepAliveEnabledKey =
       'background_keepalive_enabled';
 
@@ -47,6 +48,10 @@ class ConnectionManager with WidgetsBindingObserver {
   final StreamController<WsMessage> _messageController =
       StreamController<WsMessage>.broadcast();
   Stream<WsMessage> get messageStream => _messageController.stream;
+
+  /// [WsTransport] 接口别名，与 [messageStream] 返回同一个 Stream。
+  @override
+  Stream<WsMessage> get incoming => _messageController.stream;
 
   // -- Last error stream --
   String? _lastError;

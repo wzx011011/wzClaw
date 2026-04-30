@@ -50,6 +50,7 @@ type ContextMenuState = { x: number; y: number; sessionId: string } | null
 
 export default function SessionList(): JSX.Element | null {
   const sessions = useChatStore((s) => s.sessions)
+  const runningSessionIds = useChatStore((s) => s.runningSessionIds)
   const conversationId = useChatStore((s) => s.conversationId)
   const switchSession = useChatStore((s) => s.switchSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
@@ -184,7 +185,9 @@ export default function SessionList(): JSX.Element | null {
     ]
   }, [contextMenu, sessions, pinnedSessionIds, handleStartRename, unpinSession, pinSession, duplicateSession])
 
-  const renderSessionItem = (session: SessionMeta): JSX.Element => (
+  const renderSessionItem = (session: SessionMeta): JSX.Element => {
+    const isRunning = runningSessionIds.has(session.id)
+    return (
     <div
       key={session.id}
       className={`session-item${session.id === conversationId ? ' active' : ''}`}
@@ -223,6 +226,7 @@ export default function SessionList(): JSX.Element | null {
                 }}
                 title="双击重命名，右键更多操作"
               >
+                {isRunning && <span className="session-item-running-dot" title="正在运行" />}
                 {session.title}
               </div>
             )}
@@ -240,6 +244,7 @@ export default function SessionList(): JSX.Element | null {
       )}
     </div>
   )
+  }
 
   return (
     <div className="session-list">

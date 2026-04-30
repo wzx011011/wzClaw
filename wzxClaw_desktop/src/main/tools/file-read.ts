@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import { MAX_FILE_READ_LINES, MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
+import { MAX_FILE_READ_LINES, MAX_FILE_READ_BYTES } from '../../shared/constants'
 
 // ============================================================
 // Input Schema
@@ -30,6 +30,8 @@ Usage:
 - Always read a file before editing it with FileEdit. FileEdit requires exact string matches — reading first ensures accuracy.
 - You can call multiple FileRead tools in parallel to read several files at once.`
   readonly requiresApproval = false
+  // FileRead 自己通过行数/字符限制管理输出大小，豁免通用截断
+  readonly maxResultSizeChars = Infinity
   readonly inputSchema: Record<string, unknown> = {
     type: 'object',
     properties: {
@@ -82,6 +84,19 @@ Usage:
       }
     }
 
+    // 预读大小检查：超过 1MB 的文件直接提示使用 offset/limit 分段读取。
+    // 仅在未指定 offset/limit 时执行：指定了分段参数就认为用户已知文件较大并主动进行分段。
+    if (offset === 0 && limit === undefined) {
+      const stat = await fs.promises.stat(absolutePath)
+      if (stat.size > MAX_FILE_READ_BYTES) {
+        const kb = Math.round(stat.size / 1024)
+        return {
+          output: `File too large to read in full (${kb}KB > ${MAX_FILE_READ_BYTES / 1024}KB limit). Use offset and limit parameters to read specific sections, e.g. offset=0 limit=200 for the first 200 lines.`,
+          isError: false
+        }
+      }
+    }
+
     try {
       // Read file content
       const content = await fs.promises.readFile(absolutePath, 'utf-8')
@@ -103,11 +118,6 @@ Usage:
       }
 
       let output = numberedLines.join('\n')
-
-      // Truncate at MAX_TOOL_RESULT_CHARS
-      if (output.length > MAX_TOOL_RESULT_CHARS) {
-        output = output.substring(0, MAX_TOOL_RESULT_CHARS)
-      }
 
       return { output, isError: false }
     } catch (err: any) {

@@ -89,7 +89,7 @@ export class ConversationManager {
   replaceWithSummary(summary: string, recentMessages: Message[]): void {
     const summaryMsg: Message = {
       role: 'user',
-      content: `[Context Summary]\n${summary}`,
+      content: summary,
       timestamp: Date.now(),
     }
     this.messages = [summaryMsg, ...recentMessages]

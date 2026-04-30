@@ -380,29 +380,6 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════════════════
-  // Bug 1+2 fix: isRecentlyStreamed + _lastStreamedSessionId
-  // ══════════════════════════════════════════════════════════════════
-  group('ChatStore isRecentlyStreamed', () {
-    test('returns false for any session before any agent:done', () {
-      final store = ChatStore.instance;
-      // Reset by switching away from any session
-      store.currentSessionId = null;
-      store.currentSessionId = 'session-abc';
-      expect(store.isRecentlyStreamed('session-abc'), isFalse);
-    });
-
-    test('syncSessionId + resetSessionScope clears _lastStreamedSessionId', () {
-      final store = ChatStore.instance;
-      store.currentSessionId = 'session-xyz';
-      // syncSessionId just sets _currentSessionId — no effect on _lastStreamedSessionId
-      store.syncSessionId('session-xyz');
-      store.resetSessionScope();
-      // After reset, isRecentlyStreamed should be false for any id
-      expect(store.isRecentlyStreamed('session-xyz'), isFalse);
-    });
-  });
-
-  // ══════════════════════════════════════════════════════════════════
   // Bug 3 fix: userManuallySwitched — only true when userInitiated: true
   // ══════════════════════════════════════════════════════════════════
   group('ChatStore userManuallySwitched', () {

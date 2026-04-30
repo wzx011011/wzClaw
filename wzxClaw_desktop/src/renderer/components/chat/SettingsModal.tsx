@@ -18,6 +18,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const settingsBaseURL = useSettingsStore((s) => s.baseURL)
   const settingsSystemPrompt = useSettingsStore((s) => s.systemPrompt)
   const settingsRelayToken = useSettingsStore((s) => s.relayToken)
+  const settingsShowToolSteps = useSettingsStore((s) => s.showToolSteps)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
 
   // Local form state initialized from settings store
@@ -27,6 +28,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
   const [baseURL, setBaseURL] = useState(settingsBaseURL ?? '')
   const [systemPrompt, setSystemPrompt] = useState(settingsSystemPrompt ?? '')
   const [relayToken, setRelayToken] = useState(settingsRelayToken ?? '')
+  const [showToolSteps, setShowToolSteps] = useState(settingsShowToolSteps ?? true)
   const [saving, setSaving] = useState(false)
   const [relayConnected, setRelayConnected] = useState(false)
   const [relayConnecting, setRelayConnecting] = useState(false)
@@ -57,8 +59,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       setBaseURL(settingsBaseURL ?? '')
       setSystemPrompt(settingsSystemPrompt ?? '')
       setRelayToken(settingsRelayToken ?? '')
+      setShowToolSteps(settingsShowToolSteps ?? true)
     }
-  }, [isOpen, settingsProvider, settingsModel, settingsBaseURL, settingsSystemPrompt, settingsRelayToken])
+  }, [isOpen, settingsProvider, settingsModel, settingsBaseURL, settingsSystemPrompt, settingsRelayToken, settingsShowToolSteps])
 
   if (!isOpen) return null
 
@@ -81,7 +84,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
         model,
         baseURL: baseURL.trim(),  // 空字符串表示清除自定义 URL，始终发送以便主进程能更新
         systemPrompt: systemPrompt || undefined,
-        relayToken: relayToken || undefined
+        relayToken: relayToken || undefined,
+        showToolSteps
       }
       // Only send API key if user entered one
       if (apiKey.trim()) {
@@ -183,6 +187,20 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             rows={3}
             placeholder="You are a helpful AI coding assistant."
           />
+
+          {/* Show Tool Steps toggle */}
+          <label className="settings-label" style={{ marginTop: 8 }}>显示工具调用步骤</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: 'var(--font-size-sm, 13px)', color: 'var(--text-secondary, #aaa)' }}>
+              <input
+                type="checkbox"
+                checked={showToolSteps}
+                onChange={(e) => setShowToolSteps(e.target.checked)}
+                style={{ marginRight: 8 }}
+              />
+              在聊天中显示文件读取、搜索、执行命令等工具调用的中间过程
+            </label>
+          </div>
 
           {/* Relay Token section */}
           <label className="settings-label">Relay Token</label>

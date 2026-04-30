@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/ws_message.dart';
 import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'connection_manager.dart';
+import 'ws_transport.dart';
 
 /// Permission request from the desktop agent.
 class PermissionRequest {
@@ -38,11 +41,32 @@ class AskUserQuestion {
 }
 
 class ChatStore {
-  static final ChatStore _instance = ChatStore._();
+  static ChatStore _instance = ChatStore._();
   static ChatStore get instance => _instance;
-  ChatStore._() {
+  ChatStore._({WsTransport? transport})
+      : _transport = transport ?? ConnectionManager.instance {
     _init();
   }
+
+  /// 仅测试使用：创建一个独立的 ChatStore 实例，不使用全局单例。
+  @visibleForTesting
+  factory ChatStore.forTest({required WsTransport transport}) =>
+      ChatStore._(transport: transport);
+
+  /// 仅测试使用：替换全局单例，让其它组件（如 SessionSyncService）通过
+  /// `ChatStore.instance` 看到注入版本。
+  @visibleForTesting
+  static void setInstanceForTest(ChatStore store) {
+    _instance = store;
+  }
+
+  /// 仅测试使用：恢复默认单例。
+  @visibleForTesting
+  static void resetInstanceForTest() {
+    _instance = ChatStore._();
+  }
+
+  final WsTransport _transport;
 
   // -- Reactive state --
   final _messagesController = StreamController<List<ChatMessage>>.broadcast();
@@ -88,9 +112,6 @@ class ChatStore {
   int _clearGeneration = 0;     // 每次 loadFetchedMessages([]) 清空时递增
   int _lastUserMsgGen = 0;      // 用户最后发消息时的 generation
 
-  // -- 流式完成追踪 --
-  String? _lastStreamedSessionId; // agent:done 时记录，防止 session:changed 覆盖流式消息
-
   // -- 用户主动切换追踪 --
   bool _userManuallySwitched = false; // 只有用户从 UI 主动点会话时为 true
 
@@ -115,7 +136,6 @@ class ChatStore {
   set currentSessionId(String? id) => _currentSessionId = id;
   bool get isBrowsingHistory => _isBrowsingHistory;
   bool get userManuallySwitched => _userManuallySwitched;
-  bool isRecentlyStreamed(String sessionId) => _lastStreamedSessionId == sessionId;
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
 
@@ -137,8 +157,8 @@ class ChatStore {
 
   void _init() {
     _wsSubscription =
-        ConnectionManager.instance.messageStream.listen(_handleWsMessage);
-    ConnectionManager.instance.stateStream.listen(_handleConnectionState);
+        _transport.incoming.listen(_handleWsMessage);
+    _transport.stateStream.listen(_handleConnectionState);
   }
 
   void _handleConnectionState(WsConnectionState state) {
@@ -193,6 +213,9 @@ class ChatStore {
           break;
         case WsEvents.agentRunning:
           _handleAgentRunning(wsMsg.data);
+          break;
+        case WsEvents.desktopUserMessage:
+          _handleDesktopUserMessage(wsMsg.data);
           break;
 
         // -- Command ack --
@@ -269,7 +292,7 @@ class ChatStore {
     ChatDatabase.instance.insertMessage(
       toolMsg,
       sessionId: _currentSessionId,
-      desktopId: ConnectionManager.instance.selectedDesktopId,
+      desktopId: _transport.selectedDesktopId,
     );
     _notifyListeners();
   }
@@ -309,15 +332,40 @@ class ChatStore {
     if (data is! Map<String, dynamic>) return;
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null) return;
-    _currentSessionId = sessionId;
+    // 串台防护：仅在用户未主动切换到其他会话时才同步 _currentSessionId。
+    // 若强制覆盖，后续属于桌面会话 A 的流式事件会通过 _isWrongSession 检查，
+    // 错误地被追加到手机正在显示的会话 B 的消息列表中。
+    if (!_userManuallySwitched) {
+      _currentSessionId = sessionId;
+    }
     _isStreaming = true;
     _streamingController.add(true);
+  }
+
+  // ── stream:desktop_user_message ───────────────────────────────────
+  /// 桌面端用户发送的提问，手机端以用户气泡展示
+  void _handleDesktopUserMessage(dynamic data) {
+    if (data is! Map<String, dynamic>) return;
+    if (_isWrongSession(data)) return;
+    final content = data['content'] as String?;
+    if (content == null || content.isEmpty) return;
+    // 若最后一条消息已经是相同内容的用户气泡（手机会话加载时可能已存在），则跳过
+    if (_messages.isNotEmpty &&
+        _messages.last.role == MessageRole.user &&
+        _messages.last.content == content) return;
+    final msg = ChatMessage(
+      role: MessageRole.user,
+      content: content,
+      createdAt: DateTime.now(),
+    );
+    _messages.add(msg);
+    _setWaiting(true);
+    _notifyListeners();
   }
 
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
     if (_isWrongSession(data)) return;
-    _lastStreamedSessionId = _currentSessionId; // 记录刚完成流式的会话，防止后续 fetch 覆盖
     _finalizeStreamingMessage();
     _setWaiting(false);
 
@@ -390,7 +438,7 @@ class ChatStore {
       ChatDatabase.instance.insertMessage(
         completed,
         sessionId: _currentSessionId,
-        desktopId: ConnectionManager.instance.selectedDesktopId,
+        desktopId: _transport.selectedDesktopId,
       );
       _streamingMessage = null;
     } else {
@@ -422,7 +470,7 @@ class ChatStore {
     ChatDatabase.instance.insertMessage(
       msg,
       sessionId: _currentSessionId,
-      desktopId: ConnectionManager.instance.selectedDesktopId,
+      desktopId: _transport.selectedDesktopId,
     );
     _notifyListeners();
   }
@@ -467,7 +515,7 @@ class ChatStore {
 
   /// Send a permission response back to the desktop.
   void respondToPermission(String toolCallId, bool approved) {
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.permissionResponse,
       data: {'toolCallId': toolCallId, 'approved': approved},
     ),);
@@ -510,7 +558,7 @@ class ChatStore {
 
   /// Send a plan approval/rejection decision back to the desktop.
   void respondToPlan(bool approved) {
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.planDecision,
       data: {'approved': approved},
     ),);
@@ -546,7 +594,7 @@ class ChatStore {
   /// Send an answer to an AskUserQuestion back to the desktop.
   void respondToAskUser(String questionId, List<String> selectedLabels,
       {String? customText,}) {
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.askUserAnswer,
       data: {
         'questionId': questionId,
@@ -586,7 +634,7 @@ class ChatStore {
 
   /// Request current permission mode from desktop.
   void requestPermissionMode() {
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.permissionGetModeRequest,
       data: {'requestId': '${DateTime.now().millisecondsSinceEpoch}'},
     ));
@@ -594,7 +642,7 @@ class ChatStore {
 
   /// Set permission mode on desktop.
   void setPermissionMode(String mode) {
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.permissionSetModeRequest,
       data: {
         'requestId': '${DateTime.now().millisecondsSinceEpoch}',
@@ -630,9 +678,8 @@ class ChatStore {
       _finalizeStreamingMessage();
     }
 
-    // 系统切换时重置手动标志；并使流式保护失效（切换到新会话不需要保护旧流式）
+    // 系统切换时重置手动标志
     if (!userInitiated) _userManuallySwitched = false;
-    _lastStreamedSessionId = null;
 
     // 完整重置所有流式和会话级状态（与 resetSessionScope 对齐）
     _isStreaming = false;
@@ -666,7 +713,7 @@ class ChatStore {
     } else {
       _isBrowsingHistory = false;
       _messages.addAll(await ChatDatabase.instance.getMessages(
-        desktopId: ConnectionManager.instance.selectedDesktopId,
+        desktopId: _transport.selectedDesktopId,
         limit: 100,
       ));
     }
@@ -703,7 +750,6 @@ class ChatStore {
     _todos = [];
     _pendingMessageIds.clear();
     _userManuallySwitched = false;
-    _lastStreamedSessionId = null;
     _messages.clear();
     if (!_permissionController.isClosed) {
       _permissionController.add(null);
@@ -739,14 +785,14 @@ class ChatStore {
     await ChatDatabase.instance.insertMessage(
       msg,
       sessionId: _currentSessionId,
-      desktopId: ConnectionManager.instance.selectedDesktopId,
+      desktopId: _transport.selectedDesktopId,
     );
     _pendingMessageIds[messageId] = true;
     // 防止累积：超过 100 条时清理最老的未确认条目
     if (_pendingMessageIds.length > 100) {
       _pendingMessageIds.remove(_pendingMessageIds.keys.first);
     }
-    ConnectionManager.instance.send(
+    _transport.send(
       WsMessage(event: WsEvents.commandSend, data: {
         'content': text,
         'messageId': messageId,
@@ -759,7 +805,7 @@ class ChatStore {
   }
 
   void stopGeneration() {
-    ConnectionManager.instance.send(const WsMessage(event: WsEvents.commandStop));
+    _transport.send(const WsMessage(event: WsEvents.commandStop));
     _finalizeStreamingMessage();
     _isStreaming = false;
     _setWaiting(false);
@@ -788,7 +834,7 @@ class ChatStore {
   Future<void> loadHistory() async {
     _messages.clear();
     _messages.addAll(await ChatDatabase.instance.getMessages(
-      desktopId: ConnectionManager.instance.selectedDesktopId,
+      desktopId: _transport.selectedDesktopId,
       limit: 100,
     ));
     _cleanupStaleTools();
@@ -805,7 +851,7 @@ class ChatStore {
       );
     } else {
       older = await ChatDatabase.instance.getMessages(
-        desktopId: ConnectionManager.instance.selectedDesktopId,
+        desktopId: _transport.selectedDesktopId,
         limit: 100,
         offset: _messages.length,
       );
@@ -888,7 +934,7 @@ class ChatStore {
       ChatDatabase.instance.insertMessage(
         completed,
         sessionId: _currentSessionId,
-        desktopId: ConnectionManager.instance.selectedDesktopId,
+        desktopId: _transport.selectedDesktopId,
       );
       _streamingMessage = null;
     }
@@ -956,7 +1002,7 @@ class ChatStore {
   }
 
   void _persistSessionView(String? sessionId) {
-    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    final desktopId = _transport.selectedDesktopId;
     if (desktopId == null) return;
 
     unawaited(AppRestoreState.setLastViewedSession(

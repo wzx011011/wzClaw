@@ -64,6 +64,7 @@ export const IPC_CHANNELS = {
   'session:compacted': 'session:compacted',
   'session:context-restored': 'session:context-restored',
   'session:restore': 'session:restore',
+  'session:running_changed': 'session:running_changed',
 
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
@@ -197,6 +198,7 @@ export interface IpcRequestPayloads {
     systemPrompt?: string
     relayToken?: string
     thinkingDepth?: string
+    showToolSteps?: boolean
   }
   'workspace:open_folder': void
   'workspace:set_folder': { folderPath: string }
@@ -269,6 +271,7 @@ export interface IpcResponsePayloads {
     systemPrompt?: string
     relayToken?: string
     thinkingDepth?: string
+    showToolSteps?: boolean
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null
@@ -283,7 +286,7 @@ export interface IpcResponsePayloads {
   'file:rename': { success: boolean }
   'file:delete': { success: boolean }
   'file:create': { success: boolean; filePath: string }
-  'session:list': SessionMeta[]
+  'session:list': { sessions: SessionMeta[]; runningSessionIds: string[] }
   'session:load': unknown[]
   'session:load-tail': { messages: unknown[]; totalCount: number; hasMore: boolean }
   'session:delete': { success: boolean }
@@ -351,6 +354,7 @@ export interface IpcStreamPayloads {
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
   'session:context-restored': { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }
+  'session:running_changed': { sessionId: string; isRunning: boolean }
   'agent:plan-mode-entered': Record<string, never>
   'agent:plan-mode-exited': { plan: string }
   'terminal:data': { terminalId: string; data: string }

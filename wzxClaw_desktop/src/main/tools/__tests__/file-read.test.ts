@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { FileReadTool } from '../file-read'
-import { MAX_FILE_READ_LINES, MAX_TOOL_RESULT_CHARS } from '../../../shared/constants'
+import { MAX_FILE_READ_LINES, MAX_FILE_READ_BYTES } from '../../../shared/constants'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -86,14 +86,29 @@ describe('FileReadTool', () => {
     expect(outputLines.length).toBeLessThanOrEqual(MAX_FILE_READ_LINES)
   })
 
-  it('truncates output at MAX_TOOL_RESULT_CHARS characters', async () => {
+  it('does not truncate files under 1 MB (no generic truncation — handled upstream)', async () => {
     const filePath = path.join(tempDir, 'long.txt')
+    // 50000 chars 远低于 1MB，FileRead 应原样返回全部内容
     const longLine = 'x'.repeat(50000)
     fs.writeFileSync(filePath, longLine + '\n')
 
     const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
     expect(result.isError).toBe(false)
-    expect(result.output.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS)
+    // FileRead 设置 maxResultSizeChars = Infinity，不做通用截断
+    expect(result.output.length).toBeGreaterThan(50000)
+  })
+
+  it('rejects files larger than MAX_FILE_READ_BYTES with a helpful message', async () => {
+    const filePath = path.join(tempDir, 'huge.txt')
+    // 写入略超过 1MB 的文件
+    const chunk = Buffer.alloc(MAX_FILE_READ_BYTES + 1024, 'a')
+    fs.writeFileSync(filePath, chunk)
+
+    const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
+    expect(result.isError).toBe(false)
+    expect(result.output).toContain('File too large')
+    expect(result.output).toContain('offset')
+    expect(result.output).toContain('limit')
   })
 
   it('handles relative paths resolved against workingDirectory', async () => {

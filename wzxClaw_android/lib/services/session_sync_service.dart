@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/session_meta.dart';
@@ -8,6 +10,7 @@ import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'chat_store.dart';
 import 'connection_manager.dart';
+import 'ws_transport.dart';
 
 /// Workspace info pushed by the desktop when mobile connects.
 class WorkspaceInfo {
@@ -94,9 +97,17 @@ class SessionSyncService {
   // -- Singleton --
   static final SessionSyncService _instance = SessionSyncService._();
   static SessionSyncService get instance => _instance;
-  SessionSyncService._() {
+  SessionSyncService._({WsTransport? transport})
+      : _transport = transport ?? ConnectionManager.instance {
     _init();
   }
+
+  /// 仅测试使用：创建一个独立的 SessionSyncService 实例，不使用全局单例。
+  @visibleForTesting
+  factory SessionSyncService.forTest({required WsTransport transport}) =>
+      SessionSyncService._(transport: transport);
+
+  final WsTransport _transport;
 
   // -- Reactive state streams --
   final _sessionsController =
@@ -124,13 +135,13 @@ class SessionSyncService {
   String? _activeSessionId;
   WorkspaceInfo? _workspaceInfo;
   bool _isLoading = false;
-  DateTime? _lastSessionFetchTime;
   StreamSubscription<WsMessage>? _wsSubscription;
   StreamSubscription<WsConnectionState>? _stateSub;
   // ignore: unused_field — holds subscription reference to prevent GC
   StreamSubscription<String?>? _desktopOnlineSub;
   int _requestCounter = 0;
   int _fetchGeneration = 0; // 递增以丢弃过期的 fetchSessions 响应
+  String? _currentListRequestId; // 最近一次 fetchSessions 发出的 requestId
   final Map<String, Completer<dynamic>> _pendingRequests = {};
   // 同一个 sessionId 的并发 loadAll 请求合并为一次，避免重复写 DB。
   final Map<String, Future<List<ChatMessage>>> _inflightLoadAll = {};
@@ -140,15 +151,15 @@ class SessionSyncService {
   WorkspaceInfo? get workspaceInfo => _workspaceInfo;
   bool get isLoading => _isLoading;
   bool get _hasSelectedDesktopTarget =>
-      ConnectionManager.instance.selectedDesktopId != null;
+      _transport.selectedDesktopId != null;
 
   void _init() {
     _wsSubscription =
-        ConnectionManager.instance.messageStream.listen(_handleWsMessage);
+        _transport.incoming.listen(_handleWsMessage);
     _stateSub =
-        ConnectionManager.instance.stateStream.listen(_handleConnectionState);
+        _transport.stateStream.listen(_handleConnectionState);
     _desktopOnlineSub =
-        ConnectionManager.instance.selectedDesktopIdStream.listen(_handleDesktopOnline);
+        _transport.selectedDesktopIdStream.listen(_handleDesktopOnline);
     _loadCachedSessions();
   }
 
@@ -160,7 +171,7 @@ class SessionSyncService {
       }
       // Small delay to let identity exchange happen first
       Future.delayed(const Duration(milliseconds: 800), () {
-        if (ConnectionManager.instance.state == WsConnectionState.connected &&
+        if (_transport.state == WsConnectionState.connected &&
             _hasSelectedDesktopTarget) {
           fetchSessions();
         }
@@ -176,7 +187,7 @@ class SessionSyncService {
   void _handleDesktopOnline(String? selectedDesktopId) {
     if (selectedDesktopId == null) {
       _clearDesktopScopedState();
-    } else if (ConnectionManager.instance.state == WsConnectionState.connected) {
+    } else if (_transport.state == WsConnectionState.connected) {
       unawaited(_restorePersistedSessionView());
       Future.delayed(const Duration(milliseconds: 800), () {
         if (_hasSelectedDesktopTarget) {
@@ -200,6 +211,9 @@ class SessionSyncService {
         break;
       case WsEvents.sessionActive:
         _handleSessionActive(msg.data);
+        break;
+      case WsEvents.desktopAgentStarted:
+        _handleDesktopAgentStarted(msg.data);
         break;
       case WsEvents.sessionError:
         _handleSessionError(msg.data);
@@ -228,6 +242,10 @@ class SessionSyncService {
         // message history with pagination so we don't only keep streaming deltas.
         _handleAgentRunningSync(msg.data);
         break;
+      case WsEvents.agentRunningChanged:
+        // Per-session running state changed — update isRunning on the matching session.
+        _handleAgentRunningChanged(msg.data);
+        break;
     }
   }
 
@@ -241,6 +259,18 @@ class SessionSyncService {
     unawaited(_applySessionSelection(sessionId, _fetchGeneration));
   }
 
+  /// Per-session running state changed — update the matching SessionMeta in the list.
+  void _handleAgentRunningChanged(dynamic data) {
+    if (data is! Map) return;
+    final sessionId = data['sessionId'] as String?;
+    final isRunning = data['isRunning'] as bool? ?? false;
+    if (sessionId == null) return;
+    final idx = _sessions.indexWhere((s) => s.id == sessionId);
+    if (idx == -1) return;
+    _sessions[idx] = _sessions[idx].copyWith(isRunning: isRunning);
+    _sessionsController.add(List.unmodifiable(_sessions));
+  }
+
   void _handleSessionListResponse(dynamic data) async {
     if (data is! Map) return;
     final requestId = data['requestId'] as String? ?? '';
@@ -249,22 +279,29 @@ class SessionSyncService {
     final rawSessions = data['sessions'] as List? ?? [];
     // 桌面端当前活跃会话（新增字段，旧桌面端可能为 null）
     final desktopActiveSessionId = data['activeSessionId'] as String?;
-    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    // 桌面端正在运行的会话 ID 列表（Phase B，旧桌面端可能为 null）
+    final runningSessionIds = (data['runningSessionIds'] as List?)
+            ?.whereType<String>()
+            .toSet() ??
+        const <String>{};
+    final desktopId = _transport.selectedDesktopId;
 
     // ignore: avoid_print
     print('[SyncDiag] sessionListResponse req=$requestId workspace=$workspacePath '
-        'sessions=${rawSessions.length} activeSession=$desktopActiveSessionId');
-
-    // 快照当前 generation，用于后续判断响应是否过期
-    final gen = _fetchGeneration;
+        'sessions=${rawSessions.length} activeSession=$desktopActiveSessionId running=${runningSessionIds.length}');
 
     final sessions = rawSessions
         .whereType<Map>()
-        .map((s) => SessionMeta.fromDesktopJson(
-              Map<String, dynamic>.from(s),
-              workspacePath,
-              workspaceName,
-            ),)
+        .map((s) {
+          final meta = SessionMeta.fromDesktopJson(
+            Map<String, dynamic>.from(s),
+            workspacePath,
+            workspaceName,
+          );
+          return runningSessionIds.contains(meta.id)
+              ? meta.copyWith(isRunning: true)
+              : meta;
+        })
         .toList();
 
     if (!_hasSelectedDesktopTarget || desktopId == null) {
@@ -284,11 +321,6 @@ class SessionSyncService {
     );
     _workspaceInfoController.add(_workspaceInfo);
 
-    // 在更新 _sessions 之前保存旧的 messageCount 映射，用于后续判断是否有新消息
-    final oldMessageCounts = Map.fromEntries(
-      _sessions.map((s) => MapEntry(s.id, s.messageCount)),
-    );
-
     _sessions = sessions;
     _isLoading = false;
     _sessionsController.add(List.unmodifiable(_sessions));
@@ -301,6 +333,18 @@ class SessionSyncService {
 
     // Cache to local DB
     ChatDatabase.instance.upsertSessions(sessions);
+
+    // Phase 2：只有最新发出的请求才执行会话选择逻辑，
+    // 过期（旧 requestId）的响应更新列表即可，不做视图切换。
+    if (requestId != _currentListRequestId) {
+      // ignore: avoid_print
+      print('[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection');
+      _completePending(requestId, sessions);
+      return;
+    }
+
+    // 快照当前 generation，用于后续多 await 期间检测是否被新 fetch 取代
+    final gen = _fetchGeneration;
 
     final currentSessionId = ChatStore.instance.currentSessionId;
     final currentSessionStillExists = currentSessionId != null &&
@@ -325,46 +369,8 @@ class SessionSyncService {
     if (currentSessionStillExists) {
       _activeSessionId = currentSessionId;
       _activeSessionController.add(_activeSessionId);
-
-      // 若当前会话消息数量有变化（桌面端新增了消息），且当前不在流式状态，
-      // 则强制从桌面重新拉取消息，确保手机端展示最新内容。
-      if (gen == _fetchGeneration && !ChatStore.instance.isStreaming) {
-        final newSession = sessions.firstWhere(
-          (s) => s.id == currentSessionId,
-          orElse: () => sessions.first,
-        );
-        final oldCount = oldMessageCounts[currentSessionId];
-        if (oldCount == null || newSession.messageCount != oldCount) {
-          // 若当前会话刚完成流式，messages 已正确，跳过覆盖以保留流式格式
-          if (!ChatStore.instance.isRecentlyStreamed(currentSessionId)) {
-            try {
-              // ignore: avoid_print
-              print('[SyncDiag] list-response detected count change: '
-                  'old=$oldCount new=${newSession.messageCount} session=$currentSessionId');
-              final allMessages = await loadAllSessionMessages(
-                currentSessionId,
-                forceRefresh: true,
-              );
-              if (gen == _fetchGeneration) {
-                // ignore: avoid_print
-                print('[SyncDiag] list-response loaded ${allMessages.length} messages '
-                    'for session=$currentSessionId');
-                ChatStore.instance.loadFetchedMessages(allMessages);
-              }
-            } catch (e) {
-              // WR-03修复: async void 函数内异常不再静默丢弃；
-              // 保留现有消息可见，不影响用户体验。
-              // ignore: avoid_print
-              print('[SyncDiag] list-response refresh failed: $e');
-            }
-          } else {
-            // ignore: avoid_print
-            print('[SyncDiag] list-response skipped refresh '
-                '(recently-streamed) session=$currentSessionId');
-          }
-        }
-      }
-
+      // Phase 2：不再在 list:response 时主动 forceRefresh 消息列表。
+      // 流式消息由 Phase 3 中的流直写 DB 保证；list:response 只负责徽章计数。
       _completePending(requestId, sessions);
       return;
     }
@@ -465,62 +471,59 @@ class SessionSyncService {
     }
   }
 
+  /// 处理手机发起的 agent 指令回执（`session:active`）。
+  ///
+  /// 该事件由桌面端在**手机发起**的 agent 执行路径中发回，
+  /// 语义是"桌面已接受指令，将在该 sessionId 上执行"。
+  /// 此时手机已经主动切换到该 session，故此处只需同步 _activeSessionId。
+  ///
+  /// 旧版桌面端在桌面自发 agent 时也发此事件 —— 手机通过新建的
+  /// [_handleDesktopAgentStarted] 处理 `desktop:agent:started`；
+  /// 对于旧版桌面端的兼容回退不切换视图（保守处理）。
   void _handleSessionActive(dynamic data) {
     if (data is! Map) return;
     if (!_hasSelectedDesktopTarget) return;
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null) return;
 
-    // 同步 ChatStore 的 sessionId，防止 _isWrongSession 误判丢弃流式事件
-    ChatStore.instance.syncSessionId(sessionId);
-
-    final previousActiveId = _activeSessionId;
     _activeSessionId = sessionId;
     _activeSessionController.add(_activeSessionId);
 
-    // 若桌面端切换到了不同会话，且手机端未在手动浏览其他历史会话，
-    // 则切换视图并从桌面强制重新拉取该会话的消息，确保两端一致。
-    final currentId = ChatStore.instance.currentSessionId;
-    // 使用 userManuallySwitched 而非 isBrowsingHistory：
-    // isBrowsingHistory 在系统自动加载时也会被置 true，语义不将准。
-    // userManuallySwitched 只在用户从 UI 主动点击会话时置 true。
-    final isBrowsingDifferentSession =
-        ChatStore.instance.userManuallySwitched &&
-        currentId != null &&
-        currentId != sessionId;
-
-    if (!isBrowsingDifferentSession && currentId != sessionId) {
-      // 会话发生切换：重新加载该会话消息（前台加载，不阻塞调用方）
-      final gen = _fetchGeneration; // 在 await 之前捕获，用于过期检测
-      unawaited(Future(() async {
-        await ChatStore.instance.switchToSession(sessionId);
-        try {
-          // ignore: avoid_print
-          print('[SyncDiag] sessionActive switch session=$sessionId');
-          final allMessages = await loadAllSessionMessages(
-            sessionId,
-            forceRefresh: true,
-          );
-          if (gen == _fetchGeneration) {
-            // ignore: avoid_print
-            print('[SyncDiag] sessionActive loaded=${allMessages.length} session=$sessionId');
-            ChatStore.instance.loadFetchedMessages(allMessages);
-          }
-        } catch (e) {
-          // ignore: avoid_print
-          print('[SyncDiag] sessionActive load failed: $e');
-          // 加载失败时保留当前显示，不影响用户体验
-        }
-      }));
-    } else if (previousActiveId != sessionId) {
-      // 桌面仅标记会话 active（同一会话重连），不切换视图但可触发 fetchSessions 刷新计数
-      // fetchSessions 会通过 messageCount 对比决定是否 forceRefresh
-      if (!_isLoading) {
-        unawaited(Future.delayed(const Duration(milliseconds: 200), () {
-          if (_hasSelectedDesktopTarget) fetchSessions();
-        }));
-      }
+    // 串台防护：仅在手机未主动切换到其他会话，或本就在该会话时，才同步 ChatStore。
+    // 竞争窗口：手机发消息 → 用户立刻切走 → session:active 到达，
+    // 若此时无条件 syncSessionId，会把 _currentSessionId 改回 A，
+    // 导致 A 的流式事件通过 _isWrongSession 写入 B 的视图。
+    if (!ChatStore.instance.userManuallySwitched ||
+        ChatStore.instance.currentSessionId == sessionId) {
+      ChatStore.instance.syncSessionId(sessionId);
     }
+  }
+
+  /// 桌面自发的 agent 启动通知（Phase 1 新协议：`desktop:agent:started`）。
+  ///
+  /// 与旧 `session:active` 的关键区别：
+  /// - 不强制切换手机视图，不论手机当前在哪个会话。
+  /// - 只更新 [_activeSessionId]，并让 ChatStore 知道即将到来的流式属于哪个 session，
+  ///   防止 _isWrongSession 过度丢弃流式事件。
+  void _handleDesktopAgentStarted(dynamic data) {
+    if (data is! Map) return;
+    if (!_hasSelectedDesktopTarget) return;
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null) return;
+
+    _activeSessionId = sessionId;
+    _activeSessionController.add(_activeSessionId);
+
+    // 将 ChatStore 的内部 sessionId 同步为 桌面 agent 会话，
+    // 这样 _isWrongSession 就能正确判断流式事件。
+    // 注意：只有手机当前显示的就是该 session 时才同步，
+    //       否则手机可能在看其他会话，不应更改其 currentSessionId。
+    final currentId = ChatStore.instance.currentSessionId;
+    if (currentId == sessionId) {
+      // 手机和桌面在同一个会话 — 直接同步即可
+      ChatStore.instance.syncSessionId(sessionId);
+    }
+    // 如果手机在其他会话，不动 ChatStore，流式事件将被 _isWrongSession 正确过滤。
   }
 
   void _handleSessionError(dynamic data) {
@@ -633,25 +636,21 @@ class SessionSyncService {
 
   /// Request session list from the connected desktop.
   void fetchSessions() {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return;
     }
-    // Dedup: skip if fetched within last 2 seconds.
-    final now = DateTime.now();
-    if (_lastSessionFetchTime != null &&
-        now.difference(_lastSessionFetchTime!) < const Duration(seconds: 2)) {
-      return;
-    }
-    _lastSessionFetchTime = now;
+    // Dedup: skip if a request is already inflight.
+    if (_isLoading) return;
     _fetchGeneration++; // 递增使过期响应可被检测
 
     _isLoading = true;
     _loadingController.add(true);
     final requestId = _nextRequestId();
+    _currentListRequestId = requestId; // 记录最新发出的请求 ID，用于拒绝过期响应
     // Bug3修复: 先注册 Completer，再发送消息，避免极速响应到达时找不到对应 requestId
     _pendingRequests[requestId] = Completer<dynamic>();
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.sessionListRequest,
       data: {
         'requestId': requestId,
@@ -707,7 +706,7 @@ class SessionSyncService {
     }
 
     // Request from desktop
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
       !_hasSelectedDesktopTarget) {
       // Fallback to whatever is cached
       final messages =
@@ -724,7 +723,7 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.sessionLoadRequest,
       data: {
         'requestId': requestId,
@@ -863,22 +862,16 @@ class SessionSyncService {
     // 3. 清空 ChatStore 视图，让 UI 立刻显示空白
     ChatStore.instance.resetSessionScope();
 
-    // 4. 若已连接桌面，立即重新拉取
-    _lastSessionFetchTime = null; // 绕过 2s 去重
-    if (ConnectionManager.instance.state == WsConnectionState.connected &&
-        _hasSelectedDesktopTarget) {
-      // ignore: avoid_print
-      print('[SyncDiag] clearLocalCache: triggering fetchSessions');
-      fetchSessions();
-    } else {
-      // ignore: avoid_print
-      print('[SyncDiag] clearLocalCache: not connected, skip fetch');
-    }
+    // 4. 若已连接桌面，立即重新拉取（_isLoading 为 false 时才会真正发出请求）
+    // ignore: avoid_print
+    print('[SyncDiag] clearLocalCache: triggering fetchSessions');
+    _isLoading = false; // 清理之后强制允许下一次 fetch
+    fetchSessions();
   }
 
   /// Create a new session on the desktop.
   Future<Map<String, dynamic>?> createSession({String? title}) async {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return null;
     }
@@ -886,7 +879,7 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.sessionCreateRequest,
       data: {'requestId': requestId, if (title != null) 'title': title},
     ),);
@@ -909,7 +902,7 @@ class SessionSyncService {
 
   /// Delete a session on the desktop.
   Future<bool> deleteSession(String sessionId) async {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return false;
     }
@@ -917,7 +910,7 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.sessionDeleteRequest,
       data: {'requestId': requestId, 'sessionId': sessionId},
     ),);
@@ -940,7 +933,7 @@ class SessionSyncService {
 
   /// Rename a session on the desktop.
   Future<bool> renameSession(String sessionId, String title) async {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return false;
     }
@@ -948,7 +941,7 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.sessionRenameRequest,
       data: {'requestId': requestId, 'sessionId': sessionId, 'title': title},
     ),);
@@ -971,12 +964,12 @@ class SessionSyncService {
 
   /// Fetch list of recent workspaces from the desktop.
   Future<void> fetchWorkspaces() async {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return;
     }
     final requestId = _nextRequestId();
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.workspaceListRequest,
       data: {'requestId': requestId},
     ),);
@@ -984,7 +977,7 @@ class SessionSyncService {
 
   /// Switch the desktop to a different workspace.
   Future<bool> switchWorkspace(String workspacePath) async {
-    if (ConnectionManager.instance.state != WsConnectionState.connected ||
+    if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
       return false;
     }
@@ -992,7 +985,7 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    ConnectionManager.instance.send(WsMessage(
+    _transport.send(WsMessage(
       event: WsEvents.workspaceSwitchRequest,
       data: {'requestId': requestId, 'workspacePath': workspacePath},
     ),);
@@ -1045,7 +1038,6 @@ class SessionSyncService {
 
   void _clearDesktopScopedState() {
     _fetchGeneration++;
-    _lastSessionFetchTime = null;
     _isLoading = false;
     _loadingController.add(false);
     _workspaceInfo = null;
@@ -1082,7 +1074,7 @@ class SessionSyncService {
   }
 
   Future<void> _restorePersistedSessionView() async {
-    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    final desktopId = _transport.selectedDesktopId;
     if (desktopId == null) return;
 
     final restoreState = await AppRestoreState.getLastViewedSession(

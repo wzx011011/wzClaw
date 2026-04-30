@@ -34,6 +34,11 @@ export interface AgentRuntimeConfig {
   maxToolResultChars: number
   /** 所有工具结果总字符数上限。默认 200000 */
   maxTotalToolResultChars: number
+  /**
+   * 工具结果持久化阈値（字符数）。超过此大小的结果将写入磁盘，
+   * 对话中保留路径引用 + 2KB 预览，信息不丢失。默认 50000（= Infinity 禁用）
+   */
+  toolResultPersistThresholdChars: number
 
   // ---- 循环检测 ----
   /** 循环检测窗口大小（连续相同调用的判定次数）。默认 3 */
@@ -72,6 +77,7 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
 
   maxToolResultChars: 30_000,
   maxTotalToolResultChars: 200_000,
+  toolResultPersistThresholdChars: 50_000,
 
   loopDetectionWindow: 3,
 

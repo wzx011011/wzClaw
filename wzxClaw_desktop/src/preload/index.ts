@@ -129,6 +129,13 @@ const api = {
     return () => ipcRenderer.removeListener('session:context-restored', handler)
   },
 
+  // Session running state changed — fires when a session starts/stops running (Phase B)
+  onSessionRunningChanged: (callback: (payload: { sessionId: string; isRunning: boolean }) => void) => {
+    const handler = (_: unknown, payload: { sessionId: string; isRunning: boolean }) => callback(payload)
+    ipcRenderer.on('session:running_changed', handler)
+    return () => ipcRenderer.removeListener('session:running_changed', handler)
+  },
+
   // Compact context (manual trigger via /compact command)
   compactContext: () => ipcRenderer.invoke('agent:compact_context'),
 

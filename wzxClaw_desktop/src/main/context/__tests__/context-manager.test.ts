@@ -141,9 +141,10 @@ describe('ContextManager', () => {
 
     it('summarizes older messages and keeps last 4 messages intact', async () => {
       const cm = new ContextManager({ compactKeepMax: 4 })
-      const messages: Message[] = Array.from({ length: 10 }, (_, i) => ({
+      // 使用 20 条较长的消息，确保压缩后 token 数显著低于原始数
+      const messages: Message[] = Array.from({ length: 20 }, (_, i) => ({
         role: 'user' as const,
-        content: `Message ${i} with enough content to test`,
+        content: `Message ${i}: This is a longer message with enough content to make the token count meaningful and ensure that compaction actually reduces the total tokens in the conversation window.`,
         timestamp: Date.now()
       }))
 

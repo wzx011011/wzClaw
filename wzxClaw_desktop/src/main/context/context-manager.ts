@@ -8,6 +8,8 @@ import { DEFAULT_RUNTIME_CONFIG } from '../agent/runtime-config'
 
 export interface CompactResult {
   summary: string
+  /** 最终写入对话的完整摘要消息内容（含连续指令），用于替换对话 */
+  summaryMessageContent: string
   keptRecentCount: number
   beforeTokens: number
   afterTokens: number
@@ -118,18 +120,27 @@ export class ContextManager {
         return { summary: '', keptRecentCount: recentCount, beforeTokens, afterTokens: beforeTokens }
       }
 
-      // 构建摘要 prompt
+      // 构建摘要 prompt（参考 Claude Code compact prompt 结构）
       const maxChars = this.config.compactSummaryMaxChars
-      const summaryPrompt = `Summarize the following conversation, preserving:
-1. What files were read or modified (include file paths)
-2. What errors were encountered (include error messages)
-3. What decisions were made
-4. The user's original intent
+      const summaryPrompt = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
+
+Your summary MUST include the following sections:
+
+1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
+2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.
+3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Include full code snippets where applicable.
+4. Errors and fixes: List all errors that you ran into, and how you fixed them.
+5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
+6. All user messages: List ALL user messages that are not tool results. These are critical for understanding the users' feedback and changing intent.
+7. Pending Tasks: Outline ALL pending or in-progress tasks that have NOT been completed yet. This is CRITICAL — list every task the user asked for that is still unfinished, with enough detail to resume work without asking the user again.
+8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request. Include file names and code snippets where applicable.
+9. Next Step: List the immediate next step to take based on the most recent work. Include direct quotes from the conversation showing what task was in progress.
 
 Conversation to summarize:
-${toSummarize.map(m => `[${m.role}]: ${m.content.substring(0, maxChars)}`).join('\n')}
+${toSummarize.map(m => `[${m.role}]: ${typeof m.content === 'string' ? m.content.substring(0, maxChars) : JSON.stringify(m.content).substring(0, maxChars)}`).join('\n\n')}
 
-Provide a concise summary:`
+Provide a detailed summary following the sections above. Be especially thorough for sections 7, 8, and 9 as they are critical for resuming work.`
 
       const summaryMessages = [
         { role: 'user' as const, content: summaryPrompt, timestamp: Date.now() }
@@ -139,7 +150,7 @@ Provide a concise summary:`
       const streamOptions: StreamOptions = {
         model,
         messages: summaryMessages,
-        systemPrompt: 'You are a concise summarizer. Provide brief, structured summaries.',
+        systemPrompt: 'You are an expert technical summarizer. Create detailed, structured summaries that capture all the context needed to resume development work. Be thorough, especially for pending tasks and current work status.',
         abortSignal: undefined
       }
 
@@ -151,7 +162,7 @@ Provide a concise summary:`
 
       const summaryMessage: Message = {
         role: 'user',
-        content: `[Context Summary]\n${summary}`,
+        content: `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n${summary}\n\nContinue the conversation from where it left off. If there are pending tasks listed above, resume working on them immediately without asking the user to re-explain — pick up exactly where work stopped.`,
         timestamp: Date.now()
       }
 
@@ -163,7 +174,7 @@ Provide a concise summary:`
       this.compactHistory.lastAfter = afterTokens
       this.consecutiveCompactFailures = 0  // 成功则重置失败计数
 
-      return { summary, keptRecentCount: recentCount, beforeTokens, afterTokens }
+      return { summary, summaryMessageContent: summaryMessage.content as string, keptRecentCount: recentCount, beforeTokens, afterTokens }
     } catch (err) {
       this.consecutiveCompactFailures++
       throw err

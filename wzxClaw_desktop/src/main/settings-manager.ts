@@ -22,6 +22,7 @@ interface StoredSettings {
   lastSessionId?: string
   alwaysAllowRules?: string[]
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
+  showToolSteps?: boolean
 }
 
 interface EncryptedKeys {
@@ -36,6 +37,7 @@ export interface SettingsResponse {
   systemPrompt?: string
   relayToken?: string
   thinkingDepth?: string
+  showToolSteps?: boolean
 }
 
 export interface FullConfig {
@@ -187,13 +189,18 @@ export class SettingsManager {
       baseURL: this.settings.baseURL,
       systemPrompt: this.settings.systemPrompt,
       relayToken: this.settings.relayToken,
-      thinkingDepth: this.settings.thinkingDepth
+      thinkingDepth: this.settings.thinkingDepth,
+      showToolSteps: this.settings.showToolSteps
     }
   }
 
   /**
    * Update settings from the renderer.
    */
+  getShowToolSteps(): boolean {
+    return this.settings.showToolSteps ?? true
+  }
+
   updateSettings(request: {
     provider?: string
     model?: string
@@ -202,6 +209,7 @@ export class SettingsManager {
     systemPrompt?: string
     relayToken?: string
     thinkingDepth?: string
+    showToolSteps?: boolean
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
@@ -210,6 +218,7 @@ export class SettingsManager {
     if (request.systemPrompt !== undefined) this.settings.systemPrompt = request.systemPrompt
     if (request.relayToken !== undefined) this.setRelayToken(request.relayToken)
     if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']
+    if (request.showToolSteps !== undefined) this.settings.showToolSteps = request.showToolSteps
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)

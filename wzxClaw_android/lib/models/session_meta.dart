@@ -8,6 +8,7 @@ class SessionMeta {
   final int updatedAt; // epoch ms
   final int messageCount;
   final bool isSynced; // true if messages have been pulled from desktop
+  final bool isRunning; // true if desktop is currently processing this session
 
   const SessionMeta({
     required this.id,
@@ -18,6 +19,7 @@ class SessionMeta {
     required this.updatedAt,
     required this.messageCount,
     this.isSynced = false,
+    this.isRunning = false,
   });
 
   factory SessionMeta.fromDesktopJson(
@@ -59,6 +61,7 @@ class SessionMeta {
       'updated_at': updatedAt,
       'message_count': messageCount,
       'is_synced': isSynced ? 1 : 0,
+      // isRunning 是运行时状态，不持久化到 DB
     };
   }
 
@@ -67,6 +70,7 @@ class SessionMeta {
     int? updatedAt,
     int? messageCount,
     bool? isSynced,
+    bool? isRunning,
   }) {
     return SessionMeta(
       id: id,
@@ -77,6 +81,7 @@ class SessionMeta {
       updatedAt: updatedAt ?? this.updatedAt,
       messageCount: messageCount ?? this.messageCount,
       isSynced: isSynced ?? this.isSynced,
+      isRunning: isRunning ?? this.isRunning,
     );
   }
 }

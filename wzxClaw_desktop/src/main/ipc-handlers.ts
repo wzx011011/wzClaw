@@ -18,6 +18,7 @@ function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_MODELS } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
 import type { AgentLoop } from './agent/agent-loop'
+import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
@@ -35,6 +36,7 @@ import type { WorkspaceStore } from './tasks/workspace-store'
 export function registerIpcHandlers(
   gateway: LLMGateway,
   agentLoop: AgentLoop,
+  runtimes: SessionRuntimeManager,
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,
   getSessionStore: () => SessionStore,
@@ -70,8 +72,12 @@ export function registerIpcHandlers(
 
     const sender = event.sender
 
+    // 获取当前会话的 per-session runtime
+    const conversationId = result.data.conversationId
+    const runtime = runtimes.getOrCreate(conversationId)
+
     // Reset persisted message counter for new conversation turn
-    persistedMessageCount = agentLoop.getMessages().length
+    persistedMessageCount = runtime.getMessages().length
 
     // Ensure the LLM gateway has adapters for the configured provider AND the model's provider.
     // GLM models span both anthropic (glm-5*) and openai (glm-4*) APIs, so both adapters
@@ -108,14 +114,16 @@ export function registerIpcHandlers(
     // Inject active workspace context into agent loop
     if (result.data.activeWorkspaceId) {
       const workspace = await workspaceStore.getWorkspace(result.data.activeWorkspaceId)
-      agentLoop.activeWorkspace = workspace ?? null
+      agentLoop.activeWorkspace = workspace ?? null  // 全局镜像
+      runtime.activeWorkspace = workspace ?? null
     } else {
       agentLoop.activeWorkspace = null
+      runtime.activeWorkspace = null
     }
 
     // Build projectRoots from active workspace or fall back to workspace root
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+    const projectRoots = runtime.activeWorkspace
+      ? runtime.activeWorkspace.projects.map(p => p.path)
       : [workingDirectory]
 
     const agentConfig: AgentConfig = {
@@ -130,7 +138,7 @@ export function registerIpcHandlers(
 
     // Cleanup on window close
     const onWindowClosed = (): void => {
-      agentLoop.cancel()
+      runtimes.cancel(conversationId)
       permissionManager.clearSession(agentConfig.conversationId)
     }
     sender.once('destroyed', onWindowClosed)
@@ -146,12 +154,14 @@ export function registerIpcHandlers(
       }
     }
 
-    // 桌面发起的 agent 运行开始前，通知手机端切换到当前会话，
-    // 防止 _isWrongSession 因 sessionId 不匹配而丢弃所有流式事件。
-    onStreamEvent?.('session:active', { sessionId: agentConfig.conversationId })
+    // 桌面发起的 agent 运行开始前，通知手机端当前 agent 所在会话 ID，
+    // 新协议用 desktop:agent:started；手机端保留对旧 session:active 的兼容。
+    onStreamEvent?.('desktop:agent:started', { sessionId: agentConfig.conversationId })
+    // 将桌面用户的提问广播给手机端，让其显示用户气泡
+    onStreamEvent?.('stream:desktop_user_message', { content: result.data.content, sessionId: agentConfig.conversationId })
 
     try {
-      for await (const agentEvent of agentLoop.run(result.data.content, agentConfig, sender)) {
+      for await (const agentEvent of runtime.run(result.data.content, agentConfig, sender)) {
         switch (agentEvent.type) {
           case 'agent:text':
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
@@ -226,7 +236,7 @@ export function registerIpcHandlers(
             sender.send(IPC_CHANNELS['usage:update'], costTracker.getSession())
             // Auto-save only NEW messages since last persist (fixes log duplication P0)
             try {
-              const allMessages = agentLoop.getMessages()
+              const allMessages = runtime.getMessages()
               const newMessages = allMessages.slice(persistedMessageCount)
               if (newMessages.length > 0) {
                 // Inject usage into last assistant message for /insights cost tracking
@@ -261,7 +271,10 @@ export function registerIpcHandlers(
   // Agent: stop — cancels the running agent loop
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:stop'], () => {
-    agentLoop.cancel()
+    // 取消所有桌面发起的 runtime（不包含 mobile 专用 session，此处设计为: 只要不是 mobile 专用的研判面过于复杂）
+    // 最安全的语义: 取消桌面当前会话
+    const currentId = settingsManager.getLastSessionId()
+    if (currentId) runtimes.cancel(currentId)
   })
 
   // Note: agent:permission_response is handled dynamically by
@@ -679,14 +692,19 @@ export function registerIpcHandlers(
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
     // If activeWorkspaceId provided, look up the task's primary project root for workspace-based isolation
+    let sessions: SessionMeta[]
     if (payload?.activeWorkspaceId) {
       const task = await workspaceStore.getWorkspace(payload.activeWorkspaceId).catch(() => null)
       if (task) {
         const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        return new SessionStore(primaryRoot).listSessions()
+        sessions = await new SessionStore(primaryRoot).listSessions()
+      } else {
+        sessions = await getSessionStore().listSessions()
       }
+    } else {
+      sessions = await getSessionStore().listSessions()
     }
-    return getSessionStore().listSessions()
+    return { sessions, runningSessionIds: runtimes.listRunning() }
   })
 
   // ============================================================
@@ -698,10 +716,12 @@ export function registerIpcHandlers(
       throw new Error(`Invalid request: ${result.error.message}`)
     }
     const { sessionId, activeWorkspaceId } = result.data
+    // 为该会话获取/创建 per-session runtime
+    const loadRuntime = runtimes.getOrCreate(sessionId)
     // 优先使用请求中携带的 activeWorkspaceId（与 listSessions 保持一致），
     // 避免 agentLoop.activeWorkspace 尚未设置时读错 store。
     let store = getSessionStore()
-    let resolvedWorkspace = agentLoop.activeWorkspace ?? null
+    let resolvedWorkspace = loadRuntime.activeWorkspace ?? agentLoop.activeWorkspace ?? null
     if (activeWorkspaceId) {
       const workspace = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
       if (workspace) {
@@ -724,6 +744,14 @@ export function registerIpcHandlers(
       ? resolvedWorkspace.projects.map(p => p.path)
       : [restoreCwd]
     agentLoop.restoreContext(rawMessages, {
+      model: config.model,
+      provider: config.provider as 'openai' | 'anthropic',
+      systemPrompt: config.systemPrompt,
+      workingDirectory: restoreCwd,
+      projectRoots: restoreRoots,
+    }).catch(() => {})
+    // 将消息射入对应的 per-session runtime（同时更新 agentLoop 镜像上面已完成）
+    loadRuntime.restoreContext(rawMessages, {
       model: config.model,
       provider: config.provider as 'openai' | 'anthropic',
       systemPrompt: config.systemPrompt,
@@ -878,7 +906,10 @@ export function registerIpcHandlers(
   // Agent: compact context — manual /compact command
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:compact_context'], async (event) => {
-    const messages = agentLoop.getMessages()
+    // 获取渲染器当前会话的 runtime
+    const compactSessionId = settingsManager.getLastSessionId()
+    const compactRuntime = compactSessionId ? runtimes.getOrCreate(compactSessionId) : agentLoop
+    const messages = compactRuntime.getMessages()
     const config = settingsManager.getCurrentConfig()
     if (messages.length === 0) return null
 
@@ -897,7 +928,7 @@ export function registerIpcHandlers(
         timestamp: Date.now()
       }
       const recentMessages = messages.slice(-result.keptRecentCount)
-      agentLoop.replaceMessages([summaryMsg, ...recentMessages])
+      compactRuntime.replaceMessages([summaryMsg, ...recentMessages])
     }
     // Notify renderer so the compacted banner appears in chat
     event.sender.send(IPC_CHANNELS['session:compacted'], {
@@ -1226,8 +1257,10 @@ export function registerIpcHandlers(
     const builtinToolTokens = countTokens(JSON.stringify(builtinDefs))
     const mcpToolTokens = countTokens(JSON.stringify(mcpDefs))
 
-    // 3. Conversation messages
-    const messages = agentLoop.getMessages()
+    // 3. Conversation messages — 使用当前渲染器会话的 runtime
+    const breakdownSessionId = settingsManager.getLastSessionId()
+    const breakdownRuntime = breakdownSessionId ? runtimes.getOrCreate(breakdownSessionId) : agentLoop
+    const messages = breakdownRuntime.getMessages()
     const conversationTokens = countMessagesTokens(messages, model)
     const messagesByRole = { user: 0, assistant: 0, tool_result: 0 }
     for (const m of messages) {
