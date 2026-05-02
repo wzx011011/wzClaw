@@ -2,14 +2,21 @@ import { z } from 'zod'
 import fs from 'fs/promises'
 import path from 'path'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
+import {
+  type LineEndingType,
+  detectLineEndings,
+  normalizeLineEndings,
+  detectLineEndingsForNewFile,
+} from './file-utils'
 
 // ============================================================
 // FileWrite Tool (per TOOL-02, D-32)
+// 行尾检测 + 归一化已迁移到 file-utils.ts 共享模块
 // ============================================================
 
 const FileWriteSchema = z.object({
   path: z.string().min(1),
-  content: z.string()
+  content: z.string(),
 })
 
 export class FileWriteTool implements Tool {
@@ -28,19 +35,19 @@ Usage:
     properties: {
       path: {
         type: 'string',
-        description: 'Absolute or relative file path to write'
+        description: 'Absolute or relative file path to write',
       },
       content: {
         type: 'string',
-        description: 'File content to write'
-      }
+        description: 'File content to write',
+      },
     },
-    required: ['path', 'content']
+    required: ['path', 'content'],
   }
 
   async execute(
     input: Record<string, unknown>,
-    context: ToolExecutionContext
+    context: ToolExecutionContext,
   ): Promise<ToolExecutionResult> {
     const parsed = FileWriteSchema.safeParse(input)
     if (!parsed.success) {
@@ -67,12 +74,24 @@ Usage:
     try {
       const dir = path.dirname(absolutePath)
       await fs.mkdir(dir, { recursive: true })
-      await fs.writeFile(absolutePath, content, 'utf-8')
 
-      const byteCount = Buffer.byteLength(content, 'utf-8')
+      // 检测目标行尾：已有文件 → 检测；新文件 → .gitattributes；兜底 → LF
+      let targetEol: LineEndingType = 'LF'
+      try {
+        const existing = await fs.readFile(absolutePath, 'utf-8')
+        targetEol = detectLineEndings(existing)
+      } catch {
+        // 文件不存在 — 检查 .gitattributes
+        targetEol = detectLineEndingsForNewFile(dir)
+      }
+
+      const adaptedContent = normalizeLineEndings(content, targetEol)
+      await fs.writeFile(absolutePath, adaptedContent, 'utf-8')
+
+      const byteCount = Buffer.byteLength(adaptedContent, 'utf-8')
       return {
         output: `File written: ${absolutePath} (${byteCount} bytes)`,
-        isError: false
+        isError: false,
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

@@ -98,8 +98,10 @@ Usage:
     }
 
     try {
-      // Read file content
-      const content = await fs.promises.readFile(absolutePath, 'utf-8')
+      // Read file content — normalize CRLF to LF so LLM always sees LF,
+      // preventing FileEdit mismatch on Windows where files use CRLF.
+      const raw = await fs.promises.readFile(absolutePath, 'utf-8')
+      const content = raw.replace(/\r\n/g, '\n')
       const lines = content.split('\n')
 
       // Apply offset and limit, cap at MAX_FILE_READ_LINES
