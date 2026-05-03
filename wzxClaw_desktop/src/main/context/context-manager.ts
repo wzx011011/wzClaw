@@ -13,6 +13,8 @@ export interface CompactResult {
   keptRecentCount: number
   beforeTokens: number
   afterTokens: number
+  /** 压缩后被摘要化的消息（用于文件恢复） */
+  summarizedMessages: Message[]
 }
 
 /**
@@ -59,10 +61,10 @@ export class ContextManager {
    * Check if messages exceed the compaction threshold.
    * 电路保护：正在压缩中或连续失败过多时返回 false。
    *
-   * 阈值公式（参考 Claude Code）：
+   * 阈值公式（参考 Claude Code ~93%）：
    *   contextWindow - maxOutputTokens - safetyBuffer
    * 若 compactThreshold > 0 则使用旧式比例模式。
-   * 下限 50% 防止过早触发。
+   * 无下限——充分利用 context window，避免过早压缩浪费 token。
    */
   shouldCompact(messages: Message[], modelId: string): boolean {
     if (this.isCompacting) return false
@@ -77,11 +79,10 @@ export class ContextManager {
     }
 
     // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
+    // 参考 Claude Code：~93% 触发（safetyBuffer 13K + maxOutputTokens）
     const maxOutputTokens = this.getMaxOutputTokensForModel(modelId)
     const threshold = contextWindow - maxOutputTokens - this.config.compactSafetyBuffer
-    // 下限 50%，避免短会话也触发压缩
-    const effectiveThreshold = Math.max(threshold, contextWindow * 0.5)
-    return tokens > effectiveThreshold
+    return tokens > threshold
   }
 
   /**
@@ -117,7 +118,7 @@ export class ContextManager {
       const toKeep = messages.slice(-recentCount)
 
       if (toSummarize.length === 0) {
-        return { summary: '', keptRecentCount: recentCount, beforeTokens, afterTokens: beforeTokens }
+        return { summary: '', keptRecentCount: recentCount, beforeTokens, afterTokens: beforeTokens, summarizedMessages: [] }
       }
 
       // 构建摘要 prompt（参考 Claude Code compact prompt 结构）
@@ -174,7 +175,7 @@ Provide a detailed summary following the sections above. Be especially thorough 
       this.compactHistory.lastAfter = afterTokens
       this.consecutiveCompactFailures = 0  // 成功则重置失败计数
 
-      return { summary, summaryMessageContent: summaryMessage.content as string, keptRecentCount: recentCount, beforeTokens, afterTokens }
+      return { summary, summaryMessageContent: summaryMessage.content as string, keptRecentCount: recentCount, beforeTokens, afterTokens, summarizedMessages: toSummarize }
     } catch (err) {
       this.consecutiveCompactFailures++
       throw err
@@ -204,10 +205,43 @@ Provide a detailed summary following the sections above. Be especially thorough 
 
   /**
    * Reactive compaction: keeps only the last reactiveCompactKeepCount messages.
+   * 保留作为 fallback（当 turn-based 淘汰不可用时）。
    */
   reactiveCompact(messages: Message[]): Message[] {
     const keptCount = Math.min(this.config.reactiveCompactKeepCount, messages.length)
     return messages.slice(-keptCount)
+  }
+
+  /**
+   * Turn-based reactive compaction（参考 Claude Code PTL 分组重试）。
+   * 按轮次分组消息，从最早的轮次开始移除，保留最近 2 轮。
+   * 比简单的 reactiveCompact 保留更多上下文。
+   *
+   * 分组规则：assistant 消息及其后的 tool_result 消息为一轮。
+   * 用户消息单独算一轮（或归入前一轮）。
+   */
+  reactiveCompactByTurns(messages: Message[]): Message[] {
+    if (messages.length <= this.config.reactiveCompactKeepCount) return messages
+
+    // 按轮次分组
+    const turns = groupMessagesByTurns(messages)
+    if (turns.length <= 2) {
+      // 不足 2 轮，fallback 到简单截断
+      return messages.slice(-this.config.reactiveCompactKeepCount)
+    }
+
+    // 保留最近 2 轮
+    const keptTurns = turns.slice(-2)
+    const kept = keptTurns.flat()
+    return kept.length > 0 ? kept : messages.slice(-this.config.reactiveCompactKeepCount)
+  }
+
+  /** 获取 microcompact 配置（供 agent-loop 传入） */
+  getMicrocompactConfig(): { gapMinutes: number; keepRecent: number } {
+    return {
+      gapMinutes: this.config.microcompactGapMinutes,
+      keepRecent: this.config.microcompactKeepRecent,
+    }
   }
 
   /**
@@ -222,4 +256,44 @@ Provide a detailed summary following the sections above. Be especially thorough 
   estimateTokens(messages: Message[], modelId?: string): number {
     return countMessagesTokens(messages, modelId)
   }
+}
+
+/**
+ * 按轮次分组消息。一轮 = 一条 assistant 消息 + 其后连续的 tool_result 消息。
+ * user 消息单独成一组（作为下一轮的起始）。
+ */
+function groupMessagesByTurns(messages: Message[]): Message[][] {
+  const turns: Message[][] = []
+  let currentTurn: Message[] = []
+
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      // 用户消息开启新的一组
+      if (currentTurn.length > 0) {
+        turns.push(currentTurn)
+      }
+      currentTurn = [msg]
+    } else if (msg.role === 'assistant') {
+      // assistant 消息开启新的一组（如果当前组没有 user 消息作为开头）
+      if (currentTurn.length > 0 && currentTurn[0].role !== 'user') {
+        turns.push(currentTurn)
+        currentTurn = []
+      }
+      // 如果当前组以 user 开头，assistant 是同组的一部分
+      if (currentTurn.length > 0 && currentTurn[0].role === 'user') {
+        currentTurn.push(msg)
+      } else {
+        currentTurn = [msg]
+      }
+    } else if (msg.role === 'tool_result') {
+      // tool_result 归入当前 assistant 所在的组
+      currentTurn.push(msg)
+    }
+  }
+
+  if (currentTurn.length > 0) {
+    turns.push(currentTurn)
+  }
+
+  return turns
 }

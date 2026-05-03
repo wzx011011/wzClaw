@@ -53,6 +53,9 @@ export class SessionStore {
   private sessionsDir: string
   get sessionDir(): string { return this.sessionsDir }
 
+  // Per-session 写锁：串行化同一 JSONL 文件的并发 append，防止写入交错损坏
+  private _writeLocks = new Map<string, Promise<void>>()
+
   constructor(workspaceRoot: string) {
     const projectHash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)
     this.sessionsDir = getSessionsDir(projectHash)
@@ -70,23 +73,25 @@ export class SessionStore {
   }
 
   async appendMessage(sessionId: string, message: ChatMessageLike): Promise<void> {
-    this.validateSessionId(sessionId)
-    const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
-    const line = JSON.stringify(message) + '\n'
-    await fsp.appendFile(filePath, line, 'utf-8')
+    return this.appendMessages(sessionId, [message])
   }
 
   /**
    * Append multiple messages to a session's JSONL file.
    * Used after agent:done to persist all messages from the completed turn.
    * Batch-writes all messages in a single file append to avoid per-message overhead.
+   * Per-session 写锁保证并发调用不会交错写入。
    */
   async appendMessages(sessionId: string, messages: ChatMessageLike[]): Promise<void> {
     if (messages.length === 0) return
     this.validateSessionId(sessionId)
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     const content = messages.map(msg => JSON.stringify(msg)).join('\n') + '\n'
-    await fsp.appendFile(filePath, content, 'utf-8')
+    // 串行化：等前一次写完再写
+    const pending = this._writeLocks.get(sessionId) ?? Promise.resolve()
+    const next = pending.then(() => fsp.appendFile(filePath, content, 'utf-8'))
+    this._writeLocks.set(sessionId, next.catch(() => {}))
+    await next
   }
 
   /**

@@ -369,8 +369,23 @@ class SessionSyncService {
     if (currentSessionStillExists) {
       _activeSessionId = currentSessionId;
       _activeSessionController.add(_activeSessionId);
-      // Phase 2：不再在 list:response 时主动 forceRefresh 消息列表。
-      // 流式消息由 Phase 3 中的流直写 DB 保证；list:response 只负责徽章计数。
+      // BUG-2/3 修复：桌面新增消息后，自动刷新当前会话内容。
+      // 仅在非流式状态下刷新，避免打断正在进行的 agent 输出。
+      if (!ChatStore.instance.isStreaming) {
+        final desktopSession = sessions
+            .where((s) => s.id == currentSessionId)
+            .firstOrNull;
+        if (desktopSession != null) {
+          final localCount = await ChatDatabase.instance
+              .getSessionMessageCount(currentSessionId);
+          if (desktopSession.messageCount != localCount) {
+            unawaited(loadAllSessionMessages(
+              currentSessionId,
+              forceRefresh: true,
+            ));
+          }
+        }
+      }
       _completePending(requestId, sessions);
       return;
     }
@@ -924,8 +939,18 @@ class SessionSyncService {
 
     try {
       final result = await completer.future;
-      if (result is Map) return result['success'] as bool? ?? false;
-      return false;
+      final success = result is Map && (result['success'] as bool? ?? false);
+      if (success) {
+        // 本地清理
+        _sessions.removeWhere((s) => s.id == sessionId);
+        _sessionsController.add(List.unmodifiable(_sessions));
+        ChatDatabase.instance.deleteSessionAndMessages(sessionId);
+        // BUG-6 修复：删除的是当前会话 → 切换到空状态，避免显示僵尸 UI
+        if (sessionId == ChatStore.instance.currentSessionId) {
+          await ChatStore.instance.switchToSession(null);
+        }
+      }
+      return success;
     } catch (_) {
       return false;
     }
@@ -1070,7 +1095,7 @@ class SessionSyncService {
 
     // ignore: avoid_print
     print('[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}');
-    ChatStore.instance.loadFetchedMessages(allMessages);
+    ChatStore.instance.loadFetchedMessages(sessionId, allMessages);
   }
 
   Future<void> _restorePersistedSessionView() async {

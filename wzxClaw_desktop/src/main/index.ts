@@ -499,7 +499,9 @@ app.whenReady().then(async () => {
         return getCachedSessionStore(primaryRoot)
       }
     }
-    return getActiveSessionStore()
+    // 手机未指定 workspaceId 时，使用 sessionStore（跟随桌面 workspace 切换更新），
+    // 而非 getActiveSessionStore()（可能引用过期的 agentLoop.activeWorkspace）。
+    return sessionStore
   }
 
   // Helper: broadcast to mobile via relay
@@ -521,9 +523,8 @@ app.whenReady().then(async () => {
     const workspaceRoot = workspaceManager.getWorkspaceRoot()
     if (!workspaceRoot || !sessionStore) return
     try {
-      // Bug1修复: 使用 getActiveSessionStore() 保证 task-scoped 场景下 sessionCount 准确
-      const activeStore = getActiveSessionStore()
-      const sessions = await activeStore.listSessions()
+      // 与 getStoreForMobile 保持一致：使用 sessionStore（跟随桌面 workspace 切换）
+      const sessions = await sessionStore.listSessions()
       // Bug4修复: 优先使用 settingsManager 记录的桌面最后活跃会话，而非手机侧的 mobileSessionId
       broadcastToMobile('session:workspace:info', {
         workspaceName: path.basename(workspaceRoot),
@@ -622,6 +623,9 @@ app.whenReady().then(async () => {
           requestId,
           session: { id: sessionId, title, createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 }
         })
+        // 通知桌面渲染器：手机端创建了新会话
+        const wcCreate = BrowserWindow.getAllWindows()[0]?.webContents
+        if (wcCreate && !wcCreate.isDestroyed()) wcCreate.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'created', data: { sessionId } })
       } catch (err: any) {
         broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
       }

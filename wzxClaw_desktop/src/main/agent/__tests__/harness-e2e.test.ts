@@ -85,13 +85,15 @@ function makePermissionMgr(approved = true) {
 function makeContextMgr(opts?: { shouldCompact?: boolean }) {
   return {
     shouldCompact: vi.fn().mockReturnValue(opts?.shouldCompact ?? false),
-    compact: vi.fn().mockResolvedValue({ summary: 'compacted summary', keptRecentCount: 2, beforeTokens: 100000, afterTokens: 20000 }),
+    compact: vi.fn().mockResolvedValue({ summary: 'compacted summary', keptRecentCount: 2, beforeTokens: 100000, afterTokens: 20000, summarizedMessages: [] }),
     reactiveCompact: vi.fn((msgs: unknown[]) => msgs.slice(-2)),
+    reactiveCompactByTurns: vi.fn((msgs: unknown[]) => msgs.slice(-4)),
     trackTokenUsage: vi.fn(),
     getContextWindowForModel: vi.fn().mockReturnValue(128000),
     getTotalUsage: vi.fn().mockReturnValue({ inputTokens: 0, outputTokens: 0 }),
     resetUsage: vi.fn(),
     estimateTokens: vi.fn().mockReturnValue(5000),
+    getMicrocompactConfig: vi.fn().mockReturnValue({ gapMinutes: 60, keepRecent: 5 }),
   }
 }
 

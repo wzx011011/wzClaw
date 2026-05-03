@@ -99,7 +99,6 @@ class ChatStore {
   // Cached display list — rebuilt only when _messages or _streamingMessage changes.
   List<ChatMessage> _cachedDisplayMessages = const [];
   int _cachedMessagesLength = -1;
-  bool _cachedHadStreaming = false;
   StreamSubscription<WsMessage>? _wsSubscription;
   String? _currentSessionId;
   bool _isBrowsingHistory = false; // true when viewing a historical session
@@ -114,6 +113,11 @@ class ChatStore {
 
   // -- 用户主动切换追踪 --
   bool _userManuallySwitched = false; // 只有用户从 UI 主动点会话时为 true
+
+  // -- Streaming text throttle --
+  final StringBuffer _textBuffer = StringBuffer();
+  Timer? _textFlushTimer;
+  static const _textFlushInterval = Duration(milliseconds: 60); // ~16 FPS
 
   // -- Thinking state --
   static const _maxThinkingChars = 50000; // 约 50KB 上限，防止无限累积
@@ -142,11 +146,12 @@ class ChatStore {
   List<ChatMessage> get displayMessages {
     final hasStreaming = _streamingMessage != null;
     final msgLen = _messages.length;
-    if (msgLen == _cachedMessagesLength && hasStreaming == _cachedHadStreaming) {
+    // 流式期间跳过缓存：_streamingMessage 的内容在变但 _messages.length 不变，
+    // 原缓存逻辑只看 length 和 null 状态，导致流式时永远命中旧缓存。
+    if (!hasStreaming && msgLen == _cachedMessagesLength) {
       return _cachedDisplayMessages;
     }
     _cachedMessagesLength = msgLen;
-    _cachedHadStreaming = hasStreaming;
     if (hasStreaming) {
       _cachedDisplayMessages = [..._messages, _streamingMessage!];
     } else {
@@ -241,9 +246,13 @@ class ChatStore {
   }
 
   // ── stream:agent:text ──────────────────────────────────────────────
+  // 节流：text chunk 先写入 buffer，由定时器统一刷到 UI（~16 FPS），
+  // 避免每个 token 都触发 setState + ListView rebuild。
   void _handleAgentText(dynamic data) {
     if (_isWrongSession(data)) return;
     final content = _extractContent(data);
+    if (content.isEmpty) return;
+
     if (_streamingMessage == null) {
       _setWaiting(false);
       _streamingMessage = ChatMessage(
@@ -253,11 +262,23 @@ class ChatStore {
         isStreaming: true,
       );
       _isStreaming = true;
+      _notifyListeners();
     } else {
-      _streamingMessage = _streamingMessage!.copyWith(
-        content: _streamingMessage!.content + content,
-      );
+      // 累积到 buffer，延迟刷新
+      _textBuffer.write(content);
+      _textFlushTimer ??= Timer(_textFlushInterval, _flushTextBuffer);
     }
+  }
+
+  /// 将 buffer 中的累积文本一次性刷到 _streamingMessage 并通知 UI
+  void _flushTextBuffer() {
+    _textFlushTimer = null;
+    if (_textBuffer.isEmpty || _streamingMessage == null) return;
+    final buffered = _textBuffer.toString();
+    _textBuffer.clear();
+    _streamingMessage = _streamingMessage!.copyWith(
+      content: _streamingMessage!.content + buffered,
+    );
     _notifyListeners();
   }
 
@@ -724,7 +745,12 @@ class ChatStore {
   /// 当传入空列表（清空操作）时递增 _clearGeneration，用于检测后续覆盖。
   /// 当传入非空列表时，如果用户在清空后已发过消息（_lastUserMsgGen > _clearGeneration），
   /// 则跳过覆盖以保护用户输入不被丢弃。
-  void loadFetchedMessages(List<ChatMessage> messages) {
+  ///
+  /// [sessionId] 用于丢弃过期响应：用户快速切换会话时，
+  /// 旧请求的响应如果 sessionId 不匹配当前会话，直接忽略。
+  void loadFetchedMessages(String sessionId, List<ChatMessage> messages) {
+    // 丢弃过期响应：用户已切换到其他会话
+    if (sessionId != _currentSessionId) return;
     if (messages.isEmpty) {
       _clearGeneration++;
       _messages.clear();
@@ -928,6 +954,15 @@ class ChatStore {
   }
 
   void _finalizeStreamingMessage() {
+    // 先刷完 buffer 中残留的文本
+    _textFlushTimer?.cancel();
+    _textFlushTimer = null;
+    if (_textBuffer.isNotEmpty && _streamingMessage != null) {
+      _streamingMessage = _streamingMessage!.copyWith(
+        content: _streamingMessage!.content + _textBuffer.toString(),
+      );
+      _textBuffer.clear();
+    }
     if (_streamingMessage != null) {
       final completed = _streamingMessage!.copyWith(isStreaming: false);
       _messages.add(completed);
@@ -1012,6 +1047,7 @@ class ChatStore {
   }
 
   void dispose() {
+    _textFlushTimer?.cancel();
     _wsSubscription?.cancel();
     _messagesController.close();
     _streamingController.close();

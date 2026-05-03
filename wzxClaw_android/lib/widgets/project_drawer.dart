@@ -610,7 +610,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
           .loadAllSessionMessages(session.id, forceRefresh: true);
       ChatStore.instance.switchToSession(session.id, userInitiated: true);
       if (messages.isNotEmpty) {
-        ChatStore.instance.loadFetchedMessages(messages);
+        ChatStore.instance.loadFetchedMessages(session.id, messages);
       }
     } catch (_) {
       ChatStore.instance.switchToSession(session.id, userInitiated: true);

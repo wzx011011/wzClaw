@@ -26,6 +26,7 @@ import { TodoWriteTool } from '../tools/todo-write'
 import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
 import { maybeTimeBasedMicrocompact } from '../context/microcompact'
 import { ToolResultReplacementState } from '../context/tool-result-storage'
+import { restoreFiles, formatRestoredFilesMessage } from '../context/compact-file-restore'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -158,7 +159,9 @@ export class AgentLoop {
       }
 
       // Time-based microcompact：清理旧工具结果（provider-agnostic，无 API 调用）
-      const mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages())
+      // P3: 从 ContextManager 获取 microcompact 配置，不再使用硬编码默认值
+      const mcConfig = this.contextManager.getMicrocompactConfig()
+      const mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages(), mcConfig)
       if (mcResult.result.didCompact) {
         this.conversation.loadFromExternal(mcResult.messages)
         debugLogger.log('MICROCOMPACT', `cleared ${mcResult.result.clearedCount} old tool results (~${mcResult.result.charsSaved} chars, gap ${Math.round(mcResult.result.gapMinutes)}min)`)
@@ -207,8 +210,8 @@ export class AgentLoop {
           this.toolRegistry.isReadOnly.bind(this.toolRegistry),
         )
       } catch (streamErr) {
-        // 分层错误恢复：
-        //   1. 反应式压缩（保留最近消息，重试）
+        // 分层错误恢复（参考 Claude Code PTL 分组重试）：
+        //   1. Turn-based 逐轮淘汰（从最早的 turn 开始移除，保留最近 2 turns）
         //   2. 降级：移除工具定义，纯对话模式重试（不再调用工具，减少 token）
         //   3. 最终失败
         if (streamErr instanceof PromptTooLongError && reactiveCompactCount < MAX_REACTIVE_COMPACTS) {
@@ -216,9 +219,11 @@ export class AgentLoop {
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('reactive_compact')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
-          const compacted = this.contextManager.reactiveCompact(this.conversation.getMutableMessages())
+          const compacted = this.contextManager.reactiveCompactByTurns(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
           const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
+
+          debugLogger.log('REACTIVE_COMPACT', `PTL turn-based eviction: ${beforeTokens} -> ${afterTokens} tokens`)
 
           if (sender && !sender.isDestroyed()) {
             sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens, afterTokens, auto: true })
@@ -331,6 +336,21 @@ export class AgentLoop {
     if (result.summary) {
       const recentMessages = messages.slice(-result.keptRecentCount)
       this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
+
+      // P0: 压缩后恢复最近引用的文件内容（参考 Claude Code post-compact file restoration）
+      if (result.summarizedMessages.length > 0) {
+        const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
+        const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
+        if (restoredFiles.length > 0) {
+          const filesMsg = formatRestoredFilesMessage(restoredFiles)
+          const fileRestoreMsg: import('../../shared/types').Message = {
+            role: 'user',
+            content: `<system-reminder>\n${filesMsg}\n</system-reminder>`,
+            timestamp: Date.now(),
+          }
+          this.conversation.getMutableMessages().push(fileRestoreMsg)
+        }
+      }
 
       // 压缩后注入当前 todo 列表，确保 LLM 知道还有哪些未完成任务
       const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined

@@ -72,12 +72,13 @@ function createMockPermissionManager(approved: boolean = true) {
 function createMockContextManager() {
   return {
     shouldCompact: vi.fn().mockReturnValue(false),
-    compact: vi.fn().mockResolvedValue({ summary: '', keptRecentCount: 4, beforeTokens: 0, afterTokens: 0 }),
+    compact: vi.fn().mockResolvedValue({ summary: '', keptRecentCount: 4, beforeTokens: 0, afterTokens: 0, summarizedMessages: [] }),
     trackTokenUsage: vi.fn(),
     getContextWindowForModel: vi.fn().mockReturnValue(128000),
     getTotalUsage: vi.fn().mockReturnValue({ inputTokens: 0, outputTokens: 0 }),
     resetUsage: vi.fn(),
-    estimateTokens: vi.fn().mockReturnValue(0)
+    estimateTokens: vi.fn().mockReturnValue(0),
+    getMicrocompactConfig: vi.fn().mockReturnValue({ gapMinutes: 60, keepRecent: 5 }),
   }
 }
 

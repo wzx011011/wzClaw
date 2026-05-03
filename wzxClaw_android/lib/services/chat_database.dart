@@ -193,10 +193,26 @@ class ChatDatabase {
     final db = await _ensureDb();
     final batch = db.batch();
     for (final s in sessions) {
+      // INSERT OR IGNORE: 新会话才插入，已存在的不覆盖（保留 is_synced 等本地状态）
       batch.insert('sessions', s.toDbMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace,);
+          conflictAlgorithm: ConflictAlgorithm.ignore,);
     }
     await batch.commit(noResult: true);
+    // 对所有会话（无论新旧），更新桌面端元数据字段，但不动 is_synced
+    for (final s in sessions) {
+      await db.update(
+        'sessions',
+        {
+          'title': s.title,
+          'updated_at': s.updatedAt,
+          'message_count': s.messageCount,
+          'workspace_path': s.workspacePath,
+          'workspace_name': s.workspaceName,
+        },
+        where: 'id = ?',
+        whereArgs: [s.id],
+      );
+    }
   }
 
   Future<List<SessionMeta>> getSessions({String? workspacePath}) async {

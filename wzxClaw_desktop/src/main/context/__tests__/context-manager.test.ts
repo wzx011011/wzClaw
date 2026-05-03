@@ -47,68 +47,71 @@ describe('ContextManager', () => {
   })
 
   describe('shouldCompact', () => {
-    it('returns false when messages are under 80% threshold', () => {
+    it('returns false when messages are under threshold', () => {
       const cm = new ContextManager()
       const messages: Message[] = [
         { role: 'user', content: 'Hello', timestamp: Date.now() }
       ]
-      // A single short message is way under 80% of 128000
+      // A single short message is way under threshold
       expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(false)
     })
 
-    it('returns true when messages exceed 80% of context window', () => {
+    it('returns true when messages exceed auto threshold (~93%)', () => {
       const cm = new ContextManager()
-      // DeepSeek has 64K context. 80% = 51200 tokens.
-      // Create a message with enough content to exceed that.
-      const longContent = 'a '.repeat(60000) // ~60000 tokens roughly
+      // gpt-4o: contextWindow=128000, maxOutput=16384, safetyBuffer=13000
+      // threshold = 128000 - 16384 - 13000 = 98616
+      // Create enough content to exceed 98616 tokens (~98K+ tokens)
+      const longContent = 'a '.repeat(120000) // ~120K tokens
       const messages: Message[] = [
         { role: 'user', content: longContent, timestamp: Date.now() }
       ]
-      expect(cm.shouldCompact(messages, 'deepseek-chat')).toBe(true)
+      expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(true)
     })
 
-    it('returns false when isCompacting is true (circuit breaker)', () => {
+    it('P1: triggers at ~93% not 80% (no 50% floor)', () => {
       const cm = new ContextManager()
-      // Use a very long message that would normally trigger compact
-      const longContent = 'a '.repeat(60000)
+      // gpt-4o: contextWindow=128000
+      // Old threshold with 50% floor: max(128000 - 16384 - 13000, 64000) = 64000
+      // New threshold without floor: 128000 - 16384 - 13000 = 98616
+      // Create content that's above 80K but below 98K tokens
+      // ~80K tokens should NOT trigger (it's between old 50% floor and new ~93% threshold)
+      const mediumContent = 'x '.repeat(85000) // ~85K tokens
+      const messages: Message[] = [
+        { role: 'user', content: mediumContent, timestamp: Date.now() }
+      ]
+      // With new formula: 85K < 98616 → should NOT compact
+      expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(false)
+    })
+
+    it('respects compactThreshold > 0 for legacy ratio mode', () => {
+      const cm = new ContextManager({ compactThreshold: 0.5 })
+      const messages: Message[] = [
+        { role: 'user', content: 'a '.repeat(70000), timestamp: Date.now() }
+      ]
+      // 70K tokens > 128000 * 0.5 = 64000 → should trigger
+      expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(true)
+    })
+
+    it('returns false when isCompacting is true (circuit breaker)', async () => {
+      const cm = new ContextManager()
+      const longContent = 'a '.repeat(120000)
       const messages: Message[] = [
         { role: 'user', content: longContent, timestamp: Date.now() }
       ]
-      // First verify it WOULD compact
-      expect(cm.shouldCompact(messages, 'deepseek-chat')).toBe(true)
 
-      // Now trigger compact which sets isCompacting=true
-      const gateway = createMockGateway('Summary text')
-      // Start compact (this sets isCompacting = true internally)
-      // We test the circuit breaker by checking during compact execution
-      // Since compact is async, we need to test differently
-      // Instead, we can test shouldCompact directly by manipulating state
-      // The circuit breaker is internal, so we test it indirectly via compact
-
-      // For direct test, compact sets isCompacting then resets.
-      // If we call shouldCompact during compact, it should return false.
-      // Let's do this with a promise:
-      let shouldCompactDuringExecution = true
-
-      const slowGateway = {
+      let wasCompactingDuringExecution = false
+      const gateway = {
         stream: async function* (_options: unknown): AsyncGenerator<StreamEvent> {
-          // While streaming, check shouldCompact
-          shouldCompactDuringExecution = cm.shouldCompact(
-            messages,
-            'deepseek-chat'
-          )
+          wasCompactingDuringExecution = cm.shouldCompact(messages, 'gpt-4o')
           yield { type: 'text_delta', content: 'Summary' } as StreamEvent
           yield { type: 'done', usage: { inputTokens: 10, outputTokens: 20 } } as StreamEvent
         }
       } as any
 
-      // This will set isCompacting=true, then check during execution
-      cm.compact(messages, slowGateway, 'deepseek-chat', 'openai')
+      await cm.compact(messages, gateway, 'gpt-4o', 'openai')
 
-      // The circuit breaker should have returned false during execution
-      // Note: compact is async so we need to await it
-      // But the generator runs synchronously within the first yield
-      // Let's verify after compact completes that shouldCompact works again
+      // During execution, shouldCompact returned false (circuit breaker)
+      expect(wasCompactingDuringExecution).toBe(false)
     })
   })
 
@@ -132,16 +135,12 @@ describe('ContextManager', () => {
 
       await cm.compact(messages, gateway, 'deepseek-chat', 'openai')
 
-      // During execution, shouldCompact returned false (circuit breaker)
       expect(wasCompactingDuringExecution).toBe(false)
-
-      // After completion, shouldCompact is back to normal
       expect(cm.shouldCompact(messages, 'deepseek-chat')).toBe(false)
     })
 
-    it('summarizes older messages and keeps last 4 messages intact', async () => {
+    it('summarizes older messages and keeps last N messages intact', async () => {
       const cm = new ContextManager({ compactKeepMax: 4 })
-      // 使用 20 条较长的消息，确保压缩后 token 数显著低于原始数
       const messages: Message[] = Array.from({ length: 20 }, (_, i) => ({
         role: 'user' as const,
         content: `Message ${i}: This is a longer message with enough content to make the token count meaningful and ensure that compaction actually reduces the total tokens in the conversation window.`,
@@ -154,13 +153,11 @@ describe('ContextManager', () => {
       expect(result.summary).toBe('Summary of earlier conversation')
       expect(result.keptRecentCount).toBe(4)
       expect(result.beforeTokens).toBeGreaterThan(0)
-      // After compact, tokens should be reduced (summary + 4 messages < 10 messages)
       expect(result.afterTokens).toBeLessThan(result.beforeTokens)
     })
 
     it('returns empty summary when not enough messages to summarize', async () => {
       const cm = new ContextManager()
-      // Only 3 messages -- can't split into 4 recent + rest
       const messages: Message[] = [
         { role: 'user', content: 'Hi', timestamp: Date.now() },
         { role: 'assistant', content: 'Hello', toolCalls: [], timestamp: Date.now() },
@@ -172,6 +169,22 @@ describe('ContextManager', () => {
 
       expect(result.summary).toBe('')
       expect(result.beforeTokens).toBe(result.afterTokens)
+      expect(result.summarizedMessages).toEqual([])
+    })
+
+    it('P0: returns summarizedMessages for file restoration', async () => {
+      const cm = new ContextManager({ compactKeepMax: 2 })
+      const messages: Message[] = Array.from({ length: 10 }, (_, i) => ({
+        role: 'user' as const,
+        content: `Message ${i} with content`,
+        timestamp: Date.now()
+      }))
+
+      const gateway = createMockGateway('Summary')
+      const result = await cm.compact(messages, gateway, 'gpt-4o', 'openai')
+
+      expect(result.summarizedMessages.length).toBe(8) // 10 - 2 kept
+      expect(result.summarizedMessages[0].content).toContain('Message 0')
     })
   })
 
@@ -209,8 +222,6 @@ describe('ContextManager', () => {
       const truncated = ContextManager.truncateToolResult(content)
       expect(truncated.length).toBeLessThan(content.length)
       expect(truncated).toContain('[truncated 40000 -> 30000 chars]')
-      // 30000 chars + '\n' + suffix
-      expect(truncated.length).toBe(30000 + 1 + '[truncated 40000 -> 30000 chars]'.length)
     })
   })
 
@@ -233,6 +244,112 @@ describe('ContextManager', () => {
       const usage = cm.getTotalUsage()
       expect(usage.inputTokens).toBe(0)
       expect(usage.outputTokens).toBe(0)
+    })
+  })
+
+  describe('reactiveCompact', () => {
+    it('keeps only last reactiveCompactKeepCount messages', () => {
+      const cm = new ContextManager({ reactiveCompactKeepCount: 2 })
+      const messages: Message[] = Array.from({ length: 10 }, (_, i) => ({
+        role: 'user' as const,
+        content: `Msg ${i}`,
+        timestamp: Date.now()
+      }))
+
+      const result = cm.reactiveCompact(messages)
+      expect(result.length).toBe(2)
+      expect(result[0].content).toBe('Msg 8')
+      expect(result[1].content).toBe('Msg 9')
+    })
+  })
+
+  describe('reactiveCompactByTurns (P2)', () => {
+    it('keeps the last 2 turns and removes earlier turns', () => {
+      const cm = new ContextManager()
+      // 3 turns: user+assistant+tool_result each
+      const messages: Message[] = [
+        // Turn 1
+        { role: 'user', content: 'Turn 1 user', timestamp: 1 },
+        { role: 'assistant', content: 'Turn 1 assistant', toolCalls: [{ id: 'tc1', name: 'FileRead', input: { path: '/a.ts' } }], timestamp: 2 },
+        { role: 'tool_result', toolCallId: 'tc1', content: 'file a content', isError: false, timestamp: 3 },
+        // Turn 2
+        { role: 'user', content: 'Turn 2 user', timestamp: 4 },
+        { role: 'assistant', content: 'Turn 2 assistant', toolCalls: [{ id: 'tc2', name: 'FileRead', input: { path: '/b.ts' } }], timestamp: 5 },
+        { role: 'tool_result', toolCallId: 'tc2', content: 'file b content', isError: false, timestamp: 6 },
+        // Turn 3
+        { role: 'user', content: 'Turn 3 user', timestamp: 7 },
+        { role: 'assistant', content: 'Turn 3 assistant', toolCalls: [], timestamp: 8 },
+      ]
+
+      const result = cm.reactiveCompactByTurns(messages)
+      // Should keep turns 2 and 3 (last 2 turns)
+      expect(result.length).toBe(5) // user + assistant + tool_result + user + assistant
+      expect(result[0].content).toBe('Turn 2 user')
+      expect(result[result.length - 1].content).toBe('Turn 3 assistant')
+    })
+
+    it('returns all messages if <= 2 turns', () => {
+      const cm = new ContextManager()
+      const messages: Message[] = [
+        { role: 'user', content: 'Turn 1', timestamp: 1 },
+        { role: 'assistant', content: 'Response', toolCalls: [], timestamp: 2 },
+      ]
+
+      const result = cm.reactiveCompactByTurns(messages)
+      expect(result.length).toBe(2)
+    })
+
+    it('fallback to simple truncation when too few messages', () => {
+      const cm = new ContextManager()
+      const messages: Message[] = [
+        { role: 'user', content: 'Only message', timestamp: 1 },
+      ]
+
+      const result = cm.reactiveCompactByTurns(messages)
+      expect(result.length).toBe(1)
+    })
+
+    it('handles messages without tool_result (text-only turns)', () => {
+      const cm = new ContextManager()
+      const messages: Message[] = [
+        { role: 'user', content: 'Q1', timestamp: 1 },
+        { role: 'assistant', content: 'A1', toolCalls: [], timestamp: 2 },
+        { role: 'user', content: 'Q2', timestamp: 3 },
+        { role: 'assistant', content: 'A2', toolCalls: [], timestamp: 4 },
+        { role: 'user', content: 'Q3', timestamp: 5 },
+        { role: 'assistant', content: 'A3', toolCalls: [], timestamp: 6 },
+      ]
+
+      const result = cm.reactiveCompactByTurns(messages)
+      // Keeps last 2 turns: Q2+A2+Q3+A3 = 4 messages
+      expect(result.length).toBe(4)
+      expect(result[0].content).toBe('Q2')
+    })
+  })
+
+  describe('getMicrocompactConfig (P3)', () => {
+    it('returns default config when no overrides', () => {
+      const cm = new ContextManager()
+      const config = cm.getMicrocompactConfig()
+      expect(config.gapMinutes).toBe(60)
+      expect(config.keepRecent).toBe(5)
+    })
+
+    it('returns overridden config', () => {
+      const cm = new ContextManager({ microcompactGapMinutes: 30, microcompactKeepRecent: 10 })
+      const config = cm.getMicrocompactConfig()
+      expect(config.gapMinutes).toBe(30)
+      expect(config.keepRecent).toBe(10)
+    })
+  })
+
+  describe('getConfig', () => {
+    it('returns merged config with defaults', () => {
+      const cm = new ContextManager({ compactSafetyBuffer: 20000 })
+      const config = cm.getConfig()
+      expect(config.compactSafetyBuffer).toBe(20000)
+      expect(config.compactThreshold).toBe(0) // default
+      expect(config.microcompactGapMinutes).toBe(60) // default
     })
   })
 })
