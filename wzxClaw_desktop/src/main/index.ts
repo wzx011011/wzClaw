@@ -1321,18 +1321,24 @@ app.whenReady().then(async () => {
   // Send workspace info when mobile connects/reconnects via relay
   relayClient.on('mobile-connected', async () => {
     sendWorkspaceInfoToMobile()
-    // 也推送工作区列表，让手机端能同步最新工作区状态
+    // 也推送工作区列表，让手机端能同步最新工作区状态（使用 WorkspaceStore 而非 recentWorkspaces 历史）
     try {
-      const workspaces = settingsManager.getRecentWorkspaces()
-      const currentRoot = workspaceManager.getWorkspaceRoot()
-      broadcastToMobile('workspace:list:response', {
-        requestId: '',
-        workspaces: workspaces.map(w => ({
-          path: w,
-          name: path.basename(w),
-          isCurrent: w === currentRoot,
-        })),
-      })
+      const tasks = await workspaceStore.listWorkspaces()
+      const enriched = await Promise.all(tasks.map(async (t: any) => {
+        const root = t.projects?.[0]?.path as string | undefined
+        let sessions: any[] = []
+        if (root) {
+          try {
+            const ss = getCachedSessionStore(root)
+            const all = await ss.listSessions()
+            sessions = all
+              .sort((a: any, b: any) => b.updatedAt - a.updatedAt)
+              .slice(0, 10)
+          } catch { /* workspace 可能还没有 sessions 目录 */ }
+        }
+        return { ...t, sessions }
+      }))
+      broadcastToMobile('workspace:list:response', { requestId: '', tasks: enriched })
     } catch {}
     // 广播所有正在运行的会话状态，让手机端同步“其他会话仍在跑”的跟踪
     for (const sid of runtimes.listRunning()) {

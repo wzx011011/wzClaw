@@ -337,22 +337,18 @@ export class AgentLoop {
       const recentMessages = messages.slice(-result.keptRecentCount)
       this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
 
-      // P0: 压缩后恢复最近引用的文件内容（参考 Claude Code post-compact file restoration）
+      // P0: 压缩后恢复最近引用的文件内容 + todo 注入
+      // 合并为单个 user 消息，避免 OpenAI API 拒绝连续 user-role 消息
+      const postCompactParts: string[] = []
+
       if (result.summarizedMessages.length > 0) {
         const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
         const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
         if (restoredFiles.length > 0) {
-          const filesMsg = formatRestoredFilesMessage(restoredFiles)
-          const fileRestoreMsg: import('../../shared/types').Message = {
-            role: 'user',
-            content: `<system-reminder>\n${filesMsg}\n</system-reminder>`,
-            timestamp: Date.now(),
-          }
-          this.conversation.getMutableMessages().push(fileRestoreMsg)
+          postCompactParts.push(formatRestoredFilesMessage(restoredFiles))
         }
       }
 
-      // 压缩后注入当前 todo 列表，确保 LLM 知道还有哪些未完成任务
       const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
       if (todoTool) {
         const currentTodos = todoTool.getCurrentTodos()
@@ -362,14 +358,19 @@ export class AgentLoop {
             const icon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'
             return `${icon} [${t.status}] ${t.content}`
           })
-          const todoReminderMsg: import('../../shared/types').Message = {
-            role: 'user',
-            content: `<system-reminder>\nTask list at time of context compaction:\n${todoLines.join('\n')}\n\nThere are ${unfinished.length} unfinished task(s). Resume from where work stopped — do NOT ask the user to repeat the requirements.\n</system-reminder>`,
-            timestamp: Date.now(),
-          }
-          // 追加到压缩后的对话末尾（不重置，直接 push）
-          this.conversation.getMutableMessages().push(todoReminderMsg)
+          postCompactParts.push(
+            `Task list at time of context compaction:\n${todoLines.join('\n')}\n\nThere are ${unfinished.length} unfinished task(s). Resume from where work stopped — do NOT ask the user to repeat the requirements.`
+          )
         }
+      }
+
+      if (postCompactParts.length > 0) {
+        const postCompactMsg: import('../../shared/types').Message = {
+          role: 'user',
+          content: `<system-reminder>\n${postCompactParts.join('\n\n---\n\n')}\n</system-reminder>`,
+          timestamp: Date.now(),
+        }
+        this.conversation.getMutableMessages().push(postCompactMsg)
       }
 
       return {

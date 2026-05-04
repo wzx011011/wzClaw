@@ -13,6 +13,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import 'android_foreground_keepalive.dart';
+import 'session_sync_service.dart';
 import 'ws_transport.dart';
 
 /// Singleton WebSocket connection manager for wzxClaw Android.
@@ -405,6 +406,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _startHeartbeat();
       _startIdleMonitor();
       _syncSelectedDesktopTarget();
+      // 通知 SessionSyncService 刷新数据（后台期间桌面可能新增了消息）
+      SessionSyncService.instance.onAppForegrounded();
       return;
     }
 

@@ -68,19 +68,39 @@ describe('ContextManager', () => {
       expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(true)
     })
 
-    it('P1: triggers at ~93% not 80% (no 50% floor)', () => {
+    it('P1: triggers at ~93% not 80% (70% floor for small models)', () => {
       const cm = new ContextManager()
       // gpt-4o: contextWindow=128000
-      // Old threshold with 50% floor: max(128000 - 16384 - 13000, 64000) = 64000
-      // New threshold without floor: 128000 - 16384 - 13000 = 98616
-      // Create content that's above 80K but below 98K tokens
-      // ~80K tokens should NOT trigger (it's between old 50% floor and new ~93% threshold)
+      // Formula: 128000 - 16384 - 13000 = 98616
+      // 70% floor: 128000 * 0.7 = 89600
+      // Math.max(98616, 89600) = 98616 — formula wins
+      // ~85K tokens should NOT trigger
       const mediumContent = 'x '.repeat(85000) // ~85K tokens
       const messages: Message[] = [
         { role: 'user', content: mediumContent, timestamp: Date.now() }
       ]
-      // With new formula: 85K < 98616 → should NOT compact
       expect(cm.shouldCompact(messages, 'gpt-4o')).toBe(false)
+    })
+
+    it('applies 70% floor for small context models (DeepSeek)', () => {
+      const cm = new ContextManager()
+      // deepseek-chat: contextWindow=64000
+      // Formula: 64000 - 16384 - 13000 = 34616 (~54%, too aggressive)
+      // 70% floor: 64000 * 0.7 = 44800
+      // Math.max(34616, 44800) = 44800 — floor wins
+      // Content at ~40K should NOT trigger (below 70% floor)
+      const content40k = 'a '.repeat(40000)
+      const messages: Message[] = [
+        { role: 'user', content: content40k, timestamp: Date.now() }
+      ]
+      expect(cm.shouldCompact(messages, 'deepseek-chat')).toBe(false)
+
+      // Content at ~50K should trigger (above 70% floor of 44800)
+      const content50k = 'a '.repeat(50000)
+      const messages2: Message[] = [
+        { role: 'user', content: content50k, timestamp: Date.now() }
+      ]
+      expect(cm.shouldCompact(messages2, 'deepseek-chat')).toBe(true)
     })
 
     it('respects compactThreshold > 0 for legacy ratio mode', () => {
@@ -324,6 +344,31 @@ describe('ContextManager', () => {
       // Keeps last 2 turns: Q2+A2+Q3+A3 = 4 messages
       expect(result.length).toBe(4)
       expect(result[0].content).toBe('Q2')
+    })
+
+    it('merges system-reminder user messages into the preceding turn', () => {
+      const cm = new ContextManager()
+      const messages: Message[] = [
+        // Turn 1
+        { role: 'user', content: 'Q1', timestamp: 1 },
+        { role: 'assistant', content: 'A1', toolCalls: [{ id: 'tc1', name: 'FileRead', input: { path: '/a.ts' } }], timestamp: 2 },
+        { role: 'tool_result', toolCallId: 'tc1', content: 'a content', isError: false, timestamp: 3 },
+        // Turn 2 with system-reminder injected
+        { role: 'user', content: 'Q2', timestamp: 4 },
+        { role: 'assistant', content: 'A2', toolCalls: [], timestamp: 5 },
+        { role: 'user', content: '<system-reminder>\nFile restored content\n</system-reminder>', timestamp: 6 },
+        // Turn 3
+        { role: 'user', content: 'Q3', timestamp: 7 },
+        { role: 'assistant', content: 'A3', toolCalls: [], timestamp: 8 },
+      ]
+
+      const result = cm.reactiveCompactByTurns(messages)
+      // Turn 2 includes Q2 + A2 + system-reminder (merged), Turn 3 = Q3 + A3
+      // Total kept = 5 messages
+      expect(result.length).toBe(5)
+      expect(result[0].content).toBe('Q2')
+      // system-reminder should be in the kept messages
+      expect(result.some(m => m.content.includes('system-reminder'))).toBe(true)
     })
   })
 

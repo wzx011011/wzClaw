@@ -88,9 +88,12 @@ export class SessionStore {
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     const content = messages.map(msg => JSON.stringify(msg)).join('\n') + '\n'
     // 串行化：等前一次写完再写
+    // 锁链中记录错误但不中断后续写入；调用方通过 await next 获取自身写入的错误
     const pending = this._writeLocks.get(sessionId) ?? Promise.resolve()
-    const next = pending.then(() => fsp.appendFile(filePath, content, 'utf-8'))
-    this._writeLocks.set(sessionId, next.catch(() => {}))
+    let resolveLock!: () => void
+    const lockPromise = new Promise<void>(r => { resolveLock = r })
+    const next = pending.then(() => fsp.appendFile(filePath, content, 'utf-8')).finally(() => resolveLock())
+    this._writeLocks.set(sessionId, lockPromise)
     await next
   }
 

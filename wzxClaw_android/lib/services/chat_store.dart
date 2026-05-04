@@ -724,13 +724,19 @@ class ChatStore {
     _messages.clear();
     _persistSessionView(sessionId);
 
-    if (sessionId != null) {
+    // 用户主动切换时，不从本地缓存加载——调用方会通过 loadFetchedMessages
+    // 注入从桌面拉取的最新数据，避免先显示旧缓存再闪烁刷新。
+    if (userInitiated && sessionId != null) {
+      _isBrowsingHistory = true;
+      _notifyListeners();
+    } else if (sessionId != null) {
       _isBrowsingHistory = true;
       final messages = await ChatDatabase.instance.getSessionMessages(
         sessionId,
         limit: 100,
       );
       _messages.addAll(messages);
+      _notifyListeners();
     } else {
       _isBrowsingHistory = false;
       _messages.addAll(await ChatDatabase.instance.getMessages(

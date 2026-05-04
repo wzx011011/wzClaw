@@ -146,6 +146,11 @@ class SessionSyncService {
   // 同一个 sessionId 的并发 loadAll 请求合并为一次，避免重复写 DB。
   final Map<String, Future<List<ChatMessage>>> _inflightLoadAll = {};
 
+  // 清空会话后的冷却期：此期间内忽略对该会话的自动消息同步，
+  // 防止清完立刻被 session:changed / fetchSessions 回填。
+  String? _clearedSessionId;
+  DateTime? _clearedAt;
+
   List<SessionMeta> get sessions => List.unmodifiable(_sessions);
   String? get activeSessionId => _activeSessionId;
   WorkspaceInfo? get workspaceInfo => _workspaceInfo;
@@ -371,7 +376,11 @@ class SessionSyncService {
       _activeSessionController.add(_activeSessionId);
       // BUG-2/3 修复：桌面新增消息后，自动刷新当前会话内容。
       // 仅在非流式状态下刷新，避免打断正在进行的 agent 输出。
-      if (!ChatStore.instance.isStreaming) {
+      // 冷却期检查：清空会话后 5 秒内不自动回填。
+      final inCooldown = _clearedSessionId == currentSessionId &&
+          _clearedAt != null &&
+          DateTime.now().difference(_clearedAt!).inSeconds < 5;
+      if (!ChatStore.instance.isStreaming && !inCooldown) {
         final desktopSession = sessions
             .where((s) => s.id == currentSessionId)
             .firstOrNull;
@@ -858,13 +867,13 @@ class SessionSyncService {
   Future<void> clearLocalCache() async {
     // ignore: avoid_print
     print('[SyncDiag] clearLocalCache: start');
+
     // 1. 清空 SQLite 缓存
     try {
       await ChatDatabase.instance.clearAll();
     } catch (e) {
       // ignore: avoid_print
       print('[SyncDiag] clearLocalCache: db error $e');
-      // ignore — 即便 DB 失败也继续重置内存状态
     }
 
     // 2. 失效内存中的会话与活动会话
@@ -877,11 +886,25 @@ class SessionSyncService {
     // 3. 清空 ChatStore 视图，让 UI 立刻显示空白
     ChatStore.instance.resetSessionScope();
 
-    // 4. 若已连接桌面，立即重新拉取（_isLoading 为 false 时才会真正发出请求）
+    // 4. 不自动 fetchSessions — 用户清缓存就是为了清空，
+    //    下次手动切换会话或重连时自然会重新拉取。
+    _isLoading = false;
     // ignore: avoid_print
-    print('[SyncDiag] clearLocalCache: triggering fetchSessions');
-    _isLoading = false; // 清理之后强制允许下一次 fetch
-    fetchSessions();
+    print('[SyncDiag] clearLocalCache: done, cache cleared without auto-sync');
+  }
+
+  /// 设置清空会话后的冷却标记，5 秒内忽略对该会话的自动消息同步。
+  void setClearCooldown(String sessionId) {
+    _clearedSessionId = sessionId;
+    _clearedAt = DateTime.now();
+  }
+
+  /// App 从后台切回前台时调用：刷新当前会话消息。
+  void onAppForegrounded() {
+    final currentId = ChatStore.instance.currentSessionId;
+    if (currentId != null && !ChatStore.instance.isStreaming) {
+      unawaited(loadAllSessionMessages(currentId, forceRefresh: true));
+    }
   }
 
   /// Create a new session on the desktop.

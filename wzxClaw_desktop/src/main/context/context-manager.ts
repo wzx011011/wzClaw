@@ -80,8 +80,12 @@ export class ContextManager {
 
     // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
     // 参考 Claude Code：~93% 触发（safetyBuffer 13K + maxOutputTokens）
+    // 保底下限：至少利用 70% 的 context window 再压缩，避免小窗口模型过早触发
     const maxOutputTokens = this.getMaxOutputTokensForModel(modelId)
-    const threshold = contextWindow - maxOutputTokens - this.config.compactSafetyBuffer
+    const threshold = Math.max(
+      contextWindow - maxOutputTokens - this.config.compactSafetyBuffer,
+      contextWindow * 0.7
+    )
     return tokens > threshold
   }
 
@@ -259,32 +263,34 @@ Provide a detailed summary following the sections above. Be especially thorough 
 }
 
 /**
- * 按轮次分组消息。一轮 = 一条 assistant 消息 + 其后连续的 tool_result 消息。
- * user 消息单独成一组（作为下一轮的起始）。
+ * 按轮次分组消息。一轮 = user 消息 + 后续 assistant + tool_result 消息。
+ * 连续的 user 消息（如 system-reminder 注入）合并到前一组，
+ * 避免将逻辑上属于同一轮的消息拆成多个 turn。
  */
+function isSystemReminder(msg: Message): boolean {
+  return typeof msg.content === 'string' &&
+    msg.content.startsWith('<system-reminder>')
+}
+
 function groupMessagesByTurns(messages: Message[]): Message[][] {
   const turns: Message[][] = []
   let currentTurn: Message[] = []
 
   for (const msg of messages) {
     if (msg.role === 'user') {
-      // 用户消息开启新的一组
+      // system-reminder 的 user 消息合并到当前组（不属于新的一轮）
+      if (isSystemReminder(msg) && currentTurn.length > 0) {
+        currentTurn.push(msg)
+        continue
+      }
+      // 真正的用户消息开启新的一组
       if (currentTurn.length > 0) {
         turns.push(currentTurn)
       }
       currentTurn = [msg]
     } else if (msg.role === 'assistant') {
-      // assistant 消息开启新的一组（如果当前组没有 user 消息作为开头）
-      if (currentTurn.length > 0 && currentTurn[0].role !== 'user') {
-        turns.push(currentTurn)
-        currentTurn = []
-      }
-      // 如果当前组以 user 开头，assistant 是同组的一部分
-      if (currentTurn.length > 0 && currentTurn[0].role === 'user') {
-        currentTurn.push(msg)
-      } else {
-        currentTurn = [msg]
-      }
+      // assistant 消息归入当前组（紧跟 user 消息）
+      currentTurn.push(msg)
     } else if (msg.role === 'tool_result') {
       // tool_result 归入当前 assistant 所在的组
       currentTurn.push(msg)

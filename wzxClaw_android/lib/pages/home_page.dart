@@ -48,6 +48,7 @@ class _ChatPageState extends State<ChatPage> {
   int _previousGroupCount = 0;
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
+  bool _sessionJustSwitched = false;
   String? _desktopIdentity;
   String? _workspaceName;
   PermissionRequest? _permissionRequest;
@@ -94,13 +95,17 @@ class _ChatPageState extends State<ChatPage> {
         final curSid = ChatStore.instance.currentSessionId;
         if (curSid != _lastRenderedSessionId) {
           _lastRenderedSessionId = curSid;
+          _sessionJustSwitched = true;
           _showScrollFab = false;
           _slashSuggestions = [];
           _permissionRequest = null;
           _inputController.clear();
         }
         setState(() => _displayMessages = msgs);
-        if (_isStreaming && !_showScrollFab) _scrollToBottom();
+        if ((_isStreaming || _sessionJustSwitched) && !_showScrollFab && msgs.isNotEmpty) {
+          _scrollToBottom();
+          _sessionJustSwitched = false;
+        }
       }
     });
 
@@ -225,6 +230,8 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: () {
               Navigator.pop(ctx);
               ChatStore.instance.clearCurrentSessionMessages();
+              // 设置冷却标记：5 秒内忽略对该会话的自动消息同步
+              SessionSyncService.instance.setClearCooldown(sessionId);
               ConnectionManager.instance.send(WsMessage(
                 event: WsEvents.sessionClearRequest,
                 data: {'sessionId': sessionId},
@@ -315,6 +322,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: colors.bgPrimary,
       onDrawerChanged: (opened) {
         if (opened) _inputFocusNode.unfocus();
@@ -942,7 +950,7 @@ class _ChatPageState extends State<ChatPage> {
         final isConnected = state == WsConnectionState.connected;
 
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + MediaQuery.of(context).viewInsets.bottom),
           decoration: BoxDecoration(
             color: colors.bgSecondary,
             border: Border(top: BorderSide(color: colors.border, width: 0.5)),
