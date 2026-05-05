@@ -119,6 +119,11 @@ void main() {
   });
 
   group('ChatStore loadFetchedMessages', () {
+    setUp(() {
+      final store = ChatStore.instance;
+      store.currentSessionId = 'test-session';
+    });
+
     test('clearing with empty list does not throw', () {
       final store = ChatStore.instance;
       // Should not throw — this increments _clearGeneration and clears messages
@@ -455,6 +460,11 @@ void main() {
   // Bug 4 fix: loadFetchedMessages guard with corrected +1 generation
   // ══════════════════════════════════════════════════════════════════
   group('ChatStore loadFetchedMessages guard (Bug 4 fix)', () {
+    setUp(() {
+      final store = ChatStore.instance;
+      store.currentSessionId = 'test-session';
+    });
+
     test('messages ARE loaded when no user message sent after clear', () {
       final store = ChatStore.instance;
       store.loadFetchedMessages('test-session', []);
