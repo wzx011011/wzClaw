@@ -54,6 +54,13 @@ export interface AgentTurnEndEvent {
   type: 'agent:turn_end'
 }
 
+export interface AgentToolProgressEvent {
+  type: 'agent:tool_progress'
+  toolCallId: string
+  toolName: string
+  message: string
+}
+
 export type AgentEvent =
   | AgentTextEvent
   | AgentThinkingEvent
@@ -63,6 +70,7 @@ export type AgentEvent =
   | AgentDoneEvent
   | AgentCompactedEvent
   | AgentTurnEndEvent
+  | AgentToolProgressEvent
 
 // ============================================================
 // Agent Configuration

@@ -289,7 +289,7 @@ app.whenReady().then(async () => {
   cleanOldMediaFiles().catch(() => {})
 
   // Load persisted settings for embedding API config
-  settingsManager.load()
+  await settingsManager.load()
   logStartup('settingsManager loaded')
 
   // Initialize deferred services (after app is ready, before window creation)
@@ -1518,10 +1518,12 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  // Persist alwaysAllow permission rules for next session
+  // Persist alwaysAllow permission rules for next session + flush pending settings
   if (permissionManager) {
     settingsManager.saveAlwaysAllowRules(permissionManager.getAlwaysAllowRules())
   }
+  // 确保防抖中的设置刷盘（同步版 — 退出时不能等异步）
+  void settingsManager.flush()
   // Dispose indexing engine
   if (indexingEngine) {
     indexingEngine.dispose()

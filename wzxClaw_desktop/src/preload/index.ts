@@ -28,6 +28,11 @@ const api = {
     ipcRenderer.on('stream:tool_use_end', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_end', handler)
   },
+  onStreamToolProgress: (callback: (payload: { toolCallId: string; toolName: string; message: string }) => void) => {
+    const handler = (_: unknown, payload: { toolCallId: string; toolName: string; message: string }) => callback(payload)
+    ipcRenderer.on('stream:tool_progress', handler)
+    return () => ipcRenderer.removeListener('stream:tool_progress', handler)
+  },
   onStreamEnd: (callback: (payload: { usage: { inputTokens: number; outputTokens: number } }) => void) => {
     const handler = (_: unknown, payload: { usage: { inputTokens: number; outputTokens: number } }) => callback(payload)
     ipcRenderer.on('stream:done', handler)

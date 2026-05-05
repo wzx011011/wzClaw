@@ -125,12 +125,6 @@ export class AgentLoop {
     let stopHookCooldown = 0  // 防止 blockingError → stop hook → 无限循环
     let idleTimeoutRetried = false  // stream idle timeout 重试标记（仅重试一次）
 
-    // 输出 token 收益递减检测（参考 Claude Code tokenBudget.ts）
-    // 连续 N 轮每轮输出 <500 token → 模型无实质进展，强制停止
-    const recentOutputTokens: number[] = []
-    const DIMINISHING_THRESHOLD = 500
-    const DIMINISHING_WINDOW = 3
-
     // ---- 主循环 ----
     // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
     //   1. LLM 不再调用工具 (shouldStop)
@@ -347,24 +341,6 @@ export class AgentLoop {
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
-
-      // 输出 token 收益递减检测：连续 N 轮输出极低 → 模型空转
-      // 注意：放在 shouldStop 之后，只在 loop 会继续时才检测
-      // 子 Agent 有 maxTurns 限制，不需要此检测（避免先于 maxTurns 触发）
-      if (!maxTurns) {
-        recentOutputTokens.push(turnResult.usage.outputTokens)
-        if (recentOutputTokens.length > DIMINISHING_WINDOW) recentOutputTokens.shift()
-        if (recentOutputTokens.length >= DIMINISHING_WINDOW &&
-            recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD)) {
-          debugLogger.log('EXIT', `{ reason: 'diminishing_returns', turnCount: ${turnCount}, outputTokens: [${recentOutputTokens.join(',')}] }`)
-          debugLogger.close()
-          yield { type: 'agent:error', error: 'Agent appears stuck — very low output across recent turns. Stopping.', recoverable: true }
-          yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-          endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
-          await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
-          return
-        }
-      }
     }
     } finally {
       this._running = false
@@ -390,7 +366,7 @@ export class AgentLoop {
 
       if (result.summarizedMessages.length > 0) {
         const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
-        const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
+        const restoredFiles = await restoreFiles(result.summarizedMessages, workingDir)
         if (restoredFiles.length > 0) {
           postCompactParts.push(formatRestoredFilesMessage(restoredFiles))
         }

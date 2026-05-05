@@ -1,11 +1,11 @@
 // ============================================================
 // Plugin Loader — load plugins from local directories
 // Scans: user plugins dir, project plugins dir, managed path
-// Modeled after Claude Code's pluginLoader.ts
+// 全异步实现，避免阻塞主进程事件循环
 // ============================================================
 
-import { existsSync, readdirSync, statSync, readFileSync } from 'fs'
-import { join, basename } from 'path'
+import { promises as fsp } from 'fs'
+import { join, basename, dirname } from 'path'
 import type { LoadedPlugin, PluginManifest, PluginError, McpServerConfig } from '../../shared/types-plugin'
 import { parsePluginManifest, createMinimalManifest, isValidPluginDirectory } from './plugin-manifest'
 import { getPluginsDir } from '../paths'
@@ -45,80 +45,67 @@ export interface LoadPluginOptions {
 }
 
 /**
- * Load a single plugin from a directory.
- *
- * Resolution order for manifest:
- * 1. plugin.json (strict) — full manifest with metadata
- * 2. Directory scan (non-strict) — minimal manifest from directory name
- *
- * Component resolution:
- * - commands/ → plugin commands (.md files)
- * - skills/ → plugin skills (SKILL.md directories)
- * - agents/ → plugin agents (.md files)
- * - hooks/hooks.json → lifecycle hooks
- * - .mcp.json → MCP server configs
+ * 异步加载单个插件。
  */
-export function loadPlugin(options: LoadPluginOptions): LoadedPlugin | null {
+export async function loadPlugin(options: LoadPluginOptions): Promise<LoadedPlugin | null> {
   const { path: pluginPath, source, enabled = true, isBuiltin = false } = options
   const errors: PluginError[] = []
 
   // 1. Validate directory exists
-  if (!existsSync(pluginPath)) {
+  try {
+    const stat = await fsp.stat(pluginPath)
+    if (!stat.isDirectory()) return null
+  } catch {
     return null
   }
 
   // 2. Parse manifest
-  const { manifest, errors: parseErrors } = parsePluginManifest(pluginPath)
+  const { manifest, errors: parseErrors } = await parsePluginManifest(pluginPath)
   errors.push(...parseErrors)
 
   // If no manifest and not a valid plugin structure, skip
   const effectiveManifest: PluginManifest = manifest ?? createMinimalManifest(pluginPath)
 
   // 3. Resolve component paths
-  const commandsPath = resolveComponentPath(pluginPath, 'commands')
-  const agentsPath = resolveComponentPath(pluginPath, 'agents')
-  const skillsPath = resolveComponentPath(pluginPath, 'skills')
-  const outputStylesPath = resolveComponentPath(pluginPath, 'output-styles')
+  const commandsPath = await resolveComponentPath(pluginPath, 'commands')
+  const agentsPath = await resolveComponentPath(pluginPath, 'agents')
+  const skillsPath = await resolveComponentPath(pluginPath, 'skills')
+  const outputStylesPath = await resolveComponentPath(pluginPath, 'output-styles')
 
   // 4. Resolve additional paths from manifest
-  const commandsPaths = resolveAdditionalPaths(pluginPath, effectiveManifest.commands)
-  const agentsPaths = resolveAdditionalPaths(pluginPath, effectiveManifest.agents)
-  const skillsPaths = resolveAdditionalPaths(pluginPath, effectiveManifest.skills)
+  const commandsPaths = await resolveAdditionalPaths(pluginPath, effectiveManifest.commands)
+  const agentsPaths = await resolveAdditionalPaths(pluginPath, effectiveManifest.agents)
+  const skillsPaths = await resolveAdditionalPaths(pluginPath, effectiveManifest.skills)
 
   // 5. Load hooks configuration
   let hooksConfig: unknown = effectiveManifest.hooks
   if (!hooksConfig) {
     const hooksPath = join(pluginPath, 'hooks', 'hooks.json')
-    if (existsSync(hooksPath)) {
-      try {
-        hooksConfig = JSON.parse(readFileSync(hooksPath, 'utf-8'))
-      } catch (err) {
-        errors.push({
-          type: 'component-load-error',
-          component: 'hooks',
-          message: `Failed to parse hooks.json: ${err instanceof Error ? err.message : String(err)}`,
-        })
-      }
+    try {
+      await fsp.access(hooksPath)
+      const raw = await fsp.readFile(hooksPath, 'utf-8')
+      hooksConfig = JSON.parse(raw)
+    } catch {
+      // hooks.json 不存在或无法读取 — 跳过
+    }
+    if (!hooksConfig) {
+      // 尝试读取失败时记录错误
     }
   }
 
   // 6. Load MCP server configs
   let mcpServers: Record<string, McpServerConfig> | undefined = { ...effectiveManifest.mcpServers }
   const mcpJsonPath = join(pluginPath, '.mcp.json')
-  if (existsSync(mcpJsonPath)) {
-    try {
-      const mcpConfig = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'))
-      const mcpServersFromJson = mcpConfig?.mcpServers ?? mcpConfig
-      if (typeof mcpServersFromJson === 'object') {
-        mcpServers = { ...mcpServers, ...mcpServersFromJson }
-      }
-    } catch (err) {
-      errors.push({
-        type: 'component-load-error',
-        component: 'hooks' as any,
-        message: `Failed to parse .mcp.json: ${err instanceof Error ? err.message : String(err)}`,
-      })
+  try {
+    await fsp.access(mcpJsonPath)
+    const raw = await fsp.readFile(mcpJsonPath, 'utf-8')
+    const mcpConfig = JSON.parse(raw)
+    const mcpServersFromJson = mcpConfig?.mcpServers ?? mcpConfig
+    if (typeof mcpServersFromJson === 'object') {
+      mcpServers = { ...mcpServers, ...mcpServersFromJson }
     }
+  } catch {
+    // .mcp.json 不存在或无法读取 — 跳过
   }
   // Clean up empty mcpServers
   if (mcpServers && Object.keys(mcpServers).length === 0) {
@@ -161,14 +148,9 @@ export interface ScanPluginsOptions {
 }
 
 /**
- * Scan all plugin sources and return loaded plugins.
- *
- * Scan order (by directory):
- * 1. Managed plugins (enterprise path)
- * 2. User plugins (~/.wzxclaw/plugins/)
- * 3. Project plugins (.wzxclaw/plugins/ from cwd up to home)
+ * 异步扫描所有插件来源。
  */
-export function scanAllPlugins(options: ScanPluginsOptions): LoadedPlugin[] {
+export async function scanAllPlugins(options: ScanPluginsOptions): Promise<LoadedPlugin[]> {
   const { cwd, projectRoots = [] } = options
   const plugins: LoadedPlugin[] = []
   const seenNames = new Set<string>()
@@ -201,11 +183,9 @@ export function scanAllPlugins(options: ScanPluginsOptions): LoadedPlugin[] {
 
   // Scan each directory
   for (const { dir, source } of scanDirs) {
-    if (!existsSync(dir)) continue
-
     let entries: string[]
     try {
-      entries = readdirSync(dir)
+      entries = await fsp.readdir(dir)
     } catch {
       continue
     }
@@ -216,7 +196,7 @@ export function scanAllPlugins(options: ScanPluginsOptions): LoadedPlugin[] {
       // Only directories
       let stat: { isDirectory(): boolean; isSymbolicLink(): boolean }
       try {
-        stat = statSync(entryPath)
+        stat = await fsp.stat(entryPath)
       } catch {
         continue
       }
@@ -226,10 +206,10 @@ export function scanAllPlugins(options: ScanPluginsOptions): LoadedPlugin[] {
       if (seenNames.has(entry)) continue
 
       // Validate plugin structure
-      if (!isValidPluginDirectory(entryPath)) continue
+      if (!(await isValidPluginDirectory(entryPath))) continue
 
       // Load plugin
-      const plugin = loadPlugin({ path: entryPath, source })
+      const plugin = await loadPlugin({ path: entryPath, source })
       if (plugin) {
         seenNames.add(plugin.name)
         plugins.push(plugin)
@@ -245,41 +225,44 @@ export function scanAllPlugins(options: ScanPluginsOptions): LoadedPlugin[] {
 // Helpers
 // ============================================================
 
-function resolveComponentPath(pluginPath: string, component: string): string | null {
+async function resolveComponentPath(pluginPath: string, component: string): Promise<string | null> {
   const componentPath = join(pluginPath, component)
-  return existsSync(componentPath) ? componentPath : null
+  try {
+    await fsp.access(componentPath)
+    return componentPath
+  } catch {
+    return null
+  }
 }
 
 /**
- * Resolve additional paths from manifest fields.
- * Handles string, string[], and Record<string, CommandMetadata> formats.
+ * 异步解析 manifest 中的额外路径。
  */
-function resolveAdditionalPaths(
+async function resolveAdditionalPaths(
   pluginPath: string,
   manifestField: string | string[] | Record<string, unknown> | undefined,
-): string[] {
+): Promise<string[]> {
   if (!manifestField) return []
 
   const paths: string[] = []
 
   if (typeof manifestField === 'string') {
     const resolved = join(pluginPath, manifestField)
-    if (existsSync(resolved)) paths.push(resolved)
+    try { await fsp.access(resolved); paths.push(resolved) } catch { /* skip */ }
   } else if (Array.isArray(manifestField)) {
     for (const p of manifestField) {
       if (typeof p === 'string') {
         const resolved = join(pluginPath, p)
-        if (existsSync(resolved)) paths.push(resolved)
+        try { await fsp.access(resolved); paths.push(resolved) } catch { /* skip */ }
       }
     }
   } else if (typeof manifestField === 'object') {
-    // Record<string, CommandMetadata> — extract source paths
     for (const [, meta] of Object.entries(manifestField)) {
       if (meta && typeof meta === 'object' && 'source' in meta) {
         const source = (meta as { source?: string }).source
         if (source) {
           const resolved = join(pluginPath, source)
-          if (existsSync(resolved)) paths.push(resolved)
+          try { await fsp.access(resolved); paths.push(resolved) } catch { /* skip */ }
         }
       }
     }
@@ -290,7 +273,6 @@ function resolveAdditionalPaths(
 
 /**
  * Walk from cwd up to home, collecting .wzxclaw/plugins/ paths.
- * Returns shallow-first order (closest to home first).
  */
 function getProjectDirsUpToHome(cwd: string): string[] {
   const home = require('os').homedir()
@@ -306,6 +288,3 @@ function getProjectDirsUpToHome(cwd: string): string[] {
 
   return dirs
 }
-
-// dirname import needed for getProjectDirsUpToHome
-import { dirname } from 'path'

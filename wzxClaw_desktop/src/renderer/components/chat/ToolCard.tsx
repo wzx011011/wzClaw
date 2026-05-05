@@ -15,6 +15,8 @@ interface ToolCallInfo {
   input?: Record<string, unknown>
   output?: string
   isError?: boolean
+  /** Tool execution progress message */
+  progress?: string
   /** Nested tool calls from a sub-agent (Agent tool only) */
   children?: ToolCallInfo[]
   /** Accumulated streaming text from sub-agent (progress indicator) */
@@ -475,6 +477,10 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
           </span>
         </div>
       </div>
+      {/* 工具进度提示（仅在 running 时显示） */}
+      {toolCall.progress && status === 'running' && (
+        <div className="tool-card-progress">{toolCall.progress}</div>
+      )}
       {expanded && (
         <div className="tool-card-details">
           {/* ExitPlanMode: plan text is displayed in ChatPanel — suppress here */}
@@ -596,6 +602,7 @@ function areToolCardPropsEqual(prev: ToolCardProps, next: ToolCardProps): boolea
     p.output === n.output &&
     p.isError === n.isError &&
     p.subText === n.subText &&
+    p.progress === n.progress &&
     p.children === n.children
   )
 }

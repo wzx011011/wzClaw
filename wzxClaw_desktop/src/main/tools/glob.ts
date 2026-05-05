@@ -62,7 +62,7 @@ Usage:
       const regex = globToRegex(pattern)
       const results: string[] = []
 
-      matchDirectory(dir, dir, regex, results)
+      await matchDirectory(dir, dir, regex, results, context.onProgress)
 
       let output = results.join('\n')
 
@@ -104,17 +104,19 @@ function globToRegex(glob: string): RegExp {
 }
 
 /**
- * Recursively walk directories and collect matching file paths.
+ * 异步递归遍历目录，收集匹配的文件路径。
+ * 使用 fs.promises 避免阻塞主进程事件循环。
  */
-function matchDirectory(
+async function matchDirectory(
   rootDir: string,
   currentDir: string,
   regex: RegExp,
-  results: string[]
-): void {
+  results: string[],
+  onProgress?: (msg: string) => void
+): Promise<void> {
   let entries: fs.Dirent[]
   try {
-    entries = fs.readdirSync(currentDir, { withFileTypes: true })
+    entries = await fs.promises.readdir(currentDir, { withFileTypes: true })
   } catch {
     return // Skip directories we can't read
   }
@@ -134,7 +136,8 @@ function matchDirectory(
       if (regex.test(relativePath + '/')) {
         results.push(relativePath + '/')
       }
-      matchDirectory(rootDir, fullPath, regex, results)
+      onProgress?.(`Scanning ${fullPath.replace(/\\/g, '/')}...`)
+      await matchDirectory(rootDir, fullPath, regex, results, onProgress)
     } else if (entry.isFile()) {
       if (regex.test(relativePath)) {
         results.push(relativePath)

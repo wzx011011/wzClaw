@@ -31,7 +31,7 @@ export class MCPManager {
    * Load MCP server configurations from disk and connect to them.
    */
   async loadAndConnect(): Promise<void> {
-    const configs = this.loadConfig()
+    const configs = await this.loadConfig()
     for (const config of configs) {
       try {
         await this.connectServer(config)
@@ -81,7 +81,7 @@ export class MCPManager {
    */
   async addServer(config: MCPServerConfig): Promise<void> {
     // Save to config file
-    const fileConfig = this.loadConfigFile()
+    const fileConfig = await this.loadConfigFile()
     if (!fileConfig.mcpServers) fileConfig.mcpServers = {}
     fileConfig.mcpServers[config.name] = {
       command: config.command,
@@ -90,7 +90,7 @@ export class MCPManager {
       transport: config.transport,
       env: config.env
     }
-    this.saveConfigFile(fileConfig)
+    await this.saveConfigFile(fileConfig)
 
     // Connect
     await this.connectServer(config)
@@ -99,22 +99,22 @@ export class MCPManager {
   /**
    * Remove a server config from disk and disconnect.
    */
-  removeServer(name: string): void {
+  async removeServer(name: string): Promise<void> {
     this.disconnectServer(name)
 
     // Remove from config file
-    const fileConfig = this.loadConfigFile()
+    const fileConfig = await this.loadConfigFile()
     if (fileConfig.mcpServers) {
       delete fileConfig.mcpServers[name]
-      this.saveConfigFile(fileConfig)
+      await this.saveConfigFile(fileConfig)
     }
   }
 
   /**
    * List all configured servers and their status.
    */
-  listServers(): Array<{ name: string; transport: string; connected: boolean }> {
-    const configs = this.loadConfig()
+  async listServers(): Promise<Array<{ name: string; transport: string; connected: boolean }>> {
+    const configs = await this.loadConfig()
     return configs.map((c) => ({
       name: c.name,
       transport: c.transport,
@@ -151,8 +151,8 @@ export class MCPManager {
     this.clients.clear()
   }
 
-  private loadConfig(): MCPServerConfig[] {
-    const fileConfig = this.loadConfigFile()
+  private async loadConfig(): Promise<MCPServerConfig[]> {
+    const fileConfig = await this.loadConfigFile()
     if (!fileConfig.mcpServers) return []
 
     return Object.entries(fileConfig.mcpServers).map(([name, cfg]) => ({
@@ -165,20 +165,23 @@ export class MCPManager {
     }))
   }
 
-  private loadConfigFile(): MCPConfigFile {
+  private async loadConfigFile(): Promise<MCPConfigFile> {
     try {
-      if (fs.existsSync(this.configPath)) {
-        return JSON.parse(fs.readFileSync(this.configPath, 'utf-8'))
-      }
-    } catch (err) {
-      console.error('[MCP] Failed to load config:', err)
+      const raw = await fs.promises.readFile(this.configPath, 'utf-8')
+      return JSON.parse(raw)
+    } catch {
+      // 文件不存在或解析失败
     }
     return {}
   }
 
-  private saveConfigFile(config: MCPConfigFile): void {
+  private async saveConfigFile(config: MCPConfigFile): Promise<void> {
     try {
-      fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2), 'utf-8')
+      await fs.promises.writeFile(
+        this.configPath,
+        JSON.stringify(config, null, 2),
+        'utf-8'
+      )
     } catch (err) {
       console.error('[MCP] Failed to save config:', err)
     }

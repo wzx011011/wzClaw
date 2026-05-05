@@ -533,6 +533,49 @@
   background: var(--hover-bg);
 }
 
+/* 工具进度提示 — running 状态下显示当前扫描/读取进度 */
+.tool-card-progress {
+  padding: 2px 12px 6px;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  opacity: 0.8;
+}
+
+/* Inline spinner for buttons and loading states */
+.spinner-inline {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color, #444);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+/* Block spinner for empty/loading states */
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color, #444);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .tool-card-header:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;

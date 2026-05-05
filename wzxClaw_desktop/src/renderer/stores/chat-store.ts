@@ -19,6 +19,8 @@ interface ToolCallInfo {
   children?: ToolCallInfo[]
   /** Accumulated text output from sub-agent streaming (shown as progress) */
   subText?: string
+  /** Tool execution progress message (e.g. "Scanning src/...") */
+  progress?: string
 }
 
 export interface ChatMessage {
@@ -211,7 +213,18 @@ function updateMessageById(
   messageId: string,
   updater: (message: ChatMessage) => ChatMessage
 ): ChatMessage[] | null {
-  const index = findMessageIndexById(messages, messageId)
+  const lastIndex = messages.length - 1
+  // 快速路径：流式场景下目标消息几乎总是最后一个元素
+  if (lastIndex >= 0 && messages[lastIndex]?.id === messageId) {
+    const updated = updater(messages[lastIndex])
+    if (updated === messages[lastIndex]) return null // 无变化
+    // slice(0, -1) 底层是 memcpy，比 [...messages] spread 更高效
+    const next = messages.slice(0, -1)
+    next.push(updated)
+    return next
+  }
+  // 慢速路径：全量扫描（极少触发）
+  const index = messages.findIndex((message) => message.id === messageId)
   if (index < 0) return null
 
   const nextMessages = [...messages]
@@ -437,7 +450,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   ...tc,
                   output: payload.output,
                   isError: payload.isError,
-                  status: payload.isError ? 'error' : ('completed' as const)
+                  status: payload.isError ? 'error' : ('completed' as const),
+                  progress: undefined, // 清除进度文本
                 }
               : tc
           )
@@ -445,6 +459,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
         return nextMessages ? { messages: nextMessages } : state
       })
     })
+
+    // 工具进度事件 — rAF 批处理避免高频更新
+    let progressBuffer = new Map<string, string>() // toolCallId -> latest message
+    let progressFrame: number | null = null
+    const flushProgressBatch = (): void => {
+      progressFrame = null
+      if (progressBuffer.size === 0) return
+      const batch = new Map(progressBuffer)
+      progressBuffer.clear()
+      set((state) => {
+        const { messages, streamingMessageId } = state
+        if (!streamingMessageId) return state
+        const nextMessages = updateMessageById(messages, streamingMessageId, (m) => ({
+          ...m,
+          toolCalls: m.toolCalls?.map((tc) => {
+            const msg = batch.get(tc.id)
+            return msg !== undefined ? { ...tc, progress: msg } : tc
+          })
+        }))
+        return nextMessages ? { messages: nextMessages } : state
+      })
+    }
+    const unsubToolProgress = window.wzxclaw.onStreamToolProgress?.((payload) => {
+      progressBuffer.set(payload.toolCallId, payload.message)
+      if (progressFrame === null) {
+        progressFrame = requestAnimationFrame(flushProgressBatch)
+      }
+    }) ?? (() => {})
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
       flushTextBatch()
@@ -797,6 +839,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubThinking()
       unsubToolStart()
       unsubToolResult()
+      unsubToolProgress()
       unsubEnd()
       unsubError()
       unsubTurnEnd()

@@ -136,10 +136,6 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
     } catch {
       setActionStatus('Cannot save: invalid JSON')
     }
-    setActionStatus(result.message)
-    if (result.success) {
-      setConfigPlugin(null)
-    }
     setTimeout(() => setActionStatus(null), 3000)
   }
 
@@ -158,7 +154,9 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
               Install
             </button>
             <button className="settings-btn-secondary" onClick={handleReload} disabled={loading}>
-              Reload
+              {loading ? (
+                <><span className="spinner-inline" /> Reloading...</>
+              ) : 'Reload'}
             </button>
             <button className="settings-close-btn" onClick={onClose}>✕</button>
           </div>
@@ -226,7 +224,10 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
 
         <div className="settings-body">
           {loading && plugins.length === 0 ? (
-            <div className="plugin-empty">Loading plugins...</div>
+            <div className="plugin-empty">
+              <span className="spinner" />
+              <span>Loading plugins...</span>
+            </div>
           ) : plugins.length === 0 ? (
             <div className="plugin-empty">
               <p>No plugins installed.</p>

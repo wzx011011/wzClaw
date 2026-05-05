@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
   'stream:thinking_delta': 'stream:thinking_delta',
   'stream:tool_use_start': 'stream:tool_use_start',
   'stream:tool_use_end': 'stream:tool_use_end',
+  'stream:tool_progress': 'stream:tool_progress',
   'stream:error': 'stream:error',
   'stream:done': 'stream:done',
   'stream:turn_end': 'stream:turn_end',

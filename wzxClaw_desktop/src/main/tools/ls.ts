@@ -79,7 +79,7 @@ export class LsTool implements Tool {
     // 检查路径是否存在
     let stat: fs.Stats
     try {
-      stat = fs.statSync(absolutePath)
+      stat = await fs.promises.stat(absolutePath)
     } catch {
       return { output: `Directory not found: ${absolutePath}`, isError: true }
     }
@@ -91,7 +91,7 @@ export class LsTool implements Tool {
     // 列出内容
     let entries: fs.Dirent[]
     try {
-      entries = fs.readdirSync(absolutePath, { withFileTypes: true })
+      entries = await fs.promises.readdir(absolutePath, { withFileTypes: true })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { output: `Failed to read directory: ${msg}`, isError: true }

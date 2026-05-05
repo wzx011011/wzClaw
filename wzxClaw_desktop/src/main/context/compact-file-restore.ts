@@ -101,17 +101,17 @@ export function extractRecentFilePaths(
 }
 
 /**
- * 读取文件内容，截断到 maxTokens。
+ * 异步读取文件内容，截断到 maxTokens。
  * 如果文件不存在或无法读取，跳过。
  */
-export function readFileContent(filePath: string, maxTokens: number): string | null {
+export async function readFileContent(filePath: string, maxTokens: number): Promise<string | null> {
   try {
-    if (!fs.existsSync(filePath)) return null
-    const stat = fs.statSync(filePath)
+    const stat = await fs.promises.stat(filePath).catch(() => null)
+    if (!stat) return null
     if (stat.isDirectory()) return null
     if (stat.size > 1024 * 1024) return null // 跳过 > 1MB 的文件
 
-    const content = fs.readFileSync(filePath, 'utf-8')
+    const content = await fs.promises.readFile(filePath, 'utf-8')
     const tokens = countTokens(content)
     if (tokens > maxTokens) {
       // 截断到 maxTokens 对应的字符数（粗估 4 chars/token）
@@ -131,14 +131,14 @@ export interface RestoredFile {
 }
 
 /**
- * 恢复压缩后引用的文件内容。
+ * 异步恢复压缩后引用的文件内容。
  * 按最近使用排序，在 budget 范围内读取文件内容。
  */
-export function restoreFiles(
+export async function restoreFiles(
   summarizedMessages: Message[],
   workingDirectory?: string,
   budgetTokens: number = FILE_RESTORE_BUDGET_TOKENS
-): RestoredFile[] {
+): Promise<RestoredFile[]> {
   const filePaths = extractRecentFilePaths(summarizedMessages)
   if (filePaths.length === 0) return []
 
@@ -157,7 +157,7 @@ export function restoreFiles(
     const remainingBudget = budgetTokens - usedBudget
     const fileMaxTokens = Math.min(MAX_FILE_TOKENS, remainingBudget)
 
-    const content = readFileContent(resolvedPath, fileMaxTokens)
+    const content = await readFileContent(resolvedPath, fileMaxTokens)
     if (content === null) continue
 
     const tokens = countTokens(content)

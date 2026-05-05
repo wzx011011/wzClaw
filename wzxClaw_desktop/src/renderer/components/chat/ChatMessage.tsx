@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
@@ -55,6 +55,78 @@ const MD_COMPONENTS = {
       </code>
     )
   },
+}
+
+// ============================================================
+// MemoizedMarkdown — 缓存 ReactMarkdown 解析结果
+// 流式场景下 content 每帧增长，ReactMarkdown 会重解析全文。
+// 通过 useRef 缓存上次解析结果 + 长内容拆分前缀/尾部，
+// 避免每帧 O(n) 的全文 markdown 解析开销。
+// ============================================================
+
+/** 前缀缓存阈值：超过此长度的内容拆分为已缓存前缀 + 响应式尾部 */
+const PREFIX_CACHE_THRESHOLD = 4000
+
+function MemoizedMarkdown({ content }: { content: string }): JSX.Element {
+  const cacheRef = useRef<{ content: string; element: JSX.Element } | null>(null)
+
+  // 完全匹配缓存 — content 未变时直接返回
+  if (cacheRef.current && cacheRef.current.content === content) {
+    return cacheRef.current.element
+  }
+
+  // 长内容拆分：前缀走 dangerouslySetInnerHTML（已解析的 HTML 缓存），
+  // 仅尾部走 ReactMarkdown 实时解析
+  let element: JSX.Element
+
+  if (content.length > PREFIX_CACHE_THRESHOLD && cacheRef.current) {
+    // 找到缓存前缀的边界（在阈值附近找最后一个换行符）
+    const prevContent = cacheRef.current.content
+    // 如果新内容以旧内容开头（流式追加），前缀可复用
+    if (content.startsWith(prevContent) && prevContent.length > PREFIX_CACHE_THRESHOLD) {
+      // 将缓存的 element 作为前缀，新尾部走 ReactMarkdown
+      const tail = content.slice(prevContent.length)
+      element = (
+        <>
+          {cacheRef.current.element}
+          {tail && (
+            <ReactMarkdown
+              rehypePlugins={REHYPE_PLUGINS}
+              remarkPlugins={REMARK_PLUGINS}
+              components={MD_COMPONENTS}
+            >
+              {tail}
+            </ReactMarkdown>
+          )}
+        </>
+      )
+    } else {
+      // 内容完全不同（非追加），重新解析
+      element = (
+        <ReactMarkdown
+          rehypePlugins={REHYPE_PLUGINS}
+          remarkPlugins={REMARK_PLUGINS}
+          components={MD_COMPONENTS}
+        >
+          {content}
+        </ReactMarkdown>
+      )
+    }
+  } else {
+    // 短内容或首次渲染 — 直接 ReactMarkdown
+    element = (
+      <ReactMarkdown
+        rehypePlugins={REHYPE_PLUGINS}
+        remarkPlugins={REMARK_PLUGINS}
+        components={MD_COMPONENTS}
+      >
+        {content}
+      </ReactMarkdown>
+    )
+  }
+
+  cacheRef.current = { content, element }
+  return element
 }
 
 // ============================================================
@@ -164,13 +236,7 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
       {/* Content — always rendered via ReactMarkdown so streaming and final output look identical. */}
       {displayContent && (
         <div className={`chat-message-content${isStreaming ? ' chat-message-content-streaming' : ''}`}>
-          <ReactMarkdown
-            rehypePlugins={REHYPE_PLUGINS}
-            remarkPlugins={REMARK_PLUGINS}
-            components={MD_COMPONENTS}
-          >
-            {displayContent}
-          </ReactMarkdown>
+          <MemoizedMarkdown content={displayContent} />
         </div>
       )}
 

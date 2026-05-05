@@ -3,7 +3,7 @@
 // Modeled after Claude Code's schemas.ts + validatePlugin.ts
 // ============================================================
 
-import { existsSync, readFileSync } from 'fs'
+import { promises as fsp } from 'fs'
 import { join, isAbsolute } from 'path'
 import { z } from 'zod'
 import type { PluginManifest, PluginError } from '../../shared/types-plugin'
@@ -108,14 +108,14 @@ export interface ManifestParseResult {
  * @param pluginPath — absolute path to the plugin root directory
  * @returns parsed manifest or null with error details
  */
-export function parsePluginManifest(pluginPath: string): ManifestParseResult {
+export async function parsePluginManifest(pluginPath: string): Promise<ManifestParseResult> {
   const errors: PluginError[] = []
   const manifestPath = join(pluginPath, 'plugin.json')
 
   // 1. Check file exists
-  if (!existsSync(manifestPath)) {
-    // Strict mode: plugin.json is required
-    // Non-strict mode (marketplace entry with strict: false): return minimal manifest
+  try {
+    await fsp.access(manifestPath)
+  } catch {
     return {
       manifest: null,
       errors: [{ type: 'manifest-not-found', message: `plugin.json not found at ${manifestPath}` }],
@@ -125,7 +125,7 @@ export function parsePluginManifest(pluginPath: string): ManifestParseResult {
   // 2. Read and parse JSON
   let rawJson: string
   try {
-    rawJson = readFileSync(manifestPath, 'utf-8')
+    rawJson = await fsp.readFile(manifestPath, 'utf-8')
   } catch (err) {
     return {
       manifest: null,
@@ -189,20 +189,24 @@ export function createMinimalManifest(pluginPath: string): PluginManifest {
  * - A plugin.json file, OR
  * - At least one component directory (commands/, skills/, agents/)
  */
-export function isValidPluginDirectory(dirPath: string): boolean {
-  if (!existsSync(dirPath)) return false
+export async function isValidPluginDirectory(dirPath: string): Promise<boolean> {
+  try {
+    await fsp.access(dirPath)
+  } catch {
+    return false
+  }
 
   // Has plugin.json → valid
-  if (existsSync(join(dirPath, 'plugin.json'))) return true
+  try { await fsp.access(join(dirPath, 'plugin.json')); return true } catch { /* continue */ }
 
   // Has any component directory → valid (non-strict)
   const componentDirs = ['commands', 'skills', 'agents', 'hooks', 'output-styles']
   for (const dir of componentDirs) {
-    if (existsSync(join(dirPath, dir))) return true
+    try { await fsp.access(join(dirPath, dir)); return true } catch { /* continue */ }
   }
 
   // Has .mcp.json → valid
-  if (existsSync(join(dirPath, '.mcp.json'))) return true
+  try { await fsp.access(join(dirPath, '.mcp.json')); return true } catch { /* continue */ }
 
   return false
 }

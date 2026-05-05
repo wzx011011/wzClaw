@@ -1102,7 +1102,7 @@ export function registerIpcHandlers(
   // ============================================================
   // MCP: list_servers — returns all configured MCP servers and status
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['mcp:list_servers'], () => {
+  ipcMain.handle(IPC_CHANNELS['mcp:list_servers'], async () => {
     return mcpManager.listServers()
   })
 
@@ -1129,8 +1129,8 @@ export function registerIpcHandlers(
   // ============================================================
   // MCP: remove_server — disconnects and removes an MCP server
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['mcp:remove_server'], (_event, request) => {
-    mcpManager.removeServer(request.name)
+  ipcMain.handle(IPC_CHANNELS['mcp:remove_server'], async (_event, request) => {
+    await mcpManager.removeServer(request.name)
   })
 
   // ============================================================

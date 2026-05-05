@@ -4,7 +4,7 @@
 // Modeled after Claude Code's loadPluginCommands.ts
 // ============================================================
 
-import { existsSync, readdirSync, statSync, readFileSync } from 'fs'
+import { promises as fsp, existsSync, readdirSync, statSync, readFileSync } from 'fs'
 import { basename, dirname, join, sep as pathSep } from 'path'
 import type { Skill, SkillSource } from '../../shared/types-skill'
 import { resolveModelName } from '../../shared/types-skill'
@@ -32,7 +32,7 @@ export interface PluginCommandResult {
  *   commands/ui/card.md      → pluginName:ui:card
  *   skills/react-hook/SKILL.md → pluginName:react-hook
  */
-export function loadPluginCommands(plugin: LoadedPlugin): PluginCommandResult {
+export async function loadPluginCommands(plugin: LoadedPlugin): Promise<PluginCommandResult> {
   const errors: Array<{ path: string; error: string }> = []
   const skills: Skill[] = []
   const pluginName = plugin.name
@@ -51,14 +51,14 @@ export function loadPluginCommands(plugin: LoadedPlugin): PluginCommandResult {
 
   // Load commands (.md files, with SKILL.md support)
   for (const cmdDir of commandDirs) {
-    const result = loadCommandsFromDirectory(cmdDir, pluginName, 'plugin')
+    const result = await loadCommandsFromDirectory(cmdDir, pluginName, 'plugin')
     errors.push(...result.errors)
     skills.push(...result.skills)
   }
 
   // Load skills (SKILL.md directories)
   for (const skillDir of skillDirs) {
-    const result = loadSkillsFromDirectory(skillDir, pluginName, 'plugin')
+    const result = await loadSkillsFromDirectory(skillDir, pluginName, 'plugin')
     errors.push(...result.errors)
     skills.push(...result.skills)
   }
@@ -74,17 +74,17 @@ export function loadPluginCommands(plugin: LoadedPlugin): PluginCommandResult {
 // Commands directory loader (.md files)
 // ============================================================
 
-function loadCommandsFromDirectory(
+async function loadCommandsFromDirectory(
   basePath: string,
   pluginName: string,
   source: SkillSource,
-): PluginCommandResult {
+): Promise<PluginCommandResult> {
   const errors: Array<{ path: string; error: string }> = []
   const skills: Skill[] = []
 
   if (!existsSync(basePath)) return { skills, errors }
 
-  const mdFiles = walkDirForMd(basePath)
+  const mdFiles = await walkDirForMd(basePath)
   const processedFiles = transformSkillFiles(mdFiles)
 
   for (const filePath of processedFiles) {
@@ -92,7 +92,7 @@ function loadCommandsFromDirectory(
     const skillDirectory = isSkill ? dirname(filePath) : undefined
     const cmdName = getPluginCommandName(filePath, basePath, pluginName)
 
-    const skill = loadSkillFromFile(filePath, cmdName, source, skillDirectory)
+    const skill = await loadSkillFromFile(filePath, cmdName, source, skillDirectory)
     if (skill) {
       skills.push(skill)
     } else {
@@ -107,11 +107,11 @@ function loadCommandsFromDirectory(
 // Skills directory loader (SKILL.md format)
 // ============================================================
 
-function loadSkillsFromDirectory(
+async function loadSkillsFromDirectory(
   basePath: string,
   pluginName: string,
   source: SkillSource,
-): PluginCommandResult {
+): Promise<PluginCommandResult> {
   const errors: Array<{ path: string; error: string }> = []
   const skills: Skill[] = []
 
@@ -119,7 +119,7 @@ function loadSkillsFromDirectory(
 
   let entries: string[]
   try {
-    entries = readdirSync(basePath)
+    entries = await fsp.readdir(basePath)
   } catch {
     return { skills, errors }
   }
@@ -128,7 +128,7 @@ function loadSkillsFromDirectory(
     const entryPath = join(basePath, entry)
     let stat: { isDirectory(): boolean; isSymbolicLink(): boolean }
     try {
-      stat = statSync(entryPath)
+      stat = await fsp.stat(entryPath)
     } catch {
       continue
     }
@@ -139,7 +139,7 @@ function loadSkillsFromDirectory(
     if (!existsSync(skillFilePath)) continue
 
     const skillName = `${pluginName}:${entry}`
-    const skill = loadSkillFromFile(skillFilePath, skillName, source, entryPath)
+    const skill = await loadSkillFromFile(skillFilePath, skillName, source, entryPath)
     if (skill) {
       skills.push(skill)
     } else {
@@ -208,16 +208,16 @@ function isSkillFile(filePath: string): boolean {
   return /^skill\.md$/i.test(basename(filePath))
 }
 
-function loadSkillFromFile(
+async function loadSkillFromFile(
   filePath: string,
   skillName: string,
   source: SkillSource,
   baseDir?: string,
-): Skill | null {
+): Promise<Skill | null> {
   try {
     if (!existsSync(filePath)) return null
 
-    const content = readFileSync(filePath, 'utf-8')
+    const content = await fsp.readFile(filePath, 'utf-8')
     const { frontmatter, content: markdownContent } = parseFrontmatter(content, filePath)
 
     const displayName = frontmatter.name || skillName.split(':').pop() || skillName
@@ -290,12 +290,12 @@ function loadSkillFromFile(
   }
 }
 
-function walkDirForMd(dir: string): string[] {
+async function walkDirForMd(dir: string): Promise<string[]> {
   const results: string[] = []
 
   let entries: string[]
   try {
-    entries = readdirSync(dir)
+    entries = await fsp.readdir(dir)
   } catch {
     return results
   }
@@ -304,7 +304,7 @@ function walkDirForMd(dir: string): string[] {
     const fullPath = join(dir, entry)
     let stat: { isDirectory(): boolean }
     try {
-      stat = statSync(fullPath)
+      stat = await fsp.stat(fullPath)
     } catch {
       continue
     }

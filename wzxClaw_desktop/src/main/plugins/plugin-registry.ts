@@ -4,6 +4,8 @@
 // Modeled after Claude Code's commands.ts getCommands() flow
 // ============================================================
 
+import { existsSync, readdirSync, statSync } from 'fs'
+import { join } from 'path'
 import type { LoadedPlugin, PluginInfo, PluginScope } from '../../shared/types-plugin'
 import { pluginToInfo } from '../../shared/types-plugin'
 import type { Skill, SkillInfo } from '../../shared/types-skill'
@@ -90,8 +92,11 @@ class PluginRegistry {
     this.pluginSkills.clear()
     this.pluginAgents.clear()
 
-    // 1. Scan directories for plugins
-    const scannedPlugins = scanAllPlugins({ cwd, projectRoots })
+    // 0. Load builtin plugins (shipped with the app)
+    const builtinPlugins = this.loadBuiltinPlugins()
+
+    // 1. Scan directories for external plugins
+    const scannedPlugins = await scanAllPlugins({ cwd, projectRoots })
 
     // 2. Load persisted states from settings
     if (this.settingsManager) {
@@ -101,8 +106,17 @@ class PluginRegistry {
       }
     }
 
-    // 3. Apply saved states (enabled/disabled)
+    // 3. Merge builtin + scanned plugins (builtin first, external overrides by name)
+    const allPlugins: LoadedPlugin[] = [...builtinPlugins]
+    const builtinNames = new Set(builtinPlugins.map(p => p.name))
     for (const plugin of scannedPlugins) {
+      if (!builtinNames.has(plugin.name)) {
+        allPlugins.push(plugin)
+      }
+    }
+
+    // 4. Apply saved states (enabled/disabled) and load components
+    for (const plugin of allPlugins) {
       const state = this.pluginStates.get(plugin.name)
       if (state) {
         plugin.enabled = state.enabled
@@ -116,7 +130,7 @@ class PluginRegistry {
 
       // 3. Load commands/skills/hooks from enabled plugins
       if (plugin.enabled) {
-        const result = loadPluginCommands(plugin)
+        const result = await loadPluginCommands(plugin)
         this.pluginSkills.set(plugin.name, result.skills)
 
         // Load plugin hooks into HookRegistry
@@ -263,7 +277,7 @@ class PluginRegistry {
     this.persistPluginState(name, state)
 
     // Reload commands
-    const result = loadPluginCommands(plugin)
+    const result = await loadPluginCommands(plugin)
     this.pluginSkills.set(name, result.skills)
 
     // Register hooks
@@ -318,15 +332,15 @@ class PluginRegistry {
   /**
    * Install a plugin from a local directory.
    */
-  installFromDirectory(dirPath: string, source: string = 'local', scope: PluginScope = 'user'): LoadedPlugin | null {
-    const plugin = loadPlugin({ path: dirPath, source, enabled: true })
+  async installFromDirectory(dirPath: string, source: string = 'local', scope: PluginScope = 'user'): Promise<LoadedPlugin | null> {
+    const plugin = await loadPlugin({ path: dirPath, source, enabled: true })
     if (!plugin) return null
 
     this.plugins.set(plugin.name, plugin)
     this.persistPluginState(plugin.name, { enabled: true, scope })
 
     // Load commands + agents
-    const result = loadPluginCommands(plugin)
+    const result = await loadPluginCommands(plugin)
     this.pluginSkills.set(plugin.name, result.skills)
     const agentResult = loadPluginAgents(plugin)
     this.pluginAgents.set(plugin.name, agentResult.agents)
@@ -396,6 +410,54 @@ class PluginRegistry {
     if (!plugin) return false
     plugin.userConfigValues = { ...plugin.userConfigValues, ...values }
     return true
+  }
+
+  // ============================================================
+  // Builtin plugin loading
+  // ============================================================
+
+  /**
+   * Load builtin plugins shipped with the app in src/main/plugins/builtin/.
+   * These are always available and marked as isBuiltin.
+   */
+  private loadBuiltinPlugins(): LoadedPlugin[] {
+    const plugins: LoadedPlugin[] = []
+    const builtinDir = join(__dirname, 'builtin')
+
+    if (!existsSync(builtinDir)) {
+      console.warn('[plugins] Builtin plugin directory not found:', builtinDir)
+      return plugins
+    }
+
+    let entries: string[]
+    try {
+      entries = readdirSync(builtinDir)
+    } catch {
+      return plugins
+    }
+
+    for (const entry of entries) {
+      const entryPath = join(builtinDir, entry)
+      try {
+        const stat = statSync(entryPath)
+        if (!stat.isDirectory()) continue
+      } catch {
+        continue
+      }
+
+      const plugin = loadPlugin({
+        path: entryPath,
+        source: 'builtin',
+        enabled: true,
+        isBuiltin: true,
+      })
+      if (plugin) {
+        plugins.push(plugin)
+      }
+    }
+
+    console.log(`[plugins] Loaded ${plugins.length} builtin plugins`)
+    return plugins
   }
 
   // ============================================================

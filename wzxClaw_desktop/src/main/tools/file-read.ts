@@ -76,8 +76,10 @@ Usage:
       return { output: `Blocked: FileRead target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
-    // Check file exists
-    if (!fs.existsSync(absolutePath)) {
+    // Check file exists (async — 不阻塞事件循环)
+    try {
+      await fs.promises.access(absolutePath)
+    } catch {
       return {
         output: `File not found: ${filePath}`,
         isError: true

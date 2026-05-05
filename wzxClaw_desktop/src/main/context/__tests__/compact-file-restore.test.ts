@@ -124,13 +124,13 @@ describe('compact-file-restore', () => {
   })
 
   describe('readFileContent', () => {
-    it('returns null for non-existent files', () => {
-      const result = readFileContent('/nonexistent/path/file.ts', 10000)
+    it('returns null for non-existent files', async () => {
+      const result = await readFileContent('/nonexistent/path/file.ts', 10000)
       expect(result).toBeNull()
     })
 
-    it('returns null for directories', () => {
-      const result = readFileContent('/', 10000)
+    it('returns null for directories', async () => {
+      const result = await readFileContent('/', 10000)
       expect(result).toBeNull()
     })
   })
@@ -165,17 +165,17 @@ describe('compact-file-restore', () => {
   })
 
   describe('restoreFiles', () => {
-    it('returns empty for messages without file references', () => {
+    it('returns empty for messages without file references', async () => {
       const messages: Message[] = [
         { role: 'user', content: 'Hello', timestamp: 1 },
         { role: 'assistant', content: 'Hi', toolCalls: [], timestamp: 2 },
       ]
-      const result = restoreFiles(messages)
+      const result = await restoreFiles(messages)
       expect(result).toEqual([])
     })
 
-    it('returns empty for empty messages', () => {
-      const result = restoreFiles([])
+    it('returns empty for empty messages', async () => {
+      const result = await restoreFiles([])
       expect(result).toEqual([])
     })
   })
