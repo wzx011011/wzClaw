@@ -1,0 +1,8 @@
+{
+  "name": "project-analysis",
+  "version": "1.0.0",
+  "description": "项目分析 — 架构概览、依赖分析、技术债务评估",
+  "author": { "name": "wzxClaw" },
+  "license": "MIT",
+  "keywords": ["analysis", "architecture", "dependencies", "tech-debt"]
+}

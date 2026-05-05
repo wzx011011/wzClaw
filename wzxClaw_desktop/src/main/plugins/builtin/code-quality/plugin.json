@@ -1,0 +1,8 @@
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "代码质量工具 — 代码审查、复杂度分析、重构建议",
+  "author": { "name": "wzxClaw" },
+  "license": "MIT",
+  "keywords": ["quality", "review", "refactor", "complexity"]
+}

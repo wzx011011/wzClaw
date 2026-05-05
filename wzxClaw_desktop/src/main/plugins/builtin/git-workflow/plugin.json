@@ -1,0 +1,8 @@
+{
+  "name": "git-workflow",
+  "version": "1.0.0",
+  "description": "Git 工作流增强 — 提交分析、分支管理、冲突解决",
+  "author": { "name": "wzxClaw" },
+  "license": "MIT",
+  "keywords": ["git", "workflow", "commit", "branch"]
+}
