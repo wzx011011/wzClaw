@@ -106,7 +106,8 @@ export function classifyError(errorMsg: string): ClassifyResult {
     msg.includes('connect timeout') ||
     msg.includes('network error') ||
     msg.includes('网络错误') ||
-    msg.includes('fetch failed')
+    msg.includes('fetch failed') ||
+    msg.includes('stream idle timeout')  // 看门狗超时：模型 prefill/过载，应重试
   ) {
     return { classification: 'retryable' }
   }

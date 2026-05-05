@@ -61,6 +61,8 @@ export interface TurnResult {
   usage: { inputTokens: number; outputTokens: number }
   /** 是否有不可恢复错误 */
   hadError: boolean
+  /** 错误信息（hadError 时有值，供 agent-loop 判断是否可重试） */
+  errorMessage?: string
   /** 本轮调用的工具名列表（供 stop hooks 使用） */
   toolNames: string[]
 }
@@ -294,7 +296,7 @@ export class TurnManager {
     }
 
     if (phaseMeta.hadError) {
-      return { shouldStop: true, usage: phaseMeta.usage, hadError: true, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
+      return { shouldStop: true, usage: phaseMeta.usage, hadError: true, errorMessage: phaseMeta.errorMessage, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
     }
 
     // 6. 通过 ConversationManager 记录 assistant 消息

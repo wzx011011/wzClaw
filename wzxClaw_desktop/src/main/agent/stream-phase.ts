@@ -26,6 +26,8 @@ export interface StreamPhaseMeta {
   usage: TokenUsage
   /** 是否遇到不可恢复的错误 */
   hadError: boolean
+  /** 错误信息（hadError 时有值） */
+  errorMessage?: string
   /** 是否检测到循环（需要终止 agent loop） */
   loopDetected: boolean
   /** 工具执行结果（按 LLM 发射顺序） */
@@ -67,6 +69,7 @@ export async function* executeStreamPhase(
   const contentBlocks: ContentBlock[] = []
   let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
   let hadError = false
+  let errorMessage: string | undefined
 
   // 工具名映射：tool_use_start 记录 id→name，tool_use_end 时取出
   const toolNameMap = new Map<string, string>()
@@ -75,10 +78,14 @@ export async function* executeStreamPhase(
   const executor = new StreamingToolExecutor(isReadOnly)
 
   // ---- Phase 1: LLM 流 — 逐条 yield 事件 ----
-  // 流式看门狗：90s 无事件则中止流（参考 Claude Code 的 CLAUDE_STREAM_IDLE_TIMEOUT_MS）
-  const STREAM_IDLE_TIMEOUT_MS = 90_000
+  // 双阶段看门狗：
+  //   - 首次事件等待（prefill）：180s — 大上下文 + 模型过载时 prefill 可超过 90s
+  //   - 后续事件间隔（streaming）：90s — 一旦开始流式输出，事件间隔不应过长
+  const FIRST_EVENT_TIMEOUT_MS = 180_000
+  const INTER_EVENT_TIMEOUT_MS = 90_000
   let eventTimer: ReturnType<typeof setTimeout> | null = null
   let watchdogTriggered = false
+  let firstEventReceived = false
 
   // 独立 AbortController：看门狗触发时真正中止挂起的流
   const watchdogController = new AbortController()
@@ -87,18 +94,24 @@ export async function* executeStreamPhase(
   const combinedSignal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
   const streamOptsWithWatchdog = { ...streamOpts, abortSignal: combinedSignal }
 
-  const resetWatchdog = () => {
+  const resetWatchdog = (timeoutMs: number) => {
     if (eventTimer) clearTimeout(eventTimer)
     eventTimer = setTimeout(() => {
       watchdogTriggered = true
       watchdogController.abort()  // 真正中止 for await 循环
-    }, STREAM_IDLE_TIMEOUT_MS)
+    }, timeoutMs)
   }
-  resetWatchdog()
+  resetWatchdog(FIRST_EVENT_TIMEOUT_MS)
 
   try {
     for await (const event of streamFn(streamOptsWithWatchdog)) {
-      resetWatchdog()
+      // 首次事件后切换到更短的 inter-event 超时
+      if (!firstEventReceived) {
+        firstEventReceived = true
+        resetWatchdog(INTER_EVENT_TIMEOUT_MS)
+      } else {
+        resetWatchdog(INTER_EVENT_TIMEOUT_MS)
+      }
       if (watchdogTriggered) break
       switch (event.type) {
         case 'text_delta': {
@@ -174,11 +187,15 @@ export async function* executeStreamPhase(
     if (eventTimer) clearTimeout(eventTimer)
   }
 
-  // 看门狗触发：流 90s 无事件，中止并报错
+  // 看门狗触发：流超时，中止并报错
   if (watchdogTriggered && !hadError) {
+    const phase = firstEventReceived ? 'inter-event' : 'first-event (prefill)'
+    const timeoutMs = firstEventReceived ? INTER_EVENT_TIMEOUT_MS : FIRST_EVENT_TIMEOUT_MS
+    const errMsg = `Stream idle timeout [${phase}]: no events received in ${timeoutMs / 1000}s`
+    errorMessage = errMsg
     yield {
       type: 'agent:error',
-      error: `Stream idle timeout: no events received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+      error: errMsg,
       recoverable: true,
     }
     hadError = true
@@ -243,6 +260,7 @@ export async function* executeStreamPhase(
     contentBlocks,
     usage,
     hadError,
+    errorMessage,
     loopDetected,
     toolResults,
   }

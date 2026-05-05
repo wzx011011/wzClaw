@@ -123,6 +123,13 @@ export class AgentLoop {
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
     let turnCount = 0
     let stopHookCooldown = 0  // 防止 blockingError → stop hook → 无限循环
+    let idleTimeoutRetried = false  // stream idle timeout 重试标记（仅重试一次）
+
+    // 输出 token 收益递减检测（参考 Claude Code tokenBudget.ts）
+    // 连续 N 轮每轮输出 <500 token → 模型无实质进展，强制停止
+    const recentOutputTokens: number[] = []
+    const DIMINISHING_THRESHOLD = 500
+    const DIMINISHING_WINDOW = 3
 
     // ---- 主循环 ----
     // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
@@ -134,11 +141,21 @@ export class AgentLoop {
     let toolsDisabled = false  // 降级标志：上下文过长时禁用工具（用局部变量而非破坏原数组）
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      // 每轮开始检查 abort（turn 间隙的 compact/eval/microcompact 操作也能响应取消）
+      if (this.abortController?.signal.aborted) {
+        debugLogger.log('EXIT', `{ reason: 'aborted_between_turns', turnCount: ${turnCount} }`)
+        debugLogger.close()
+        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
+        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+        return
+      }
+
       turnCount++
 
       // 安全天花板检查
       if (turnCount > safetyCeiling) {
-        debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
+        debugLogger.log('EXIT', `{ reason: 'safety_ceiling', turnCount: ${turnCount} }`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
@@ -149,7 +166,7 @@ export class AgentLoop {
 
       // 子 Agent 轮数限制检查
       if (maxTurns && turnCount > maxTurns) {
-        debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
+        debugLogger.log('EXIT', `{ reason: 'sub_agent_max_turns', turnCount: ${turnCount}, maxTurns: ${maxTurns} }`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
@@ -240,7 +257,7 @@ export class AgentLoop {
           if (turnCount > 0) turnCount--
           continue
         } else {
-          debugLogger.log('ERROR', 'context too long, all recovery exhausted')
+          debugLogger.log('EXIT', `{ reason: 'ptl_fatal', turnCount: ${turnCount} }`)
           debugLogger.close()
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('fatal')
           yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
@@ -251,7 +268,19 @@ export class AgentLoop {
       }
 
       if (turnResult.hadError) {
-        debugLogger.log('ERROR', 'turn had error, stopping')
+        // Stream idle timeout 重试：看门狗超时（模型 prefill 过慢/过载）时重试一次
+        // 而不是直接终止整个 agent loop
+        const isIdleTimeout = turnResult.errorMessage?.includes('Stream idle timeout') ?? false
+        if (isIdleTimeout && !idleTimeoutRetried) {
+          idleTimeoutRetried = true
+          debugLogger.log('RETRY', 'stream idle timeout, retrying once')
+          yield { type: 'agent:error', error: 'Stream timed out — retrying once...', recoverable: true }
+          await new Promise(resolve => setTimeout(resolve, 3000))
+          turnCount--
+          continue
+        }
+
+        debugLogger.log('EXIT', `{ reason: 'turn_error', turnCount: ${turnCount}, error: '${turnResult.errorMessage?.substring(0, 60) ?? 'unknown'}' }`)
         debugLogger.close()
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
@@ -269,7 +298,7 @@ export class AgentLoop {
 
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
-        debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
+        debugLogger.log('EXIT', `{ reason: 'token_budget_exceeded', turnCount: ${turnCount}, inputTokens: ${totalUsage.inputTokens}, budget: ${config.maxBudgetTokens} }`)
         yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
@@ -293,7 +322,7 @@ export class AgentLoop {
         })
 
         if (hookResult.preventContinuation) {
-          debugLogger.log('HOOK', 'stop hook prevented continuation')
+          debugLogger.log('EXIT', `{ reason: 'hook_prevent_continuation', turnCount: ${turnCount} }`)
           debugLogger.close()
           yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
           endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
@@ -311,12 +340,30 @@ export class AgentLoop {
 
       // 无工具调用 → 正常结束
       if (turnResult.shouldStop) {
-        debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
+        debugLogger.log('EXIT', `{ reason: 'completed', turnCount: ${turnCount}, inputTokens: ${totalUsage.inputTokens}, outputTokens: ${totalUsage.outputTokens} }`)
         debugLogger.close()
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, false, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
+      }
+
+      // 输出 token 收益递减检测：连续 N 轮输出极低 → 模型空转
+      // 注意：放在 shouldStop 之后，只在 loop 会继续时才检测
+      // 子 Agent 有 maxTurns 限制，不需要此检测（避免先于 maxTurns 触发）
+      if (!maxTurns) {
+        recentOutputTokens.push(turnResult.usage.outputTokens)
+        if (recentOutputTokens.length > DIMINISHING_WINDOW) recentOutputTokens.shift()
+        if (recentOutputTokens.length >= DIMINISHING_WINDOW &&
+            recentOutputTokens.every(t => t < DIMINISHING_THRESHOLD)) {
+          debugLogger.log('EXIT', `{ reason: 'diminishing_returns', turnCount: ${turnCount}, outputTokens: [${recentOutputTokens.join(',')}] }`)
+          debugLogger.close()
+          yield { type: 'agent:error', error: 'Agent appears stuck — very low output across recent turns. Stopping.', recoverable: true }
+          yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
+          endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
+          await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
+          return
+        }
       }
     }
     } finally {

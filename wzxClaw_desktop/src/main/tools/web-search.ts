@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import { WEB_SEARCH_TIMEOUT_MS } from '../../shared/constants'
+import { SEARXNG_BASE_URL, WEB_SEARCH_TIMEOUT_MS } from '../../shared/constants'
 import { enforceRateLimit } from './rate-limiter'
 
 // ============================================================
@@ -15,63 +15,22 @@ const WebSearchInputSchema = z.object({
 })
 
 // ============================================================
-// Helper: 从 HTML 中提取搜索结果
+// SearXNG JSON 响应类型
 // ============================================================
 
-interface SearchResult {
+interface SearXNGResult {
   title: string
   url: string
-  snippet: string
+  /** 搜索结果摘要 */
+  content: string
 }
 
-/** 去除 HTML 标签 */
-function stripHtmlTags(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .trim()
-}
-
-/** 从 DuckDuckGo HTML 搜索页解析结果 */
-function parseDuckDuckGoHtml(html: string): SearchResult[] {
-  const results: SearchResult[] = []
-
-  // DuckDuckGo HTML lite 使用 <div class="result results_links ..."> 包裹每个结果
-  const resultBlocks = html.split(/<div\s+class="result\s+results_links/gi)
-
-  for (const block of resultBlocks.slice(1)) {
-    try {
-      // 标题: <a class="result__a" href="...">Title</a>
-      const titleMatch = block.match(/<a[^>]+class="result__a"[^>]*>([\s\S]*?)<\/a>/i)
-      // 摘要: <a class="result__snippet">...</a> 或 <td class="result__snippet">
-      const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|td)>/i)
-      // URL: href 里通过 uddg 参数编码了真实 URL
-      const hrefMatch = block.match(/uddg=([^&"']+)/i)
-
-      if (titleMatch) {
-        const url = hrefMatch ? decodeURIComponent(hrefMatch[1]) : ''
-        const title = stripHtmlTags(titleMatch[1])
-        const snippet = snippetMatch ? stripHtmlTags(snippetMatch[1]) : ''
-
-        if (title && url) {
-          results.push({ title, url, snippet })
-        }
-      }
-    } catch {
-      // 解析失败跳过此结果
-    }
-  }
-
-  return results
+interface SearXNGResponse {
+  results: SearXNGResult[]
 }
 
 // ============================================================
-// WebSearchTool Implementation
+// WebSearchTool Implementation — 通过 SearXNG JSON API 搜索
 // ============================================================
 
 export class WebSearchTool implements Tool {
@@ -128,13 +87,16 @@ export class WebSearchTool implements Tool {
     await enforceRateLimit()
 
     try {
-      // 使用 DuckDuckGo HTML 搜索页（返回真正的搜索结果）
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
-      const response = await fetch(searchUrl, {
-        signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
-        }
+      // 调用 SearXNG JSON API（自建 NAS 服务）
+      const params = new URLSearchParams({
+        q: query,
+        format: 'json',
+        categories: 'general',
+        language: 'zh-CN'
+      })
+
+      const response = await fetch(`${SEARXNG_BASE_URL}/search?${params}`, {
+        signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS)
       })
 
       if (!response.ok) {
@@ -144,8 +106,8 @@ export class WebSearchTool implements Tool {
         }
       }
 
-      const html = await response.text()
-      let results = parseDuckDuckGoHtml(html)
+      const data = (await response.json()) as SearXNGResponse
+      let results = data.results ?? []
 
       // 域名过滤
       if (allowed_domains && allowed_domains.length > 0) {
@@ -173,7 +135,7 @@ export class WebSearchTool implements Tool {
       const formatted = results
         .map((r, i) => {
           const link = `[${r.title}](${r.url})`
-          return r.snippet ? `${i + 1}. ${link}\n   ${r.snippet}` : `${i + 1}. ${link}`
+          return r.content ? `${i + 1}. ${link}\n   ${r.content}` : `${i + 1}. ${link}`
         })
         .join('\n\n')
 

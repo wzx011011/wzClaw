@@ -35,24 +35,16 @@ describe('WebSearchTool', () => {
     expect(result.output).toContain('Invalid input')
   })
 
-  it('returns results parsed from DDG HTML', async () => {
-    const mockHtml = `
-      <div class="result results_links results_links_deep web-result">
-        <div class="links_main links_deep result__body">
-          <a class="result__a" href="/l/?uddg=https%3A%2F%2Fwww.typescriptlang.org%2Fdocs">TypeScript: Documentation</a>
-          <a class="result__snippet">TypeScript is a strongly typed programming language that builds on JavaScript.</a>
-        </div>
-      </div>
-      <div class="result results_links results_links_deep web-result">
-        <div class="links_main links_deep result__body">
-          <a class="result__a" href="/l/?uddg=https%3A%2F%2Fgithub.com%2Fmicrosoft%2FTypeScript">microsoft/TypeScript</a>
-          <a class="result__snippet">TypeScript is a superset of JavaScript that compiles to clean JavaScript output.</a>
-        </div>
-      </div>
-    `
+  it('returns results from SearXNG JSON API', async () => {
+    const mockJson = {
+      results: [
+        { title: 'TypeScript: Documentation', url: 'https://www.typescriptlang.org/docs', content: 'TypeScript is a strongly typed programming language.' },
+        { title: 'microsoft/TypeScript', url: 'https://github.com/microsoft/TypeScript', content: 'TypeScript is a superset of JavaScript.' }
+      ]
+    }
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      text: () => Promise.resolve(mockHtml)
+      json: () => Promise.resolve(mockJson)
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -62,12 +54,17 @@ describe('WebSearchTool', () => {
     expect(result.output).toContain('typescriptlang.org')
     expect(result.output).toContain('microsoft/TypeScript')
     expect(result.output).toContain('github.com')
+    // 验证调用了 SearXNG 端点
+    expect(mockFetch).toHaveBeenCalledOnce()
+    expect(mockFetch.mock.calls[0][0]).toContain('searxng.5945.top')
+    expect(mockFetch.mock.calls[0][0]).toContain('format=json')
   })
 
-  it('returns no-results message when DDG HTML has no results', async () => {
+  it('returns no-results message when SearXNG returns empty results', async () => {
+    const mockJson = { results: [] }
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      text: () => Promise.resolve('<html><body>No results</body></html>')
+      json: () => Promise.resolve(mockJson)
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -80,8 +77,7 @@ describe('WebSearchTool', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
-      statusText: 'Internal Server Error',
-      text: () => Promise.resolve('server error')
+      statusText: 'Internal Server Error'
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -97,5 +93,49 @@ describe('WebSearchTool', () => {
     const result = await tool.execute({ query: 'test' }, { workingDirectory: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.output).toContain('Network error')
+  })
+
+  it('filters by allowed_domains', async () => {
+    const mockJson = {
+      results: [
+        { title: 'GitHub Result', url: 'https://github.com/test', content: 'from github' },
+        { title: 'Other Result', url: 'https://other.com/test', content: 'from other' }
+      ]
+    }
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockJson)
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await tool.execute(
+      { query: 'test', allowed_domains: ['github.com'] },
+      { workingDirectory: '/tmp' }
+    )
+    expect(result.isError).toBe(false)
+    expect(result.output).toContain('GitHub Result')
+    expect(result.output).not.toContain('Other Result')
+  })
+
+  it('filters by blocked_domains', async () => {
+    const mockJson = {
+      results: [
+        { title: 'Pinterest Junk', url: 'https://pinterest.com/pin/123', content: 'junk' },
+        { title: 'Good Result', url: 'https://example.com/page', content: 'useful' }
+      ]
+    }
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockJson)
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await tool.execute(
+      { query: 'test', blocked_domains: ['pinterest.com'] },
+      { workingDirectory: '/tmp' }
+    )
+    expect(result.isError).toBe(false)
+    expect(result.output).toContain('Good Result')
+    expect(result.output).not.toContain('Pinterest')
   })
 })
