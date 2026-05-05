@@ -122,14 +122,14 @@ void main() {
     test('clearing with empty list does not throw', () {
       final store = ChatStore.instance;
       // Should not throw — this increments _clearGeneration and clears messages
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
     });
 
     test('loading empty list then loading messages works when no user message sent', () {
       final store = ChatStore.instance;
 
       // Step 1: Clear messages (simulates task switch)
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       // Step 2: Load fetched messages — should succeed since no user message
       // was sent in between
@@ -140,7 +140,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(fetchedMessages);
+      store.loadFetchedMessages('test-session', fetchedMessages);
 
       // The message should have been loaded
       expect(store.messages, isNotEmpty);
@@ -155,7 +155,7 @@ void main() {
       final store = ChatStore.instance;
 
       // Clear once
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       // Send a message — this sets _lastUserMsgGen = current _clearGeneration
       // Note: sendMessage calls ChatDatabase.insertMessage which needs sqflite.
@@ -169,7 +169,7 @@ void main() {
       }
 
       // Now clear again — this increments _clearGeneration past _lastUserMsgGen
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       // Load messages — this should succeed because _lastUserMsgGen < _clearGeneration
       final newMessages = [
@@ -179,7 +179,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(newMessages);
+      store.loadFetchedMessages('test-session', newMessages);
 
       expect(store.messages, isNotEmpty);
       expect(store.messages.any((m) => m.content == 'Fresh response after clear'),
@@ -190,7 +190,7 @@ void main() {
       final store = ChatStore.instance;
 
       // Step 1: Clear to set a baseline generation
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       // Step 2: Send a user message — sets _lastUserMsgGen = _clearGeneration + 1 (Bug 4 fix).
       // sendMessage internally calls ChatDatabase.insertMessage which needs
@@ -213,7 +213,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(fetched);
+      store.loadFetchedMessages('test-session', fetched);
 
       // Messages should be REJECTED (guard now correctly fires after user sends a message)
       expect(store.messages.any((m) => m.content == 'AI response'), isFalse);
@@ -258,7 +258,7 @@ void main() {
     test('clearSession does not throw', () async {
       final store = ChatStore.instance;
       // Load some messages first
-      store.loadFetchedMessages([
+      store.loadFetchedMessages('test-session', [
         ChatMessage(
           role: MessageRole.user,
           content: 'to be cleared',
@@ -457,7 +457,7 @@ void main() {
   group('ChatStore loadFetchedMessages guard (Bug 4 fix)', () {
     test('messages ARE loaded when no user message sent after clear', () {
       final store = ChatStore.instance;
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       final fetched = [
         ChatMessage(
@@ -466,7 +466,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(fetched);
+      store.loadFetchedMessages('test-session', fetched);
       expect(store.messages.any((m) => m.content == 'auto-sync result'), isTrue);
     });
 
@@ -474,7 +474,7 @@ void main() {
       final store = ChatStore.instance;
 
       // Clear — sets baseline generation N
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
 
       // User sends message — now _lastUserMsgGen = N + 1
       try {
@@ -491,7 +491,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(staleFetch);
+      store.loadFetchedMessages('test-session', staleFetch);
 
       // The stale fetch must NOT replace the messages (user message is in flight)
       expect(
@@ -505,14 +505,14 @@ void main() {
       final store = ChatStore.instance;
 
       // Clear N
-      store.loadFetchedMessages([]);
+      store.loadFetchedMessages('test-session', []);
       // User sends → _lastUserMsgGen = N+1
       try {
         await store.sendMessage('user input 2');
       } catch (_) {}
       // Clear again → generation = N+1, then N+2 (depending on sequence)
       // Either way, _lastUserMsgGen <= _clearGeneration after this
-      store.loadFetchedMessages([]); // clears and increments
+      store.loadFetchedMessages('test-session', []); // clears and increments
 
       final freshFetch = [
         ChatMessage(
@@ -521,7 +521,7 @@ void main() {
           createdAt: DateTime.now(),
         ),
       ];
-      store.loadFetchedMessages(freshFetch);
+      store.loadFetchedMessages('test-session', freshFetch);
 
       expect(
         store.messages.any((m) => m.content == 'fresh fetch after second clear'),
