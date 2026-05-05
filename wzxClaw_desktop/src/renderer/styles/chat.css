@@ -1710,6 +1710,11 @@
   white-space: nowrap;
 }
 
+.slash-picker-source {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
 /* ============================================================
    @-Mention Picker (per MENTION-01, MENTION-02, MENTION-05)
    ============================================================ */
@@ -3072,4 +3077,258 @@
 
 .todo-item--completed .todo-content {
   color: var(--text-secondary);
+}
+
+/* ============================================================
+   Plugin Manager
+   ============================================================ */
+
+.plugin-manager.settings-modal {
+  max-width: 580px;
+  width: 90vw;
+}
+
+.plugin-status-bar {
+  padding: 6px 14px;
+  background: rgba(79, 195, 247, 0.1);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.plugin-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.plugin-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.plugin-hint code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  transition: border-color 0.15s;
+}
+
+.plugin-item.enabled {
+  border-left: 3px solid var(--tool-completed);
+}
+
+.plugin-item.disabled {
+  border-left: 3px solid var(--text-muted);
+  opacity: 0.7;
+}
+
+.plugin-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plugin-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(79, 195, 247, 0.15);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plugin-version {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.plugin-item-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.plugin-item-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.plugin-item-errors {
+  margin-top: 4px;
+}
+
+.plugin-error {
+  font-size: 11px;
+  color: var(--tool-error);
+  background: rgba(244, 135, 113, 0.08);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+.plugin-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.plugin-item-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.plugin-item-actions button:hover {
+  opacity: 0.85;
+}
+
+.plugin-item-actions .btn-primary {
+  background: rgba(137, 209, 133, 0.2);
+  border-color: var(--tool-completed);
+  color: var(--tool-completed);
+}
+
+.plugin-item-actions .btn-warning {
+  background: rgba(255, 183, 77, 0.15);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.plugin-item-actions .btn-danger {
+  background: rgba(244, 135, 113, 0.1);
+  border-color: var(--tool-error);
+  color: var(--tool-error);
+}
+
+/* ============================================================
+   Plugin Manager — Install & Config additions
+   ============================================================ */
+
+.plugin-install-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.plugin-install-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.plugin-install-input:focus {
+  border-color: var(--accent);
+}
+
+.plugin-config-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.plugin-config-panel {
+  width: 90%;
+  max-width: 500px;
+  max-height: 70vh;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.plugin-config-editor {
+  flex: 1;
+  min-height: 200px;
+  padding: 12px;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+
+.plugin-tag-mcp,
+.plugin-tag-hooks,
+.plugin-tag-config {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.plugin-tag-mcp {
+  background: rgba(187, 134, 252, 0.15);
+  color: #bb86fc;
+}
+
+.plugin-tag-hooks {
+  background: rgba(255, 183, 77, 0.15);
+  color: #ffb74d;
+}
+
+.plugin-tag-config {
+  background: rgba(79, 195, 247, 0.15);
+  color: var(--accent);
 }

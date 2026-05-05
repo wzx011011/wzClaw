@@ -4,12 +4,26 @@ import type { SlashCommand } from '../../../shared/types'
 // ============================================================
 // SlashCommandPicker — Dropdown shown when input starts with /
 // (per SLASH-01)
+// Supports dynamic skills loaded from main process.
 // ============================================================
+
+// Source labels for display
+const SOURCE_LABELS: Record<string, string> = {
+  user: '👤',
+  project: '📁',
+  bundled: '📦',
+  legacy: '📄',
+  builtin: '',
+  managed: '🏢',
+  mcp: '🔌',
+}
 
 interface SlashCommandPickerProps {
   visible: boolean
   query: string
   commands: SlashCommand[]
+  /** Optional source info keyed by command name (from SkillInfo.source) */
+  commandSources?: Record<string, string>
   onSelect: (cmd: SlashCommand) => void
   onClose: () => void
 }
@@ -18,6 +32,7 @@ export default function SlashCommandPicker({
   visible,
   query,
   commands,
+  commandSources,
   onSelect,
   onClose
 }: SlashCommandPickerProps): JSX.Element | null {
@@ -87,7 +102,14 @@ export default function SlashCommandPicker({
           onClick={() => onSelect(cmd)}
           onMouseEnter={() => setSelectedIndex(idx)}
         >
-          <span className="slash-picker-name">/{cmd.name}</span>
+          <span className="slash-picker-name">
+            /{cmd.name}
+            {commandSources?.[cmd.name] && SOURCE_LABELS[commandSources[cmd.name]] && (
+              <span className="slash-picker-source" title={`Source: ${commandSources[cmd.name]}`}>
+                {' '}{SOURCE_LABELS[commandSources[cmd.name]]}
+              </span>
+            )}
+          </span>
           <span className="slash-picker-desc">{cmd.description}</span>
         </div>
       ))}

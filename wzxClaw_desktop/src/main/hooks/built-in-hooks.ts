@@ -18,6 +18,8 @@ const STAGNATION_MIN_TURNS = 3
  */
 function createStagnationHook(): (ctx: any) => Promise<HookResult> {
   const history: boolean[] = []  // true = 有写操作
+  let stagnationCount = 0        // 累计停滞触发次数
+  const MAX_STAGNATION_WARNINGS = 3  // 最大容忍次数（参考 Claude Code 连续失败 3 次熔断）
 
   return async (ctx) => {
     const hadWrite = ctx.turnInfo?.hadWrite ?? false
@@ -33,10 +35,25 @@ function createStagnationHook(): (ctx: any) => Promise<HookResult> {
 
     // 连续 N 轮无写操作 → 停滞
     if (history.length >= STAGNATION_WINDOW && history.every(h => !h)) {
-      history.length = 0  // 重置，避免反复触发
-      return {
-        blockingError: `你已连续 ${STAGNATION_WINDOW} 轮只读不写。请采取行动（修改文件、执行命令）或向用户确认方向是否正确。`,
+      history.length = 0  // 重置窗口，避免反复触发
+      stagnationCount++
+
+      // 超过容忍次数 → 强制终止 agent loop（preventContinuation=true）
+      if (stagnationCount > MAX_STAGNATION_WARNINGS) {
+        return {
+          preventContinuation: true,
+          blockingError: `已连续 ${stagnationCount} 次检测到停滞，强制终止。请检查任务方向或手动调整。`,
+        }
       }
+
+      return {
+        blockingError: `你已连续 ${STAGNATION_WINDOW} 轮只读不写。请采取行动（修改文件、执行命令）或向用户确认方向是否正确。（${stagnationCount}/${MAX_STAGNATION_WARNINGS}）`,
+      }
+    }
+
+    // 如果本轮有写操作，重置停滞计数
+    if (hadWrite && stagnationCount > 0) {
+      stagnationCount = 0
     }
 
     return {}

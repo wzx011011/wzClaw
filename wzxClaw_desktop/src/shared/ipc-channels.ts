@@ -169,6 +169,26 @@ export const IPC_CHANNELS = {
 
   // File save request (main -> renderer, triggers unsaved file prompt)
   'file:save_request': 'file:save_request',
+
+  // Skill channels (renderer -> main)
+  'skill:list': 'skill:list',
+  'skill:get-prompt': 'skill:get-prompt',
+  'skill:reload': 'skill:reload',
+  'skill:invoke': 'skill:invoke',
+
+  // Plugin channels (renderer -> main)
+  'plugin:list': 'plugin:list',
+  'plugin:get': 'plugin:get',
+  'plugin:install': 'plugin:install',
+  'plugin:uninstall': 'plugin:uninstall',
+  'plugin:enable': 'plugin:enable',
+  'plugin:disable': 'plugin:disable',
+  'plugin:reload': 'plugin:reload',
+  'plugin:get-skills': 'plugin:get-skills',
+  'plugin:install-from-source': 'plugin:install-from-source',
+  'plugin:get-output-styles': 'plugin:get-output-styles',
+  'plugin:get-user-config': 'plugin:get-user-config',
+  'plugin:set-user-config': 'plugin:set-user-config',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -259,6 +279,24 @@ export interface IpcRequestPayloads {
   'shell:get_extension_paths': void
   'insights:generate': void
   'agent:context_breakdown': void
+  'skill:list': void
+  'skill:get-prompt': { name: string; args: string }
+  'skill:reload': void
+  'skill:invoke': { name: string; args: string }
+
+  // Plugin channels
+  'plugin:list': void
+  'plugin:get': { name: string }
+  'plugin:install': { path: string; scope?: import('./types-plugin').PluginScope }
+  'plugin:uninstall': { name: string }
+  'plugin:enable': { name: string }
+  'plugin:disable': { name: string }
+  'plugin:reload': void
+  'plugin:get-skills': { pluginName?: string }
+  'plugin:install-from-source': { source: import('./types-plugin').MarketplacePluginSource; scope?: import('./types-plugin').PluginScope }
+  'plugin:get-output-styles': void
+  'plugin:get-user-config': { pluginName: string }
+  'plugin:set-user-config': { pluginName: string; values: Record<string, unknown> }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -333,6 +371,24 @@ export interface IpcResponsePayloads {
   'shell:get_extension_paths': { commandsDir: string; skillsDir: string }
   'insights:generate': { summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }
   'agent:context_breakdown': import('./types').ContextBreakdownResponse
+  'skill:list': import('./types-skill').SkillInfo[]
+  'skill:get-prompt': string | null
+  'skill:reload': void
+  'skill:invoke': { content: string } | { error: string }
+
+  // Plugin channels
+  'plugin:list': import('./types-plugin').PluginInfo[]
+  'plugin:get': import('./types-plugin').PluginInfo | null
+  'plugin:install': { success: boolean; message: string; pluginName?: string }
+  'plugin:uninstall': { success: boolean; message: string }
+  'plugin:enable': { success: boolean; message: string }
+  'plugin:disable': { success: boolean; message: string }
+  'plugin:reload': void
+  'plugin:get-skills': import('./types-skill').SkillInfo[]
+  'plugin:install-from-source': import('./types-plugin').PluginInstallResult
+  'plugin:get-output-styles': { css: string; styleNames: string[] }
+  'plugin:get-user-config': Record<string, unknown>
+  'plugin:set-user-config': { success: boolean; message: string }
 }
 
 // Stream payloads (main sends to renderer via webContents.send)

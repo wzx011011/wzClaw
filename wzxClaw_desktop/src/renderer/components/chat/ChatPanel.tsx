@@ -11,15 +11,17 @@ import { useChatStore } from '../../stores/chat-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useStepStore } from '../../stores/step-store'
 import { useToastStore } from '../../stores/toast-store'
-import { SLASH_COMMANDS } from '../../commands/slash-commands'
+import { SLASH_COMMANDS, getAllSlashCommandsAsync } from '../../commands/slash-commands'
 import MessageList from './MessageList'
 import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
 import SettingsModal from './SettingsModal'
+import PluginManager from './PluginManager'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
+import { registerPluginManagerToggle, invalidateSkillCache } from '../../commands/slash-commands'
 
 import type { MentionItem } from '../../../shared/types'
 
@@ -64,10 +66,12 @@ export default function ChatPanel(): JSX.Element {
   // Local UI state
   const [inputValue, setInputValue] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [showPlugins, setShowPlugins] = useState(false)
   const [showMentionPicker, setShowMentionPicker] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
   const [showSlashPicker, setShowSlashPicker] = useState(false)
   const [slashQuery, setSlashQuery] = useState('')
+  const [allCommands, setAllCommands] = useState(SLASH_COMMANDS)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef(activeSessionId)
 
@@ -99,6 +103,11 @@ export default function ChatPanel(): JSX.Element {
   const [pendingAskUserQuestions, setPendingAskUserQuestions] = useState<
     Array<{ questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }>
   >([])
+
+  // Load dynamic skills from main process on mount
+  useEffect(() => {
+    getAllSlashCommandsAsync().then(setAllCommands).catch(() => {})
+  }, [])
 
   // Load permission mode from backend on mount — deferred 100ms, not first-frame critical
   useEffect(() => {
@@ -192,6 +201,11 @@ export default function ChatPanel(): JSX.Element {
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
 
+  // Register plugin manager toggle so /plugin command can open the modal
+  useEffect(() => {
+    registerPluginManagerToggle((show) => setShowPlugins(show))
+  }, [])
+
   // Initialize step store — subscribe to IPC events for real-time updates
   useEffect(() => {
     const unsub = useStepStore.getState().init()
@@ -267,7 +281,7 @@ export default function ChatPanel(): JSX.Element {
 
     // Handle /help inline — inject a local assistant message listing all commands
     if (trimmed === '/help') {
-      const lines = SLASH_COMMANDS.map((c) => `  /${c.name} — ${c.description}`)
+      const lines = allCommands.map((c) => `  /${c.name} — ${c.description}`)
       lines.push('  /help — Show this help message')
       const helpContent = `Available slash commands:\n\n${lines.join('\n')}`
       const { messages } = useChatStore.getState()
@@ -294,7 +308,7 @@ export default function ChatPanel(): JSX.Element {
       const parts = trimmed.slice(1).split(/\s+/)
       const cmdName = parts[0].toLowerCase()
       const args = parts.slice(1).join(' ')
-      const cmd = SLASH_COMMANDS.find((c) => c.name === cmdName)
+      const cmd = allCommands.find((c) => c.name === cmdName)
       if (cmd) {
         setInputValue('')
         setShowSlashPicker(false)
@@ -512,7 +526,7 @@ export default function ChatPanel(): JSX.Element {
           <SlashCommandPicker
             visible={showSlashPicker}
             query={slashQuery}
-            commands={SLASH_COMMANDS}
+            commands={allCommands}
             onSelect={handleSlashSelect}
             onClose={() => { setShowSlashPicker(false); setSlashQuery('') }}
           />
@@ -565,6 +579,12 @@ export default function ChatPanel(): JSX.Element {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+              </svg>
+            </button>
+            {/* Plugins */}
+            <button className="chat-toolbar-icon" title="插件管理" onClick={() => setShowPlugins(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
             </button>
             {/* Settings */}
@@ -635,6 +655,7 @@ export default function ChatPanel(): JSX.Element {
         </div>
       </div>
       <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <PluginManager isOpen={showPlugins} onClose={() => setShowPlugins(false)} />
     </div>
   )
 }

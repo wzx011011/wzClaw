@@ -402,6 +402,12 @@ app.whenReady().then(async () => {
   // 避免外部进程启动阻塞窗口创建
   const mcpManager = new MCPManager(toolRegistry)
 
+  // Wire plugin registry with hook and MCP systems
+  const { pluginRegistry } = await import('./plugins')
+  pluginRegistry.setSettingsManager(settingsManager)
+  pluginRegistry.setHookRegistry(hookRegistry)
+  pluginRegistry.setMcpManager(mcpManager)
+
   // Register AgentTool (sub-agent) — must be after registry + agentLoop deps exist
   // Pass a getLatestConfig getter so sub-agents always use the current model/provider
   toolRegistry.register(

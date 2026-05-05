@@ -4,6 +4,8 @@ import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
 import { getCommandsDir, getSkillsDir, getAppDataDir, getInsightsCacheDir, getInsightsReportDir } from './paths'
 import { invalidateGitCache } from './git/git-context'
+import { pluginToInfo } from '../shared/types-plugin'
+import { skillToInfo } from '../shared/types-skill'
 
 /**
  * Check whether a file path is within the workspace root boundary.
@@ -1308,5 +1310,184 @@ export function registerIpcHandlers(
       compactionHistory,
       model,
     }
+  })
+
+  // ============================================================
+  // Skills — list, get prompt, reload, invoke
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['skill:list'], async () => {
+    const { skillRegistry } = await import('./skills')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await skillRegistry.load(cwd, projectRoots)
+    return skillRegistry.getAllInfo()
+  })
+
+  ipcMain.handle(IPC_CHANNELS['skill:get-prompt'], async (_event, request: { name: string; args: string }) => {
+    const { skillRegistry } = await import('./skills')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await skillRegistry.load(cwd, projectRoots)
+    // Set session ID for ${SESSION_ID} substitution
+    process.env.__WZXCLAW_SESSION_ID__ = settingsManager.getLastSessionId() ?? 'unknown'
+    return skillRegistry.getPrompt(request.name, request.args ?? '')
+  })
+
+  ipcMain.handle(IPC_CHANNELS['skill:reload'], async () => {
+    const { skillRegistry } = await import('./skills')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await skillRegistry.reload(cwd, projectRoots)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['skill:invoke'], async (_event, request: { name: string; args: string }) => {
+    const { skillRegistry } = await import('./skills')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await skillRegistry.load(cwd, projectRoots)
+    const content = await skillRegistry.getPrompt(request.name, request.args ?? '')
+    if (content === null) {
+      return { error: `Skill '${request.name}' not found` }
+    }
+    return { content }
+  })
+
+  // ============================================================
+  // Plugins — list, get, install, uninstall, enable, disable, reload, get-skills
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['plugin:list'], async () => {
+    const { pluginRegistry } = await import('./plugins')
+    pluginRegistry.setSettingsManager(settingsManager)
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await pluginRegistry.load(cwd, projectRoots)
+    return pluginRegistry.getAllInfo()
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:get'], async (_event, request: { name: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await pluginRegistry.load(cwd, projectRoots)
+    const plugin = pluginRegistry.find(request.name)
+    if (!plugin) return null
+    const info = pluginToInfo(plugin)
+    const skills = pluginRegistry.getPluginSkills(plugin.name)
+    info.commandCount = skills.length
+    info.skillCount = skills.filter(s => s.skillRoot).length
+    return info
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:install'], async (_event, request: { path: string; scope?: import('../shared/types-plugin').PluginScope }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const plugin = pluginRegistry.installFromDirectory(
+      request.path,
+      'local',
+      request.scope ?? 'user',
+    )
+    if (!plugin) {
+      return { success: false, message: `Failed to install plugin from ${request.path}` }
+    }
+    return { success: true, message: `Plugin '${plugin.name}' installed successfully`, pluginName: plugin.name }
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:uninstall'], async (_event, request: { name: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const removed = pluginRegistry.uninstall(request.name)
+    return { success: removed, message: removed ? `Plugin '${request.name}' uninstalled` : `Plugin '${request.name}' not found` }
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:enable'], async (_event, request: { name: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const ok = await pluginRegistry.enable(request.name)
+    return { success: ok, message: ok ? `Plugin '${request.name}' enabled` : `Plugin '${request.name}' not found` }
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:disable'], async (_event, request: { name: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const ok = pluginRegistry.disable(request.name)
+    return { success: ok, message: ok ? `Plugin '${request.name}' disabled` : `Plugin '${request.name}' not found` }
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:reload'], async () => {
+    const { pluginRegistry } = await import('./plugins')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await pluginRegistry.reload(cwd, projectRoots)
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:get-skills'], async (_event, request: { pluginName?: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const projectRoots = agentLoop.activeWorkspace
+      ? agentLoop.activeWorkspace.projects.map(p => p.path)
+      : [cwd]
+    await pluginRegistry.load(cwd, projectRoots)
+    if (request.pluginName) {
+      return pluginRegistry.getPluginSkills(request.pluginName).map(skillToInfo)
+    }
+    return pluginRegistry.getAllPluginSkillInfo()
+  })
+
+  // ============================================================
+  // Plugins: install-from-source (marketplace: git/npm/url)
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['plugin:install-from-source'], async (_event, request) => {
+    const { PluginInstaller } = await import('./plugins')
+    const scope = request.scope ?? 'user'
+    const projectRoot = scope === 'project'
+      ? workspaceManager.getWorkspaceRoot() ?? undefined
+      : undefined
+    return PluginInstaller.fromMarketplaceSource(request.source, scope, projectRoot)
+  })
+
+  // ============================================================
+  // Plugins: get-output-styles — merged CSS from all enabled plugins
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['plugin:get-output-styles'], async () => {
+    const { pluginRegistry, loadOutputStyles } = await import('./plugins')
+    const { getAllOutputStylesCss } = await import('./plugins/plugin-output-styles')
+    const plugins = pluginRegistry.getAll().filter(p => p.enabled)
+    return getAllOutputStylesCss(plugins)
+  })
+
+  // ============================================================
+  // Plugins: get-user-config / set-user-config
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['plugin:get-user-config'], async (_event, request: { pluginName: string }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const plugin = pluginRegistry.find(request.pluginName)
+    if (!plugin) return {}
+    return plugin.userConfigValues ?? {}
+  })
+
+  ipcMain.handle(IPC_CHANNELS['plugin:set-user-config'], async (_event, request: { pluginName: string; values: Record<string, unknown> }) => {
+    const { pluginRegistry } = await import('./plugins')
+    const plugin = pluginRegistry.find(request.pluginName)
+    if (!plugin) {
+      return { success: false, message: `Plugin '${request.pluginName}' not found` }
+    }
+    plugin.userConfigValues = { ...plugin.userConfigValues, ...request.values }
+    // 持久化到磁盘
+    pluginRegistry.persistPluginState(plugin.name, {
+      enabled: plugin.enabled,
+      scope: 'user',
+      userConfigValues: plugin.userConfigValues,
+    })
+    return { success: true, message: `User config saved for '${request.pluginName}'` }
   })
 }

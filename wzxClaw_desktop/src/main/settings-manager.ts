@@ -23,6 +23,7 @@ interface StoredSettings {
   alwaysAllowRules?: string[]
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
   showToolSteps?: boolean
+  pluginStates?: Record<string, { enabled: boolean; scope: string }>
 }
 
 interface EncryptedKeys {
@@ -307,6 +308,34 @@ export class SettingsManager {
       baseURL,
       systemPrompt: this.settings.systemPrompt,
       thinkingDepth: this.settings.thinkingDepth
+    }
+  }
+
+  /**
+   * Get persisted plugin states (enabled/disabled per plugin).
+   */
+  getPluginStates(): Record<string, { enabled: boolean; scope: string }> {
+    return this.settings.pluginStates ?? {}
+  }
+
+  /**
+   * Save plugin state (enabled/disabled) to settings.
+   */
+  savePluginState(pluginName: string, state: { enabled: boolean; scope: string; userConfigValues?: Record<string, unknown> }): void {
+    if (!this.settings.pluginStates) {
+      this.settings.pluginStates = {}
+    }
+    this.settings.pluginStates[pluginName] = state
+    this.save()
+  }
+
+  /**
+   * Remove a plugin's persisted state (on uninstall).
+   */
+  removePluginState(pluginName: string): void {
+    if (this.settings.pluginStates) {
+      delete this.settings.pluginStates[pluginName]
+      this.save()
     }
   }
 }

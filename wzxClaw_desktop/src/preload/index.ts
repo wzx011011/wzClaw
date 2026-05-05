@@ -309,12 +309,48 @@ const api = {
   getContextBreakdown: (): Promise<import('../shared/types').ContextBreakdownResponse> =>
     ipcRenderer.invoke('agent:context_breakdown'),
 
+  // Skills — list, get prompt, reload, invoke
+  listSkills: (): Promise<import('../shared/types-skill').SkillInfo[]> =>
+    ipcRenderer.invoke('skill:list'),
+  getSkillPrompt: (request: { name: string; args: string }): Promise<string | null> =>
+    ipcRenderer.invoke('skill:get-prompt', request),
+  reloadSkills: (): Promise<void> =>
+    ipcRenderer.invoke('skill:reload'),
+  invokeSkill: (request: { name: string; args: string }): Promise<{ content: string } | { error: string }> =>
+    ipcRenderer.invoke('skill:invoke', request),
+
   // Data changed notification (mobile <-> desktop sync)
   onDataChanged: (callback: (payload: { source: string; entity: string; action: string; data: unknown }) => void) => {
     const handler = (_: unknown, payload: { source: string; entity: string; action: string; data: unknown }) => callback(payload)
     ipcRenderer.on('data:changed', handler)
     return () => ipcRenderer.removeListener('data:changed', handler)
   },
+
+  // Plugins — list, get, install, uninstall, enable, disable, reload, get-skills
+  listPlugins: (): Promise<import('../shared/types-plugin').PluginInfo[]> =>
+    ipcRenderer.invoke('plugin:list'),
+  getPlugin: (request: { name: string }): Promise<import('../shared/types-plugin').PluginInfo | null> =>
+    ipcRenderer.invoke('plugin:get', request),
+  installPlugin: (request: { path: string; scope?: import('../shared/types-plugin').PluginScope }): Promise<{ success: boolean; message: string; pluginName?: string }> =>
+    ipcRenderer.invoke('plugin:install', request),
+  uninstallPlugin: (request: { name: string }): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('plugin:uninstall', request),
+  enablePlugin: (request: { name: string }): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('plugin:enable', request),
+  disablePlugin: (request: { name: string }): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('plugin:disable', request),
+  reloadPlugins: (): Promise<void> =>
+    ipcRenderer.invoke('plugin:reload'),
+  getPluginSkills: (request?: { pluginName?: string }): Promise<import('../shared/types-skill').SkillInfo[]> =>
+    ipcRenderer.invoke('plugin:get-skills', request ?? {}),
+  installPluginFromSource: (request: { source: import('../shared/types-plugin').MarketplacePluginSource; scope?: import('../shared/types-plugin').PluginScope }): Promise<import('../shared/types-plugin').PluginInstallResult> =>
+    ipcRenderer.invoke('plugin:install-from-source', request),
+  getPluginOutputStyles: (): Promise<{ css: string; styleNames: string[] }> =>
+    ipcRenderer.invoke('plugin:get-output-styles'),
+  getPluginUserConfig: (request: { pluginName: string }): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('plugin:get-user-config', request),
+  setPluginUserConfig: (request: { pluginName: string; values: Record<string, unknown> }): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('plugin:set-user-config', request),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

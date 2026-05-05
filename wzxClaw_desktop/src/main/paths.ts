@@ -87,6 +87,11 @@ export function getSkillsDir(): string {
   return path.join(getUserDir(), 'skills')
 }
 
+/** 用户插件目录：~/.wzxclaw/plugins/（只读扫描） */
+export function getPluginsDir(): string {
+  return path.join(getUserDir(), 'plugins')
+}
+
 /** 用户自定义 agent 目录：~/.wzxclaw/agents/（只读扫描） */
 export function getAgentsDir(): string {
   return path.join(getUserDir(), 'agents')
@@ -180,6 +185,7 @@ export async function ensureAppDirs(): Promise<void> {
     getShellSnapshotsDir(),
     getCommandsDir(),
     getSkillsDir(),
+    getPluginsDir(),
     getMediaDir(),
     getInsightsCacheDir(),
     getInsightsReportDir(),
