@@ -1523,7 +1523,7 @@ app.on('before-quit', () => {
     settingsManager.saveAlwaysAllowRules(permissionManager.getAlwaysAllowRules())
   }
   // 确保防抖中的设置刷盘（同步版 — 退出时不能等异步）
-  void settingsManager.flush()
+  settingsManager.flushSync()
   // Dispose indexing engine
   if (indexingEngine) {
     indexingEngine.dispose()

@@ -835,6 +835,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Return combined unsubscribe
     return () => {
       resetTextBatch()
+      if (progressFrame !== null) cancelAnimationFrame(progressFrame)
       unsubText()
       unsubThinking()
       unsubToolStart()

@@ -221,6 +221,36 @@ export class SettingsManager {
   }
 
   /**
+   * 同步刷盘 — 用于 before-quit 等无法等待异步的场景。
+   * 使用 writeFileSync 确保数据在进程退出前写入磁盘。
+   */
+  flushSync(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (!this.dirty) return
+    this.dirty = false
+    try {
+      const fsSync = require('fs') as typeof import('fs')
+      fsSync.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8')
+      // Save encrypted keys synchronously
+      const encrypted: EncryptedKeys = {}
+      for (const [provider, plaintext] of this.decryptedKeys.entries()) {
+        if (safeStorage.isEncryptionAvailable()) {
+          const encryptedBuf = safeStorage.encryptString(plaintext)
+          encrypted[provider] = encryptedBuf.toString('base64')
+        } else {
+          encrypted[provider] = Buffer.from(plaintext, 'utf-8').toString('base64')
+        }
+      }
+      fsSync.writeFileSync(this.keysPath, JSON.stringify(encrypted, null, 2), 'utf-8')
+    } catch (err) {
+      console.error('[settings] flushSync failed:', err)
+    }
+  }
+
+  /**
    * Get settings for the renderer (no API key exposed).
    */
   getSettings(): SettingsResponse {
@@ -234,6 +264,13 @@ export class SettingsManager {
       thinkingDepth: this.settings.thinkingDepth,
       showToolSteps: this.settings.showToolSteps
     }
+  }
+
+  /**
+   * Get showToolSteps setting for mobile relay filtering.
+   */
+  getShowToolSteps(): boolean {
+    return this.settings.showToolSteps ?? true
   }
 
   /**

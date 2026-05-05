@@ -93,7 +93,7 @@ class PluginRegistry {
     this.pluginAgents.clear()
 
     // 0. Load builtin plugins (shipped with the app)
-    const builtinPlugins = this.loadBuiltinPlugins()
+    const builtinPlugins = await this.loadBuiltinPlugins()
 
     // 1. Scan directories for external plugins
     const scannedPlugins = await scanAllPlugins({ cwd, projectRoots })
@@ -420,7 +420,7 @@ class PluginRegistry {
    * Load builtin plugins shipped with the app in src/main/plugins/builtin/.
    * These are always available and marked as isBuiltin.
    */
-  private loadBuiltinPlugins(): LoadedPlugin[] {
+  private async loadBuiltinPlugins(): Promise<LoadedPlugin[]> {
     const plugins: LoadedPlugin[] = []
     const builtinDir = join(__dirname, 'builtin')
 
@@ -445,7 +445,7 @@ class PluginRegistry {
         continue
       }
 
-      const plugin = loadPlugin({
+      const plugin = await loadPlugin({
         path: entryPath,
         source: 'builtin',
         enabled: true,
