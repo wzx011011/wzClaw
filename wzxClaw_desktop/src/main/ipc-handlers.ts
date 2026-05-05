@@ -78,6 +78,9 @@ export function registerIpcHandlers(
     const conversationId = result.data.conversationId
     const runtime = runtimes.getOrCreate(conversationId)
 
+    // Set active session for step manager (session-isolated steps)
+    stepManager.setActiveSession(conversationId)
+
     // Reset persisted message counter for new conversation turn
     persistedMessageCount = runtime.getMessages().length
 
@@ -163,7 +166,7 @@ export function registerIpcHandlers(
     onStreamEvent?.('stream:desktop_user_message', { content: result.data.content, sessionId: agentConfig.conversationId })
 
     try {
-      for await (const agentEvent of runtime.run(result.data.content, agentConfig, sender)) {
+      for await (const agentEvent of runtime.run(result.data.content, agentConfig, sender, result.data.images as import('../shared/types').ImageContent[] | undefined)) {
         switch (agentEvent.type) {
           case 'agent:text':
             sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
@@ -813,7 +816,11 @@ export function registerIpcHandlers(
       }
     }
     const success = await store.deleteSession(result.data.sessionId)
-    if (success) onDataChanged?.('session:changed', { action: 'deleted', sessionId: result.data.sessionId })
+    if (success) {
+      // Clean up associated steps from memory and disk
+      stepManager.clearSession(result.data.sessionId)
+      onDataChanged?.('session:changed', { action: 'deleted', sessionId: result.data.sessionId })
+    }
     return { success }
   })
 
@@ -867,6 +874,15 @@ export function registerIpcHandlers(
     await fsp.writeFile(newPath, jsonlContent, 'utf-8')
     onDataChanged?.('session:changed', { action: 'created', sessionId: newId })
     return { newSessionId: newId }
+  })
+
+  // ============================================================
+  // Todo: load persisted todos for a workspace
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['todo:load'], async (_event, request: { workspaceId: string }) => {
+    const { TodoWriteTool } = await import('./tools/todo-write')
+    const todos = await TodoWriteTool.loadForWorkspace(request.workspaceId)
+    return todos.map(t => ({ content: t.content, status: t.status, activeForm: t.activeForm ?? '' }))
   })
 
   // ============================================================
@@ -991,9 +1007,16 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Step: list — returns all agent steps
+  // Step: list — returns all agent steps for a session.
+  // Loads from disk first if not already in memory.
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['step:list'], () => {
+  ipcMain.handle(IPC_CHANNELS['step:list'], async (_event, request?: { sessionId?: string }) => {
+    const sid = request?.sessionId
+    if (sid) {
+      // Ensure steps are loaded from disk into memory
+      await stepManager.loadSessionSteps(sid)
+      return stepManager.getAllSteps(sid)
+    }
     return stepManager.getAllSteps()
   })
 

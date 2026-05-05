@@ -652,6 +652,7 @@ app.whenReady().then(async () => {
         const success = await store.deleteSession(sessionId)
         if (success) {
           mobilePersistedMessageCounts.delete(sessionId)
+          stepManager.clearSession(sessionId)
         }
         broadcastToMobile('session:delete:response', { requestId, success })
         // Notify desktop renderer
@@ -704,6 +705,7 @@ app.whenReady().then(async () => {
         })
         await fsp.writeFile(sessionPath, metaLine ? metaLine + '\n' : '', 'utf-8')
         mobilePersistedMessageCounts.delete(sessionId)
+        stepManager.clearSession(sessionId)
         broadcastToMobile('session:clear:response', { success: true })
       } catch (err: any) {
         broadcastToMobile('session:clear:response', { success: false })
@@ -733,6 +735,8 @@ app.whenReady().then(async () => {
         agentLoop.activeWorkspace = null
         agentLoop.reset()
         sessionStore = new SessionStore(workspacePath)
+        stepManager.setWorkspaceRoot(workspacePath)
+        stepManager.clearAllSteps()
         mobileSessionId = null
         mobilePersistedMessageCounts.clear()
         settingsManager.setLastWorkspacePath(workspacePath)
@@ -1039,7 +1043,10 @@ app.whenReady().then(async () => {
           }
           case 'clear': {
             // Discard the mobile-current session runtime and start fresh on next send
-            if (mobileSessionId) runtimes.delete(mobileSessionId)
+            if (mobileSessionId) {
+              stepManager.clearSession(mobileSessionId)
+              runtimes.delete(mobileSessionId)
+            }
             mobileSessionId = null
             broadcastToMobile('session:create:response', { success: true })
             return
@@ -1093,6 +1100,7 @@ app.whenReady().then(async () => {
       })
       const sessionId = sessionTransition.sessionId
       mobileSessionId = sessionId
+      stepManager.setActiveSession(sessionId)
       const toolCallInputs = new Map<string, Record<string, unknown>>()
 
       const config = settingsManager.getCurrentConfig()
@@ -1143,6 +1151,8 @@ app.whenReady().then(async () => {
           if (rawMessages.length > 0) {
             await runtimes.getOrCreate(sessionId).restoreContext(rawMessages, agentConfig)
           }
+          // Restore steps from disk into memory for this session
+          await stepManager.loadSessionSteps(sessionId)
           mobilePersistedMessageCounts.set(sessionId, rawMessages.length)
         } catch {
           mobilePersistedMessageCounts.set(sessionId, 0)
@@ -1412,6 +1422,9 @@ app.whenReady().then(async () => {
   // Create session store for JSONL persistence (per PERSIST-01)
   sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
+  // Initialize step manager's persistence directory
+  stepManager.setWorkspaceRoot(workspaceManager.getWorkspaceRoot() ?? process.cwd())
+
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
@@ -1424,6 +1437,8 @@ app.whenReady().then(async () => {
       settingsManager.setLastWorkspacePath(rootPath)
       // Rebuild SessionStore for new workspace
       sessionStore = new SessionStore(rootPath)
+      // Update step manager's persistence directory
+      stepManager.setWorkspaceRoot(rootPath)
       // Reset mobile session and notify connected mobile
       mobileSessionId = null
       sendWorkspaceInfoToMobile()

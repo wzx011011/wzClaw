@@ -73,7 +73,16 @@ export default function ChatPanel(): JSX.Element {
   const [slashQuery, setSlashQuery] = useState('')
   const [allCommands, setAllCommands] = useState(SLASH_COMMANDS)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const previousSessionIdRef = useRef(activeSessionId)
+
+  // Image attachments state
+  const [pendingImages, setPendingImages] = useState<Array<{ data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; name?: string }>>([])
+
+  // Input history (up/down arrow)
+  const inputHistoryRef = useRef<string[]>([])
+  const historyIndexRef = useRef(-1)
+  const savedInputRef = useRef('')
 
   // Mention store actions
   const addMention = useChatStore((s) => s.addMention)
@@ -206,6 +215,140 @@ export default function ChatPanel(): JSX.Element {
     registerPluginManagerToggle((show) => setShowPlugins(show))
   }, [])
 
+  // ============================================================
+  // Image handling helpers
+  // ============================================================
+
+  const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
+
+  const processImageFile = useCallback((file: File): Promise<{ data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; name?: string } | null> => {
+    return new Promise((resolve) => {
+      if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+        useToastStore.getState().show(`不支持的图片格式: ${file.type}`, 'error')
+        resolve(null)
+        return
+      }
+      if (file.size > MAX_IMAGE_SIZE) {
+        useToastStore.getState().show('图片大小不能超过 10MB', 'error')
+        resolve(null)
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Strip data URL prefix to get raw base64
+        const base64 = result.split(',')[1]
+        if (!base64) { resolve(null); return }
+        resolve({
+          data: base64,
+          mimeType: file.type as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+          name: file.name,
+        })
+      }
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(file)
+    })
+  }, [])
+
+  const handleImageFiles = useCallback(async (files: FileList | File[]) => {
+    const newImages: typeof pendingImages = []
+    for (const file of files) {
+      if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+        const img = await processImageFile(file)
+        if (img) newImages.push(img)
+      }
+    }
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages])
+    }
+  }, [processImageFile])
+
+  // Paste handler for images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if ((item as DataTransferItem).type.startsWith('image/')) {
+        const file = (item as DataTransferItem).getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      handleImageFiles(imageFiles)
+    }
+  }, [handleImageFiles])
+
+  // Drag & drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      handleImageFiles(files)
+    }
+  }, [handleImageFiles])
+
+  // File input click handler
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      handleImageFiles(files)
+    }
+    // Reset so same file can be selected again
+    e.target.value = ''
+  }, [handleImageFiles])
+
+  const removePendingImage = useCallback((index: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // ============================================================
+  // Input history navigation
+  // ============================================================
+
+  const pushToHistory = useCallback((text: string) => {
+    if (!text.trim()) return
+    const history = inputHistoryRef.current
+    // Deduplicate: don't add if same as last entry
+    if (history.length > 0 && history[history.length - 1] === text) return
+    history.push(text)
+    // Keep last 100 entries
+    if (history.length > 100) history.shift()
+  }, [])
+
+  const navigateHistory = useCallback((direction: 'up' | 'down'): string | null => {
+    const history = inputHistoryRef.current
+    if (history.length === 0) return null
+
+    if (direction === 'up') {
+      if (historyIndexRef.current === -1) {
+        // Save current input before navigating
+        savedInputRef.current = inputValue
+        historyIndexRef.current = history.length - 1
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current--
+      }
+    } else {
+      if (historyIndexRef.current === -1) return null
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current++
+      } else {
+        // Restore saved input
+        historyIndexRef.current = -1
+        return savedInputRef.current
+      }
+    }
+    return history[historyIndexRef.current] ?? null
+  }, [inputValue])
+
   // Initialize step store — subscribe to IPC events for real-time updates
   useEffect(() => {
     const unsub = useStepStore.getState().init()
@@ -277,7 +420,7 @@ export default function ChatPanel(): JSX.Element {
 
   const handleSend = async (): Promise<void> => {
     const trimmed = inputValue.trim()
-    if ((!trimmed && pendingMentions.length === 0) || isStreaming) return
+    if ((!trimmed && pendingMentions.length === 0 && pendingImages.length === 0) || isStreaming) return
 
     // Handle /help inline — inject a local assistant message listing all commands
     if (trimmed === '/help') {
@@ -327,12 +470,20 @@ export default function ChatPanel(): JSX.Element {
     }
 
     // Normal message send
-    sendMessage(trimmed || 'See the attached files.')
+    const imagesToSend = pendingImages.length > 0 ? pendingImages : undefined
+    const displayText = trimmed || (pendingImages.length > 0 ? 'See the attached images.' : 'See the attached files.')
+
+    // Push to input history
+    if (trimmed) pushToHistory(trimmed)
+
+    sendMessage(displayText, undefined, imagesToSend)
     setInputValue('')
+    setPendingImages([])
     setShowMentionPicker(false)
     setMentionFilter('')
     setShowSlashPicker(false)
     setSlashQuery('')
+    historyIndexRef.current = -1
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
@@ -346,6 +497,37 @@ export default function ChatPanel(): JSX.Element {
     if (e.key === 'Enter' && !e.shiftKey && !showMentionPicker && !showSlashPicker) {
       e.preventDefault()
       handleSend()
+      return
+    }
+    // Up/Down arrow: navigate input history when cursor is at start/end
+    if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const target = e.target as HTMLTextAreaElement
+      if (target.selectionStart === 0 && target.selectionEnd === 0) {
+        e.preventDefault()
+        const historical = navigateHistory('up')
+        if (historical !== null) {
+          setInputValue(historical)
+          // Move cursor to end
+          requestAnimationFrame(() => { target.selectionStart = target.selectionEnd = historical.length })
+        }
+      }
+    }
+    if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const target = e.target as HTMLTextAreaElement
+      if (target.selectionStart === inputValue.length && target.selectionEnd === inputValue.length) {
+        e.preventDefault()
+        const historical = navigateHistory('down')
+        if (historical !== null) {
+          setInputValue(historical)
+          requestAnimationFrame(() => { target.selectionStart = target.selectionEnd = historical.length })
+        }
+      }
+    }
+    // Ctrl+A: select all text in input
+    // Escape: clear input or close pickers
+    if (e.key === 'Escape') {
+      if (showMentionPicker) { setShowMentionPicker(false); setMentionFilter(''); return }
+      if (showSlashPicker) { setShowSlashPicker(false); setSlashQuery(''); return }
     }
   }
 
@@ -504,16 +686,43 @@ export default function ChatPanel(): JSX.Element {
             ))}
           </div>
         )}
-        <div className="chat-input-area" style={{ position: 'relative' }}>
+        {/* Pending image previews */}
+        {pendingImages.length > 0 && (
+          <div className="pending-images">
+            {pendingImages.map((img, i) => (
+              <div key={i} className="pending-image-thumb">
+                <img src={`data:${img.mimeType};base64,${img.data}`} alt={img.name ?? `Image ${i + 1}`} />
+                <button className="pending-image-remove" onClick={() => removePendingImage(i)}>✕</button>
+                {img.name && <span className="pending-image-name">{img.name.length > 15 ? img.name.slice(0, 12) + '...' : img.name}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <div
+          className="chat-input-area"
+          style={{ position: 'relative' }}
+          onPaste={handlePaste}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
           <textarea
             ref={textareaRef}
             className="chat-input"
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="描述后续调整内容"
+            placeholder={pendingImages.length > 0 ? '添加图片描述（可选）...' : '描述后续调整内容'}
             rows={1}
             disabled={isStreaming}
+          />
+          {/* Hidden file input for image upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+n            style={{ display: 'none' }}
+            onChange={handleFileSelect}
           />
           {/* Mention picker dropdown */}
           <MentionPicker
@@ -534,10 +743,12 @@ export default function ChatPanel(): JSX.Element {
         {/* Bottom toolbar: icons | context% | permission | model | send/stop */}
         <div className="chat-input-toolbar">
           <div className="chat-toolbar-left">
-            {/* Attachment */}
-            <button className="chat-toolbar-icon" title="添加附件" onClick={() => { setShowMentionPicker(true); textareaRef.current?.focus() }}>
+            {/* Image upload */}
+            <button className="chat-toolbar-icon" title="上传图片" onClick={() => fileInputRef.current?.click()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
             {/* @ mention */}
@@ -643,7 +854,7 @@ export default function ChatPanel(): JSX.Element {
               <button
                 className="chat-send-btn"
                 onClick={handleSend}
-                disabled={!inputValue.trim() && pendingMentions.length === 0}
+                disabled={!inputValue.trim() && pendingMentions.length === 0 && pendingImages.length === 0}
                 title="发送 (Enter)"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

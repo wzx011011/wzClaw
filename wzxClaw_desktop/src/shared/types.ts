@@ -29,11 +29,22 @@ export type ContentBlock = TextContentBlock | ToolUseContentBlock | ThinkingCont
 // Message Types
 // ============================================================
 
+export interface ImageContent {
+  /** Base64-encoded image data (no data: prefix) */
+  data: string
+  /** MIME type: image/png, image/jpeg, image/gif, image/webp */
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+  /** Original file name */
+  name?: string
+}
+
 export interface UserMessage {
   /** 唯一消息 ID（新消息自动生成，旧消息反序列化时可能为 undefined） */
   id?: string
   role: 'user'
   content: string
+  /** Attached images (base64) */
+  images?: ImageContent[]
   timestamp: number
 }
 

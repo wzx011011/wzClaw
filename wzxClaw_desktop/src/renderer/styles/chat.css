@@ -89,6 +89,83 @@
   white-space: pre-wrap;
 }
 
+/* Image display in user messages */
+.chat-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chat-message-image {
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: 8px;
+  object-fit: cover;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.chat-message-image:hover {
+  opacity: 0.9;
+}
+
+/* Pending image previews above input */
+.pending-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+
+.pending-image-thumb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+}
+.pending-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pending-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.pending-image-remove:hover {
+  background: rgba(220, 50, 50, 0.8);
+}
+.pending-image-name {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 4px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chat-message-assistant {
   align-self: flex-start;
   max-width: 95%;

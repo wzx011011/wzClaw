@@ -176,7 +176,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
 }
 
 function ChatMessage({ message }: ChatMessageProps): JSX.Element {
-  const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions, model } = message
+  const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions, model, images } = message
 
   if (role === 'user') {
     // Show mention context blocks if present, then the display content
@@ -191,6 +191,19 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
           <div className="mention-blocks">
             {mentions.map((m, i) => (
               <MentionBlock key={`${m.path}-${i}`} mention={m} />
+            ))}
+          </div>
+        )}
+        {images && images.length > 0 && (
+          <div className="chat-message-images">
+            {images.map((img, i) => (
+              <img
+                key={i}
+                className="chat-message-image"
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt={img.name ?? `Image ${i + 1}`}
+                title={img.name}
+              />
             ))}
           </div>
         )}

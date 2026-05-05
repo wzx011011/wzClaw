@@ -3,7 +3,7 @@ import type { AgentStep, Workspace } from '../shared/types'
 
 const api = {
   // Agent
-  sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string }) =>
+  sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string; images?: Array<{ data: string; mimeType: string; name?: string }> }) =>
     ipcRenderer.invoke('agent:send_message', request),
   stopGeneration: () => ipcRenderer.invoke('agent:stop'),
 
@@ -170,14 +170,14 @@ const api = {
     ipcRenderer.send('symbol:result', response),
 
   // Steps
-  listSteps: () => ipcRenderer.invoke('step:list'),
-  onStepCreated: (callback: (payload: AgentStep) => void) => {
-    const handler = (_: unknown, payload: AgentStep) => callback(payload)
+  listSteps: (sessionId?: string) => ipcRenderer.invoke('step:list', { sessionId }),
+  onStepCreated: (callback: (payload: AgentStep & { sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: AgentStep & { sessionId?: string }) => callback(payload)
     ipcRenderer.on('step:created', handler)
     return () => ipcRenderer.removeListener('step:created', handler)
   },
-  onStepUpdated: (callback: (payload: AgentStep) => void) => {
-    const handler = (_: unknown, payload: AgentStep) => callback(payload)
+  onStepUpdated: (callback: (payload: AgentStep & { sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: AgentStep & { sessionId?: string }) => callback(payload)
     ipcRenderer.on('step:updated', handler)
     return () => ipcRenderer.removeListener('step:updated', handler)
   },
@@ -287,6 +287,8 @@ const api = {
     ipcRenderer.on('todo:updated', handler)
     return () => ipcRenderer.removeListener('todo:updated', handler)
   },
+  loadTodos: (workspaceId: string) =>
+    ipcRenderer.invoke('todo:load', { workspaceId }),
 
   // Shell utility — open a directory in the OS file manager
   openInExplorer: (folderPath: string) =>

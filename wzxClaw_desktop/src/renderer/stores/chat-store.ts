@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { SessionMeta, MentionItem } from '../../shared/types'
 import { useWorkspaceStore } from './workspace-store'
 import { useSettingsStore } from './settings-store'
+import { useStepStore } from './step-store'
 
 // ============================================================
 // Chat Store (per D-54, D-55, D-56)
@@ -29,6 +30,8 @@ export interface ChatMessage {
   content: string
   thinkingContent?: string
   timestamp: number
+  // user-only fields
+  images?: Array<{ data: string; mimeType: string; name?: string }>
   // assistant-only fields
   toolCalls?: ToolCallInfo[]
   isStreaming?: boolean
@@ -60,7 +63,7 @@ interface ChatState {
 
 interface ChatActions {
   init: () => () => void
-  sendMessage: (displayContent: string, agentContent?: string) => Promise<void>
+  sendMessage: (displayContent: string, agentContent?: string, images?: Array<{ data: string; mimeType: string; name?: string }>) => Promise<void>
   stopGeneration: () => Promise<void>
   clearConversation: () => void
   loadSessionList: () => Promise<void>
@@ -864,7 +867,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * Creates a user ChatMessage + empty streaming assistant ChatMessage.
    * If pendingMentions exist, formats file content into the message.
    */
-  sendMessage: async (displayContent: string, agentContent?: string) => {
+  sendMessage: async (displayContent: string, agentContent?: string, images?: Array<{ data: string; mimeType: string; name?: string }>) => {
     const { conversationId, messages, pendingMentions } = get()
 
     // Format mentions into message content for LLM context
@@ -883,6 +886,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       id: uuidv4(),
       role: 'user',
       content: displayContent,
+      images,
       timestamp: Date.now(),
       mentions: pendingMentions.length > 0 ? [...pendingMentions] : undefined
     }
@@ -906,7 +910,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined })
+      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined, images })
     } catch (err) {
       set({
         isStreaming: false,
@@ -1081,6 +1085,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }
 
     // 完整重置所有流式和会话级状态，防止旧会话状态泄漏
+    useStepStore.getState().setSteps([])
     const cleanState = {
       isStreaming: false,
       isWaitingForResponse: false,
@@ -1149,6 +1154,19 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Persist last session so it can be restored on next app launch
     window.wzxclaw.saveLastSession?.({ sessionId }).catch(() => {})
+
+    // Restore todos for the active workspace
+    const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+    if (activeWorkspaceId) {
+      window.wzxclaw.loadTodos?.(activeWorkspaceId).then((todos) => {
+        if (todos && todos.length > 0 && get().activeSessionId === sessionId) {
+          set({ currentTodos: todos })
+        }
+      }).catch(() => {})
+    }
+
+    // Reload steps for the new session context
+    useStepStore.getState().loadSteps()
   },
 
   /**

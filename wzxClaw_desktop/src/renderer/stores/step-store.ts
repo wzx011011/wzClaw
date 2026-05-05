@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AgentStep } from '../../shared/types'
+import { useChatStore } from './chat-store'
 
 // ============================================================
 // Step Store — state management for step panel
@@ -28,6 +29,9 @@ export const useStepStore = create<StepStore>((set, get) => ({
   init: () => {
     // Subscribe to real-time step events from main process
     const unsubCreated = window.wzxclaw.onStepCreated((step) => {
+      // Only accept steps for the current session
+      const activeSessionId = useChatStore.getState().activeSessionId
+      if (step.sessionId && step.sessionId !== activeSessionId) return
       const { steps } = get()
       // Avoid duplicates
       if (!steps.find((t) => t.id === step.id)) {
@@ -36,6 +40,9 @@ export const useStepStore = create<StepStore>((set, get) => ({
     })
 
     const unsubUpdated = window.wzxclaw.onStepUpdated((step) => {
+      // Only accept steps for the current session
+      const activeSessionId = useChatStore.getState().activeSessionId
+      if (step.sessionId && step.sessionId !== activeSessionId) return
       const { steps } = get()
       set({
         steps: steps.map((t) => (t.id === step.id ? step : t))
@@ -62,7 +69,8 @@ export const useStepStore = create<StepStore>((set, get) => ({
 
   loadSteps: async () => {
     try {
-      const steps = await window.wzxclaw.listSteps()
+      const sessionId = useChatStore.getState().activeSessionId
+      const steps = await window.wzxclaw.listSteps?.(sessionId)
       set({ steps })
     } catch {
       // Silently fail -- steps will sync via IPC events

@@ -7,6 +7,7 @@ describe('StepManager', () => {
 
   beforeEach(() => {
     tm = new StepManager()
+    tm.setActiveSession('test-session')
   })
 
   describe('createStep', () => {

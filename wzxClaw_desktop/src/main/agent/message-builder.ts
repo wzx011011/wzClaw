@@ -1,4 +1,4 @@
-import type { Message, LLMProvider, ToolDefinition, ContentBlock } from '../../shared/types'
+import type { Message, LLMProvider, ToolDefinition, ContentBlock, ImageContent } from '../../shared/types'
 
 // ============================================================
 // MessageBuilder (per D-25, D-26)
@@ -58,9 +58,22 @@ export class MessageBuilder {
 
     for (const msg of messages) {
       switch (msg.role) {
-        case 'user':
-          result.push({ role: 'user', content: msg.content })
+        case 'user': {
+          if (msg.images && msg.images.length > 0) {
+            // OpenAI vision format: content is an array of text + image_url blocks
+            const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = []
+            if (msg.content) {
+              parts.push({ type: 'text', text: msg.content })
+            }
+            for (const img of msg.images) {
+              parts.push({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.data}` } })
+            }
+            result.push({ role: 'user', content: parts })
+          } else {
+            result.push({ role: 'user', content: msg.content })
+          }
           break
+        }
 
         case 'assistant': {
           const openaiMsg: Record<string, unknown> = {
@@ -136,9 +149,25 @@ export class MessageBuilder {
 
     for (const msg of messages) {
       switch (msg.role) {
-        case 'user':
-          result.push({ role: 'user', content: msg.content })
+        case 'user': {
+          if (msg.images && msg.images.length > 0) {
+            // Anthropic vision format: content is an array of text + image blocks
+            const parts: Array<Record<string, unknown>> = []
+            if (msg.content) {
+              parts.push({ type: 'text', text: msg.content })
+            }
+            for (const img of msg.images) {
+              parts.push({
+                type: 'image',
+                source: { type: 'base64', media_type: img.mimeType, data: img.data },
+              })
+            }
+            result.push({ role: 'user', content: parts })
+          } else {
+            result.push({ role: 'user', content: msg.content })
+          }
           break
+        }
 
         case 'assistant': {
           // Use contentBlocks if available (preserves interleaved text/tool ordering)

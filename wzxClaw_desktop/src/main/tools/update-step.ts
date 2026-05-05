@@ -67,9 +67,9 @@ export class UpdateStepTool implements Tool {
       return { output: 'Step not found', isError: true }
     }
 
-    // Forward step:updated event to renderer
+    // Forward step:updated event to renderer with sessionId
     const sender = this.senderFn?.()
-    sender?.send('step:updated', result)
+    sender?.send('step:updated', { ...result, sessionId: this.stepManager.getActiveSessionId() })
 
     return { output: JSON.stringify(result, null, 2), isError: false }
   }

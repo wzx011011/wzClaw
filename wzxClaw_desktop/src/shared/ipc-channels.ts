@@ -141,6 +141,7 @@ export const IPC_CHANNELS = {
 
   // Todo panel (main -> renderer push)
   'todo:updated': 'todo:updated',
+  'todo:load': 'todo:load',
 
   // Workspace management channels (renderer -> main)
   'workspace:list': 'workspace:list',
@@ -204,8 +205,10 @@ export interface IpcRequestPayloads {
     conversationId: string
     content: string
     activeWorkspaceId?: string
+    images?: Array<{ data: string; mimeType: string; name?: string }>
   }
   'agent:stop': void
+  'todo:load': { workspaceId: string }
   'agent:permission_response': {
     approved: boolean
     sessionCache: boolean
@@ -302,6 +305,7 @@ export interface IpcRequestPayloads {
 export interface IpcResponsePayloads {
   'agent:send_message': void
   'agent:stop': void
+  'todo:load': Array<{ content: string; status: string; activeForm: string }>
   'settings:get': {
     provider: string
     model: string
@@ -438,7 +442,12 @@ export const IpcSchemas = {
     request: z.object({
       conversationId: z.string(),
       content: z.string().min(1),
-      activeWorkspaceId: z.string().optional()
+      activeWorkspaceId: z.string().optional(),
+      images: z.array(z.object({
+        data: z.string(),
+        mimeType: z.string(),
+        name: z.string().optional()
+      })).optional()
     }),
     response: z.undefined()
   },

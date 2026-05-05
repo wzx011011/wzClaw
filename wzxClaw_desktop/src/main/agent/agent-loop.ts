@@ -58,7 +58,8 @@ export class AgentLoop {
   async *run(
     userMessage: string,
     config: AgentConfig,
-    sender?: Electron.WebContents
+    sender?: Electron.WebContents,
+    images?: import('../../shared/types').ImageContent[]
   ): AsyncGenerator<AgentEvent> {
     this._running = true
     try {
@@ -94,7 +95,7 @@ export class AgentLoop {
     let reactiveCompactCount = 0
 
     // 追加用户消息
-    this.conversation.appendUserMessage(userMessage)
+    this.conversation.appendUserMessage(userMessage, images)
 
     // 构建系统提示（委托给 SystemPromptBuilder）
     const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace)

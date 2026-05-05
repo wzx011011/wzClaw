@@ -53,9 +53,9 @@ export class CreateStepTool implements Tool {
     const { subject, description, blockedBy } = parsed.data
     const step = this.stepManager.createStep(subject, description ?? '', blockedBy ?? [])
 
-    // Forward step:created event to renderer
+    // Forward step:created event to renderer with sessionId
     const sender = this.senderFn?.()
-    sender?.send('step:created', step)
+    sender?.send('step:created', { ...step, sessionId: this.stepManager.getActiveSessionId() })
 
     return { output: JSON.stringify(step, null, 2), isError: false }
   }
