@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Run tests
         run: npm test
@@ -51,7 +51,7 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Build (vite compile check)
         run: npx electron-vite build
