@@ -6,7 +6,6 @@
 // (after the first), we inject brief contextual nudges into the
 // conversation so the model stays aware of changed state.
 
-import type { Message } from '../../shared/types'
 
 /**
  * Wrap text in a <system-reminder> tag.

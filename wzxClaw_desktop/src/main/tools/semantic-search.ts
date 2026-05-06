@@ -62,7 +62,7 @@ export class SemanticSearchTool implements Tool {
 
   async execute(
     input: Record<string, unknown>,
-    context: ToolExecutionContext
+    _context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     // Validate input
     const parsed = SemanticSearchInputSchema.safeParse(input)
@@ -119,9 +119,9 @@ export class SemanticSearchTool implements Tool {
       }
 
       return { output, isError: false }
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
-        output: `Semantic search failed: ${err.message || String(err)}`,
+        output: `Semantic search failed: ${err instanceof Error ? err.message : String(err)}`,
         isError: true
       }
     }

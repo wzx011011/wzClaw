@@ -11,6 +11,7 @@
 // ============================================================
 
 import { NodeSDK } from '@opentelemetry/sdk-node'
+import { context as otelContext, trace as otelTrace } from '@opentelemetry/api'
 import { LangfuseSpanProcessor } from '@langfuse/otel'
 import { LangfuseClient } from '@langfuse/client'
 import {
@@ -130,6 +131,7 @@ function getFinalAssistantOutput(messages?: Message[]): string | undefined {
     const message = messages[index]
     if (message.role !== 'assistant') continue
     if (typeof message.content !== 'string') continue
+    return message.content
   }
 
   return undefined
@@ -205,20 +207,27 @@ export class AgentTraceContext {
 
     // v5 中 trace 级属性通过 propagateAttributes 写入当前上下文；root observation
     // 用 setTraceIO 兼容现有 LLM-as-Judge / trace-level input/output。
-    const root = propagateAttributes({
-      traceName: 'agent-session',
-      sessionId: conversationId,
-      tags,
-      metadata,
-    }, () => startObservation('agent-session', {
-      input: userInput,
-      metadata: {
-        ide: IDE_NAME,
-        model,
-        workingDirectory,
-        ...(workspaceId ? { workspaceId } : {}),
-      },
-    }))
+    //
+    // 关键修复：每次创建 trace 前清除 OTel 上下文中的活跃 span，
+    // 否则 propagateAttributes 会继承上一次 trace 的上下文，
+    // 导致所有 trace 共享同一个 OTel traceId → 所有 score 写入第一条 trace。
+    const cleanContext = otelTrace.deleteSpan(otelContext.active())
+    const root = otelContext.with(cleanContext, () =>
+      propagateAttributes({
+        traceName: 'agent-session',
+        sessionId: conversationId,
+        tags,
+        metadata,
+      }, () => startObservation('agent-session', {
+        input: userInput,
+        metadata: {
+          ide: IDE_NAME,
+          model,
+          workingDirectory,
+          ...(workspaceId ? { workspaceId } : {}),
+        },
+      }))
+    )
 
     root.setTraceIO({ input: userInput })
     this.trace = root
@@ -272,21 +281,27 @@ export class AgentTraceContext {
 
     const client = getClient()
     if (client) {
-      client.score.create({ traceId: this.traceId, name: 'total_tokens', value: totalTokens, dataType: 'NUMERIC' })
-      client.score.create({ traceId: this.traceId, name: 'turns_used', value: turnCount, dataType: 'NUMERIC' })
-      if (hadError) {
-        client.score.create({ traceId: this.traceId, name: 'had_error', value: 1, dataType: 'NUMERIC' })
-      }
+      // 同样清除 OTel 上下文后再创建 score，
+      // 防止 LangfuseClient 内部从 OTel 上下文读取错误的 traceId。
+      const cleanCtx = otelTrace.deleteSpan(otelContext.active())
+      otelContext.with(cleanCtx, () => {
+        const tid = this.traceId
+        client.score.create({ traceId: tid, name: 'total_tokens', value: totalTokens, dataType: 'NUMERIC' })
+        client.score.create({ traceId: tid, name: 'turns_used', value: turnCount, dataType: 'NUMERIC' })
+        if (hadError) {
+          client.score.create({ traceId: tid, name: 'had_error', value: 1, dataType: 'NUMERIC' })
+        }
 
-      // Tier 1 自动评分 — 从 EvalCollector 计算
-      for (const score of this.evalCollector.computeScores()) {
-        client.score.create({
-          traceId: this.traceId,
-          name: score.name,
-          value: toScoreValue(score.value),
-          dataType: score.dataType,
-        })
-      }
+        // Tier 1 自动评分 — 从 EvalCollector 计算
+        for (const score of this.evalCollector.computeScores()) {
+          client.score.create({
+            traceId: tid,
+            name: score.name,
+            value: toScoreValue(score.value),
+            dataType: score.dataType,
+          })
+        }
+      })
     }
 
     this.trace!.end()

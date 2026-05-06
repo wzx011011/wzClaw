@@ -33,7 +33,8 @@ export async function pullAutoScores(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const resp = await lf.api.traceGet(traceId)
-      const scores = (resp as any)?.data?.scores ?? (resp as any)?.scores ?? []
+      const respData = resp as { data?: { scores?: unknown[] }; scores?: unknown[] }
+      const scores = respData?.data?.scores ?? respData?.scores ?? []
 
       const filtered = (scores as Array<{ name: string; value: number | string }>)
         .filter(s => AUTO_SCORE_NAMES.has(s.name))

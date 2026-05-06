@@ -99,8 +99,8 @@ export class AgentOptimizer {
         // 清理磁盘备份
         try { writeFileSync(backupPath, '') } catch { /* ignore */ }
         console.log(`  Rolled back: ${opt.file}`)
-      } catch (e: any) {
-        console.error(`  Rollback FAILED for ${opt.file}: ${e.message}`)
+      } catch (e: unknown) {
+        console.error(`  Rollback FAILED for ${opt.file}: ${(e as Error).message}`)
       }
     }
     this.applied = []
@@ -227,7 +227,7 @@ export class AgentOptimizer {
 
     // 找到这一行的开头
     const lineStart = content.lastIndexOf('\n', insertPoint) + 1
-    const indent = content.slice(lineStart, insertPoint).match(/^(\s*)/)?.[1] ?? '    '
+    const _indent = content.slice(lineStart, insertPoint).match(/^(\s*)/)?.[1] ?? '    '
 
     this.applied.push({
       file: TARGETS.fileEdit,
@@ -297,7 +297,7 @@ export class AgentOptimizer {
     // 找到这一行结束后
     const lineEnd = content.indexOf('\n', insertPoint) + 1
     // 找到下一个闭合花括号的位置（当前代码块的结束处）
-    const nextLineEnd = content.indexOf('\n', lineEnd) + 1
+    const _nextLineEnd = content.indexOf('\n', lineEnd) + 1
 
     // 在 loop 开始前初始化 stallCount
     const loopStart = content.indexOf('for (let turn')
@@ -377,7 +377,7 @@ export class AgentOptimizer {
       }
     }
 
-    const originalMethod = content.slice(methodStart, bodyEnd + 1)
+    const _originalMethod = content.slice(methodStart, bodyEnd + 1)
 
     const enhancedMethod = `isLooping(): boolean {
     if (this.history.length < 3) return false

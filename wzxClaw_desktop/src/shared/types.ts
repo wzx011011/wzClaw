@@ -205,6 +205,8 @@ export interface SessionMeta {
   updatedAt: number
   messageCount: number
   preview?: string // 第一条用户消息摘要
+  isRunning?: boolean // 是否正在生成
+  todoSummary?: string // e.g. "3/5 完成 · 当前: 编写测试"
 }
 
 // ============================================================
@@ -375,7 +377,6 @@ export interface Workspace {
   updatedAt: number
   lastSessionId?: string // most recent chat session
   archived: boolean
-  progressSummary?: string // e.g. "3/5 完成, 当前: 编写测试"
 }
 
 /** Response type for agent:context_breakdown IPC */

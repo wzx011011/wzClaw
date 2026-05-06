@@ -3,8 +3,8 @@
 // 记录 prompt diff、代码变更、工作区级别改进/回退、统计噪声估计
 // ============================================================
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
+import { writeFileSync, mkdirSync, existsSync } from 'fs'
+import { resolve } from 'path'
 import { compareRuns } from './comparison-report'
 import type { RunSummary, WeaknessReport, IterationState } from './types'
 

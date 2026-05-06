@@ -32,7 +32,7 @@ function generateQueryId(): string {
  * Rejects all pending queries to prevent memory leaks from dangling references.
  */
 export function cleanupPendingQueries(): void {
-  for (const [queryId, pending] of pendingQueries) {
+  for (const [_queryId, pending] of pendingQueries) {
     clearTimeout(pending.timer)
     pending.resolve([]) // Resolve with empty results instead of rejecting
   }

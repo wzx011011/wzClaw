@@ -146,7 +146,7 @@ export class RelayClient extends EventEmitter {
         if (event === 'system:mobile_list') {
           const list = msg.data?.mobiles
           if (Array.isArray(list)) {
-            this._mobiles = list.map((m: any) => ({
+            this._mobiles = list.map((m: Record<string, unknown>) => ({
               deviceId: m.deviceId ?? '',
               name: m.name ?? null,
               platform: m.platform ?? null,

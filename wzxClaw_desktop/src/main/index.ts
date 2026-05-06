@@ -340,14 +340,6 @@ app.whenReady().then(async () => {
   toolRegistry.register(new EnterPlanModeTool(permissionManager, getPlanModeSender))
   toolRegistry.register(new ExitPlanModeTool(permissionManager, getPlanModeSender, planModeController))
 
-  // Wire TodoWrite — WorkspaceStore progress sync
-  const todoTool = toolRegistry.get('TodoWrite') as import('./tools/todo-write').TodoWriteTool | undefined
-  if (todoTool) {
-    todoTool.setProgressCallback((workspaceId, summary) => {
-      workspaceStore.updateWorkspace(workspaceId, { progressSummary: summary }).catch(() => { /* ignore */ })
-    })
-  }
-
   // AskUserQuestion tool — interactive question card in chat (Phase 4.2)
   const askUserTool = new AskUserQuestionTool(getWebContents)
   toolRegistry.register(askUserTool)
@@ -582,12 +574,30 @@ app.whenReady().then(async () => {
       }
       try {
         const sessions = await store.listSessions()
+        // Enrich sessions with todo summary
+        const runningIds = runtimes.listRunning()
+        const { TodoWriteTool } = await import('./tools/todo-write')
+        for (const session of sessions) {
+          session.isRunning = runningIds.includes(session.id)
+          try {
+            const todos = await TodoWriteTool.loadForSession(session.id)
+            if (todos.length > 0) {
+              const completed = todos.filter(t => t.status === 'completed').length
+              const inProgress = todos.find(t => t.status === 'in_progress')
+              let summary = `${completed}/${todos.length} 完成`
+              if (inProgress) {
+                summary += ` · 当前: ${inProgress.activeForm || inProgress.content}`
+              }
+              session.todoSummary = summary
+            }
+          } catch { /* ignore */ }
+        }
         broadcastToMobile('session:list:response', {
           requestId,
           workspaceName: path.basename(workspaceRoot),
           workspacePath: workspaceRoot,
           sessions,
-          runningSessionIds: runtimes.listRunning(),
+          runningSessionIds: runningIds,
           activeSessionId: settingsManager.getLastSessionId() ?? null
         })
       } catch (err: unknown) {

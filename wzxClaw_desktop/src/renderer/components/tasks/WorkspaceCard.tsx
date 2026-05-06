@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import type { Workspace, SessionMeta } from '../../../shared/types'
+import type { Workspace } from '../../../shared/types'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useT } from '../../i18n/useT'
 import { formatRelativeTime } from '../../i18n/formatRelativeTime'

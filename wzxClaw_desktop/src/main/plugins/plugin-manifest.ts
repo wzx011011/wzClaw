@@ -4,7 +4,7 @@
 // ============================================================
 
 import { promises as fsp } from 'fs'
-import { join, isAbsolute } from 'path'
+import { join } from 'path'
 import { z } from 'zod'
 import type { PluginManifest, PluginError } from '../../shared/types-plugin'
 

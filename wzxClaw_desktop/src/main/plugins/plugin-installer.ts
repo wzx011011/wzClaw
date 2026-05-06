@@ -7,7 +7,7 @@ import { execFile } from 'child_process'
 import { existsSync, mkdirSync, renameSync, rmSync } from 'fs'
 import { join, basename } from 'path'
 import { getUserPluginsDir } from './plugin-loader'
-import type { PluginInstallResult, MarketplaceSource, MarketplacePluginSource } from '../../shared/types-plugin'
+import type { PluginInstallResult, MarketplacePluginSource } from '../../shared/types-plugin'
 
 /**
  * PluginInstaller handles downloading plugins from various sources
@@ -32,7 +32,7 @@ export class PluginInstaller {
       case 'url':
         return PluginInstaller.fromUrl(source.url, scope, projectRoot)
       default:
-        return { success: false, message: `Unsupported source type: ${(source as any).source}` }
+        return { success: false, message: `Unsupported source type: ${(source as Record<string, unknown>).source}` }
     }
   }
 

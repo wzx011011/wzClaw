@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { VectorStore, cosineSimilarity, BINARY_EXTENSIONS, MAX_INDEX_FILE_SIZE, SKIP_DIRS, type IndexEntry, type SearchResult } from '../vector-store'
+import { VectorStore, cosineSimilarity, BINARY_EXTENSIONS, MAX_INDEX_FILE_SIZE, SKIP_DIRS, type IndexEntry } from '../vector-store'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'

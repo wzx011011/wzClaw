@@ -74,6 +74,7 @@ describe('WebSearchTool', () => {
   })
 
   it('returns error on fetch failure', async () => {
+    // 重试逻辑会重试一次（2s 延迟），需要足够超时
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -84,7 +85,9 @@ describe('WebSearchTool', () => {
     const result = await tool.execute({ query: 'test' }, { workingDirectory: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.output).toContain('500')
-  })
+    // 重试后应该调用了 2 次 fetch
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  }, 10000)
 
   it('returns error on network failure', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
@@ -93,7 +96,8 @@ describe('WebSearchTool', () => {
     const result = await tool.execute({ query: 'test' }, { workingDirectory: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.output).toContain('Network error')
-  })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  }, 10000)
 
   it('filters by allowed_domains', async () => {
     const mockJson = {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { RelayClient } from '../relay-client'
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server } from 'http'
@@ -38,10 +38,10 @@ describe('RelayClient', () => {
     // Create client with patched URL via subclass trick
     client = new RelayClient()
     // Override _doConnect to use local relay
-    const origDoConnect = (client as any)._doConnect.bind(client)
+    const _origDoConnect = (client as any)._doConnect.bind(client)
     ;(client as any)._doConnect = function () {
       // Temporarily override the module constant via the ws URL construction
-      const origWs = (globalThis as any).WebSocket
+      const _origWs = (globalThis as any).WebSocket
       // We need to intercept the URL — simplest: directly set ws
       ;(client as any)._clearTimers()
       ;(client as any)._closeWs()

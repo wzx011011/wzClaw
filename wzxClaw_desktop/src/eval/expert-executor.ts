@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
 import { runBenchmarkTask } from './headless-runner'
-import type { BenchmarkTask, HeadlessConfig, HeadlessRunResult, FailureClassification, TaskTraceData } from './types'
+import type { BenchmarkTask, HeadlessConfig, FailureClassification } from './types'
 
 const STRATEGY_BOOK_PATH = '.eval-reports/strategy-book.json'
 const MAX_RETRIES_PER_ITERATION = 5
@@ -101,8 +101,8 @@ export class ExpertExecutor {
           this.recordStrategyResult(cls.failureMode, cls.taxonomy, strategy, false)
           console.log(`    ${cls.taskId}: retry did not improve`)
         }
-      } catch (err: any) {
-        console.log(`    ${cls.taskId}: retry error: ${err.message}`)
+      } catch (err: unknown) {
+        console.log(`    ${cls.taskId}: retry error: ${err instanceof Error ? err.message : String(err)}`)
         this.book.totalRetries++
       }
     }

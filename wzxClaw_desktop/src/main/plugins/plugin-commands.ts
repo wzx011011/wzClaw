@@ -4,12 +4,12 @@
 // Modeled after Claude Code's loadPluginCommands.ts
 // ============================================================
 
-import { promises as fsp, existsSync, readdirSync, statSync, readFileSync } from 'fs'
+import { promises as fsp, existsSync } from 'fs'
 import { basename, dirname, join, sep as pathSep } from 'path'
 import type { Skill, SkillSource } from '../../shared/types-skill'
 import { resolveModelName } from '../../shared/types-skill'
 import { parseFrontmatter, extractDescriptionFromMarkdown, splitAndExpandBraces } from '../skills/frontmatter-parser'
-import { parseArgumentNames, substituteArguments } from '../skills/argument-substitution'
+import { substituteArguments } from '../skills/argument-substitution'
 import type { LoadedPlugin } from '../../shared/types-plugin'
 
 // ============================================================

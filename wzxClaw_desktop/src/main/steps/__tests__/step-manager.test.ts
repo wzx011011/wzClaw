@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { StepManager } from '../step-manager'
-import type { StepEvent } from '../step-manager'
 
 describe('StepManager', () => {
   let tm: StepManager

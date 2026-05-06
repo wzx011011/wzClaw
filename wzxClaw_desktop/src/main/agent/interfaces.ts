@@ -3,7 +3,7 @@
 // 所有依赖通过接口类型注入，便于测试 mock 和未来替换实现
 // ============================================================
 
-import type { StreamEvent, LLMProvider, Message, ToolCall } from '../../shared/types'
+import type { StreamEvent, LLMProvider, Message } from '../../shared/types'
 import type { StreamOptions } from '../llm/types'
 import type { Tool } from '../tools/tool-interface'
 import type { CompactResult } from '../context/context-manager'

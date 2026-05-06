@@ -4,7 +4,7 @@
 
 import { mkdir, writeFile } from 'fs/promises'
 import { resolve, join } from 'path'
-import type { RunSummary, WeaknessReport, ComparisonReport, TaskEvalResult } from './types'
+import type { RunSummary, WeaknessReport, ComparisonReport } from './types'
 
 const REPORTS_DIR = '.eval-reports'
 

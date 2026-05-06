@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { GlobTool } from '../glob'
 import { MAX_TOOL_RESULT_CHARS } from '../../../shared/constants'
 import * as fs from 'fs'

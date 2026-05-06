@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { exec } from 'child_process'
+import { exec, execSync } from 'child_process'
 import { existsSync, appendFile } from 'fs'
 import path from 'path'
 import iconv from 'iconv-lite'
@@ -7,29 +7,76 @@ import { MAX_TOOL_RESULT_CHARS } from '../../shared/constants'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { TerminalManager } from '../terminal/terminal-manager'
 import { analyzeBashCommand } from './bash-security'
-import { isReadOnlyBashCommand } from './bash-readonly'
 import { getShellSnapshotsDir } from '../paths'
 
 // ============================================================
-// Bash Tool (per TOOL-04, D-32, D-36)
+// Bash Tool — 对齐 Claude Code 的 Windows 策略：
+//   1. 通过 where git → 推导 bash.exe 位置（覆盖所有安装方式）
+//   2. 自动重写 >nul → /dev/null（防止 Git Bash 创建 NUL 文件）
+//   3. 始终使用 bash（POSIX），消除 Unix/Windows 命令兼容问题
 // ============================================================
 
 const DEFAULT_TIMEOUT = 30000 // 30 seconds per D-36
 
-// Detect Git Bash on Windows for better Unix command compatibility
-let detectedShell: string | undefined
-if (process.platform === 'win32') {
-  const gitBashPaths = [
+/**
+ * Windows 上查找 Git Bash — 对齐 Claude Code 检测策略：
+ *   1. 环境变量 WZXCLAW_GIT_BASH_PATH
+ *   2. where git → 从 git.exe 位置推导 bash.exe
+ *   3. 硬编码常见路径（兜底）
+ */
+function findGitBashOnWindows(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+
+  // Step 1: 环境变量覆盖
+  const envPath = process.env.WZXCLAW_GIT_BASH_PATH
+  if (envPath && existsSync(envPath)) return envPath
+
+  // Step 2: 通过 where git 查找 git.exe → 推导 bash.exe（Claude Code 主策略）
+  try {
+    const whereOutput = execSync('where.exe git', { encoding: 'utf-8', timeout: 5000 }).trim()
+    const gitCandidates = whereOutput.split('\n').map(l => l.trim().replace(/\r$/, '')).filter(Boolean)
+    for (const gitPath of gitCandidates) {
+      if (!existsSync(gitPath)) continue
+      // git.exe 通常在 Git\cmd\ 或 Git\bin\ 下；bash.exe 在 Git\bin\ 下
+      // Git\cmd\git.exe → ..\..\bin\bash.exe = Git\bin\bash.exe
+      // Git\bin\git.exe → ..\bin\bash.exe → 不存在；直接取 Git\bin\bash.exe
+      const gitDir = path.dirname(gitPath)
+      const possibleBashPaths = [
+        path.join(gitDir, '..', 'bin', 'bash.exe'),   // cmd/git.exe → bin/bash.exe
+        path.join(gitDir, 'bash.exe'),                  // bin/git.exe → bin/bash.exe
+      ]
+      for (const bashPath of possibleBashPaths) {
+        const resolved = path.resolve(bashPath)
+        if (existsSync(resolved)) return resolved
+      }
+    }
+  } catch {
+    // where git 失败 — git 不在 PATH 中
+  }
+
+  // Step 3: 硬编码常见安装路径（兜底）
+  const hardcodedPaths = [
     path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
     path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
     path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
   ]
-  for (const p of gitBashPaths) {
-    if (p && existsSync(p)) {
-      detectedShell = p
-      break
-    }
+  for (const p of hardcodedPaths) {
+    if (p && existsSync(p)) return p
   }
+
+  return undefined
+}
+
+let detectedShell: string | undefined = findGitBashOnWindows()
+
+/**
+ * Claude Code 的 >nul → /dev/null 自动重写。
+ * LLM 有时在 Git Bash 环境下写出 `2>nul` 等 CMD 语法，
+ * Git Bash 会创建名为 NUL 的文件（Windows 保留设备名），导致 git 报错。
+ * 参考：anthropics/claude-code#4928
+ */
+function rewriteWindowsNullRedirect(command: string): string {
+  return command.replace(/(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g, '$1/dev/null')
 }
 
 const BashSchema = z.object({
@@ -41,11 +88,12 @@ export class BashTool implements Tool {
   readonly name = 'Bash'
 
   get description(): string {
+    // 对齐 Claude Code：根据实际检测到的 shell 提示语法风格
     const shellNote =
       process.platform === 'win32'
         ? detectedShell
-          ? '\n\nRunning via Git Bash — Unix commands (find, grep, head, tail, etc.) ARE available. Use forward-slash paths.'
-          : '\n\nWARNING — Running via Windows cmd.exe: Unix commands (find, head, grep, ls, cat, etc.) are NOT available. Use Windows-compatible paths (E:\\path or E:/path, NOT /e/path). Prefer the Glob, Grep, and FileRead tools over shell commands whenever possible.'
+          ? '\n\nShell: bash (use Unix shell syntax, not Windows — e.g., /dev/null not NUL, forward slashes in paths).'
+          : '\n\nShell: cmd.exe — Unix commands are NOT available. Prefer Glob/Grep/FileRead tools over shell commands. Use forward-slash or backslash paths.'
         : ''
     return `Execute a shell command and return stdout and stderr output. Commands run in the working directory.${shellNote}
 
@@ -149,8 +197,12 @@ Always quote file paths containing spaces with double quotes.`
       // Without Git Bash: force UTF-8 codepage so cmd.exe error messages aren't GBK-garbled.
       let commandToRun = command
       const useGitBash = process.platform === 'win32' && detectedShell
+      // 对齐 Claude Code：仅在 Git Bash 下重写 >nul → /dev/null（cmd.exe 不支持 /dev/null）
+      if (useGitBash) {
+        commandToRun = rewriteWindowsNullRedirect(command)
+      }
       if (process.platform === 'win32' && !useGitBash) {
-        commandToRun = `chcp 65001 > nul 2>&1 && ${command}`
+        commandToRun = `chcp 65001 > nul 2>&1 && ${commandToRun}`
       }
 
       // On Windows cmd.exe: use buffer encoding + iconv-lite to avoid GBK mojibake.

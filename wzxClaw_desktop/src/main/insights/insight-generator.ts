@@ -51,7 +51,7 @@ export function aggregateData(
   const goalCategories: Record<string, number> = {}
   const friction: Record<string, number> = {}
   const success: Record<string, number> = {}
-  const sessionSummaries: Array<{ id: string; date: string; summary: string; goal?: string }> = []
+  const _sessionSummaries: Array<{ id: string; date: string; summary: string; goal?: string }> = []
   let sessionsWithFacets = 0
 
   for (const meta of allMeta) {

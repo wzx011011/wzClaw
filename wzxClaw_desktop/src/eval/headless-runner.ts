@@ -11,8 +11,9 @@ import { ContextManager } from '../main/context/context-manager'
 import { shutdownLangfuse, flushLangfuse } from '../main/observability/langfuse-observer'
 import { prepareWorkspace, extractPatch } from './workspace-isolation'
 import { DEFAULT_SYSTEM_PROMPT } from '../shared/constants'
-import type { AgentEvent, AgentConfig } from '../main/agent/types'
+import type { AgentEvent, AgentConfig, AgentDoneEvent, AgentToolCallEvent, AgentToolResultEvent, AgentTextEvent } from '../main/agent/types'
 import type { BenchmarkTask, HeadlessConfig, HeadlessRunResult, TaskTraceData } from './types'
+import type { Message } from '../shared/types'
 
 /**
  * 运行单个评测工作区
@@ -93,26 +94,26 @@ export async function runBenchmarkTask(
         type: event.type,
         timestamp: Date.now(),
         ...(event.type === 'agent:done' ? {
-          turnCount: (event as any).turnCount,
-          usage: (event as any).usage,
+          turnCount: (event as AgentDoneEvent).turnCount,
+          usage: (event as AgentDoneEvent).usage,
         } : {}),
         ...(event.type === 'agent:tool_call' ? {
-          toolCallId: (event as any).toolCallId,
-          toolName: (event as any).toolName,
+          toolCallId: (event as AgentToolCallEvent).toolCallId,
+          toolName: (event as AgentToolCallEvent).toolName,
         } : {}),
         ...(event.type === 'agent:tool_result' ? {
-          toolCallId: (event as any).toolCallId,
-          toolName: (event as any).toolName,
-          isError: (event as any).isError,
+          toolCallId: (event as AgentToolResultEvent).toolCallId,
+          toolName: (event as AgentToolResultEvent).toolName,
+          isError: (event as AgentToolResultEvent).isError,
         } : {}),
         ...(event.type === 'agent:text' ? {
-          content: (event as any).content,
+          content: (event as AgentTextEvent).content,
         } : {}),
       })
 
       if (event.type === 'agent:done') {
-        doneUsage = (event as any).usage ?? doneUsage
-        turnCount = (event as any).turnCount ?? 0
+        doneUsage = (event as AgentDoneEvent).usage ?? doneUsage
+        turnCount = (event as AgentDoneEvent).turnCount ?? 0
       }
     }
 
@@ -123,10 +124,10 @@ export async function runBenchmarkTask(
     const patch = await extractPatch(workspace.workspaceDir)
 
     // 11. 提取消息记录
-    const messages: HeadlessRunResult['messages'] = (loop as any).getMessages()?.map((m: any) => ({
+    const messages: HeadlessRunResult['messages'] = (loop as { getMessages(): Message[] }).getMessages()?.map((m: Message) => ({
       role: m.role,
       content: typeof m.content === 'string' ? m.content : '',
-      ...(m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}),
+      ...('toolCalls' in m && m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}),
     })) ?? []
 
     return {
@@ -184,12 +185,13 @@ export function extractTraceData(
 
   for (const ev of events) {
     if (ev.type === 'agent:done') {
-      currentTurn = (ev as any).turnCount ?? currentTurn
-      if ((ev as any).reason === 'max_turns') hitMaxTurns = true
+      const doneEv = ev as AgentDoneEvent & { reason?: string }
+      currentTurn = doneEv.turnCount ?? currentTurn
+      if (doneEv.reason === 'max_turns') hitMaxTurns = true
     }
 
     if (ev.type === 'agent:tool_call') {
-      const tool = String((ev as any).toolName ?? '')
+      const tool = String((ev as AgentToolCallEvent).toolName ?? '')
       toolCallSequence.push({ tool, turn: currentTurn, isError: false })
 
       if (EDIT_TOOLS.has(tool) && !hasSeenEdit) {
@@ -206,8 +208,8 @@ export function extractTraceData(
     }
 
     if (ev.type === 'agent:tool_result') {
-      const tool = String((ev as any).toolName ?? '')
-      const isError = Boolean((ev as any).isError)
+      const tool = String((ev as AgentToolResultEvent).toolName ?? '')
+      const isError = Boolean((ev as AgentToolResultEvent).isError)
       if (isError) errorCount++
 
       // 更新 toolCallSequence 中对应项的 isError

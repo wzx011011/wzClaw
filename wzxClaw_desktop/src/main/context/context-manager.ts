@@ -98,8 +98,8 @@ export class ContextManager {
     messages: Message[],
     gateway: LLMGateway,
     model: string,
-    provider: string,
-    systemPrompt?: string
+    _provider: string,
+    _systemPrompt?: string
   ): Promise<CompactResult> {
     const beforeTokens = countMessagesTokens(messages, model)
     this.isCompacting = true

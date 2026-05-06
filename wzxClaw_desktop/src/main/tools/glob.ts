@@ -72,9 +72,9 @@ Usage:
       }
 
       return { output, isError: false }
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
-        output: err.message || String(err),
+        output: err instanceof Error ? err.message : String(err),
         isError: true
       }
     }

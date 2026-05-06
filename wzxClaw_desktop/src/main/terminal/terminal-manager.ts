@@ -20,7 +20,7 @@ function getPtyModule(): typeof import('node-pty') | null {
   if (ptyLoadAttempted) return ptyModule
   ptyLoadAttempted = true
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     ptyModule = require('node-pty')
   } catch (err) {
     console.warn('node-pty failed to load. Terminal panel will not be available.', err)

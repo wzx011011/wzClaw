@@ -289,8 +289,8 @@ const api = {
     ipcRenderer.on('todo:updated', handler)
     return () => ipcRenderer.removeListener('todo:updated', handler)
   },
-  loadTodos: (workspaceId: string) =>
-    ipcRenderer.invoke('todo:load', { workspaceId }),
+  loadTodos: (sessionId: string) =>
+    ipcRenderer.invoke('todo:load', { sessionId }),
 
   // Shell utility — open a directory in the OS file manager
   openInExplorer: (folderPath: string) =>

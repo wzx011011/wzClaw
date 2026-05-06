@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileTreeNode, Workspace } from '../../shared/types'
+import type { FileTreeNode, Workspace, SessionMeta } from '../../shared/types'
 
 // ============================================================
 // Workspace Store — 文件树管理 + 工作区 CRUD
@@ -74,6 +74,8 @@ interface WorkspaceStoreState {
   tasks: Workspace[]
   activeWorkspaceId: string | null
   viewingWorkspaceId: string | null
+  // 每个工作区的会话（含 todo 状态）
+  workspaceSessions: Record<string, SessionMeta[]>
   // 通用状态
   isLoading: boolean
   error: string | null
@@ -104,6 +106,7 @@ interface WorkspaceStoreActions {
   removeProject: (workspaceId: string, projectId: string) => Promise<void>
   getActiveWorkspace: () => Workspace | null
   getViewingWorkspace: () => Workspace | null
+  loadWorkspaceSessions: (workspaceId: string) => Promise<void>
 }
 
 type WorkspaceStore = WorkspaceStoreState & WorkspaceStoreActions
@@ -114,6 +117,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   tasks: [],
   activeWorkspaceId: null,
   viewingWorkspaceId: null,
+  workspaceSessions: {},
   isLoading: false,
   error: null,
 
@@ -385,5 +389,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const { tasks, viewingWorkspaceId } = get()
     if (!viewingWorkspaceId) return null
     return tasks.find((t) => t.id === viewingWorkspaceId) ?? null
+  },
+
+  loadWorkspaceSessions: async (workspaceId: string) => {
+    try {
+      const result = await window.wzxclaw.listSessions({ activeWorkspaceId: workspaceId })
+      set((s) => ({
+        workspaceSessions: { ...s.workspaceSessions, [workspaceId]: result.sessions }
+      }))
+    } catch {
+      // ignore
+    }
   }
 }))

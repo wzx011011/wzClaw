@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { FileReadTool } from '../file-read'
 import { MAX_FILE_READ_LINES, MAX_FILE_READ_BYTES } from '../../../shared/constants'
 import * as fs from 'fs'

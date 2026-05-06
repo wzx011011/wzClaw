@@ -482,7 +482,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     // 工具进度事件 — rAF 批处理避免高频更新
-    let progressBuffer = new Map<string, string>() // toolCallId -> latest message
+    const progressBuffer = new Map<string, string>() // toolCallId -> latest message
     let progressFrame: number | null = null
     const flushProgressBatch = (): void => {
       progressFrame = null
@@ -1102,7 +1102,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // 中断正在进行的生成，避免切换后残留流式事件污染新会话
     if (isStreaming) {
-      try { await window.wzxclaw.stopGeneration() } catch {}
+      try { await window.wzxclaw.stopGeneration() } catch { /* abort may fail if nothing running */ }
     }
 
     // 保存当前消息到模块级缓存（无 spread，无 Zustand 触发）

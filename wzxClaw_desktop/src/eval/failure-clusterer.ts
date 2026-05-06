@@ -27,7 +27,7 @@ export function clusterFailures(
   }
 
   const clusters: FailureCluster[] = []
-  let priority = 0
+  let _priority = 0
 
   for (const [key, items] of groups) {
     const [taxonomy, failureMode] = key.split('::')

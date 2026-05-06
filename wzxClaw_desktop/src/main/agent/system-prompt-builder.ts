@@ -3,7 +3,7 @@
 // 从 AgentLoop.run() 中提取，独立测试和复用
 // ============================================================
 
-import type { LLMProvider, Workspace } from '../../shared/types'
+import type { Workspace } from '../../shared/types'
 import type { AgentConfig } from './types'
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 import { getGitContext } from '../git/git-context'

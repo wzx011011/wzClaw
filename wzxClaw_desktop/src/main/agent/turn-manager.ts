@@ -6,7 +6,7 @@
 // v2: executeTurn 为 async generator，事件逐条 yield
 // ============================================================
 
-import type { Message, ToolCall, LLMProvider, ContentBlock } from '../../shared/types'
+import type { ToolCall } from '../../shared/types'
 import type { StreamOptions } from '../llm/types'
 import type { AgentEvent, AgentConfig } from './types'
 import type { ToolExecResult } from './streaming-tool-executor'
@@ -19,7 +19,7 @@ import type { LLMGateway } from '../llm/gateway'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { FileChangeTracker, buildTurnAttachments } from '../context/turn-attachments'
-import { truncateToolResult, enforceContextBudget, ToolResultEntry } from '../context/tool-result-budget'
+import { truncateToolResult, enforceContextBudget } from '../context/tool-result-budget'
 import { maybePersistLargeToolResult, ToolResultReplacementState } from '../context/tool-result-storage'
 import { ContextManager as ContextManagerClass } from '../context/context-manager'
 import { executeStreamPhase, type StreamPhaseMeta, type ExecuteToolFn, type StreamFn } from './stream-phase'
@@ -94,7 +94,7 @@ export class TurnManager {
     abortSignal: AbortSignal,
     sender?: Electron.WebContents,
     workspaceId?: string,
-    replacementState?: ToolResultReplacementState,
+    _replacementState?: ToolResultReplacementState,
   ): ExecuteToolFn {
     return async (toolCall: ToolCall): Promise<ToolExecResult> => {
       const _eval = getActiveTrace(config.conversationId)?.evalCollector
@@ -157,6 +157,7 @@ export class TurnManager {
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
           workspaceId,
+          sessionId: config.conversationId,
           projectRoots: config.projectRoots,
           abortSignal,
           // tool:Agent span 전달 → sub-agent 의 observations 이 이 span 하위에 nested 로 기록됨

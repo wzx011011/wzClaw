@@ -5,7 +5,7 @@ import path from 'path'
 // Git Context Injection
 // ============================================================
 
-interface GitContext {
+interface _GitContext {
   branch: string
   status: string
   recentLog: string

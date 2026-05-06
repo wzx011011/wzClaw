@@ -709,7 +709,29 @@ export function registerIpcHandlers(
     } else {
       sessions = await getSessionStore().listSessions()
     }
-    return { sessions, runningSessionIds: runtimes.listRunning() }
+
+    // Enrich each session with todo summary and running status
+    const runningIds = runtimes.listRunning()
+    const { TodoWriteTool } = await import('./tools/todo-write')
+    for (const session of sessions) {
+      session.isRunning = runningIds.includes(session.id)
+      try {
+        const todos = await TodoWriteTool.loadForSession(session.id)
+        if (todos.length > 0) {
+          const completed = todos.filter(t => t.status === 'completed').length
+          const inProgress = todos.find(t => t.status === 'in_progress')
+          let summary = `${completed}/${todos.length} 完成`
+          if (inProgress) {
+            summary += ` · 当前: ${inProgress.activeForm || inProgress.content}`
+          }
+          session.todoSummary = summary
+        }
+      } catch {
+        // ignore — session may not have todos
+      }
+    }
+
+    return { sessions, runningSessionIds: runningIds }
   })
 
   // ============================================================
@@ -877,11 +899,11 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Todo: load persisted todos for a workspace
+  // Todo: load persisted todos for a session
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['todo:load'], async (_event, request: { workspaceId: string }) => {
+  ipcMain.handle(IPC_CHANNELS['todo:load'], async (_event, request: { sessionId: string }) => {
     const { TodoWriteTool } = await import('./tools/todo-write')
-    const todos = await TodoWriteTool.loadForWorkspace(request.workspaceId)
+    const todos = await TodoWriteTool.loadForSession(request.sessionId)
     return todos.map(t => ({ content: t.content, status: t.status, activeForm: t.activeForm ?? '' }))
   })
 
@@ -1037,7 +1059,7 @@ export function registerIpcHandlers(
     return workspace
   })
 
-  ipcMain.handle(IPC_CHANNELS['workspace:update'], async (_event, payload: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => {
+  ipcMain.handle(IPC_CHANNELS['workspace:update'], async (_event, payload: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }) => {
     const workspace = await workspaceStore.updateWorkspace(payload.workspaceId, payload.updates)
     onDataChanged?.('workspace:changed', { action: 'updated', workspace })
     return workspace

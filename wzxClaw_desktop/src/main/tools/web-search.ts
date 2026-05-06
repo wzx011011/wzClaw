@@ -86,69 +86,88 @@ export class WebSearchTool implements Tool {
 
     await enforceRateLimit()
 
-    try {
-      // 调用 SearXNG JSON API（自建 NAS 服务）
-      const params = new URLSearchParams({
-        q: query,
-        format: 'json',
-        categories: 'general',
-        language: 'zh-CN'
-      })
+    // 最多重试 1 次（共 2 次尝试），间隔 2 秒
+    const MAX_ATTEMPTS = 2
+    const RETRY_DELAY_MS = 2000
 
-      const response = await fetch(`${SEARXNG_BASE_URL}/search?${params}`, {
-        signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS)
-      })
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        // 调用 SearXNG JSON API（自建 NAS 服务）
+        const params = new URLSearchParams({
+          q: query,
+          format: 'json',
+          categories: 'general',
+          language: 'zh-CN'
+        })
 
-      if (!response.ok) {
+        const response = await fetch(`${SEARXNG_BASE_URL}/search?${params}`, {
+          signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS)
+        })
+
+        if (!response.ok) {
+          // 5xx 服务端错误可重试
+          if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+            continue
+          }
+          return {
+            output: `Web search failed: ${response.status} ${response.statusText}`,
+            isError: true
+          }
+        }
+
+        const data = (await response.json()) as SearXNGResponse
+        let results = data.results ?? []
+
+        // 域名过滤
+        if (allowed_domains && allowed_domains.length > 0) {
+          results = results.filter((r) =>
+            allowed_domains.some((d) => r.url.includes(d))
+          )
+        }
+        if (blocked_domains && blocked_domains.length > 0) {
+          results = results.filter((r) =>
+            !blocked_domains.some((d) => r.url.includes(d))
+          )
+        }
+
+        // 截断到最大结果数
+        results = results.slice(0, maxResults)
+
+        if (results.length === 0) {
+          return {
+            output: `No results found for "${query}".`,
+            isError: false
+          }
+        }
+
+        // 格式化为 Markdown 链接
+        const formatted = results
+          .map((r, i) => {
+            const link = `[${r.title}](${r.url})`
+            return r.content ? `${i + 1}. ${link}\n   ${r.content}` : `${i + 1}. ${link}`
+          })
+          .join('\n\n')
+
         return {
-          output: `Web search failed: ${response.status} ${response.statusText}`,
+          output: formatted,
+          isError: false
+        }
+      } catch (err: unknown) {
+        // 网络错误（fetch failed / timeout）可重试
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+          continue
+        }
+        const message = err instanceof Error ? err.message : String(err)
+        return {
+          output: `Web search failed: ${message}`,
           isError: true
         }
       }
-
-      const data = (await response.json()) as SearXNGResponse
-      let results = data.results ?? []
-
-      // 域名过滤
-      if (allowed_domains && allowed_domains.length > 0) {
-        results = results.filter((r) =>
-          allowed_domains.some((d) => r.url.includes(d))
-        )
-      }
-      if (blocked_domains && blocked_domains.length > 0) {
-        results = results.filter((r) =>
-          !blocked_domains.some((d) => r.url.includes(d))
-        )
-      }
-
-      // 截断到最大结果数
-      results = results.slice(0, maxResults)
-
-      if (results.length === 0) {
-        return {
-          output: `No results found for "${query}".`,
-          isError: false
-        }
-      }
-
-      // 格式化为 Markdown 链接
-      const formatted = results
-        .map((r, i) => {
-          const link = `[${r.title}](${r.url})`
-          return r.content ? `${i + 1}. ${link}\n   ${r.content}` : `${i + 1}. ${link}`
-        })
-        .join('\n\n')
-
-      return {
-        output: formatted,
-        isError: false
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      return {
-        output: `Web search failed: ${message}`,
-        isError: true
-      }
     }
+
+    // 不应到达此处
+    return { output: 'Web search failed: unexpected state', isError: true }
   }
 }

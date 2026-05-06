@@ -87,10 +87,11 @@ export class AgentLoop {
     this.abortController = new AbortController()
     this.turnManager.reset()
 
-    // 恢复上次会话的 todos（如有持久化文件）
+    // 恢复上次会话的 todos（如有持久化文件）— session-scoped
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool && this.activeWorkspace) {
-      const saved = await TodoWriteTool.loadForWorkspace(this.activeWorkspace.id)
+    if (todoTool) {
+      const sessionId = config.conversationId
+      const saved = await TodoWriteTool.loadForSession(sessionId)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately

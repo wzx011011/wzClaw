@@ -3,7 +3,6 @@
 // ============================================================
 
 import fs from 'fs'
-import path from 'path'
 import { MCPClient, type MCPServerConfig } from './mcp-client'
 import { MCPToolWrapper } from './mcp-tool-wrapper'
 import type { ToolRegistry } from '../tools/tool-registry'

@@ -93,15 +93,9 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
   private currentTodos: TodoItem[] = []
   private getWebContents: () => Electron.WebContents | null
-  private onProgressUpdate?: (workspaceId: string, summary: string) => void
 
   constructor(getWebContents: () => Electron.WebContents | null) {
     this.getWebContents = getWebContents
-  }
-
-  /** Attach a callback to push progress summary to the task store. */
-  setProgressCallback(cb: (workspaceId: string, summary: string) => void): void {
-    this.onProgressUpdate = cb
   }
 
   getCurrentTodos(): TodoItem[] {
@@ -114,11 +108,11 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
   }
 
   /**
-   * Load persisted todos for a task from disk.
+   * Load persisted todos for a session from disk.
    * Returns empty array if no file exists or the file is corrupt.
    */
-  static async loadForWorkspace(workspaceId: string): Promise<TodoItem[]> {
-    const file = path.join(getUserDir(), 'workspaces', sanitizePath(workspaceId), 'todos.json')
+  static async loadForSession(sessionId: string): Promise<TodoItem[]> {
+    const file = path.join(getUserDir(), 'sessions', sanitizePath(sessionId), 'todos.json')
     try {
       const raw = await fsp.readFile(file, 'utf-8')
       const parsed = z.array(TodoItemSchema).safeParse(JSON.parse(raw))
@@ -128,11 +122,13 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
     }
   }
 
-  /** Atomically write todos to disk (tmp + rename). Silently fails. */
-  private async persistTodos(workspaceId: string, todos: TodoItem[]): Promise<void> {
-    const workspaceDir = path.join(getUserDir(), 'workspaces', sanitizePath(workspaceId))
-    await fsp.mkdir(workspaceDir, { recursive: true })
-    const file = path.join(workspaceDir, 'todos.json')
+  /**
+   * Atomically write todos to disk (tmp + rename). Silently fails.
+   */
+  private async persistTodos(sessionId: string, todos: TodoItem[]): Promise<void> {
+    const sessionDir = path.join(getUserDir(), 'sessions', sanitizePath(sessionId))
+    await fsp.mkdir(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'todos.json')
     const tmp = `${file}.tmp`
     await fsp.writeFile(tmp, JSON.stringify(todos, null, 2), 'utf-8')
     await fsp.rename(tmp, file)
@@ -163,27 +159,17 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
 
     this.currentTodos = todos
 
-    // Persist to disk (fire-and-forget, atomic write) — workspace-scoped
-    if (context.workspaceId) {
-      this.persistTodos(context.workspaceId, todos).catch(() => { /* ignore */ })
-
-      // Push progress summary to workspace card
-      if (this.onProgressUpdate) {
-        const inProgressItem = todos.find(t => t.status === 'in_progress')
-        const completed = todos.filter(t => t.status === 'completed').length
-        const total = todos.length
-        let summary = `${completed}/${total} 完成`
-        if (inProgressItem) {
-          summary += ` · 当前: ${inProgressItem.title}`
-        }
-        this.onProgressUpdate(context.workspaceId, summary)
-      }
+    // Persist to disk (fire-and-forget, atomic write) — session-scoped
+    const persistKey = context.sessionId ?? context.workspaceId
+    if (persistKey) {
+      this.persistTodos(persistKey, todos).catch(() => { /* ignore */ })
     }
 
-    // Notify renderer
+    // Notify renderer: todo panel update + session list refresh
     const wc = this.getWebContents()
     if (wc && !wc.isDestroyed()) {
       wc.send(IPC_CHANNELS['todo:updated'], { todos })
+      wc.send('data:changed', { source: 'desktop', entity: 'session', action: 'updated', data: { sessionId: context.sessionId } })
     }
 
     const counts = {

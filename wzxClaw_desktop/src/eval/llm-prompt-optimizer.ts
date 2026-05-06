@@ -161,8 +161,8 @@ Only include entries where you can provide meaningful, specific guidance. Omit c
       item.guidance.length < 500 &&
       validNames.has(item.categoryName)
     )
-  } catch (e: any) {
-    console.log(`  [llm-prompt-optimizer] Error: ${e.message}`)
+  } catch (e: unknown) {
+    console.log(`  [llm-prompt-optimizer] Error: ${e instanceof Error ? e.message : String(e)}`)
     return []
   }
 }

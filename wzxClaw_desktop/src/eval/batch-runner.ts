@@ -4,8 +4,7 @@
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
-import { Langfuse } from 'langfuse'
-import { runBenchmarkTask, shutdown, extractTraceData } from './headless-runner'
+import { runBenchmarkTask, extractTraceData } from './headless-runner'
 import { prepareWorkspace } from './workspace-isolation'
 import { scoreTask } from './scorer'
 import { aggregateScores } from './score-aggregator'
@@ -187,8 +186,9 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
       if (i < tasks.length - 1 && delay > 0) {
         await new Promise(r => setTimeout(r, delay))
       }
-    } catch (err: any) {
-      console.error(`  -> ERROR: ${err.message}`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`  -> ERROR: ${message}`)
       results.push({
         taskId: task.id,
         taskSource: task.source,
@@ -200,7 +200,7 @@ export async function runBatch(config: BatchRunConfig): Promise<RunSummary> {
         turnCount: 0,
         duration: 0,
         traceId: '',
-        error: err.message,
+        error: message,
       })
     }
   }

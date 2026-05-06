@@ -158,10 +158,10 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--accent-primary, #58a6ff);
+  color: var(--accent-primary, var(--accent));
   margin: 0 0 var(--sp-2) 0;
   padding: 4px 8px;
-  background: rgba(88, 166, 255, 0.08);
+  background: var(--accent-subtle);
   border-radius: 4px;
 }
 

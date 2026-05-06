@@ -33,7 +33,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function getWzxclaw(): Record<string, ReturnType<typeof vi.fn>> {
+function _getWzxclaw(): Record<string, ReturnType<typeof vi.fn>> {
   return (globalThis as unknown as { window: { wzxclaw: Record<string, ReturnType<typeof vi.fn>> } }).window.wzxclaw
 }
 

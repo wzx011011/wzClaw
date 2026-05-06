@@ -22,6 +22,8 @@ export interface ToolExecutionContext {
   workingDirectory: string
   /** Workspace ID if the agent is running within a Workspace. Used for workspace-scoped storage. */
   workspaceId?: string
+  /** Session ID (conversation ID) for session-scoped storage (e.g. todos). */
+  sessionId?: string
   /** All project root directories for this context (multi-folder Workspace support). */
   projectRoots?: string[]
   abortSignal?: AbortSignal

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { ContextManager } from '../context-manager'
 import type { Message } from '../../../shared/types'
 import type { StreamEvent } from '../../../shared/types'

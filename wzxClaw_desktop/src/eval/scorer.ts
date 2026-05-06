@@ -5,7 +5,7 @@
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import type { BenchmarkTask, TaskEvalResult, HeadlessRunResult } from './types'
+import type { BenchmarkTask, TaskEvalResult, HeadlessRunResult, AgentEventRecord } from './types'
 
 const execAsync = promisify(execFile)
 
@@ -33,8 +33,9 @@ export async function scoreTestExecution(
       env: process.env,
     })
     return { passed: true, output: (stdout + '\n' + stderr).trim() }
-  } catch (err: any) {
-    const output = (err?.stdout ?? '') + '\n' + (err?.stderr ?? '') + '\n' + (err?.message ?? '')
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; message?: string }
+    const output = (e?.stdout ?? '') + '\n' + (e?.stderr ?? '') + '\n' + (e?.message ?? '')
 
     // Windows fallback: python not found → retry with py
     if (process.platform === 'win32' && /\bpython\b/.test(resolvedCmd) && /not recognized|not found/i.test(output)) {
@@ -47,8 +48,9 @@ export async function scoreTestExecution(
           env: process.env,
         })
         return { passed: true, output: (stdout2 + '\n' + stderr2).trim() }
-      } catch (err2: any) {
-        const output2 = (err2?.stdout ?? '') + '\n' + (err2?.stderr ?? '') + '\n' + (err2?.message ?? '')
+      } catch (err2: unknown) {
+        const e2 = err2 as { stdout?: string; stderr?: string; message?: string }
+        const output2 = (e2?.stdout ?? '') + '\n' + (e2?.stderr ?? '') + '\n' + (e2?.message ?? '')
         return { passed: false, output: output2.trim() }
       }
     }
@@ -82,9 +84,9 @@ export async function scoreWithJudge(
 
   const toolCalls = result.events
     .filter(e => e.type === 'agent:tool_call')
-    .map(e => (e as any).toolName)
+    .map((e: AgentEventRecord) => String(e.toolName ?? ''))
   const toolErrors = result.events
-    .filter(e => e.type === 'agent:tool_result' && (e as any).isError)
+    .filter(e => e.type === 'agent:tool_result' && Boolean(e.isError))
     .length
 
   const prompt = `You are evaluating an AI coding agent's performance on a benchmark task.

@@ -38,7 +38,7 @@ function buildTestResponse(overrides?: Partial<ContextBreakdownResponse>): Conte
   const conversationTokens = 8000
   const conversationMessageCount = 12
 
-  const totalEstimatedTokens = systemPromptTokens + envInfoTokens + gitContextTokens +
+  const _totalEstimatedTokens = systemPromptTokens + envInfoTokens + gitContextTokens +
     instructionsTokens + commandsTokens + skillsTokens + memoryTokens +
     toolDefinitionsTokens + conversationTokens
 

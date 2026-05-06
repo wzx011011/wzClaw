@@ -1,4 +1,4 @@
-import type { Message, LLMProvider, ToolDefinition, ContentBlock, ImageContent } from '../../shared/types'
+import type { Message, LLMProvider, ToolDefinition, ContentBlock } from '../../shared/types'
 
 // ============================================================
 // MessageBuilder (per D-25, D-26)

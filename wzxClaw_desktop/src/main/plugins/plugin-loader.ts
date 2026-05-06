@@ -5,7 +5,7 @@
 // ============================================================
 
 import { promises as fsp } from 'fs'
-import { join, basename, dirname } from 'path'
+import { join, dirname } from 'path'
 import type { LoadedPlugin, PluginManifest, PluginError, McpServerConfig } from '../../shared/types-plugin'
 import { parsePluginManifest, createMinimalManifest, isValidPluginDirectory } from './plugin-manifest'
 import { getPluginsDir } from '../paths'

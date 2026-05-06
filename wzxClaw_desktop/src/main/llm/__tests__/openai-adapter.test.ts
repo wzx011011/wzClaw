@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { OpenAIAdapter } from '../openai-adapter'
-import type { StreamOptions } from '../types'
 
 // We need to mock the OpenAI module so that when the adapter does
 // `new OpenAI(...)`, it gets our mock whose `chat.completions.create`

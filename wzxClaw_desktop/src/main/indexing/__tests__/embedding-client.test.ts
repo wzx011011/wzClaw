@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { EmbeddingClient, type EmbeddingResult } from '../embedding-client'
+import { EmbeddingClient } from '../embedding-client'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'

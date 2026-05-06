@@ -5,6 +5,15 @@
 
 import type { Skill, SkillSource } from '../../shared/types-skill'
 
+// Modular bundled skills
+import { registerSimplifySkill } from './bundled/simplify'
+import { registerDebugSkill } from './bundled/debug'
+import { registerVerifySkill } from './bundled/verify'
+import { registerBatchSkill } from './bundled/batch'
+import { registerSkillifySkill } from './bundled/skillify'
+import { registerUpdateConfigSkill } from './bundled/update-config'
+import { registerKeybindingsSkill } from './bundled/keybindings'
+
 export interface BundledSkillDefinition {
   name: string
   description: string
@@ -152,3 +161,21 @@ registerBundledSkill({
     return `Please compact the current conversation context. Summarize the key information from our discussion so far into a concise summary that preserves the essential context needed to continue working.`
   },
 })
+
+// ============================================================
+// Register modular bundled skills (from ./bundled/ directory)
+// ============================================================
+
+/** Register all modular bundled skills. Called once at startup. */
+export function registerModularBundledSkills(): void {
+  registerSimplifySkill()
+  registerDebugSkill()
+  registerVerifySkill()
+  registerBatchSkill()
+  registerSkillifySkill()
+  registerUpdateConfigSkill()
+  registerKeybindingsSkill()
+}
+
+// Auto-register modular skills when this module is loaded
+registerModularBundledSkills()

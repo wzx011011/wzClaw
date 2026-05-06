@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useDiffStore } from '../diff-store'
-import type { PendingDiff, DiffHunk } from '../../../shared/types'
+import type { PendingDiff } from '../../../shared/types'
 
 // Mock uuid to return predictable values
 let uuidCounter = 0

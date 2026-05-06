@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   UserMessageSchema,
-  TokenUsageSchema,
   StreamEventSchema,
   type StreamEvent,
   type Message

@@ -24,7 +24,7 @@ export default function WorkspaceDetailPage(): JSX.Element {
     if (viewingWorkspace) {
       useWorkspaceStore.getState().loadWorkspaceSessions(viewingWorkspace.id)
     }
-  }, [viewingWorkspace?.id])
+  }, [viewingWorkspace?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!viewingWorkspace) return <></>
 

@@ -2,7 +2,7 @@
 // 弱点分析器 — 从评测结果中检测失败模式，给出可操作修复建议
 // ============================================================
 
-import type { RunSummary, TaskEvalResult, WeaknessReport, WeaknessCategory } from './types'
+import type { RunSummary, WeaknessReport, WeaknessCategory } from './types'
 
 /**
  * 分析一次 run 的结果，检测系统性弱点
@@ -126,7 +126,7 @@ export function analyzeWeaknesses(summary: RunSummary): WeaknessReport {
   }
 }
 
-function groupBy<T extends Record<string, any>>(arr: T[], key: string): Record<string, T[]> {
+function groupBy<T extends Record<string, unknown>>(arr: T[], key: string): Record<string, T[]> {
   const map: Record<string, T[]> = {}
   for (const item of arr) {
     const k = String(item[key] ?? 'unknown')

@@ -3,7 +3,6 @@ import crypto from 'crypto'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   PermissionMode,
-  PermissionRule,
   DenialRecord
 } from './types'
 import {

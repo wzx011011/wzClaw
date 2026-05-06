@@ -4,15 +4,12 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
-import { Langfuse } from 'langfuse'
 import { runBatch } from './batch-runner'
 import { analyzeWeaknesses } from './weakness-analyzer'
-import { compareRuns } from './comparison-report'
-import { optimizePrompt, stripOptimizations } from './prompt-optimizer'
-import { optimizePromptWithLLM } from './llm-prompt-optimizer'
+import { optimizePrompt } from './prompt-optimizer'
 import { AgentOptimizer } from './agent-optimizer'
 import { writeImprovementChangelog } from './improvement-changelog'
-import { compareStratified, formatStratifiedReport } from './stratified-tracker'
+import { compareStratified } from './stratified-tracker'
 import { ELORanking } from './elo-ranking'
 import { analyzeTaskFailure } from './trace-analyzer'
 import { computeTraceMetrics, formatTraceMetrics } from './trace-metrics'
@@ -43,7 +40,7 @@ const DATASETS = {
   },
 } as const
 
-type DatasetKey = keyof typeof DATASETS
+type _DatasetKey = keyof typeof DATASETS
 
 const STATE_FILE = '.eval-reports/iteration-state.json'
 const BASE_IMPROVEMENT_THRESHOLD = 0.02  // 基准阈值，会根据样本量动态调整
@@ -438,7 +435,7 @@ export class IterationEngine {
     const allCategories: WeaknessReport['categories'] = []
     const allRecommendations: string[] = []
 
-    for (const [ds, summary] of Object.entries(trainResults)) {
+    for (const [_ds, summary] of Object.entries(trainResults)) {
       const report = analyzeWeaknesses(summary)
       allCategories.push(...report.categories)
       allRecommendations.push(...report.topRecommendations)

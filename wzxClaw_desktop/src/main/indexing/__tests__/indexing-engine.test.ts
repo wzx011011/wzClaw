@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { IndexingEngine, type IndexingStatus, type IndexingProgress } from '../indexing-engine'
+import { IndexingEngine, type IndexingProgress } from '../indexing-engine'
 import { EmbeddingClient } from '../embedding-client'
 import * as fs from 'fs'
 import * as path from 'path'

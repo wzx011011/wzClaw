@@ -1,4 +1,3 @@
-import fs from 'fs'
 import fsp from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
@@ -67,7 +66,7 @@ export class WorkspaceStore {
 
   async updateWorkspace(
     id: string,
-    updates: Partial<Pick<Workspace, 'title' | 'description' | 'archived' | 'lastSessionId' | 'progressSummary'>>
+    updates: Partial<Pick<Workspace, 'title' | 'description' | 'archived' | 'lastSessionId'>>
   ): Promise<Workspace> {
     await this.load()
     const workspace = this.workspaces.get(id)

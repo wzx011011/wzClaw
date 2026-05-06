@@ -1,4 +1,4 @@
-import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
+import type { Tool, ToolExecutionResult } from './tool-interface'
 import type { BrowserManager } from '../browser/browser-manager'
 
 /**
@@ -27,8 +27,8 @@ export class BrowserNavigateTool implements Tool {
     try {
       const title = await this.browserManager.navigate(url)
       return { output: `Navigated to ${url}\nPage title: ${title}`, isError: false }
-    } catch (err: any) {
-      return { output: `Navigation failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Navigation failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }
@@ -58,8 +58,8 @@ export class BrowserClickTool implements Tool {
     try {
       await this.browserManager.click(selector)
       return { output: `Clicked element: ${selector}`, isError: false }
-    } catch (err: any) {
-      return { output: `Click failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Click failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }
@@ -91,8 +91,8 @@ export class BrowserTypeTool implements Tool {
     try {
       await this.browserManager.type(selector, text)
       return { output: `Typed "${text}" into ${selector}`, isError: false }
-    } catch (err: any) {
-      return { output: `Type failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Type failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }
@@ -119,8 +119,8 @@ export class BrowserScreenshotTool implements Tool {
       await this.browserManager.screenshot()
       const url = this.browserManager.currentUrl ?? 'unknown'
       return { output: `Screenshot captured for ${url}`, isError: false }
-    } catch (err: any) {
-      return { output: `Screenshot failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Screenshot failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }
@@ -150,8 +150,8 @@ export class BrowserEvaluateTool implements Tool {
     try {
       const result = await this.browserManager.evaluate(javascript)
       return { output: result, isError: false }
-    } catch (err: any) {
-      return { output: `Evaluate failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Evaluate failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }
@@ -176,8 +176,8 @@ export class BrowserCloseTool implements Tool {
     try {
       await this.browserManager.close()
       return { output: 'Browser closed', isError: false }
-    } catch (err: any) {
-      return { output: `Close failed: ${err.message}`, isError: true }
+    } catch (err: unknown) {
+      return { output: `Close failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
     }
   }
 }

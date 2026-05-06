@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool, handleSymbolResult } from '../symbol-nav'
 
 // Mock getWebContents that never resolves (simulates no Monaco)

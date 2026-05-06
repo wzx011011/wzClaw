@@ -5,9 +5,9 @@
 
 import type { Skill, SkillInfo, SkillLoadResult } from '../../shared/types-skill'
 import { skillToInfo } from '../../shared/types-skill'
-import { loadAllSkills, getDynamicSkills, clearDynamicSkills, discoverSkillDirsForPaths, addDynamicSkillDirectories } from './skill-loader'
+import { loadAllSkills, getDynamicSkills, discoverSkillDirsForPaths, addDynamicSkillDirectories } from './skill-loader'
 import { getBundledSkills, registerBundledSkill } from './bundled-skills'
-import { registerConditionalSkill, activateConditionalSkillsForPaths, clearConditionalSkills, getConditionalSkills } from './conditional-skills'
+import { registerConditionalSkill, activateConditionalSkillsForPaths } from './conditional-skills'
 import { pluginRegistry } from '../plugins'
 
 // ============================================================

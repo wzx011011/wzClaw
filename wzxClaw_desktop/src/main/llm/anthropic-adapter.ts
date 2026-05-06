@@ -60,11 +60,11 @@ export class AnthropicAdapter implements LLMAdapter {
         if (typeof msg.content === 'string') {
           messages[targetIdx] = {
             ...msg,
-            content: [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }] as any
+            content: [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }] as Anthropic.TextBlockParam[]
           }
         } else if (Array.isArray(msg.content) && msg.content.length > 0) {
           const blocks = [...msg.content]
-          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } } as any
+          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } } as Anthropic.TextBlockParam
           messages[targetIdx] = { ...msg, content: blocks }
         }
       }
@@ -83,7 +83,7 @@ export class AnthropicAdapter implements LLMAdapter {
         ...(i === arr.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
       }))
 
-      const params: any = {
+      const params: Record<string, unknown> = {
         model: options.model,
         max_tokens: options.maxTokens ?? 8192,
         messages,
@@ -130,7 +130,7 @@ export class AnthropicAdapter implements LLMAdapter {
         ? signals[0]
         : AbortSignal.any(signals)
 
-      const streamOptions: any = { signal: combinedSignal }
+      const streamOptions: Record<string, unknown> = { signal: combinedSignal }
       if (betas.length > 0) {
         streamOptions.headers = { 'anthropic-beta': betas.join(',') }
       }
@@ -157,7 +157,7 @@ export class AnthropicAdapter implements LLMAdapter {
               }
             }
             // Thinking block — 初始化累积器，并发 empty delta 让 UI 进入 thinking 状态
-            if ((event.content_block as any).type === 'thinking') {
+            if ((event.content_block as Record<string, unknown>).type === 'thinking') {
               thinkingAccumulators.set(event.index, { thinking: '' })
               yield { type: 'thinking_delta', content: '' }
             }
@@ -169,16 +169,16 @@ export class AnthropicAdapter implements LLMAdapter {
               yield { type: 'text_delta', content: event.delta.text }
             }
             // Thinking delta — 流式转发给 UI，同时累积完整内容
-            if ((event.delta as any).type === 'thinking_delta') {
-              const text: string = (event.delta as any).thinking
+            if ((event.delta as Record<string, unknown>).type === 'thinking_delta') {
+              const text: string = (event.delta as Record<string, unknown>).thinking as string
               const acc = thinkingAccumulators.get(event.index)
               if (acc) acc.thinking += text
               yield { type: 'thinking_delta', content: text }
             }
             // Anthropic 返回的 signature delta（不透明字符串，必须回传）
-            if ((event.delta as any).type === 'signature_delta') {
+            if ((event.delta as Record<string, unknown>).type === 'signature_delta') {
               const acc = thinkingAccumulators.get(event.index)
-              if (acc) acc.signature = (acc.signature ?? '') + (event.delta as any).signature
+              if (acc) acc.signature = (acc.signature ?? '') + ((event.delta as Record<string, unknown>).signature as string)
             }
             if (event.delta.type === 'input_json_delta') {
               const acc = toolAccumulators.get(event.index)
@@ -216,7 +216,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
       // Get usage from final message, including cache tokens if available
       const finalMessage = await stream.finalMessage()
-      const usage = finalMessage.usage as any
+      const usage = finalMessage.usage as Record<string, unknown>
       yield {
         type: 'done',
         usage: {

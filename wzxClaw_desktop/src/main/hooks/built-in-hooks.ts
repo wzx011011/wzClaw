@@ -3,10 +3,10 @@
 // v2: 新增 stagnation stop hook（连续只读不写 → 注入提醒）
 // ============================================================
 
-import type { HookRegistry, HookResult } from './hook-registry'
+import type { HookContext, HookRegistry, HookResult } from './hook-registry'
 
 /** 写操作工具名称集合 */
-const WRITE_TOOLS = new Set(['FileWrite', 'FileEdit', 'Bash'])
+const _WRITE_TOOLS = new Set(['FileWrite', 'FileEdit', 'Bash'])
 
 /** 停滞检测窗口和阈值 */
 const STAGNATION_WINDOW = 6
@@ -16,7 +16,7 @@ const STAGNATION_MIN_TURNS = 3
  * 创建停滞检测 stop hook 的状态追踪器。
  * 返回一个 turn-end hook handler。
  */
-function createStagnationHook(): (ctx: any) => Promise<HookResult> {
+function createStagnationHook(): (ctx: HookContext) => Promise<HookResult> {
   const history: boolean[] = []  // true = 有写操作
   let stagnationCount = 0        // 累计停滞触发次数
   const MAX_STAGNATION_WARNINGS = 3  // 最大容忍次数（参考 Claude Code 连续失败 3 次熔断）

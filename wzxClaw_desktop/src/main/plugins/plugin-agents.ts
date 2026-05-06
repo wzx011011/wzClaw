@@ -10,7 +10,7 @@ import type { LoadedPlugin } from '../../shared/types-plugin'
 import type { Skill, SkillSource } from '../../shared/types-skill'
 import { resolveModelName } from '../../shared/types-skill'
 import { parseFrontmatter, extractDescriptionFromMarkdown } from '../skills/frontmatter-parser'
-import { parseArgumentNames, substituteArguments } from '../skills/argument-substitution'
+import { substituteArguments } from '../skills/argument-substitution'
 
 /**
  * A loaded agent from a plugin.

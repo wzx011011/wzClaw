@@ -1,5 +1,4 @@
 import type { LLMProvider, TokenUsage } from '../../shared/types'
-import { MAX_AGENT_TURNS } from '../../shared/constants'
 
 // ============================================================
 // Agent Event Types (per D-23)

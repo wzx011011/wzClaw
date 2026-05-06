@@ -3,7 +3,7 @@
 // Modeled after Claude Code's conditional skill system
 // ============================================================
 
-import { isAbsolute, relative, sep as pathSep } from 'path'
+import { isAbsolute, relative } from 'path'
 import type { Skill } from '../../shared/types-skill'
 
 // Pending conditional skills (have paths frontmatter but not yet activated)
