@@ -4,6 +4,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Toast from './components/Toast'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useSettingsStore } from './stores/settings-store'
+import { useI18nStore } from './i18n/i18n-store'
 import './styles/ide.css'
 import './styles/chat.css'
 import './styles/workspaces.css'
@@ -17,10 +18,14 @@ function App(): JSX.Element {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const viewingWorkspaceId = useWorkspaceStore((s) => s.viewingWorkspaceId)
   const loadSettings = useSettingsStore((s) => s.loadSettings)
+  const initLocale = useI18nStore((s) => s.initLocale)
 
   // 启动时从主进程加载已保存的设置，确保 store 不停留在默认值
   useEffect(() => {
-    loadSettings()
+    loadSettings().then(() => {
+      const language = useSettingsStore.getState().language
+      initLocale(language)
+    })
   }, [])
 
   if (activeWorkspaceId) return (

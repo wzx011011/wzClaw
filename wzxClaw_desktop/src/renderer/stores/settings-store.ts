@@ -14,6 +14,7 @@ interface SettingsState {
   relayToken?: string
   thinkingDepth?: string
   showToolSteps?: boolean
+  language?: string
   isLoading: boolean
 }
 
@@ -33,6 +34,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   systemPrompt: undefined,
   thinkingDepth: undefined,
   showToolSteps: true,
+  language: 'zh-CN',
   isLoading: false,
 
   /**
@@ -51,6 +53,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         relayToken: settings.relayToken,
         thinkingDepth: settings.thinkingDepth,
         showToolSteps: settings.showToolSteps ?? true,
+        language: settings.language ?? 'zh-CN',
         isLoading: false
       })
     } catch (err) {

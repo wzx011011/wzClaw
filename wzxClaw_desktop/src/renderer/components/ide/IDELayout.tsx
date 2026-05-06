@@ -1,6 +1,7 @@
 import React, { useEffect, lazy, Suspense, useState, useRef } from 'react'
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
+import { useT } from '../../i18n/useT'
 import TitleBar from './TitleBar'
 import ActivityBar from './ActivityBar'
 import Sidebar from './Sidebar'
@@ -39,9 +40,10 @@ function scheduleDeferredUiWork(task: () => void, delayMs: number): () => void {
  *   [StatusBar (fixed bottom)]
  */
 export default function IDELayout(): JSX.Element {
+  const t = useT()
   const openFolder = useWorkspaceStore((s) => s.openFolder)
   const initWorkspace = useWorkspaceStore((s) => s.initWorkspace)
-  const setFolder = useWorkspaceStore((s) => s.setFolder)
+  const _setFolder = useWorkspaceStore((s) => s.setFolder)
   const setFolders = useWorkspaceStore((s) => s.setFolders)
   const handleWorkspaceFileChange = useWorkspaceStore((s) => s.handleFileChange)
   const initChat = useChatStore((s) => s.init)
@@ -63,7 +65,7 @@ export default function IDELayout(): JSX.Element {
   const setRightSidebarVisible = useLayoutStore((s) => s.setRightSidebarVisible)
   const setRightSidebarTab = useLayoutStore((s) => s.setRightSidebarTab)
   const setSidebarWidth = useLayoutStore((s) => s.setSidebarWidth)
-  const setRightSidebarWidth = useLayoutStore((s) => s.setRightSidebarWidth)
+  const _setRightSidebarWidth = useLayoutStore((s) => s.setRightSidebarWidth)
 
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = React.useState(false)
@@ -222,7 +224,7 @@ export default function IDELayout(): JSX.Element {
     }, WORKSPACE_RESTORE_DELAY_MS)
 
     return cancelDeferredWorkspaceInit
-  }, [activeWorkspace?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeWorkspace?.id])
 
   // Index status is useful but not a first-paint dependency.
   useEffect(() => {
@@ -319,13 +321,13 @@ export default function IDELayout(): JSX.Element {
                       className={`sidebar-tab${rightSidebarTab === 'editor' ? ' active' : ''}`}
                       onClick={() => { setEditorMounted(true); setRightSidebarTab('editor') }}
                     >
-                      文件编辑
+                      {t('ideLayout.fileEditor')}
                     </button>
                     <button
                       className={`sidebar-tab${rightSidebarTab === 'preview' ? ' active' : ''}`}
                       onClick={() => { setPreviewMounted(true); setRightSidebarTab('preview') }}
                     >
-                      浏览器
+                      {t('ideLayout.browser')}
                     </button>
                   </div>
                   <div className="sidebar-body">

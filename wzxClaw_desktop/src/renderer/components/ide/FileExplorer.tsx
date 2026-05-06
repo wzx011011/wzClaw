@@ -105,6 +105,7 @@ function TreeNodeItem({ node, depth, rootPath, onCreateNew }: TreeNodeProps): JS
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   const handleDirectoryClick = useCallback(async () => {
@@ -149,9 +150,14 @@ function TreeNodeItem({ node, depth, rootPath, onCreateNew }: TreeNodeProps): JS
     setRenaming(false)
   }, [renameValue, node.path, node.name])
 
+  // 内联删除确认 5 秒后自动取消
+  useEffect(() => {
+    if (!confirmDelete) return
+    const t = window.setTimeout(() => setConfirmDelete(false), 5000)
+    return () => window.clearTimeout(t)
+  }, [confirmDelete])
+
   const handleDelete = useCallback(async () => {
-    const confirmed = window.confirm(`确定删除 "${node.name}" 吗？此操作不可撤销。`)
-    if (!confirmed) return
     try {
       const result = await window.wzxclaw.deleteFile({ filePath: node.path })
       if (result.success) {
@@ -161,7 +167,8 @@ function TreeNodeItem({ node, depth, rootPath, onCreateNew }: TreeNodeProps): JS
     } catch (err) {
       console.error('Delete failed:', err)
     }
-  }, [node.path, node.name])
+    setConfirmDelete(false)
+  }, [node.path])
 
   const handleCopyPath = useCallback(() => {
     navigator.clipboard.writeText(node.path)
@@ -191,7 +198,7 @@ function TreeNodeItem({ node, depth, rootPath, onCreateNew }: TreeNodeProps): JS
         { label: '复制相对路径', onClick: handleCopyRelativePath },
         { label: '在文件管理器中显示', onClick: handleRevealInExplorer },
         { separator: true, label: '', onClick: () => {} },
-        { label: '删除', shortcut: 'Del', onClick: handleDelete },
+        { label: confirmDelete ? '确认删除？' : '删除', shortcut: confirmDelete ? undefined : 'Del', onClick: confirmDelete ? handleDelete : () => setConfirmDelete(true) },
       ]
     }
     return [
@@ -203,9 +210,9 @@ function TreeNodeItem({ node, depth, rootPath, onCreateNew }: TreeNodeProps): JS
       { label: '复制相对路径', onClick: handleCopyRelativePath },
       { label: '在文件管理器中显示', onClick: handleRevealInExplorer },
       { separator: true, label: '', onClick: () => {} },
-      { label: '删除', shortcut: 'Del', onClick: handleDelete },
+      { label: confirmDelete ? '确认删除？' : '删除', shortcut: confirmDelete ? undefined : 'Del', onClick: confirmDelete ? handleDelete : () => setConfirmDelete(true) },
     ]
-  }, [node, handleFileClick, onCreateNew, handleCopyPath, handleCopyRelativePath, handleRevealInExplorer, handleDelete])
+  }, [node, handleFileClick, onCreateNew, handleCopyPath, handleCopyRelativePath, handleRevealInExplorer, handleDelete, confirmDelete])
 
   useEffect(() => {
     if (renaming && renameInputRef.current) {
@@ -347,7 +354,7 @@ export default function FileExplorer(): JSX.Element {
   }, [rootPath, loadTree])
 
   if (tree.length === 0) {
-    return <div style={{ padding: 12, color: 'var(--text-secondary)' }}>Empty workspace</div>
+    return <div style={{ padding: 12, color: 'var(--text-secondary)' }}>空工作区</div>
   }
 
   const isMultiRoot = tree.length > 1 && tree.every((n) => n.isDirectory)

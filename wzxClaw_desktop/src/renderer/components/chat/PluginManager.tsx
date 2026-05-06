@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useT } from '../../i18n/useT'
 import type { PluginInfo } from '../../../shared/types-plugin'
 import type { MarketplacePluginDisplay } from '../../../shared/types-plugin'
 
@@ -15,6 +16,7 @@ type TabId = 'discover' | 'installed' | 'marketplace'
 // ============================================================
 
 export default function PluginManager({ isOpen, onClose }: PluginManagerProps): JSX.Element | null {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<TabId>('discover')
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [marketplacePlugins, setMarketplacePlugins] = useState<MarketplacePluginDisplay[]>([])
@@ -118,8 +120,8 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
     setLoading(true)
     await window.wzxclaw.reloadPlugins()
     await loadPlugins()
-    setActionStatus('插件已重新加载')
-    setTimeout(() => setActionStatus(null), 3000)
+    setActionStatus(t('settings.plugins.reloaded'))
+    scheduleActionStatusClear(3000)
   }
 
   const handleInstallFromUrl = async (): Promise<void> => {
@@ -144,7 +146,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
         await loadPlugins()
       }
     } catch (err) {
-      setActionStatus(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+      setActionStatus(t('settings.plugins.installFailed', { error: err instanceof Error ? err.message : String(err) }))
     } finally {
       setInstalling(null)
       scheduleActionStatusClear(5000)
@@ -160,7 +162,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
         await Promise.allSettled([loadPlugins(), loadMarketplace()])
       }
     } catch (err) {
-      setActionStatus(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+      setActionStatus(t('settings.plugins.installFailed', { error: err instanceof Error ? err.message : String(err) }))
     } finally {
       setInstalling(null)
       scheduleActionStatusClear(5000)
@@ -181,7 +183,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
   const handleSaveConfig = async (): Promise<void> => {
     if (!configPlugin) return
     if (configParseError) {
-      setActionStatus('无法保存: ' + configParseError)
+      setActionStatus(t('settings.plugins.cannotSave', { error: configParseError }))
       scheduleActionStatusClear(3000)
       return
     }
@@ -194,7 +196,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
       setActionStatus(result.message)
       if (result.success) setConfigPlugin(null)
     } catch {
-      setActionStatus('无法保存: 无效的 JSON')
+      setActionStatus(t('settings.plugins.invalidJson'))
     }
     setTimeout(() => setActionStatus(null), 3000)
   }
@@ -230,16 +232,16 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
       <div className="settings-modal plugin-manager" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="settings-header">
-          <h2>插件</h2>
+          <h2>{t('settings.plugins.title')}</h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               className="settings-btn-secondary"
               onClick={() => setShowInstall(!showInstall)}
             >
-              从 URL 安装
+              {t('settings.plugins.installFromUrl')}
             </button>
             <button className="settings-btn-secondary" onClick={handleReload} disabled={loading}>
-              {loading ? '加载中...' : '刷新'}
+              {loading ? t('common.loading') : t('common.refresh')}
             </button>
             <button className="settings-close-btn" onClick={onClose}>✕</button>
           </div>
@@ -256,7 +258,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
             <input
               type="text"
               className="plugin-install-input"
-              placeholder="GitHub 仓库 (user/repo)、Git URL 或压缩包 URL"
+              placeholder="GitHub repo (user/repo), Git URL, or archive URL"
               value={installUrl}
               onChange={(e) => setInstallUrl(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleInstallFromUrl() }}
@@ -267,7 +269,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
               onClick={handleInstallFromUrl}
               disabled={installing === '__url__' || !installUrl.trim()}
             >
-              {installing === '__url__' ? '安装中...' : '安装'}
+              {installing === '__url__' ? t('settings.plugins.installing') : t('common.install')}
             </button>
           </div>
         )}
@@ -277,7 +279,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
           <div className="plugin-config-overlay">
             <div className="plugin-config-panel">
               <div className="settings-header">
-                <h3>配置: {configPlugin}</h3>
+                <h3>{t('settings.plugins.configLabel', { name: configPlugin })}</h3>
                 <button className="settings-close-btn" onClick={() => setConfigPlugin(null)}>✕</button>
               </div>
               <textarea
@@ -289,17 +291,17 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
                     JSON.parse(e.target.value)
                     setConfigParseError(null)
                   } catch {
-                    setConfigParseError('无效的 JSON')
+                    setConfigParseError(t('settings.plugins.invalidJson'))
                   }
                 }}
               />
               {configParseError && <div className="config-error">{configParseError}</div>}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 8 }}>
                 <button className="settings-btn-secondary" onClick={() => setConfigPlugin(null)}>
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button className="btn-sm btn-primary" onClick={handleSaveConfig}>
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </div>
@@ -314,7 +316,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
               className={`plugin-tab${activeTab === tab ? ' active' : ''}`}
               onClick={() => setActiveTab(tab)}
             >
-              {tab === 'discover' ? '发现' : tab === 'installed' ? '已安装' : '市场'}
+              {tab === 'discover' ? t('settings.plugins.discover') : tab === 'installed' ? t('settings.plugins.installed') : t('settings.plugins.marketplace')}
               {tab === 'installed' && plugins.length > 0 && (
                 <span className="plugin-tab-count">{plugins.length}</span>
               )}
@@ -330,7 +332,7 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
           <input
             type="text"
             className="plugin-search-input"
-            placeholder="搜索插件名称、描述或标签..."
+            placeholder={t('settings.plugins.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -342,18 +344,18 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
           {activeTab === 'discover' && (
             <div className="plugin-list">
               {loading && discoverPlugins.length === 0 ? (
-                <div className="plugin-empty">加载插件中...</div>
+                <div className="plugin-empty">{t('settings.plugins.loadingPlugins')}</div>
               ) : discoverPlugins.length === 0 ? (
                 <div className="plugin-empty">
-                  <p>没有找到插件。</p>
-                  <p className="plugin-hint">将插件放在 <code>~/.wzxclaw/plugins/</code> 或项目 <code>.wzxclaw/plugins/</code> 目录下。</p>
+                  <p>{t('settings.plugins.noPluginsFound')}</p>
+                  <p className="plugin-hint">{t('settings.plugins.installedHint')}</p>
                 </div>
               ) : (
                 discoverPlugins.map(plugin => (
                   <div key={plugin.name} className={`plugin-card ${plugin.enabled ? 'enabled' : 'disabled'}`}>
                     <div className="plugin-card-header">
                       <span className="plugin-card-name">{plugin.name}</span>
-                      {plugin.isBuiltin && <span className="plugin-badge builtin">内置</span>}
+                      {plugin.isBuiltin && <span className="plugin-badge builtin">{t('settings.plugins.builtin')}</span>}
                       {plugin.version && <span className="plugin-version">v{plugin.version}</span>}
                     </div>
                     {plugin.description && (
@@ -365,20 +367,20 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
                       ))}
                     </div>
                     <div className="plugin-card-footer">
-                      <span className="plugin-card-source">来源: {plugin.source}</span>
+                      <span className="plugin-card-source">{t('settings.plugins.source', { source: plugin.source })}</span>
                       <div className="plugin-card-actions">
                         {plugin.hasUserConfig && (
-                          <button className="btn-sm settings-btn-secondary" onClick={() => handleOpenConfig(plugin.name)}>配置</button>
+                          <button className="btn-sm settings-btn-secondary" onClick={() => handleOpenConfig(plugin.name)}>{t('common.config')}</button>
                         )}
                         <button
                           className={`btn-sm ${plugin.enabled ? 'btn-warning' : 'btn-primary'}`}
                           onClick={() => handleToggle(plugin)}
                           disabled={installing === plugin.name}
                         >
-                          {installing === plugin.name ? '...' : plugin.enabled ? '禁用' : '启用'}
+                          {installing === plugin.name ? '...' : plugin.enabled ? t('common.disable') : t('common.enable')}
                         </button>
                         {!plugin.isBuiltin && (
-                          <button className="btn-sm btn-danger" onClick={() => handleUninstall(plugin)}>{pendingUninstall === plugin.name ? '确认卸载？' : '卸载'}</button>
+                          <button className="btn-sm btn-danger" onClick={() => handleUninstall(plugin)}>{pendingUninstall === plugin.name ? t('settings.plugins.confirmUninstall') : t('common.uninstall')}</button>
                         )}
                       </div>
                     </div>
@@ -400,8 +402,8 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
             <div className="plugin-list">
               {plugins.filter(p => !p.isBuiltin).length === 0 ? (
                 <div className="plugin-empty">
-                  <p>没有已安装的第三方插件。</p>
-                  <p className="plugin-hint">前往"市场"标签浏览可用插件，或点击"从 URL 安装"。</p>
+                  <p>{t('settings.plugins.noInstalledPlugins')}</p>
+                  <p className="plugin-hint">{t('settings.plugins.installedHint')}</p>
                 </div>
               ) : (
                 plugins.filter(p => !p.isBuiltin).map(plugin => (
@@ -419,19 +421,19 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
                       ))}
                     </div>
                     <div className="plugin-card-footer">
-                      <span className="plugin-card-source">来源: {plugin.source}</span>
+                      <span className="plugin-card-source">{t('settings.plugins.source', { source: plugin.source })}</span>
                       <div className="plugin-card-actions">
                         {plugin.hasUserConfig && (
-                          <button className="btn-sm settings-btn-secondary" onClick={() => handleOpenConfig(plugin.name)}>配置</button>
+                          <button className="btn-sm settings-btn-secondary" onClick={() => handleOpenConfig(plugin.name)}>{t('common.config')}</button>
                         )}
                         <button
                           className={`btn-sm ${plugin.enabled ? 'btn-warning' : 'btn-primary'}`}
                           onClick={() => handleToggle(plugin)}
                           disabled={installing === plugin.name}
                         >
-                          {installing === plugin.name ? '...' : plugin.enabled ? '禁用' : '启用'}
+                          {installing === plugin.name ? '...' : plugin.enabled ? t('common.disable') : t('common.enable')}
                         </button>
-                        <button className="btn-sm btn-danger" onClick={() => handleUninstall(plugin)}>{pendingUninstall === plugin.name ? '确认卸载？' : '卸载'}</button>
+                        <button className="btn-sm btn-danger" onClick={() => handleUninstall(plugin)}>{pendingUninstall === plugin.name ? t('settings.plugins.confirmUninstall') : t('common.uninstall')}</button>
                       </div>
                     </div>
                   </div>
@@ -444,17 +446,17 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
           {activeTab === 'marketplace' && (
             <div className="plugin-list">
               {marketplaceLoading ? (
-                <div className="plugin-empty">加载市场中...</div>
+                <div className="plugin-empty">{t('settings.plugins.loadingMarketplace')}</div>
               ) : marketplacePlugins.length === 0 ? (
                 <div className="plugin-empty">
-                  <p>{searchQuery ? '没有找到匹配的插件。' : '暂无可用插件。'}</p>
+                  <p>{searchQuery ? t('settings.plugins.noMarketplaceMatch') : t('settings.plugins.noMarketplacePlugins')}</p>
                 </div>
               ) : (
                 marketplacePlugins.map(plugin => (
                   <div key={plugin.name} className={`plugin-card${plugin.installed ? ' installed' : ''}`}>
                     <div className="plugin-card-header">
                       <span className="plugin-card-name">{plugin.name}</span>
-                      {plugin.installed && <span className="plugin-badge installed">已安装</span>}
+                      {plugin.installed && <span className="plugin-badge installed">{t('settings.plugins.installed')}</span>}
                       {plugin.category && <span className="plugin-badge category">{plugin.category}</span>}
                     </div>
                     {plugin.description && (
@@ -469,20 +471,20 @@ export default function PluginManager({ isOpen, onClose }: PluginManagerProps): 
                     )}
                     <div className="plugin-card-footer">
                       {plugin.author && (
-                        <span className="plugin-card-source">来自 {plugin.author}</span>
+                        <span className="plugin-card-source">{t('settings.plugins.from', { source: plugin.author })}</span>
                       )}
                       <div className="plugin-card-actions">
                         {plugin.installed ? (
-                          <button className="btn-sm btn-success" disabled>已安装</button>
+                          <button className="btn-sm btn-success" disabled>{t('settings.plugins.installed')}</button>
                         ) : plugin.isPlaceholder ? (
-                          <button className="btn-sm settings-btn-secondary" disabled>即将推出</button>
+                          <button className="btn-sm settings-btn-secondary" disabled>{t('settings.plugins.comingSoon')}</button>
                         ) : (
                           <button
                             className="btn-sm btn-primary"
                             onClick={() => handleInstallFromMarketplace(plugin)}
                             disabled={installing === plugin.name}
                           >
-                            {installing === plugin.name ? '安装中...' : '安装'}
+                            {installing === plugin.name ? t('settings.plugins.installing') : t('common.install')}
                           </button>
                         )}
                       </div>

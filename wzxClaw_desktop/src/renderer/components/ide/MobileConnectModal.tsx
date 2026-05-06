@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
+import { useT } from '../../i18n/useT'
 
 interface MobileConnectModalProps {
   onClose: () => void
@@ -9,6 +10,7 @@ interface MobileConnectModalProps {
  * Simplified: just shows QR, auto-closes when mobile connects.
  */
 export default function MobileConnectModal({ onClose }: MobileConnectModalProps): JSX.Element {
+  const t = useT()
   const [relayQrCode, setRelayQrCode] = useState<string | null>(null)
   const [relayToken, setRelayToken] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -19,9 +21,9 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
   useEffect(() => {
     window.wzxclaw
       .getRelayQrCode()
-      .then((result) => {
-        setRelayQrCode(result.qrCode)
-        if ((result as any).token) setRelayToken((result as any).token)
+      .then((result: Record<string, unknown>) => {
+        setRelayQrCode(result.qrCode as string)
+        if (result.token) setRelayToken(result.token as string)
         setLoading(false)
       })
       .catch((err: Error) => {
@@ -44,7 +46,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
     <div className="mobile-modal-overlay" onClick={onClose}>
       <div className="mobile-modal" onClick={(e) => e.stopPropagation()}>
         <div className="mobile-modal-header">
-          <h2>连接手机</h2>
+          <h2>{t('mobileConnect.title')}</h2>
           <button className="mobile-modal-close" onClick={onClose}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -54,13 +56,13 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
         </div>
 
         <div className="mobile-modal-body">
-          {loading && <p className="mobile-loading">正在生成二维码…</p>}
+          {loading && <p className="mobile-loading">{t('mobileConnect.generating')}</p>}
 
           {error && (
             <div className="mobile-error-container">
-              <p className="mobile-error">无法生成二维码</p>
+              <p className="mobile-error">{t('mobileConnect.generateFailed')}</p>
               <p className="mobile-error-detail">{error}</p>
-              <p className="mobile-error-hint">请先在 Settings → Relay Token 中配置连接令牌</p>
+              <p className="mobile-error-hint">{t('mobileConnect.hint')}</p>
             </div>
           )}
 
@@ -70,7 +72,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
                 <img src={relayQrCode} alt="Relay QR Code" className="mobile-qr" />
               </div>
 
-              <p className="mobile-hint">用 wzxClaw 手机端扫码连接</p>
+              <p className="mobile-hint">{t('mobileConnect.scanHint')}</p>
               {relayToken && (
                 <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 'var(--sp-1)', wordBreak: 'break-all' }}>Token: <code style={{ color: 'var(--text-muted)' }}>{relayToken}</code></p>
               )}
@@ -80,7 +82,7 @@ export default function MobileConnectModal({ onClose }: MobileConnectModalProps)
 
         <div className="mobile-modal-footer">
           <button className="mobile-btn-close" onClick={onClose}>
-            关闭
+            {t('common.close')}
           </button>
         </div>
       </div>

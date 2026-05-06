@@ -27,6 +27,7 @@ interface StoredSettings {
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'
   showToolSteps?: boolean
   pluginStates?: Record<string, { enabled: boolean; scope: string }>
+  language?: string
 }
 
 interface EncryptedKeys {
@@ -42,6 +43,7 @@ export interface SettingsResponse {
   relayToken?: string
   thinkingDepth?: string
   showToolSteps?: boolean
+  language?: string
 }
 
 export interface FullConfig {
@@ -93,7 +95,8 @@ export class SettingsManager {
         recentWorkspaces: parsed.recentWorkspaces,
         lastSessionId: parsed.lastSessionId,
         alwaysAllowRules: parsed.alwaysAllowRules,
-        thinkingDepth: parsed.thinkingDepth
+        thinkingDepth: parsed.thinkingDepth,
+        language: parsed.language
       }
     } catch {
       // 文件不存在或解析失败 — 使用默认值
@@ -262,7 +265,8 @@ export class SettingsManager {
       systemPrompt: this.settings.systemPrompt,
       relayToken: this.settings.relayToken,
       thinkingDepth: this.settings.thinkingDepth,
-      showToolSteps: this.settings.showToolSteps
+      showToolSteps: this.settings.showToolSteps,
+      language: this.settings.language
     }
   }
 
@@ -285,6 +289,7 @@ export class SettingsManager {
     relayToken?: string
     thinkingDepth?: string
     showToolSteps?: boolean
+    language?: string
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
@@ -294,6 +299,7 @@ export class SettingsManager {
     if (request.relayToken !== undefined) this.settings.relayToken = request.relayToken
     if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']
     if (request.showToolSteps !== undefined) this.settings.showToolSteps = request.showToolSteps
+    if (request.language !== undefined) this.settings.language = request.language
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { useT } from '../../i18n/useT'
 
 interface CreateWorkspaceModalProps {
   onClose: () => void
@@ -6,6 +7,7 @@ interface CreateWorkspaceModalProps {
 }
 
 export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceModalProps): JSX.Element {
+  const t = useT()
   const [folderPath, setFolderPath] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -47,10 +49,10 @@ export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceMo
   return (
     <div className="workspace-modal-backdrop" onClick={onClose} onKeyDown={handleKeyDown}>
       <div className="workspace-modal" onClick={(e) => e.stopPropagation()}>
-        <h2 className="workspace-modal-title">新建工作区</h2>
+        <h2 className="workspace-modal-title">{t('createTask.title')}</h2>
         <form onSubmit={handleSubmit}>
           <div className="workspace-modal-field">
-            <label>项目文件夹</label>
+            <label>{t('createTask.projectFolder')}</label>
             <div className="workspace-modal-folder-row">
               <input
                 type="text"
@@ -65,38 +67,38 @@ export default function CreateTaskModal({ onClose, onCreate }: CreateWorkspaceMo
                 onClick={handlePickFolder}
                 disabled={isPicking}
               >
-                {isPicking ? '...' : '选择'}
+                {isPicking ? '...' : t('createTask.select')}
               </button>
             </div>
           </div>
           <div className="workspace-modal-field">
-            <label htmlFor="workspace-title">工作区名称</label>
+            <label htmlFor="workspace-title">{t('createTask.workspaceName')}</label>
             <input
               ref={titleRef}
               id="workspace-title"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="例如：重构用户认证模块"
+              placeholder={t('createTask.namePlaceholder')}
               autoComplete="off"
             />
           </div>
           <div className="workspace-modal-field">
-            <label htmlFor="workspace-desc">描述（可选）</label>
+            <label htmlFor="workspace-desc">{t('createTask.description')}</label>
             <textarea
               id="workspace-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="工作区的详细描述..."
+              placeholder={t('createTask.descPlaceholder')}
               rows={3}
             />
           </div>
           <div className="workspace-modal-actions">
             <button type="button" className="workspace-btn-secondary" onClick={onClose}>
-              取消
+              {t('common.cancel')}
             </button>
             <button type="submit" className="workspace-btn-primary" disabled={!title.trim()}>
-              创建
+              {t('common.create')}
             </button>
           </div>
         </form>

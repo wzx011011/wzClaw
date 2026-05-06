@@ -1,18 +1,30 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
+import { useChatStore } from '../../stores/chat-store'
+import { useT } from '../../i18n/useT'
 
 export default function WorkspaceDetailPage(): JSX.Element {
+  const t = useT()
   const viewingWorkspace = useWorkspaceStore((s) => s.getViewingWorkspace)()
+  const sessions = useWorkspaceStore((s) => viewingWorkspace ? s.workspaceSessions[viewingWorkspace.id] : undefined)
   const closeWorkspaceDetail = useWorkspaceStore((s) => s.closeWorkspaceDetail)
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
   const addProject = useWorkspaceStore((s) => s.addProject)
   const removeProject = useWorkspaceStore((s) => s.removeProject)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
-  const _openFolder = useWorkspaceStore((s) => s.openFolder)
+  const switchSession = useChatStore((s) => s.switchSession)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
 
   const [isAddingFolder, setIsAddingFolder] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+
+  // Load sessions when viewing a workspace
+  useEffect(() => {
+    if (viewingWorkspace) {
+      useWorkspaceStore.getState().loadWorkspaceSessions(viewingWorkspace.id)
+    }
+  }, [viewingWorkspace?.id])
 
   if (!viewingWorkspace) return <></>
 
@@ -49,6 +61,15 @@ export default function WorkspaceDetailPage(): JSX.Element {
     await removeProject(viewingWorkspace.id, projectId)
   }
 
+  const handleOpenSession = async (sessionId: string) => {
+    // First enter the workspace if not already active
+    if (activeWorkspaceId !== viewingWorkspace.id) {
+      openWorkspace(viewingWorkspace.id)
+    }
+    // Then switch to the session
+    await switchSession(sessionId)
+  }
+
   const createdDate = new Date(viewingWorkspace.createdAt).toLocaleString()
   const updatedDate = new Date(viewingWorkspace.updatedAt).toLocaleString()
 
@@ -58,10 +79,10 @@ export default function WorkspaceDetailPage(): JSX.Element {
       {/* Header */}
       <div className="workspace-detail-header">
         <button className="workspace-detail-back" onClick={closeWorkspaceDetail}>
-          ← 返回工作区列表
+          ← {t('workspaceDetail.backToList')}
         </button>
         <button className="workspace-btn-primary workspace-detail-enter-btn" onClick={handleEnterIDE}>
-          进入工作区 →
+          {t('workspaceDetail.enterWorkspace')} →
         </button>
       </div>
 
@@ -85,7 +106,7 @@ export default function WorkspaceDetailPage(): JSX.Element {
               <h1 className="workspace-detail-title">{viewingWorkspace.title}</h1>
             )}
             {!isRenaming && (
-              <button className="workspace-card-btn" title="重命名" onClick={handleRenameStart}>
+              <button className="workspace-card-btn" title={t('workspaceDetail.rename')} onClick={handleRenameStart}>
                 ✎
               </button>
             )}
@@ -94,27 +115,27 @@ export default function WorkspaceDetailPage(): JSX.Element {
             <p className="workspace-detail-description">{viewingWorkspace.description}</p>
           )}
           <div className="workspace-detail-meta">
-            <span>创建于 {createdDate}</span>
-            <span>最后更新 {updatedDate}</span>
+            <span>{t('workspaceDetail.createdAt')} {createdDate}</span>
+            <span>{t('workspaceDetail.lastUpdated')} {updatedDate}</span>
           </div>
         </div>
 
         {/* Projects (folders) */}
         <div className="workspace-detail-section">
           <div className="workspace-detail-section-header">
-            <h2 className="workspace-detail-section-title">绑定的文件夹</h2>
+            <h2 className="workspace-detail-section-title">{t('workspaceDetail.boundFolders')}</h2>
             <button
               className="workspace-btn-secondary"
               onClick={handleAddFolder}
               disabled={isAddingFolder}
             >
-              {isAddingFolder ? '选择中...' : '+ 添加文件夹'}
+              {isAddingFolder ? t('workspaceDetail.selecting') : `+ ${t('workspaceDetail.addFolder')}`}
             </button>
           </div>
 
           {viewingWorkspace.projects.length === 0 ? (
             <div className="workspace-detail-empty">
-              还没有绑定文件夹。点击「添加文件夹」选择项目目录。
+              {t('workspaceDetail.noFolders')}
             </div>
           ) : (
             <ul className="workspace-detail-projects">
@@ -126,11 +147,58 @@ export default function WorkspaceDetailPage(): JSX.Element {
                   </div>
                   <button
                     className="workspace-card-btn workspace-card-btn-danger"
-                    title="移除文件夹"
+                    title={t('workspaceDetail.removeFolder')}
                     onClick={() => handleRemoveProject(project.id)}
                   >
                     ✕
                   </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Sessions with task status */}
+        <div className="workspace-detail-section">
+          <div className="workspace-detail-section-header">
+            <h2 className="workspace-detail-section-title">会话</h2>
+          </div>
+
+          {!sessions || sessions.length === 0 ? (
+            <div className="workspace-detail-empty">
+              暂无会话
+            </div>
+          ) : (
+            <ul className="workspace-detail-sessions">
+              {sessions.map((session) => (
+                <li
+                  key={session.id}
+                  className="workspace-detail-session-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleOpenSession(session.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpenSession(session.id) } }}
+                >
+                  <div className="workspace-detail-session-info">
+                    <div className="workspace-detail-session-title-row">
+                      <span className={`workspace-detail-session-dot${session.isRunning ? ' running' : ''}`} />
+                      <span className="workspace-detail-session-title">
+                        {session.title || session.preview || '新会话'}
+                      </span>
+                      {session.isRunning && (
+                        <span className="workspace-detail-session-badge running">运行中</span>
+                      )}
+                    </div>
+                    {session.todoSummary && (
+                      <div className="workspace-detail-session-todo">
+                        📊 {session.todoSummary}
+                      </div>
+                    )}
+                    <div className="workspace-detail-session-meta">
+                      <span>{session.messageCount} 条消息</span>
+                      <span>{new Date(session.updatedAt).toLocaleString()}</span>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

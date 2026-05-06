@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { useT } from '../../i18n/useT'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -17,11 +18,11 @@ import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
-import SettingsModal from './SettingsModal'
+import SettingsPage from '../settings/SettingsPage'
 import PluginManager from './PluginManager'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
-import { registerPluginManagerToggle, invalidateSkillCache } from '../../commands/slash-commands'
+import { registerPluginManagerToggle } from '../../commands/slash-commands'
 
 import type { MentionItem } from '../../../shared/types'
 
@@ -31,19 +32,23 @@ import type { MentionItem } from '../../../shared/types'
 
 type PermissionMode = 'always-ask' | 'accept-edits' | 'plan' | 'bypass'
 
-const THINKING_DEPTHS: { id: 'none' | 'low' | 'medium' | 'high'; label: string; desc: string }[] = [
-  { id: 'none', label: '关闭', desc: '不使用扩展思考' },
-  { id: 'low', label: '低', desc: '简单推理' },
-  { id: 'medium', label: '中', desc: '平衡深度与速度' },
-  { id: 'high', label: '高', desc: '深度推理，较慢' },
-]
+// Thinking depth and permission mode definitions — labels resolved at render time via useMemo
+const THINKING_DEPTH_IDS: ('none' | 'low' | 'medium' | 'high')[] = ['none', 'low', 'medium', 'high']
+const PERMISSION_MODE_IDS: PermissionMode[] = ['always-ask', 'accept-edits', 'plan', 'bypass']
 
-const PERMISSION_MODES: { id: PermissionMode; label: string; desc: string }[] = [
-  { id: 'always-ask', label: '总是询问', desc: '每次工具调用都需确认' },
-  { id: 'accept-edits', label: '允许编辑', desc: '自动允许文件编辑' },
-  { id: 'plan', label: '规划模式', desc: '所有工具都需审批' },
-  { id: 'bypass', label: '自动批准', desc: '跳过所有权限检查' },
-]
+// I18n key mappings for permission mode labels and descriptions
+const PM_LABEL_KEYS: Record<PermissionMode, string> = {
+  'always-ask': 'permission.alwaysAsk',
+  'accept-edits': 'permission.acceptEdits',
+  'plan': 'permission.plan',
+  'bypass': 'permission.bypass',
+}
+const PM_DESC_KEYS: Record<PermissionMode, string> = {
+  'always-ask': 'permission.alwaysAskDesc',
+  'accept-edits': 'permission.acceptEditsDesc',
+  'plan': 'permission.planDesc',
+  'bypass': 'permission.bypassDesc',
+}
 
 // ============================================================
 // ChatPanel — Full chat interface (per D-57, D-58, D-67, D-68)
@@ -51,6 +56,24 @@ const PERMISSION_MODES: { id: PermissionMode; label: string; desc: string }[] = 
 // ============================================================
 
 export default function ChatPanel(): JSX.Element {
+  const t = useT()
+
+  // Computed i18n arrays for thinking depths and permission modes
+  const THINKING_DEPTHS = THINKING_DEPTH_IDS.map(id => {
+    const key = `settings.general.thinkingDepth.${id}` as string
+    const full = t(key) // e.g. "低 — 简单推理"
+    const dashIdx = full.indexOf(' — ')
+    return dashIdx !== -1
+      ? { id, label: full.slice(0, dashIdx), desc: full.slice(dashIdx + 3) }
+      : { id, label: full, desc: '' }
+  })
+
+  const PERMISSION_MODES = PERMISSION_MODE_IDS.map(id => ({
+    id,
+    label: t(PM_LABEL_KEYS[id]),
+    desc: t(PM_DESC_KEYS[id]),
+  }))
+
   // Chat store — 仅订阅 ChatPanel 自身需要的字段；
   // messages / streaming 高频更新字段已移至 MessageList，不再引起 ChatPanel 重渲。
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -126,7 +149,7 @@ export default function ChatPanel(): JSX.Element {
           setPermissionMode(result.mode as PermissionMode)
         }
       }).catch(() => {
-        useToastStore.getState().show('权限模式加载失败', 'error')
+        useToastStore.getState().show(t('chat.permissionModeLoadFailed'), 'error')
       })
     }, 100)
     return () => clearTimeout(timer)
@@ -162,7 +185,7 @@ export default function ChatPanel(): JSX.Element {
       }).catch(() => {})
     }
     window.wzxclaw.setPermissionMode?.({ mode }).catch(() => {
-      useToastStore.getState().show('权限模式切换失败', 'error')
+      useToastStore.getState().show(t('chat.permissionModeSwitchFailed'), 'error')
     })
   }
 
@@ -210,7 +233,7 @@ export default function ChatPanel(): JSX.Element {
   const handlePlanDecision = (approved: boolean): void => {
     setPendingPlan(null)
     window.wzxclaw.sendPlanDecision?.({ approved }).catch(() => {
-      useToastStore.getState().show('计划决策提交失败', 'error')
+      useToastStore.getState().show(t('chat.planDecisionFailed'), 'error')
     })
   }
 
@@ -236,12 +259,12 @@ export default function ChatPanel(): JSX.Element {
   const processImageFile = useCallback((file: File): Promise<{ data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; name?: string } | null> => {
     return new Promise((resolve) => {
       if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-        useToastStore.getState().show(`不支持的图片格式: ${file.type}`, 'error')
+        useToastStore.getState().show(t('chat.unsupportedImageFormat', { format: file.type }), 'error')
         resolve(null)
         return
       }
       if (file.size > MAX_IMAGE_SIZE) {
-        useToastStore.getState().show('图片大小不能超过 10MB', 'error')
+        useToastStore.getState().show(t('chat.imageSizeExceeded'), 'error')
         resolve(null)
         return
       }
@@ -437,7 +460,7 @@ export default function ChatPanel(): JSX.Element {
     if (trimmed === '/help') {
       const lines = allCommands.map((c) => `  /${c.name} — ${c.description}`)
       lines.push('  /help — Show this help message')
-      const helpContent = `Available slash commands:\n\n${lines.join('\n')}`
+      const helpContent = `${t('chat.availableSlashCommands')}\n\n${lines.join('\n')}`
       const { messages } = useChatStore.getState()
       useChatStore.setState({
         messages: [
@@ -482,7 +505,7 @@ export default function ChatPanel(): JSX.Element {
 
     // Normal message send
     const imagesToSend = pendingImages.length > 0 ? pendingImages : undefined
-    const displayText = trimmed || (pendingImages.length > 0 ? 'See the attached images.' : 'See the attached files.')
+    const displayText = trimmed || (pendingImages.length > 0 ? t('chat.viewAttachment') : t('chat.viewFileAttachment'))
 
     // Push to input history
     if (trimmed) pushToHistory(trimmed)
@@ -570,7 +593,7 @@ export default function ChatPanel(): JSX.Element {
       {planModeActive && (
         <div className="plan-mode-badge">
           <span className="plan-mode-icon">&#9998;</span>
-          Planning Mode — write operations blocked
+          {t('chat.planModeBadge')}
         </div>
       )}
 
@@ -602,7 +625,7 @@ export default function ChatPanel(): JSX.Element {
       {pendingPlan && (
         <div className="plan-approval-panel">
           <div className="plan-approval-header">
-            <span className="plan-approval-title">&#9998; Agent Plan — Review &amp; Approve</span>
+            <span className="plan-approval-title">{t('chat.planApproval')}</span>
           </div>
           <div className="plan-approval-content">
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS_PLAN}>{pendingPlan}</ReactMarkdown>
@@ -612,13 +635,13 @@ export default function ChatPanel(): JSX.Element {
               className="plan-approval-btn plan-approval-btn-approve"
               onClick={() => handlePlanDecision(true)}
             >
-              Approve — Proceed
+              {t('chat.planApprove')}
             </button>
             <button
               className="plan-approval-btn plan-approval-btn-reject"
               onClick={() => handlePlanDecision(false)}
             >
-              Reject
+              {t('chat.planReject')}
             </button>
           </div>
         </div>
@@ -630,7 +653,7 @@ export default function ChatPanel(): JSX.Element {
       )}
 
       {/* TodoWrite panel — shows active session task list (Copilot style) */}
-      {currentTodos.length > 0 && (
+      {currentTodos.length > 0 && !currentTodos.every(t => t.status === 'completed') && (
         <div className="todo-panel">
           <div
             className="todo-panel-header"
@@ -643,7 +666,7 @@ export default function ChatPanel(): JSX.Element {
             <span className="todo-panel-title">Todos ({currentTodos.filter(t => t.status === 'completed').length}/{currentTodos.length})</span>
             <button
               className="todo-panel-clear"
-              title="清空列表"
+              title={t('chat.clearTodos')}
               onClick={(e) => {
                 e.stopPropagation()
                 useChatStore.setState({ currentTodos: [] })
@@ -658,7 +681,7 @@ export default function ChatPanel(): JSX.Element {
                 <li key={i} className={`todo-item todo-item--${todo.status}`}>
                   <button
                     className={`todo-check-btn todo-check-btn--${todo.status}`}
-                    title={todo.status === 'completed' ? '标记为待办' : '标记为完成'}
+                    title={todo.status === 'completed' ? t('chat.markAsPending') : t('chat.markAsCompleted')}
                     onClick={() => {
                       const newTodos = [...currentTodos]
                       newTodos[i] = {
@@ -730,7 +753,7 @@ export default function ChatPanel(): JSX.Element {
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder={pendingImages.length > 0 ? '添加图片描述（可选）...' : '描述后续调整内容'}
+            placeholder={pendingImages.length > 0 ? t('chat.imageDescPlaceholder') : t('chat.inputPlaceholder.continue')}
             rows={1}
             disabled={isStreaming}
           />
@@ -763,7 +786,7 @@ n            style={{ display: 'none' }}
         <div className="chat-input-toolbar">
           <div className="chat-toolbar-left">
             {/* Image upload */}
-            <button className="chat-toolbar-icon" title="上传图片" onClick={() => fileInputRef.current?.click()}>
+            <button className="chat-toolbar-icon" title={t('chat.uploadImage')} onClick={() => fileInputRef.current?.click()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 <circle cx="8.5" cy="8.5" r="1.5" />
@@ -771,7 +794,7 @@ n            style={{ display: 'none' }}
               </svg>
             </button>
             {/* @ mention */}
-            <button className="chat-toolbar-icon" title="@ 提及文件" onClick={() => { setShowMentionPicker(true); textareaRef.current?.focus() }}>
+            <button className="chat-toolbar-icon" title={t('chat.mentionFile')} onClick={() => { setShowMentionPicker(true); textareaRef.current?.focus() }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0V12a10 10 0 1 0-3.92 7.94" />
               </svg>
@@ -780,7 +803,7 @@ n            style={{ display: 'none' }}
             <div ref={thinkingRef} style={{ position: 'relative', display: 'inline-flex' }}>
               <button
                 className={`chat-toolbar-icon${thinkingDepth !== 'none' ? ' active' : ''}`}
-                title={`思考深度: ${THINKING_DEPTHS.find(t => t.id === thinkingDepth)?.label}`}
+                title={`${t('chat.thinkingDepth')}: ${THINKING_DEPTHS.find(td => td.id === thinkingDepth)?.label}`}
                 onClick={() => { setShowThinkingDropdown(!showThinkingDropdown); setShowPermissionDropdown(false) }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -790,7 +813,7 @@ n            style={{ display: 'none' }}
               </button>
               {showThinkingDropdown && (
                 <div className="chat-toolbar-dropdown">
-                  <div className="chat-toolbar-dropdown-title">思考深度</div>
+                  <div className="chat-toolbar-dropdown-title">{t('chat.thinkingDepth')}</div>
                   {THINKING_DEPTHS.map((t) => (
                     <button
                       key={t.id}
@@ -805,20 +828,20 @@ n            style={{ display: 'none' }}
               )}
             </div>
             {/* Web search */}
-            <button className="chat-toolbar-icon" title="网络搜索" onClick={() => { setInputValue((v) => v ? v : '搜索网络: '); textareaRef.current?.focus() }}>
+            <button className="chat-toolbar-icon" title={t('chat.webSearch')} onClick={() => { setInputValue((v) => v ? v : `${t('chat.webSearch')}: `); textareaRef.current?.focus() }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
               </svg>
             </button>
             {/* Plugins */}
-            <button className="chat-toolbar-icon" title="插件管理" onClick={() => setShowPlugins(true)}>
+            <button className="chat-toolbar-icon" title={t('chat.pluginManager')} onClick={() => setShowPlugins(true)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
             </button>
             {/* Settings */}
-            <button className="chat-toolbar-icon" title="设置" onClick={() => setShowSettings(true)}>
+            <button className="chat-toolbar-icon" title={t('chat.settings')} onClick={() => setShowSettings(true)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
               </svg>
@@ -835,12 +858,12 @@ n            style={{ display: 'none' }}
                 className="chat-toolbar-select"
                 onClick={() => { setShowPermissionDropdown(!showPermissionDropdown); setShowThinkingDropdown(false) }}
               >
-                {PERMISSION_MODES.find(p => p.id === permissionMode)?.label ?? '总是询问'}
+                {PERMISSION_MODES.find(p => p.id === permissionMode)?.label ?? t('permission.alwaysAsk')}
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6" /></svg>
               </button>
               {showPermissionDropdown && (
                 <div className="chat-toolbar-dropdown right">
-                  <div className="chat-toolbar-dropdown-title">权限模式</div>
+                  <div className="chat-toolbar-dropdown-title">{t('chat.permissionMode')}</div>
                   {PERMISSION_MODES.map((p) => (
                     <button
                       key={p.id}
@@ -866,7 +889,7 @@ n            style={{ display: 'none' }}
             </select>
             {/* Send / Stop button */}
             {isStreaming ? (
-              <button className="chat-stop-btn" onClick={stopGeneration} title="停止生成">
+              <button className="chat-stop-btn" onClick={stopGeneration} title={t('chat.stopGeneration')}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
               </button>
             ) : (
@@ -874,7 +897,7 @@ n            style={{ display: 'none' }}
                 className="chat-send-btn"
                 onClick={handleSend}
                 disabled={!inputValue.trim() && pendingMentions.length === 0 && pendingImages.length === 0}
-                title="发送 (Enter)"
+                title={t('chat.sendTooltip')}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
@@ -884,7 +907,7 @@ n            style={{ display: 'none' }}
           </div>
         </div>
       </div>
-      <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <SettingsPage isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <PluginManager isOpen={showPlugins} onClose={() => setShowPlugins(false)} />
     </div>
   )

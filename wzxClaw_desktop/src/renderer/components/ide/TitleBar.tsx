@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { useT } from '../../i18n/useT'
 
 type ThemeMode = 'midnight' | 'dark' | 'light'
 
@@ -35,6 +36,7 @@ export default function TitleBar({
   onBackToTasks,
   activeTaskTitle
 }: TitleBarProps): JSX.Element {
+  const t = useT()
   const [menuOpen, setMenuOpen] = useState(false)
   const [currentTheme, setCurrentTheme] = useState<ThemeMode>('midnight')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -73,8 +75,8 @@ export default function TitleBar({
     <div className="ide-titlebar">
       {/* Back to tasks */}
       {onBackToTasks && (
-        <button className="workspace-back-btn" onClick={onBackToTasks} title="返回工作区列表">
-          ← {activeTaskTitle || '工作区'}
+        <button className="workspace-back-btn" onClick={onBackToTasks} title={t('titleBar.backToWorkspaces')}>
+          ← {activeTaskTitle || t('titleBar.workspace')}
         </button>
       )}
 
@@ -82,7 +84,7 @@ export default function TitleBar({
       <div className="titlebar-menu-container" ref={menuRef}>
         <button
           className={`titlebar-action-btn titlebar-hamburger${menuOpen ? ' active' : ''}`}
-          title="菜单"
+          title={t('titleBar.menu')}
           onClick={() => setMenuOpen(!menuOpen)}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -95,10 +97,10 @@ export default function TitleBar({
           <div className="titlebar-dropdown-menu">
             <button className="titlebar-menu-item" onClick={() => { onOpenFolder(); setMenuOpen(false) }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
-              打开文件夹
+              {t('titleBar.openFolder')}
             </button>
             <div className="titlebar-menu-separator" />
-            <div className="titlebar-menu-label">主题</div>
+            <div className="titlebar-menu-label">{t('titleBar.theme')}</div>
             {THEMES.map((t) => (
               <button
                 key={t.id}
@@ -119,7 +121,7 @@ export default function TitleBar({
         {/* Folder — open workspace folder */}
         <button
           className="titlebar-action-btn"
-          title="打开文件夹 (Ctrl+Shift+O)"
+          title={t('titleBar.openFolderTooltip')}
           onClick={onOpenFolder}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -130,7 +132,7 @@ export default function TitleBar({
         {/* Smartphone — connect phone */}
         <button
           className="titlebar-action-btn"
-          title="连接手机"
+          title={t('titleBar.connectPhone')}
           onClick={onConnectPhone}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -142,7 +144,7 @@ export default function TitleBar({
         {/* Terminal — toggle terminal panel */}
         <button
           className="titlebar-action-btn"
-          title="显示终端 (Ctrl+`)"
+          title={t('titleBar.toggleTerminal')}
           onClick={onToggleTerminal}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -154,7 +156,7 @@ export default function TitleBar({
         {/* Globe — open browser / AI preview */}
         <button
           className="titlebar-action-btn"
-          title="打开浏览器"
+          title={t('titleBar.openBrowser')}
           onClick={onOpenBrowser}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -167,7 +169,7 @@ export default function TitleBar({
         {/* Layout — toggle right sidebar */}
         <button
           className={`titlebar-action-btn${rightSidebarVisible ? ' active' : ''}`}
-          title="切换右侧边栏 (Ctrl+Shift+B)"
+          title={t('titleBar.toggleRightSidebar')}
           onClick={onToggleRightSidebar}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

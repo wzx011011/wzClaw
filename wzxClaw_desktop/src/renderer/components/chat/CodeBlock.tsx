@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useT } from '../../i18n/useT'
 import { useTabStore } from '../../stores/tab-store'
 
 // ============================================================
@@ -14,6 +15,7 @@ export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Eleme
   const [copied, setCopied] = useState(false)
   const [applied, setApplied] = useState(false)
   const [collapsed, setCollapsed] = useState(true)
+  const t = useT()
 
   const lineCount = (code.match(/\n/g) || []).length + 1
   const isLong = lineCount > 15
@@ -47,15 +49,15 @@ export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Eleme
           <button
             className={`code-block-btn${copied ? ' code-block-btn-success' : ''}`}
             onClick={handleCopy}
-            aria-label={copied ? '已复制到剪贴板' : '复制代码'}
+            aria-label={copied ? t('codeBlock.copiedToClipboard') : t('codeBlock.copyCode')}
           >
-            {copied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> 已复制</> : '复制'}
+            {copied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> {t('codeBlock.copied')}</> : t('codeBlock.copy')}
           </button>
           <button
             className={`code-block-btn apply-btn${applied ? ' code-block-btn-success' : ''}`}
             onClick={handleApply}
           >
-            {applied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> 已应用</> : '应用'}
+            {applied ? <><span className="code-block-btn-icon" aria-hidden="true">✓</span> {t('codeBlock.applied')}</> : t('codeBlock.apply')}
           </button>
         </div>
       </div>
@@ -64,7 +66,7 @@ export default function CodeBlock({ code, language }: CodeBlockProps): JSX.Eleme
       </pre>
       {isLong && (
         <button className="code-block-toggle" onClick={() => setCollapsed(!collapsed)}>
-          {collapsed ? `Show more (${lineCount} lines)` : 'Show less'}
+          {collapsed ? t('codeBlock.expandMore', { count: lineCount }) : t('codeBlock.collapse')}
         </button>
       )}
     </div>

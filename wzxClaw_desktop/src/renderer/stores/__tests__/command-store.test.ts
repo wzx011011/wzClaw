@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useCommandStore } from '../command-store'
+import { useI18nStore } from '../../i18n/i18n-store'
 
 describe('CommandStore', () => {
   beforeEach(() => {
@@ -107,15 +108,17 @@ describe('CommandStore', () => {
       expect(commands).toHaveLength(9)
 
       const labels = commands.map((c) => c.label)
-      expect(labels).toContain('Open Folder')
-      expect(labels).toContain('Save File')
-      expect(labels).toContain('New Session')
-      expect(labels).toContain('Clear Session')
-      expect(labels).toContain('Toggle Sidebar')
-      expect(labels).toContain('Toggle Terminal')
-      expect(labels).toContain('Change Model')
-      expect(labels).toContain('Open Settings')
-      expect(labels).toContain('Re-index Workspace')
+      // Labels are resolved via i18n — verify using the t() function directly
+      const t = useI18nStore.getState().t
+      expect(labels).toContain(t('cmd.file.openFolder'))
+      expect(labels).toContain(t('cmd.file.save'))
+      expect(labels).toContain(t('cmd.session.new'))
+      expect(labels).toContain(t('cmd.session.clear'))
+      expect(labels).toContain(t('cmd.view.toggleSidebar'))
+      expect(labels).toContain(t('cmd.view.toggleTerminal'))
+      expect(labels).toContain(t('cmd.settings.changeModel'))
+      expect(labels).toContain(t('cmd.settings.open'))
+      expect(labels).toContain(t('cmd.index.reindex'))
     })
 
     it('should have correct shortcuts for Open Folder, Save File, Toggle Sidebar, and Toggle Terminal', () => {

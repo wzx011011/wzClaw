@@ -3,6 +3,7 @@ import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useT } from '../../i18n/useT'
 
 interface RelayStatus {
   connected: boolean; connecting: boolean; reconnectAttempt: number
@@ -24,6 +25,7 @@ interface UsageDisplay {
  * terminal info, index status, relay connection status, and cost (Phase 4.4).
  */
 export default function StatusBar(): JSX.Element {
+  const t = useT()
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const panelVisible = useTerminalStore((s) => s.panelVisible)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
@@ -55,7 +57,7 @@ export default function StatusBar(): JSX.Element {
     }
   }, [])
 
-  const displayPath = rootPath ?? 'No folder open'
+  const displayPath = rootPath ?? t('statusBar.noFolder')
 
   const activeTerminal = panelVisible && activeTerminalId
     ? tabs.find((t) => t.id === activeTerminalId)
@@ -76,22 +78,22 @@ export default function StatusBar(): JSX.Element {
       <div className="status-bar-center" />
       <div className="status-bar-right">
         {activeTerminal && (
-          <span className="status-item">Terminal: {activeTerminal.title}</span>
+          <span className="status-item">{t('statusBar.terminal', { title: activeTerminal.title })}</span>
         )}
         <span className="status-item status-index">
           {indexStatus === 'indexing' && (
-            <span title="Indexing codebase...">
-              ~ Indexing... ({indexFileCount})
+            <span title={t('statusBar.indexingTooltip')}>
+              {t('statusBar.indexing', { count: indexFileCount })}
             </span>
           )}
           {indexStatus === 'ready' && (
-            <span title={`Index ready: ${indexFileCount} files indexed`}>
-              {indexFileCount} indexed
+            <span title={t('statusBar.indexedTooltip', { count: indexFileCount })}>
+              {t('statusBar.indexed', { count: indexFileCount })}
             </span>
           )}
           {indexStatus === 'error' && (
-            <span className="index-error" title="Indexing error">
-              ! Index Error
+            <span className="index-error" title={t('statusBar.indexErrorTooltip')}>
+              ! {t('statusBar.indexError')}
             </span>
           )}
         </span>
@@ -99,24 +101,24 @@ export default function StatusBar(): JSX.Element {
         {usage && (
           <span
             className="status-item status-cost"
-            title={`Model: ${usage.model} | Input: ${usage.inputTokens.toLocaleString()} | Output: ${usage.outputTokens.toLocaleString()} | Cache read: ${usage.cacheReadTokens.toLocaleString()} | Cache write: ${usage.cacheWriteTokens.toLocaleString()}`}
+            title={t('statusBar.costTooltip', { model: usage.model, input: usage.inputTokens.toLocaleString(), output: usage.outputTokens.toLocaleString(), cacheRead: usage.cacheReadTokens.toLocaleString(), cacheWrite: usage.cacheWriteTokens.toLocaleString() })}
           >
             {formatUsage(usage)}
           </span>
         )}
         <span className="status-item">
-          {isStreaming ? 'Agent: Working...' : 'Agent: Ready'}
+          {isStreaming ? t('statusBar.agentWorking') : t('statusBar.agentReady')}
         </span>
         {relayStatus && relayStatus.connected && (
-          <span className="status-item status-relay" title={relayStatus.mobileConnected ? `手机已连接: ${relayStatus.mobileIdentity ?? 'Mobile'}` : 'Relay 已连接，等待手机'}>
+          <span className="status-item status-relay" title={relayStatus.mobileConnected ? t('statusBar.mobileConnectedTooltip', { identity: relayStatus.mobileIdentity ?? 'Mobile' }) : t('statusBar.relayConnectedTooltip')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
               <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
               <line x1="12" y1="18" x2="12.01" y2="18" />
             </svg>
             <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: relayStatus.mobileConnected ? 'var(--success)' : 'var(--warning)', display: 'inline-block', marginRight: 'var(--sp-1)' }} />
             {relayStatus.mobileConnected
-              ? <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-xs)' }}>{relayStatus.mobileIdentity ?? 'Mobile'} 已连接</span>
-              : <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-xs)' }}>Relay 等待连接</span>}
+              ? <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-xs)' }}>{t('statusBar.mobileConnected', { identity: relayStatus.mobileIdentity ?? 'Mobile' })}</span>
+              : <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-xs)' }}>{t('statusBar.relayWaiting')}</span>}
           </span>
         )}
       </div>

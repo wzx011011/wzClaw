@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { SessionMeta, MentionItem } from '../../shared/types'
 import { useWorkspaceStore } from './workspace-store'
 import { useSettingsStore } from './settings-store'
+import { useI18nStore } from '../i18n/i18n-store'
 import { useStepStore } from './step-store'
 
 // ============================================================
@@ -652,8 +653,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
           id: uuidv4(),
           role: 'assistant',
           content: payload.auto
-            ? `Auto-compacted context: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens (80% threshold reached)`
-            : `Context compacted: ${(payload.beforeTokens / 1000).toFixed(1)}K -> ${(payload.afterTokens / 1000).toFixed(1)}K tokens`,
+            ? useI18nStore.getState().t('chatStore.autoCompacted', { before: (payload.beforeTokens / 1000).toFixed(1), after: (payload.afterTokens / 1000).toFixed(1) })
+            : useI18nStore.getState().t('chatStore.compacted', { before: (payload.beforeTokens / 1000).toFixed(1), after: (payload.afterTokens / 1000).toFixed(1) }),
           timestamp: Date.now(),
           isCompacted: true
         }
@@ -664,9 +665,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Session context restored — fires after session:load restores the agent loop (Phase 3.4)
     const unsubContextRestored = window.wzxclaw.onSessionContextRestored?.((payload) => {
       set((state) => {
-        let note = `Session context restored (${payload.messageCount} messages)`
+        const t = useI18nStore.getState().t
+        let note = t('chatStore.contextRestored', { count: payload.messageCount })
         if (payload.compacted) {
-          note += ` — compacted ${(payload.beforeTokens / 1000).toFixed(1)}K→${(payload.afterTokens / 1000).toFixed(1)}K tokens`
+          note += t('chatStore.contextRestoredCompacted', { before: (payload.beforeTokens / 1000).toFixed(1), after: (payload.afterTokens / 1000).toFixed(1) })
         }
         const restoredMsg: ChatMessage = {
           id: uuidv4(),
@@ -848,7 +850,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
       if (entity === 'session') {
         if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
-        sessionRefreshTimer = setTimeout(() => get().loadSessionList(), 300)
+        sessionRefreshTimer = setTimeout(() => {
+          get().loadSessionList()
+          // Also refresh workspaceSessions cache so WorkspaceCard todo summaries update
+          const ws = useWorkspaceStore.getState()
+          if (ws.activeWorkspaceId) ws.loadWorkspaceSessions(ws.activeWorkspaceId)
+          if (ws.viewingWorkspaceId && ws.viewingWorkspaceId !== ws.activeWorkspaceId) {
+            ws.loadWorkspaceSessions(ws.viewingWorkspaceId)
+          }
+        }, 300)
       }
     }) ?? (() => {})
 
@@ -1172,10 +1182,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Persist last session so it can be restored on next app launch
     window.wzxclaw.saveLastSession?.({ sessionId }).catch(() => {})
 
-    // Note: Todos are workspace-scoped, not session-scoped. They were loaded
-    // when the workspace was opened and updated via real-time IPC (todo:updated).
-    // No need to reload them on session switch — cleanState already clears them
-    // and the onTodoUpdated listener will push fresh ones if the model writes new todos.
+    // Restore todos for the target session (now session-scoped, not workspace-scoped)
+    window.wzxclaw.loadTodos?.(sessionId).then((todos) => {
+      if (todos && todos.length > 0 && get().activeSessionId === sessionId) {
+        set({ currentTodos: todos })
+      }
+    }).catch(() => {})
 
     // Reload steps for the new session context
     useStepStore.getState().loadSteps()

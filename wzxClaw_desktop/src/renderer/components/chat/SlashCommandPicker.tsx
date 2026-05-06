@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useT } from '../../i18n/useT'
 import type { SlashCommand } from '../../../shared/types'
 
 // ============================================================
@@ -38,6 +39,7 @@ export default function SlashCommandPicker({
 }: SlashCommandPickerProps): JSX.Element | null {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+  const t = useT()
 
   // Filter commands whose name starts with the query
   const filteredCommands = query
@@ -105,7 +107,7 @@ export default function SlashCommandPicker({
           <span className="slash-picker-name">
             /{cmd.name}
             {commandSources?.[cmd.name] && SOURCE_LABELS[commandSources[cmd.name]] && (
-              <span className="slash-picker-source" title={`Source: ${commandSources[cmd.name]}`}>
+              <span className="slash-picker-source" title={`${t('slashCommandPicker.source')} ${commandSources[cmd.name]}`}>
                 {' '}{SOURCE_LABELS[commandSources[cmd.name]]}
               </span>
             )}

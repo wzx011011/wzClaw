@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useT } from '../../i18n/useT'
 
 // ============================================================
 // PermissionRequest — Approve/deny UI for tool permission requests (per D-64, D-65)
@@ -12,6 +13,7 @@ interface PendingPermission {
 
 export default function PermissionRequest(): JSX.Element | null {
   const [pendingRequest, setPendingRequest] = useState<PendingPermission | null>(null)
+  const t = useT()
   const [sessionCache, setSessionCache] = useState(false)
 
   useEffect(() => {
@@ -41,7 +43,7 @@ export default function PermissionRequest(): JSX.Element | null {
   return (
     <div className="permission-request">
       <div className="permission-request-header">
-        <div className="permission-request-title">Permission Request: {toolName}</div>
+        <div className="permission-request-title">{t('permission.title', { tool: toolName })}</div>
         {reason && <div className="permission-request-reason">{reason}</div>}
       </div>
       <div className="permission-request-input">
@@ -54,14 +56,14 @@ export default function PermissionRequest(): JSX.Element | null {
             checked={sessionCache}
             onChange={(e) => setSessionCache(e.target.checked)}
           />
-          Remember for this session
+          {t('permission.rememberSession')}
         </label>
         <div className="permission-btn-group">
           <button className="permission-btn permission-btn-deny" onClick={handleDeny}>
-            Deny
+            {t('permission.deny')}
           </button>
           <button className="permission-btn permission-btn-approve" onClick={handleApprove}>
-            Approve
+            {t('permission.approve')}
           </button>
         </div>
       </div>

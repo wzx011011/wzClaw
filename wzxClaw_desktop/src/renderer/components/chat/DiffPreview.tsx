@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
+import { useT } from '../../i18n/useT'
 import { useDiffStore } from '../../stores/diff-store'
 
 // ============================================================
@@ -8,6 +9,7 @@ import { useDiffStore } from '../../stores/diff-store'
 // ============================================================
 
 export default function DiffPreview(): JSX.Element | null {
+  const t = useT()
   const activeDiffId = useDiffStore((s) => s.activeDiffId)
   const pendingDiffs = useDiffStore((s) => s.pendingDiffs)
   const acceptHunk = useDiffStore((s) => s.acceptHunk)
@@ -16,6 +18,7 @@ export default function DiffPreview(): JSX.Element | null {
   const rejectAll = useDiffStore((s) => s.rejectAll)
   const setActiveDiff = useDiffStore((s) => s.setActiveDiff)
   const clearDiffs = useDiffStore((s) => s.clearDiffs)
+  const [confirmAction, setConfirmAction] = useState<'accept' | 'reject' | null>(null)
 
   // Auto-clear when all diffs are fully resolved (no pending hunks remaining)
   useEffect(() => {
@@ -42,11 +45,28 @@ export default function DiffPreview(): JSX.Element | null {
     setActiveDiff(null)
   }
 
+  // 批量操作确认 5 秒后自动取消
+  useEffect(() => {
+    if (!confirmAction) return
+    const t = window.setTimeout(() => setConfirmAction(null), 5000)
+    return () => window.clearTimeout(t)
+  }, [confirmAction])
+
   const handleAcceptAll = async (): Promise<void> => {
+    if (confirmAction !== 'accept') {
+      setConfirmAction('accept')
+      return
+    }
+    setConfirmAction(null)
     await acceptAll(activeDiffId)
   }
 
   const handleRejectAll = async (): Promise<void> => {
+    if (confirmAction !== 'reject') {
+      setConfirmAction('reject')
+      return
+    }
+    setConfirmAction(null)
     await rejectAll(activeDiffId)
   }
 
@@ -75,7 +95,7 @@ export default function DiffPreview(): JSX.Element | null {
               >
                 <span className="diff-file-item-path">{d.filePath.split('/').pop()}</span>
                 <span className="diff-file-item-badge">
-                  {isResolved ? 'Done' : `${dPendingCount} pending`}
+                  {isResolved ? t('diff.done') : `${dPendingCount} ${t('diff.pending')}`}
                 </span>
               </div>
             )
@@ -94,7 +114,7 @@ export default function DiffPreview(): JSX.Element | null {
                   if (currentIndex > 0) setActiveDiff(pendingDiffs[currentIndex - 1].id)
                 }}
                 disabled={currentIndex <= 0}
-                title="Previous file"
+                title={t('diff.prevFile')}
               >
                 &lt;
               </button>
@@ -107,7 +127,7 @@ export default function DiffPreview(): JSX.Element | null {
                   if (currentIndex < pendingDiffs.length - 1) setActiveDiff(pendingDiffs[currentIndex + 1].id)
                 }}
                 disabled={currentIndex >= pendingDiffs.length - 1}
-                title="Next file"
+                title={t('diff.nextFile')}
               >
                 &gt;
               </button>
@@ -115,7 +135,7 @@ export default function DiffPreview(): JSX.Element | null {
           )}
           <span className="diff-preview-file">{diff.filePath}</span>
           <span className="diff-status-badge">
-            {pendingCount} of {totalHunks} pending
+            {pendingCount} / {totalHunks} {t('diff.pending')}
           </span>
         </div>
         <div className="diff-preview-toolbar-right">
@@ -123,22 +143,22 @@ export default function DiffPreview(): JSX.Element | null {
             className="diff-toolbar-btn accept-all"
             onClick={handleAcceptAll}
             disabled={pendingCount === 0}
-            title="Accept all changes"
+            title={t('diff.acceptAll')}
           >
-            Accept All
+            {confirmAction === 'accept' ? t('diff.confirmAccept') : t('diff.acceptAllConfirm')}
           </button>
           <button
             className="diff-toolbar-btn reject-all"
             onClick={handleRejectAll}
             disabled={pendingCount === 0}
-            title="Reject all changes"
+            title={t('diff.rejectAll')}
           >
-            Reject All
+            {confirmAction === 'reject' ? t('diff.confirmReject') : t('diff.rejectAllConfirm')}
           </button>
           <button
             className="diff-toolbar-btn close-btn"
             onClick={handleClose}
-            title="Close diff preview"
+            title={t('diff.closePreview')}
           >
             x
           </button>
@@ -154,7 +174,7 @@ export default function DiffPreview(): JSX.Element | null {
                 {hunk.type === 'add' ? '+' : hunk.type === 'delete' ? '-' : '~'}
               </span>
               <span className="diff-hunk-lines">
-                Lines {hunk.startIndex + 1}-{hunk.endIndex + 1}
+                {t('diff.lines', { start: hunk.startIndex + 1, end: hunk.endIndex + 1 })}
               </span>
               <div className="diff-hunk-actions">
                 {hunk.status === 'pending' && (
@@ -162,14 +182,14 @@ export default function DiffPreview(): JSX.Element | null {
                     <button
                       className="diff-hunk-action accept"
                       onClick={() => handleAcceptHunk(hunk.id)}
-                      title="Accept this change"
+                      title={t('diff.acceptChange')}
                     >
                       ✓
                     </button>
                     <button
                       className="diff-hunk-action reject"
                       onClick={() => handleRejectHunk(hunk.id)}
-                      title="Reject this change"
+                      title={t('diff.rejectChange')}
                     >
                       ✗
                     </button>

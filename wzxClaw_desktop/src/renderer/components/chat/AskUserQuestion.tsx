@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useT } from '../../i18n/useT'
 import { useToastStore } from '../../stores/toast-store'
 
 // ============================================================
@@ -31,13 +32,14 @@ export default function AskUserQuestion({
   const [customText, setCustomText] = useState('')
   const [answered, setAnswered] = useState(false)
   const [answeredWith, setAnsweredWith] = useState<string>('')
+  const t = useT()
 
   const submit = (labels: string[], text?: string): void => {
     if (answered) return
     setAnswered(true)
     setAnsweredWith(labels.join(', ') + (text ? ` — ${text}` : ''))
     window.wzxclaw.answerUserQuestion({ questionId, selectedLabels: labels, customText: text }).catch(() => {
-      useToastStore.getState().show('回答提交失败，请重试', 'error')
+      useToastStore.getState().show(t('askUserQuestion.submitFailed'), 'error')
     })
     setTimeout(() => onDismiss(questionId), 800)
   }
@@ -73,8 +75,7 @@ export default function AskUserQuestion({
   if (answered) {
     return (
       <div className="ask-user-question ask-user-answered-banner">
-        <span className="ask-user-answered-label">Response sent:</span>
-        <span className="ask-user-answered-text">{answeredWith}</span>
+        {t('askUserQuestion.answered', { answer: answeredWith })}
       </div>
     )
   }
@@ -83,7 +84,7 @@ export default function AskUserQuestion({
     <div className="ask-user-question">
       <div className="ask-user-header">
         <span className="ask-user-icon">?</span>
-        <span className="ask-user-title">Question from Agent</span>
+        <span className="ask-user-title">{t('askUserQuestion.title')}</span>
       </div>
       <div className="ask-user-question-text">{question}</div>
       <div className="ask-user-options">
@@ -133,8 +134,8 @@ export default function AskUserQuestion({
               disabled={answered}
             />
             <span className="ask-user-option-content">
-              <span className="ask-user-option-label">自定义</span>
-              <span className="ask-user-option-desc">输入自定义回复</span>
+              <span className="ask-user-option-label">{t('askUserQuestion.custom')}</span>
+              <span className="ask-user-option-desc">{t('askUserQuestion.customReply')}</span>
             </span>
           </label>
         ) : (
@@ -144,8 +145,8 @@ export default function AskUserQuestion({
               onClick={handleOtherSingle}
               disabled={answered}
             >
-              <span className="ask-user-option-label">自定义</span>
-              <span className="ask-user-option-desc">输入自定义回复</span>
+              <span className="ask-user-option-label">{t('askUserQuestion.custom')}</span>
+              <span className="ask-user-option-desc">{t('askUserQuestion.customReply')}</span>
             </button>
           )
         )}
@@ -155,7 +156,7 @@ export default function AskUserQuestion({
         <div className="ask-user-custom">
           <input
             className="ask-user-custom-input"
-            placeholder="输入自定义回复..."
+            placeholder={t('askUserQuestion.customPlaceholder')}
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             onKeyDown={(e) => {
@@ -173,7 +174,7 @@ export default function AskUserQuestion({
               onClick={handleOtherSubmit}
               disabled={answered || !customText.trim()}
             >
-              发送
+              {t('common.send')}
             </button>
           )}
         </div>
@@ -186,7 +187,7 @@ export default function AskUserQuestion({
             onClick={handleMultiSubmit}
             disabled={answered || (selected.length === 0 && !customText.trim())}
           >
-            发送
+            {t('common.send')}
           </button>
         </div>
       )}

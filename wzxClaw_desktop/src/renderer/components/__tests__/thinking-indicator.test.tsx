@@ -22,7 +22,7 @@ describe('ThinkingIndicator', () => {
     const { container } = render(<ThinkingIndicator />)
     expect(container.querySelector('.thinking-dot')).toBeTruthy()
     const phraseEl = container.querySelector('.thinking-phrase')
-    expect(phraseEl?.textContent).toMatch(/Thinking\.\.\.|Reasoning\.\.\.|Analyzing\.\.\.|Evaluating\.\.\./)
+    expect(phraseEl?.textContent).toMatch(/思考中...|推理中...|分析中...|评估中.../)
   })
 
   it('cycles phrases after the timer', () => {

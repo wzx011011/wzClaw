@@ -89,11 +89,6 @@ describe('WorkspaceCard', () => {
     expect(screen.getByText('Test Workspace')).toBeInTheDocument()
   })
 
-  it('renders progress summary when present', () => {
-    render(<WorkspaceCard workspace={makeWorkspace({ progressSummary: '3/5 完成' })} onOpen={onOpen} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />)
-    expect(screen.getByText('3/5 完成')).toBeInTheDocument()
-  })
-
   it('renders bound folders', () => {
     const workspace = makeWorkspace({
       projects: [{ id: 'p1', path: '/home/user/project', name: 'project', addedAt: Date.now() }],

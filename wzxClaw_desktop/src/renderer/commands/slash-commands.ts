@@ -2,6 +2,7 @@ import type { SlashCommand, ContextBreakdownResponse } from '../../shared/types'
 import type { SkillInfo } from '../../shared/types-skill'
 import { DEFAULT_MODELS } from '../../shared/constants'
 import { useChatStore } from '../stores/chat-store'
+import { useI18nStore } from '../i18n/i18n-store'
 import { v4 as uuidv4 } from 'uuid'
 
 // PluginManager modal state — set by ChatPanel
@@ -35,6 +36,7 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
     handler: {
       type: 'action',
       execute: (_args: string) => {
+        const t = useI18nStore.getState().t
         const { messages } = useChatStore.getState()
         // Build command list (builtins + dynamic)
         const allCmds = getAllSlashCommands()
@@ -50,20 +52,15 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
             {
               id: uuidv4(),
               role: 'assistant' as const,
-              content: `## 可用命令
+              content: `${t('slashCmd.helpTitle')}
 
 ${cmdLines}
 
-**使用方式**：在输入框输入 \`/命令名\`，例如 \`/compact\`、\`/commit\`。
-部分命令可以带参数，例如 \`/init\` 会自动分析项目。
+${t('slashCmd.helpUsage')}
 
-**自定义技能**：在 \`~/.wzxclaw/skills/\` 或项目 \`.wzxclaw/skills/\` 目录下放置 .md 文件即可添加自定义技能。
+${t('slashCmd.helpSkills')}
 
-**快捷操作**：
-- \`Enter\` 发送消息
-- \`Shift+Enter\` 换行
-- \`Escape\` 中止生成
-- \`Ctrl+N\` 新建会话`,
+${t('slashCmd.helpShortcuts')}`,
               timestamp: Date.now()
             }
           ]
@@ -193,6 +190,75 @@ ${cmdLines}
         }
       }
     }
+  },
+  {
+    name: 'diff',
+    description: 'Show git diff of current changes',
+    handler: {
+      type: 'inject-prompt',
+      getPrompt: async (_args: string, _workspaceRoot: string) => {
+        return `Show me the current git diff. Run \`git diff\` and \`git diff --cached\` to show all changes. Summarize the key modifications.`
+      }
+    }
+  },
+  {
+    name: 'cost',
+    description: 'Show token usage and estimated cost for this session',
+    handler: {
+      type: 'action',
+      execute: async (_args: string) => {
+        try {
+          const bd = await window.wzxclaw.getContextBreakdown()
+          const su = bd.sessionUsage
+          const costStr = su.totalCostUSD > 0 ? `${su.totalCostUSD.toFixed(4)}` : '$0'
+          const content = `## Session Cost & Usage\n\n| Metric | Value |\n|--------|-------|\n| Input Tokens | ${su.inputTokens.toLocaleString()} |\n| Output Tokens | ${su.outputTokens.toLocaleString()} |\n| Cache Read | ${su.cacheReadTokens.toLocaleString()} |\n| Cache Write | ${su.cacheWriteTokens.toLocaleString()} |\n| Total Cost | ${costStr} |\n| Context Usage | ${bd.usagePercent.toFixed(1)}% |\n| Messages | ${bd.conversationMessageCount} |`
+          useChatStore.setState({
+            messages: [
+              ...useChatStore.getState().messages,
+              { id: uuidv4(), role: 'assistant' as const, content, timestamp: Date.now() }
+            ]
+          })
+        } catch (err) {
+          useChatStore.setState({
+            messages: [
+              ...useChatStore.getState().messages,
+              {
+                id: uuidv4(),
+                role: 'assistant' as const,
+                content: `Failed to get cost info: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: Date.now()
+              }
+            ]
+          })
+        }
+      }
+    }
+  },
+  {
+    name: 'status',
+    description: 'Show workspace status (git branch, changed files, index status)',
+    handler: {
+      type: 'inject-prompt',
+      getPrompt: async (_args: string, _workspaceRoot: string) => {
+        return `Show the workspace status. Run \`git status\` and \`git branch --show-current\` to display the current branch and changed files. Keep it concise.`
+      }
+    }
+  },
+  {
+    name: 'version',
+    description: 'Show wzxClaw version information',
+    handler: {
+      type: 'action',
+      execute: (_args: string) => {
+        const content = `## wzxClaw Version\n\n${window.wzxclaw.getVersion?.() ?? 'Unknown'}\n\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}\nNode: ${process.versions.node}`
+        useChatStore.setState({
+          messages: [
+            ...useChatStore.getState().messages,
+            { id: uuidv4(), role: 'assistant' as const, content, timestamp: Date.now() }
+          ]
+        })
+      }
+    }
   }
 ]
 
@@ -287,14 +353,15 @@ interface CategoryBucket {
 }
 
 function buildCategoryBuckets(bd: ContextBreakdownResponse): CategoryBucket[] {
+  const t = useI18nStore.getState().t
   return [
-    { label: '系统提示词', tokens: bd.systemPromptTokens, color: '🟪' },
-    { label: '指令文件', tokens: bd.instructionsTokens, color: '🟦' },
-    { label: '命令+技能', tokens: bd.commandsTokens + bd.skillsTokens, color: '🟧' },
+    { label: t('context.systemPrompt'), tokens: bd.systemPromptTokens, color: '🟪' },
+    { label: t('context.instructions'), tokens: bd.instructionsTokens, color: '🟦' },
+    { label: t('context.commandsSkills'), tokens: bd.commandsTokens + bd.skillsTokens, color: '🟧' },
     { label: 'Memory', tokens: bd.memoryTokens, color: '🟨' },
-    { label: '内置工具', tokens: bd.builtinToolTokens, color: '🟩' },
-    { label: 'MCP 工具', tokens: bd.mcpToolTokens, color: '🩵' },
-    { label: '对话历史', tokens: bd.conversationTokens, color: '🔵' },
+    { label: t('context.builtinTools'), tokens: bd.builtinToolTokens, color: '🟩' },
+    { label: t('context.mcpTools'), tokens: bd.mcpToolTokens, color: '🩵' },
+    { label: t('context.conversation'), tokens: bd.conversationTokens, color: '🔵' },
   ]
 }
 
@@ -336,6 +403,7 @@ function formatTokenCount(n: number): string {
 }
 
 function buildContextReport(bd: ContextBreakdownResponse): string {
+  const t = useI18nStore.getState().t
   const buckets = buildCategoryBuckets(bd)
   const contextWindow = bd.contextWindowSize
   const totalUsed = bd.totalEstimatedTokens
@@ -343,43 +411,44 @@ function buildContextReport(bd: ContextBreakdownResponse): string {
 
   const preset = DEFAULT_MODELS.find((m) => m.id === bd.model)
   const modelName = preset?.name ?? bd.model
-  const header = `## 上下文使用情况\n\n**模型**: \`${bd.model}\` (${modelName})\n**上下文窗口**: ${(contextWindow / 1000).toFixed(0)}K tokens | **最大输出**: ${(bd.maxOutputTokens / 1000).toFixed(0)}K tokens\n**使用率**: ${pctUsed.toFixed(1)}%`
+  const header = `## ${t('context.title')}\n\n**${t('context.model')}**: \`${bd.model}\` (${modelName})\n**${t('context.contextWindow')}**: ${(contextWindow / 1000).toFixed(0)}K tokens | **${t('context.maxOutput')}**: ${(bd.maxOutputTokens / 1000).toFixed(0)}K tokens\n**${t('context.usagePercent')}**: ${pctUsed.toFixed(1)}%`
 
   const grid = buildContextGrid(buckets, totalUsed, contextWindow)
 
-  const tableHeader = '| 颜色 | 类别 | Token 数 | 占比 |\n|------|------|---------|------|'
+  const tableHeader = `| ${t('context.color')} | ${t('context.category')} | ${t('context.tokenCount')} | ${t('context.percentage')} |\n|------|------|---------|------|`
   const tableRows = buckets.map((b) => {
     const pct = contextWindow > 0 ? ((b.tokens / contextWindow) * 100).toFixed(1) : '0.0'
     return `| ${b.color} | ${b.label} | ${b.tokens.toLocaleString()} | ${pct}% |`
   })
   const freePct = contextWindow > 0 ? ((bd.freeSpaceTokens / contextWindow) * 100).toFixed(1) : '0.0'
-  const tableTotal = `| ⬜ | 剩余空间 | ${bd.freeSpaceTokens.toLocaleString()} | ${freePct}% |\n| | **总计** | **${totalUsed.toLocaleString()}** | **${pctUsed.toFixed(1)}%** |`
+  const tableTotal = `| ⬜ | ${t('context.freeSpace')} | ${bd.freeSpaceTokens.toLocaleString()} | ${freePct}% |\n| | **${t('context.total')}** | **${totalUsed.toLocaleString()}** | **${pctUsed.toFixed(1)}%** |`
   const table = [tableHeader, ...tableRows, tableTotal].join('\n')
 
   const su = bd.sessionUsage
   const roleCounts = bd.messagesByRole
   const costStr = su.totalCostUSD > 0 ? `$${su.totalCostUSD.toFixed(4)}` : '$0'
-  const sessionStats = `### 会话统计\n\n| 指标 | 值 |\n|------|----|\n| 消息数 | ${bd.conversationMessageCount} (用户: ${roleCounts.user}, 助手: ${roleCounts.assistant}, 工具: ${roleCounts.tool_result}) |\n| 累计输入 | ${su.inputTokens.toLocaleString()} tokens |\n| 累计输出 | ${su.outputTokens.toLocaleString()} tokens |\n| 缓存读取 | ${su.cacheReadTokens.toLocaleString()} tokens |\n| 缓存写入 | ${su.cacheWriteTokens.toLocaleString()} tokens |\n| 累计费用 | ${costStr} |`
+  const sessionStats = `### ${t('context.sessionStats')}\n\n| ${t('context.metric')} | ${t('context.value')} |\n|------|----|\n| ${t('context.messageCount')} | ${bd.conversationMessageCount} (${t('context.user')}: ${roleCounts.user}, ${t('context.assistant')}: ${roleCounts.assistant}, ${t('context.tool')}: ${roleCounts.tool_result}) |\n| ${t('context.cumulativeInput')} | ${su.inputTokens.toLocaleString()} tokens |\n| ${t('context.cumulativeOutput')} | ${su.outputTokens.toLocaleString()} tokens |\n| ${t('context.cacheRead')} | ${su.cacheReadTokens.toLocaleString()} tokens |\n| ${t('context.cacheWrite')} | ${su.cacheWriteTokens.toLocaleString()} tokens |\n| ${t('context.cumulativeCost')} | ${costStr} |`
 
   const ch = bd.compactionHistory
   let compactionSection = ''
   if (ch.compactCount > 0) {
     const lastInfo = ch.lastBefore !== null && ch.lastAfter !== null
-      ? ` (最近: ${formatTokenCount(ch.lastBefore)} → ${formatTokenCount(ch.lastAfter)})`
+      ? ` (${t('context.lastCompact')}: ${formatTokenCount(ch.lastBefore)} → ${formatTokenCount(ch.lastAfter)})`
       : ''
-    compactionSection = `\n\n### 压缩历史\n\n已压缩 **${ch.compactCount}** 次${lastInfo}\n\n自动压缩阈值: 80% 上下文窗口`
+    compactionSection = `\n\n### ${t('context.compactionHistory')}\n\n${t('context.compactCount', { count: ch.compactCount })}${lastInfo}\n\n${t('context.autoCompactThreshold')}`
   }
 
   const suggestions = buildContextSuggestions(bd)
   let suggestionsSection = ''
   if (suggestions.length > 0) {
-    suggestionsSection = '\n\n### 建议\n\n' + suggestions.join('\n')
+    suggestionsSection = `\n\n### ${t('context.suggestions')}\n\n` + suggestions.join('\n')
   }
 
   return [header, '', grid, '', table, '', sessionStats, compactionSection, suggestionsSection].join('\n')
 }
 
 function buildContextSuggestions(bd: ContextBreakdownResponse): string[] {
+  const t = useI18nStore.getState().t
   const suggestions: string[] = []
   const pct = bd.usagePercent
   const cw = bd.contextWindowSize
@@ -389,27 +458,27 @@ function buildContextSuggestions(bd: ContextBreakdownResponse): string[] {
   const convPct = cw > 0 ? (bd.conversationTokens / cw) * 100 : 0
 
   if (pct >= 85) {
-    suggestions.push('🔴 **上下文严重不足** — 建议立即使用 `/compact` 压缩对话或 `/clear` 开始新会话')
+    suggestions.push(t('context.suggestion.critical'))
   } else if (pct >= 70) {
-    suggestions.push('🟡 **上下文偏高** — 建议使用 `/compact` 压缩对话以释放空间')
+    suggestions.push(t('context.suggestion.high'))
   }
   if (toolPct > 20 && mcpPct > toolPct * 0.6) {
-    suggestions.push(`💡 MCP 工具占用 ${mcpPct.toFixed(1)}% — 考虑断开未使用的 MCP 服务器`)
+    suggestions.push(t('context.suggestion.mcpHigh', { pct: mcpPct.toFixed(1) }))
   }
   if (instrPct > 15) {
-    suggestions.push(`📄 指令文件占用 ${instrPct.toFixed(1)}% — 考虑精简 WZXCLAW.md 和 rules 文件`)
+    suggestions.push(t('context.suggestion.instrHigh', { pct: instrPct.toFixed(1) }))
   }
   if (convPct > 60) {
-    suggestions.push('💬 对话历史占比过高 — 使用 `/compact` 可显著释放空间')
+    suggestions.push(t('context.suggestion.convHigh'))
   }
   if (bd.memoryTokens > 2000) {
-    suggestions.push(`🧠 Memory 文件占用 ${formatTokenCount(bd.memoryTokens)} tokens — 考虑归档旧的 Memory 条目`)
+    suggestions.push(t('context.suggestion.memoryHigh', { tokens: formatTokenCount(bd.memoryTokens) }))
   }
   if (bd.conversationMessageCount > 50) {
-    suggestions.push(`📝 消息数已超过 50 条 — 建议压缩或开启新会话以保持效率`)
+    suggestions.push(t('context.suggestion.messageHigh'))
   }
   if (suggestions.length === 0) {
-    suggestions.push('✅ 上下文空间充裕，无需优化')
+    suggestions.push(t('context.suggestion.ok'))
   }
   return suggestions
 }

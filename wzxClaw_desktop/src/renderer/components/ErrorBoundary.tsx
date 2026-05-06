@@ -1,4 +1,5 @@
 import React from 'react'
+import { useI18nStore } from '../i18n/i18n-store'
 
 interface ErrorBoundaryProps {
   /** Optional name shown in the fallback UI. */
@@ -41,13 +42,15 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
     const { error, info } = this.state
     if (!error) return this.props.children
 
+    const t = useI18nStore.getState().t
+
     return (
       <div className="error-boundary">
         <div className="error-boundary-card">
           <div className="error-boundary-icon">⚠</div>
-          <h2 className="error-boundary-title">界面出现错误</h2>
+          <h2 className="error-boundary-title">{t('errorBoundary.title')}</h2>
           <p className="error-boundary-subtitle">
-            {this.props.scope ? `${this.props.scope} ` : ''}组件渲染时抛出异常。已阻止整页崩溃，可尝试恢复或重载窗口。
+            {t('errorBoundary.subtitle', { scope: this.props.scope ?? '' })}
           </p>
           <pre className="error-boundary-detail">
             {error.message}
@@ -55,10 +58,10 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
           </pre>
           <div className="error-boundary-actions">
             <button className="error-boundary-btn primary" onClick={this.handleReset}>
-              尝试恢复
+              {t('errorBoundary.reset')}
             </button>
             <button className="error-boundary-btn" onClick={this.handleReload}>
-              重载窗口
+              {t('errorBoundary.reload')}
             </button>
           </div>
         </div>

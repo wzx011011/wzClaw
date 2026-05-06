@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useT } from '../../i18n/useT'
 import { useDiffStore } from '../../stores/diff-store'
 import type { PendingDiff } from '../../../shared/types'
 
@@ -187,35 +188,36 @@ function renderSymbolNavOutput(toolName: string, output: string): JSX.Element {
 // Result Summary — extract one-line summary from tool output
 // ============================================================
 
-function extractResultSummary(toolName: string, output: string, isError?: boolean): string | null {
+function extractResultSummary(toolName: string, output: string, t: (key: string, params?: Record<string, unknown>) => string, isError?: boolean): string | null {
   if (!output) return null
   if (isError) {
     const firstLine = output.split('\n')[0].trim()
     return firstLine.length > 60 ? firstLine.slice(0, 57) + '...' : firstLine
   }
+  const lineCount = (output.match(/\n/g) || []).length + 1
   switch (toolName) {
     case 'Read':
     case 'FileRead':
-      return `${(output.match(/\n/g) || []).length + 1} lines`
+      return t('toolCard.lines', { count: lineCount })
     case 'Bash':
     case 'Terminal': {
       const trimmed = output.trim()
-      if (!trimmed) return 'done'
+      if (!trimmed) return t('toolCard.completed')
       const fl = trimmed.split('\n')[0].trim()
       return fl.length > 50 ? fl.slice(0, 47) + '...' : fl
     }
     case 'Grep':
-      return `${(output.match(/\n/g) || []).length + 1} matches`
+      return t('toolCard.matches', { count: lineCount })
     case 'Glob':
-      return `${(output.match(/\n/g) || []).length + 1} files`
+      return t('toolCard.files', { count: lineCount })
     case 'FileWrite':
     case 'Write':
-      return 'written'
+      return t('toolCard.written')
     case 'FileEdit':
     case 'Edit':
-      return 'applied'
+      return t('toolCard.applied')
     case 'WebSearch':
-      return `${(output.match(/\n\n/g) || []).length + 1} results`
+      return t('toolCard.results', { count: (output.match(/\n\n/g) || []).length + 1 })
     default: {
       const fl = output.split('\n')[0].trim()
       return fl.length > 50 ? fl.slice(0, 47) + '...' : (fl || null)
@@ -228,6 +230,7 @@ function extractResultSummary(toolName: string, output: string, isError?: boolea
 // ============================================================
 
 function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
+  const t = useT()
   const prevStatusRef = useRef(toolCall.status)
   const startTimeRef = useRef(Date.now())
   const [elapsed, setElapsed] = useState(0)
@@ -308,8 +311,8 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
     : outputText
 
   // Status display
-  const statusLabel = status === 'running' ? 'Running' : status === 'completed' ? 'Done' : 'Error'
-  const resultSummary = extractResultSummary(name, outputText, toolCall.isError)
+  const statusLabel = status === 'running' ? t('toolCard.running') : status === 'completed' ? t('toolCard.completed') : t('toolCard.error')
+  const resultSummary = extractResultSummary(name, outputText, t, toolCall.isError)
 
   // Handle "Review Changes" click: create a pending diff and open the diff preview
   const handleReviewChanges = (): void => {
@@ -343,7 +346,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
 
   // Determine review status badge text
   const reviewStatus = existingDiff
-    ? `${existingDiff.hunks.filter(h => h.status === 'pending').length} pending`
+    ? `${existingDiff.hunks.filter(h => h.status === 'pending').length} ${t('diff.pending')}`
     : null
 
   // Handle "Revert" click: restore file to pre-write snapshot via IPC
@@ -354,10 +357,10 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
         setReverted(true)
         setRevertError(null)
       } else {
-        setRevertError(result.error ?? 'Revert failed')
+        setRevertError(result.error ?? t('toolCard.revertFailed'))
       }
     } catch (err) {
-      setRevertError(err instanceof Error ? err.message : 'Revert failed')
+      setRevertError(err instanceof Error ? err.message : t('toolCard.revertFailed'))
     }
   }
 
@@ -366,7 +369,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
     if (isWebSearch && input?.query) {
       return (
         <div className="tool-card-section">
-          <div className="tool-card-section-label">Query</div>
+          <div className="tool-card-section-label">{t('toolCard.query')}</div>
           <div className="tool-card-section-content" style={{ fontSize: 'var(--font-size-xs)', fontFamily: 'Consolas, Courier New, monospace' }}>
             {String(input.query)}
           </div>
@@ -397,7 +400,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
       const symFilePath = input?.filePath ? String(input.filePath) : ''
       return (
         <div className="tool-card-section">
-          <div className="tool-card-section-label">Symbol</div>
+          <div className="tool-card-section-label">{t('toolCard.symbol')}</div>
           <div className="tool-card-section-content" style={{ fontSize: 'var(--font-size-xs)', fontFamily: 'Consolas, Courier New, monospace' }}>
             {symbolName}
             {symFilePath && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>({symFilePath})</span>}
@@ -415,7 +418,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
     if (isWebSearch) {
       return (
         <div className="tool-card-section">
-          <div className="tool-card-section-label">Results</div>
+          <div className="tool-card-section-label">{t('toolCard.result')}</div>
           {renderWebSearchOutput(outputText)}
         </div>
       )
@@ -423,13 +426,13 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
     if (isWebFetch) {
       return (
         <div className="tool-card-section">
-          <div className="tool-card-section-label">Content</div>
+          <div className="tool-card-section-label">{t('toolCard.content')}</div>
           {renderWebFetchOutput(outputText, webFetchExpanded)}
           <button
             className="tool-card-show-more"
             onClick={() => setWebFetchExpanded(!webFetchExpanded)}
           >
-            {webFetchExpanded ? 'Show less' : 'Show more'}
+            {webFetchExpanded ? t('codeBlock.collapse') : t('toolCard.expandMore')}
           </button>
         </div>
       )
@@ -437,7 +440,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
     if (isSymbolNav) {
       return (
         <div className="tool-card-section">
-          <div className="tool-card-section-label">Results</div>
+          <div className="tool-card-section-label">{t('toolCard.result')}</div>
           {renderSymbolNavOutput(name, outputText)}
         </div>
       )
@@ -488,10 +491,10 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
             <div className="tool-card-section">
               <div className="tool-card-section-content" style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-xs)' }}>
                 {status === 'completed' && !toolCall.isError
-                  ? 'Plan approved — proceeding with changes.'
+                  ? t('chat.planApproved')
                   : status === 'completed' && toolCall.isError
-                    ? 'Plan rejected or cancelled.'
-                    : 'Waiting for user approval…'}
+                    ? t('chat.planRejected')
+                    : t('chat.planWaitingApproval')}
               </div>
             </div>
           ) : (
@@ -505,7 +508,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
                     className="tool-card-review-btn"
                     onClick={handleReviewChanges}
                   >
-                    Review Changes
+                    {t('toolCard.reviewChanges')}
                   </button>
                 )}
                 {!reverted ? (
@@ -513,10 +516,10 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
                     className="tool-card-revert-btn"
                     onClick={handleRevert}
                   >
-                    Revert
+                    {t('toolCard.revert')}
                   </button>
                 ) : (
-                  <span className="tool-card-reverted">Reverted</span>
+                  <span className="tool-card-reverted">{t('toolCard.reverted')}</span>
                 )}
               </div>
               {revertError && (
@@ -534,7 +537,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
             <>
               {input && Object.keys(input).length > 0 && (
                 <div className="tool-card-section">
-                  <div className="tool-card-section-label">Input</div>
+                  <div className="tool-card-section-label">{t('toolCard.input')}</div>
                   <div className="tool-card-section-content">
                     {JSON.stringify(input, null, 2)}
                   </div>
@@ -542,7 +545,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
               )}
               {outputText && (
                 <div className="tool-card-section">
-                  <div className="tool-card-section-label">Output</div>
+                  <div className="tool-card-section-label">{t('toolCard.output')}</div>
                   <div className={`tool-card-section-content ${shouldTruncate ? 'truncated' : ''}`}>
                     {displayedOutput}
                   </div>
@@ -551,7 +554,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
                       className="tool-card-show-more"
                       onClick={() => setOutputExpanded(!outputExpanded)}
                     >
-                      {outputExpanded ? 'Show less' : 'Show more'}
+                      {outputExpanded ? t('toolCard.collapse') : t('toolCard.expandMore')}
                     </button>
                   )}
                 </div>
@@ -561,7 +564,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
           {/* Sub-agent progress text (Agent tool only) */}
           {toolCall.subText && status === 'running' && (
             <div className="tool-card-section">
-              <div className="tool-card-section-label">Progress</div>
+              <div className="tool-card-section-label">{t('toolCard.progress')}</div>
               <div className="tool-card-section-content" style={{ fontStyle: 'italic', color: 'var(--text-secondary)', fontSize: 'var(--font-size-xs)' }}>
                 {toolCall.subText.split('\n').slice(-5).join('\n')}
               </div>
@@ -570,7 +573,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
           {/* Nested sub-agent tool calls */}
           {toolCall.children && toolCall.children.length > 0 && (
             <div className="tool-card-section">
-              <div className="tool-card-section-label">Sub-tasks</div>
+              <div className="tool-card-section-label">{t('toolCard.subTasks')}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
                 {toolCall.children.map((child) => (
                   <ToolCard key={child.id} toolCall={child} />

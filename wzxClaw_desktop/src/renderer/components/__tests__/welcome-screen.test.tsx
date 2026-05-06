@@ -17,14 +17,14 @@ describe('WelcomeScreen', () => {
 
   it('renders open folder prompt', () => {
     render(<WelcomeScreen />)
-    expect(screen.getByText('Open a folder to get started')).toBeInTheDocument()
+    expect(screen.getByText('打开一个文件夹开始使用')).toBeInTheDocument()
   })
 
   it('renders keyboard shortcuts', () => {
     render(<WelcomeScreen />)
     expect(screen.getByText('Ctrl+Shift+O')).toBeInTheDocument()
-    expect(screen.getByText('Open Folder')).toBeInTheDocument()
+    expect(screen.getByText('打开文件夹')).toBeInTheDocument()
     expect(screen.getByText('Ctrl+S')).toBeInTheDocument()
-    expect(screen.getByText('Save File')).toBeInTheDocument()
+    expect(screen.getByText('保存文件')).toBeInTheDocument()
   })
 })

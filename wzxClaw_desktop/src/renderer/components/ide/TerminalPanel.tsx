@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useTerminalStore } from '../../stores/terminal-store'
 import TerminalTabs from './TerminalTabs'
 
@@ -12,22 +12,93 @@ import TerminalTabs from './TerminalTabs'
 // ============================================================
 
 // Lazily load xterm modules (they are renderer-side only)
-let Terminal: any = null
-let FitAddon: any = null
-let WebLinksAddon: any = null
+// Use minimal interfaces to avoid importing xterm at module level
+interface XtermTerminal {
+  open(container: HTMLElement): void
+  dispose(): void
+  onData(callback: (data: string) => void): { dispose(): void }
+  loadAddon(addon: { dispose?(): void }): void
+  write(data: string): void
+  readonly cols: number
+  readonly rows: number
+}
+interface XtermFitAddon {
+  fit(): void
+}
+interface XtermWebLinksAddon {
+  dispose?(): void
+}
+
+let Terminal: (new (options: Record<string, unknown>) => XtermTerminal) | null = null
+let FitAddon: (new () => XtermFitAddon) | null = null
+let WebLinksAddon: (new () => XtermWebLinksAddon) | null = null
 let xtermLoaded = false
+
+// 根据当前主题返回 xterm 配色
+function getXtermTheme(): Record<string, string> {
+  const theme = document.documentElement.getAttribute('data-theme') || 'midnight'
+  if (theme === 'light') {
+    return {
+      background: '#ffffff',
+      foreground: '#383a42',
+      cursor: '#526eff',
+      cursorAccent: '#ffffff',
+      selectionBackground: '#add6ff',
+      black: '#383a42',
+      red: '#e45649',
+      green: '#50a14f',
+      yellow: '#c18401',
+      blue: '#4078f2',
+      magenta: '#a626a4',
+      cyan: '#0184bc',
+      white: '#a0a1a7',
+      brightBlack: '#4f525e',
+      brightRed: '#e06c75',
+      brightGreen: '#98c379',
+      brightYellow: '#e5c07b',
+      brightBlue: '#61afef',
+      brightMagenta: '#c678dd',
+      brightCyan: '#56b6c2',
+      brightWhite: '#ffffff'
+    }
+  }
+  // midnight / dark 共用深色配色
+  return {
+    background: '#1e1e1e',
+    foreground: '#cccccc',
+    cursor: '#007acc',
+    cursorAccent: '#1e1e1e',
+    selectionBackground: '#264f78',
+    black: '#000000',
+    red: '#cd3131',
+    green: '#0dbc79',
+    yellow: '#e5e510',
+    blue: '#2472c8',
+    magenta: '#bc3fbc',
+    cyan: '#11a8cd',
+    white: '#e5e5e5',
+    brightBlack: '#666666',
+    brightRed: '#f14c4c',
+    brightGreen: '#23d18b',
+    brightYellow: '#f5f543',
+    brightBlue: '#3b8eea',
+    brightMagenta: '#d670d6',
+    brightCyan: '#29b8db',
+    brightWhite: '#ffffff'
+  }
+}
 
 function loadXtermModules(): void {
   if (xtermLoaded) return
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     Terminal = require('xterm').Terminal
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     FitAddon = require('@xterm/addon-fit').FitAddon
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     WebLinksAddon = require('@xterm/addon-web-links').WebLinksAddon
     // Load xterm CSS
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     require('xterm/css/xterm.css')
     xtermLoaded = true
   } catch (err) {
@@ -40,8 +111,8 @@ export default function TerminalPanel(): JSX.Element {
   const tabs = useTerminalStore((s) => s.tabs)
 
   // Maps terminal IDs to xterm Terminal instances and FitAddon instances
-  const terminalsRef = useRef<Map<string, any>>(new Map())
-  const fitAddonsRef = useRef<Map<string, any>>(new Map())
+  const terminalsRef = useRef<Map<string, XtermTerminal>>(new Map())
+  const fitAddonsRef = useRef<Map<string, XtermFitAddon>>(new Map())
   const unsubscribersRef = useRef<Map<string, () => void>>(new Map())
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -77,29 +148,7 @@ export default function TerminalPanel(): JSX.Element {
       cursorStyle: 'block',
       fontSize: 14,
       fontFamily: 'Consolas, "Courier New", monospace',
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#cccccc',
-        cursor: '#007acc',
-        cursorAccent: '#1e1e1e',
-        selectionBackground: '#264f78',
-        black: '#000000',
-        red: '#cd3131',
-        green: '#0dbc79',
-        yellow: '#e5e510',
-        blue: '#2472c8',
-        magenta: '#bc3fbc',
-        cyan: '#11a8cd',
-        white: '#e5e5e5',
-        brightBlack: '#666666',
-        brightRed: '#f14c4c',
-        brightGreen: '#23d18b',
-        brightYellow: '#f5f543',
-        brightBlue: '#3b8eea',
-        brightMagenta: '#d670d6',
-        brightCyan: '#29b8db',
-        brightWhite: '#ffffff'
-      },
+      theme: getXtermTheme(),
       scrollback: 1000,
       lineHeight: 1.2,
       allowTransparency: false

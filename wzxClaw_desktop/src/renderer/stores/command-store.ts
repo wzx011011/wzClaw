@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useTerminalStore } from './terminal-store'
+import { useI18nStore } from '../i18n/i18n-store'
 
 // ============================================================
 // Command Store — pluggable command registry for Command Palette
@@ -86,69 +87,69 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
    * Can be called multiple times safely (replaces by id).
    */
   registerBuiltInCommands: (deps) => {
+    const t = useI18nStore.getState().t
     const builtIn: CommandDef[] = [
       {
         id: 'file.open-folder',
-        label: 'Open Folder',
-        category: 'File',
+        label: t('cmd.file.openFolder'),
+        category: t('cmd.category.file'),
         shortcut: 'Ctrl+Shift+O',
         handler: deps.openFolder
       },
       {
         id: 'file.save',
-        label: 'Save File',
-        category: 'File',
+        label: t('cmd.file.save'),
+        category: t('cmd.category.file'),
         shortcut: 'Ctrl+S',
         handler: deps.saveActiveTab
       },
       {
         id: 'session.new',
-        label: 'New Session',
-        category: 'Session',
+        label: t('cmd.session.new'),
+        category: t('cmd.category.session'),
         shortcut: 'Ctrl+T',
         handler: deps.createSession
       },
       {
         id: 'session.clear',
-        label: 'Clear Session',
-        category: 'Session',
+        label: t('cmd.session.clear'),
+        category: t('cmd.category.session'),
         handler: deps.clearConversation
       },
       {
         id: 'view.toggle-sidebar',
-        label: 'Toggle Sidebar',
-        category: 'View',
+        label: t('cmd.view.toggleSidebar'),
+        category: t('cmd.category.view'),
         shortcut: 'Ctrl+B',
         handler: () => {
-          // Toggle sidebar visibility via DOM class
           const sidebar = document.querySelector('.sidebar-pane')
           if (sidebar) sidebar.classList.toggle('hidden')
         }
       },
       {
         id: 'view.toggle-terminal',
-        label: 'Toggle Terminal',
-        category: 'View',
+        label: t('cmd.view.toggleTerminal'),
+        category: t('cmd.category.view'),
         shortcut: 'Ctrl+`',
         available: true,
         handler: () => useTerminalStore.getState().togglePanel()
       },
       {
         id: 'settings.change-model',
-        label: 'Change Model',
-        category: 'Settings',
+        label: t('cmd.settings.changeModel'),
+        category: t('cmd.category.settings'),
         handler: deps.openSettingsModal
       },
       {
         id: 'settings.open',
-        label: 'Open Settings',
-        category: 'Settings',
+        label: t('cmd.settings.open'),
+        category: t('cmd.category.settings'),
         handler: deps.openSettingsModal
       },
       {
         id: 'index.reindex',
-        label: 'Re-index Workspace',
-        category: 'Index',
+        label: t('cmd.index.reindex'),
+        category: t('cmd.category.index'),
         handler: deps.reindex
       }
     ]

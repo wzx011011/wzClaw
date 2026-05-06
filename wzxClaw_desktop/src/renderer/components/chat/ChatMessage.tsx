@@ -1,4 +1,5 @@
 import React, { useState, lazy, Suspense } from 'react'
+import { useT } from '../../i18n/useT'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
 import CodeBlock from './CodeBlock'
 import ThinkingIndicator from './ThinkingIndicator'
@@ -99,9 +100,10 @@ interface ChatMessageProps {
  */
 function MentionBlock({ mention }: { mention: { type: string; path: string; content: string; size: number } }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
+  const t = useT()
   const isFolder = mention.type === 'folder_mention'
   const sizeLabel = isFolder
-    ? `${mention.size} 个条目`
+    ? t('chatMessage.entries', { count: mention.size })
     : mention.size < 1024
       ? `${mention.size}B`
       : mention.size < 1024 * 1024
@@ -133,6 +135,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
 
 function ChatMessage({ message }: ChatMessageProps): JSX.Element {
   const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions, model, images } = message
+  const t = useT()
 
   if (role === 'user') {
     // Show mention context blocks if present, then the display content
@@ -197,7 +200,7 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
       {/* Thinking block — always starts open; no key so user state is preserved during streaming */}
       {displayThinking && (
         <details className="chat-message-thinking" defaultOpen>
-          <summary>思考过程</summary>
+          <summary>{t('chatMessage.thinking')}</summary>
           <div className="chat-message-thinking-content">{displayThinking}</div>
         </details>
       )}
@@ -225,8 +228,8 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
       {/* Usage info */}
       {!isStreaming && usage && (
         <div className="chat-usage-info">
-          <span>输入: {usage.inputTokens}</span>
-          <span>输出: {usage.outputTokens}</span>
+          <span>{t('chatMessage.input')} {usage.inputTokens}</span>
+          <span>{t('chatMessage.output')} {usage.outputTokens}</span>
           {model && <span className="chat-usage-model">{model}</span>}
         </div>
       )}

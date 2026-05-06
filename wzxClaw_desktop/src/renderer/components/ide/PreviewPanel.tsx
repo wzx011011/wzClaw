@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useToastStore } from '../../stores/toast-store'
+import { useT } from '../../i18n/useT'
 
 interface BrowserState {
   running: boolean
@@ -14,6 +15,7 @@ interface BrowserState {
  * Users can manually navigate by typing a URL in the address bar.
  */
 export default function PreviewPanel(): JSX.Element {
+  const t = useT()
   const [browser, setBrowser] = useState<BrowserState>({
     running: false,
     url: null,
@@ -58,7 +60,7 @@ export default function PreviewPanel(): JSX.Element {
   useEffect(() => {
     if (!browser.running) return
     window.wzxclaw.screenshotBrowser().catch(() => {
-      useToastStore.getState().show('截图失败', 'error')
+      useToastStore.getState().show(t('preview.screenshotFailed'), 'error')
     })
   }, [browser.running])
 
@@ -87,15 +89,15 @@ export default function PreviewPanel(): JSX.Element {
       } catch {
         // screenshot may already be sent via event
       }
-    } catch (err: any) {
-      const msg = err?.message || String(err)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
       // Provide user-friendly error messages
       if (msg.includes('Executable doesn\'t exist') || msg.includes('browserType.launch')) {
-        setError('未找到 Chrome 浏览器。请安装 Google Chrome 或设置 CHROME_PATH 环境变量。')
+        setError(t('preview.chromeNotFound'))
       } else if (msg.includes('net::ERR_')) {
-        setError(`网络错误: ${msg.replace(/.*net::(ERR_[A-Z_]+).*/, '$1')}`)
+        setError(t('preview.networkError', { error: msg.replace(/.*net::(ERR_[A-Z_]+).*/, '$1') }))
       } else {
-        setError(`导航失败: ${msg.length > 120 ? msg.slice(0, 120) + '…' : msg}`)
+        setError(t('preview.navigateFailed', { error: msg.length > 120 ? msg.slice(0, 120) + '…' : msg }))
       }
       setNavigating(false)
     }
@@ -124,23 +126,23 @@ export default function PreviewPanel(): JSX.Element {
       <div className="preview-panel">
         <div className="preview-browser-bar">
           <div className="preview-bar-dots">
-            <button className="preview-browser-dot red" title="关闭浏览器" onClick={handleClose} />
+            <button className="preview-browser-dot red" title={t('preview.closeBrowser')} onClick={handleClose} />
             <div className="preview-browser-dot yellow" />
-            <button className="preview-browser-dot green" title="刷新" onClick={handleRefresh} />
+            <button className="preview-browser-dot green" title={t('preview.refresh')} onClick={handleRefresh} />
           </div>
           <input
             className="preview-url-input"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入网址…"
+            placeholder={t('preview.urlPlaceholder')}
             spellCheck={false}
           />
         </div>
         <div className="preview-browser-viewport">
           <img
             src={`data:image/jpeg;base64,${browser.screenshot}`}
-            alt="Browser screenshot"
+            alt={t('preview.screenshotAlt')}
             className="preview-browser-img"
           />
           {error && <div className="preview-error">{error}</div>}
@@ -160,8 +162,8 @@ export default function PreviewPanel(): JSX.Element {
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
           </svg>
         </div>
-        <h3 className="preview-panel-title">新标签页</h3>
-        <p className="preview-panel-desc">输入网址或让 AI 使用浏览器工具</p>
+        <h3 className="preview-panel-title">{t('preview.newTab')}</h3>
+        <p className="preview-panel-desc">{t('preview.newTabDesc')}</p>
         <div className="preview-url-bar-empty">
           <input
             ref={inputRef}
@@ -169,7 +171,7 @@ export default function PreviewPanel(): JSX.Element {
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入网址，按 Enter 导航…"
+            placeholder={t('preview.urlInputPlaceholder')}
             spellCheck={false}
             autoFocus
           />

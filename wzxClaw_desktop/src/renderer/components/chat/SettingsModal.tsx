@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../../i18n/useT'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useToastStore } from '../../stores/toast-store'
@@ -13,6 +14,7 @@ interface SettingsModalProps {
  * Allows user to configure provider, API key, base URL, model, and system prompt.
  */
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): JSX.Element | null {
+  const t = useT()
   const settingsProvider = useSettingsStore((s) => s.provider)
   const settingsModel = useSettingsStore((s) => s.model)
   const settingsBaseURL = useSettingsStore((s) => s.baseURL)
@@ -98,8 +100,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
           setRelayConnecting(true)
           setRelayError(null)
           await window.wzxclaw.connectRelay({ token: relayToken.trim() })
-        } catch (err: any) {
-          setRelayError(err.message || '连接失败')
+        } catch (err: unknown) {
+          setRelayError(err instanceof Error ? err.message : t('settingsModal.connectFailed', { error: '' }))
         } finally {
           setRelayConnecting(false)
         }
@@ -107,7 +109,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
       onClose()
     } catch (err) {
       console.error('Failed to save settings:', err)
-      useToastStore.getState().show('设置保存失败，请重试', 'error')
+      useToastStore.getState().show(t('settingsModal.saveFailed'), 'error')
     } finally {
       setSaving(false)
     }
@@ -123,14 +125,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
     <div className="settings-overlay" onClick={onClose} onKeyDown={handleKeyDown}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
-          <h3>Settings</h3>
+          <h3>{t('settingsModal.title')}</h3>
           <button className="settings-close-btn" onClick={onClose}>
             x
           </button>
         </div>
         <div className="settings-body">
           {/* Provider section */}
-          <label className="settings-label">Provider</label>
+          <label className="settings-label">{t('settingsModal.provider')}</label>
           <select
             className="settings-select"
             value={provider}
@@ -141,17 +143,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
           </select>
 
           {/* API Key section */}
-          <label className="settings-label">API Key</label>
+          <label className="settings-label">{t('settingsModal.apiKey')}</label>
           <input
             className="settings-input"
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
+            placeholder={t('settingsModal.apiKeyPlaceholder')}
           />
 
           {/* Base URL section */}
-          <label className="settings-label">Base URL</label>
+          <label className="settings-label">{t('settingsModal.baseUrl')}</label>
           <input
             className="settings-input"
             type="text"
@@ -159,13 +161,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             onChange={(e) => setBaseURL(e.target.value)}
             placeholder={
               provider === 'anthropic'
-                ? 'https://open.bigmodel.cn/api/anthropic  (留空使用官方 Anthropic)'
+                ? t('settingsModal.baseUrlPlaceholder')
                 : 'https://api.openai.com/v1'
             }
           />
 
           {/* Model section */}
-          <label className="settings-label">Model</label>
+          <label className="settings-label">{t('settingsModal.model')}</label>
           <select
             className="settings-select"
             value={model}
@@ -179,7 +181,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
           </select>
 
           {/* System Prompt section */}
-          <label className="settings-label">System Prompt</label>
+          <label className="settings-label">{t('settingsModal.systemPrompt')}</label>
           <textarea
             className="settings-textarea"
             value={systemPrompt}
@@ -189,7 +191,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
           />
 
           {/* Show Tool Steps toggle */}
-          <label className="settings-label" style={{ marginTop: 8 }}>显示工具调用步骤</label>
+          <label className="settings-label" style={{ marginTop: 8 }}>{t('settingsModal.showToolSteps')}</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
             <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: 'var(--font-size-sm, 13px)', color: 'var(--text-secondary, #aaa)' }}>
               <input
@@ -198,55 +200,55 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
                 onChange={(e) => setShowToolSteps(e.target.checked)}
                 style={{ marginRight: 8 }}
               />
-              在聊天中显示文件读取、搜索、执行命令等工具调用的中间过程
+              {t('settings.general.showToolStepsDesc')}
             </label>
           </div>
 
           {/* Relay Token section */}
-          <label className="settings-label">Relay Token</label>
+          <label className="settings-label">{t('settingsModal.relayToken')}</label>
           <input
             className="settings-input"
             type="text"
             value={relayToken}
             onChange={(e) => setRelayToken(e.target.value)}
-            placeholder="Enter relay pairing token"
+            placeholder=""
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 16px' }}>
-            {relayConnecting && <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-sm)' }}>Connecting...</span>}
-            {relayConnected && <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-sm)' }}>Relay connected</span>}
-            {relayError && <span style={{ color: 'var(--error)', fontSize: 'var(--font-size-sm)' }}>Connection failed: {relayError}</span>}
+            {relayConnecting && <span style={{ color: 'var(--warning)', fontSize: 'var(--font-size-sm)' }}>{t('settingsModal.connecting')}</span>}
+            {relayConnected && <span style={{ color: 'var(--success)', fontSize: 'var(--font-size-sm)' }}>{t('settingsModal.relayConnected')}</span>}
+            {relayError && <span style={{ color: 'var(--error)', fontSize: 'var(--font-size-sm)' }}>{t('settingsModal.connectFailed', { error: relayError })}</span>}
             {!relayConnecting && !relayConnected && !relayError && (
-              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>Used for mobile app pairing via relay server</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>{t('settingsModal.relayTokenHint')}</span>
             )}
           </div>
 
           {/* User Extensions section */}
           {extensionPaths && (
             <>
-              <label className="settings-label" style={{ marginTop: 8 }}>User Extensions</label>
+              <label className="settings-label" style={{ marginTop: 8 }}>{t('settingsModal.userExtensions')}</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ color: '#aaa', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    Commands: {extensionPaths.commandsDir}
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t('settingsModal.commands')} {extensionPaths.commandsDir}
                   </span>
                   <button
                     className="settings-save-btn"
                     style={{ padding: '2px 10px', fontSize: 12, width: 'auto' }}
                     onClick={() => window.wzxclaw.openInExplorer(extensionPaths.commandsDir)}
                   >
-                    Open
+                    {t('settingsModal.open')}
                   </button>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ color: '#aaa', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    Skills: {extensionPaths.skillsDir}
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t('settingsModal.skills')} {extensionPaths.skillsDir}
                   </span>
                   <button
                     className="settings-save-btn"
                     style={{ padding: '2px 10px', fontSize: 12, width: 'auto' }}
                     onClick={() => window.wzxclaw.openInExplorer(extensionPaths.skillsDir)}
                   >
-                    Open
+                    {t('settingsModal.open')}
                   </button>
                 </div>
               </div>
@@ -259,7 +261,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps): 
             onClick={handleSave}
             disabled={saving}
           >
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? t('settingsModal.saving') : t('settingsModal.save')}
           </button>
         </div>
       </div>

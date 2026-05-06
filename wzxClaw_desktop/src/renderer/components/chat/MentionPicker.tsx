@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useT } from '../../i18n/useT'
 import { useWorkspaceStore } from '../../stores/workspace-store'
-import type { MentionItem } from '../../../shared/types'
+import { useToastStore } from '../../stores/toast-store'
+import type { MentionItem, FileTreeNode } from '../../../shared/types'
 
 // ============================================================
 // MentionPicker — Fuzzy file/folder picker dropdown triggered by @
@@ -25,7 +27,7 @@ interface FlatFileEntry {
  * Flatten the workspace file tree into a list of relative-path entries,
  * including both files and directories as selectable items.
  */
-function flattenTree(nodes: { name: string; path: string; isDirectory: boolean; children?: any[] }[], rootPath: string): FlatFileEntry[] {
+function flattenTree(nodes: FileTreeNode[], rootPath: string): FlatFileEntry[] {
   const results: FlatFileEntry[] = []
   for (const node of nodes) {
     const relative = node.path.replace(/\\/g, '/').startsWith(rootPath.replace(/\\/g, '/'))
@@ -82,6 +84,7 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const t = useT()
 
   // Flatten tree to file list
   const allFiles = useMemo(() => {
@@ -167,7 +170,7 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
         // Read folder tree for directory mentions
         const result = await window.wzxclaw.readFolderTree({ dirPath: entry.path })
         if ('error' in result) {
-          alert(`Cannot add ${entry.path}: ${result.error}`)
+          useToastStore.getState().show(t('mentionPicker.addFailed', { error: `${entry.path}: ${result.error}` }), 'error')
           return
         }
         const mention = {
@@ -182,7 +185,7 @@ export default function MentionPicker({ visible, filter, onSelect, onClose }: Me
         const result = await window.wzxclaw.readFileContent({ filePath: entry.path })
         if ('error' in result) {
           // File too large — show alert, don't add
-          alert(`Cannot add ${entry.path}: ${result.error} (${(result.size / 1024).toFixed(1)}KB exceeds ${(result.limit / 1024).toFixed(0)}KB limit)`)
+          useToastStore.getState().show(t('mentionPicker.fileTooLarge', { size: `${(result.size / 1024).toFixed(1)}KB`, max: `${(result.limit / 1024).toFixed(0)}KB` }), 'warning')
           return
         }
         const mention = {

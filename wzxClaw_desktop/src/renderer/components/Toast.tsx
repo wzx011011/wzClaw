@@ -1,5 +1,6 @@
 import React from 'react'
 import { useToastStore } from '../stores/toast-store'
+import { useT } from '../i18n/useT'
 
 // ============================================================
 // Toast — 全局轻提示组件（Phase C）
@@ -13,6 +14,7 @@ const TYPE_STYLES: Record<string, { borderColor: string; iconColor: string; icon
 }
 
 export default function Toast(): JSX.Element | null {
+  const t = useT()
   const message = useToastStore((s) => s.message)
   const type = useToastStore((s) => s.type)
   const clear = useToastStore((s) => s.clear)
@@ -58,7 +60,7 @@ export default function Toast(): JSX.Element | null {
           lineHeight: 1,
           flexShrink: 0,
         }}
-        aria-label="关闭提示"
+        aria-label={t('toast.close')}
       >
         ✕
       </button>

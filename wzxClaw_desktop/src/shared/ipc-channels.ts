@@ -212,7 +212,7 @@ export interface IpcRequestPayloads {
     images?: Array<{ data: string; mimeType: string; name?: string }>
   }
   'agent:stop': void
-  'todo:load': { workspaceId: string }
+  'todo:load': { sessionId: string }
   'agent:permission_response': {
     approved: boolean
     sessionCache: boolean
@@ -227,6 +227,7 @@ export interface IpcRequestPayloads {
     relayToken?: string
     thinkingDepth?: string
     showToolSteps?: boolean
+    language?: string
   }
   'workspace:open_folder': void
   'workspace:set_folder': { folderPath: string }
@@ -323,6 +324,7 @@ export interface IpcResponsePayloads {
     relayToken?: string
     thinkingDepth?: string
     showToolSteps?: boolean
+    language?: string
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null

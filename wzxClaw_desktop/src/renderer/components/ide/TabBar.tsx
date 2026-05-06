@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react'
 import { useTabStore } from '../../stores/tab-store'
+import { useT } from '../../i18n/useT'
 
 /**
  * TabBar — horizontal row of editor tabs (per EDIT-02, D-50).
@@ -7,6 +8,7 @@ import { useTabStore } from '../../stores/tab-store'
  */
 
 export default function TabBar(): JSX.Element {
+  const t = useT()
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
@@ -55,7 +57,7 @@ export default function TabBar(): JSX.Element {
           <button
             className="tab-close"
             onClick={(e) => handleClose(e, tab.id)}
-            title="Close"
+            title={t('tabBar.close')}
           >
             {'\u00D7'}
           </button>

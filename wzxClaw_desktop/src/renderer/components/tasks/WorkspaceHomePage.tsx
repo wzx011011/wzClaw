@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
+import { useT } from '../../i18n/useT'
 import WorkspaceCard from './WorkspaceCard'
 import CreateWorkspaceModal from './CreateTaskModal'
 import MobileConnectModal from '../ide/MobileConnectModal'
@@ -37,6 +38,7 @@ function formatConnectedAt(ts: number): string {
 }
 
 export default function WorkspaceHomePage(): JSX.Element {
+  const t = useT()
   const tasks = useWorkspaceStore((s) => s.tasks)
   const isLoading = useWorkspaceStore((s) => s.isLoading)
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
@@ -121,16 +123,16 @@ export default function WorkspaceHomePage(): JSX.Element {
     <div className="workspace-home">
       <div className="workspace-home-dragbar" />
       <div className="workspace-home-header">
-        <h1 className="workspace-home-title">工作区</h1>
+        <h1 className="workspace-home-title">{t('workspace.title')}</h1>
         <div className="workspace-home-actions">
           <button
             className={`workspace-filter-btn${showArchived ? ' active' : ''}`}
             onClick={() => setShowArchived(!showArchived)}
           >
-            {showArchived ? '显示活跃' : '显示归档'}
+            {showArchived ? t('workspace.showActive') : t('workspace.showArchived')}
           </button>
           <button className="workspace-btn-primary" onClick={() => setShowCreateModal(true)}>
-            + 新建工作区
+            + {t('workspace.newWorkspace')}
           </button>
         </div>
       </div>
@@ -139,7 +141,7 @@ export default function WorkspaceHomePage(): JSX.Element {
         <div className="workspace-home-empty">加载中...</div>
       ) : displayWorkspaces.length === 0 ? (
         <div className="workspace-home-empty">
-          {showArchived ? '没有归档的工作区' : '还没有工作区，点击"新建工作区"开始'}
+          {showArchived ? t('workspace.noArchived') : t('workspace.empty')}
         </div>
       ) : (
         <div className="workspace-grid">
@@ -158,7 +160,7 @@ export default function WorkspaceHomePage(): JSX.Element {
 
       <div className="workspace-home-section">
         <div className="workspace-home-section-header">
-          <span className="workspace-home-section-title">连接状态</span>
+          <span className="workspace-home-section-title">{t('workspace.connectionStatus')}</span>
           <div className="theme-selector">
             {THEMES.map((t) => (
               <button
@@ -184,10 +186,10 @@ export default function WorkspaceHomePage(): JSX.Element {
               />
               <span className="connection-label">
                 {relayConnected
-                  ? 'Relay 服务器已连接'
+                  ? t('workspace.relayConnected')
                   : relayConnecting
-                    ? `正在连接 Relay...${relayStatus?.reconnectAttempt ? ` (重试 ${relayStatus.reconnectAttempt})` : ''}`
-                    : '未连接 Relay 服务器'}
+                    ? `${t('workspace.relayConnecting')}${relayStatus?.reconnectAttempt ? ` (${relayStatus.reconnectAttempt})` : ''}`
+                    : t('workspace.relayDisconnected')}
               </span>
             </div>
             <div className="connection-actions">
@@ -197,7 +199,7 @@ export default function WorkspaceHomePage(): JSX.Element {
                   style={{ fontSize: 'var(--font-size-sm)', padding: '4px 12px' }}
                   onClick={() => setShowMobileModal(true)}
                 >
-                  连接手机
+                  {t('workspace.connectPhone')}
                 </button>
               )}
               {!relayConnected && !relayConnecting && (
@@ -206,12 +208,12 @@ export default function WorkspaceHomePage(): JSX.Element {
                   style={{ fontSize: 'var(--font-size-sm)', padding: '4px 12px' }}
                   onClick={() => setShowMobileModal(true)}
                 >
-                  连接手机
+                  {t('workspace.connectPhone')}
                 </button>
               )}
               {relayConnected && (
                 <button className="device-item-disconnect" onClick={handleDisconnectRelay}>
-                  断开
+                  {t('workspace.disconnect')}
                 </button>
               )}
             </div>
@@ -243,7 +245,7 @@ export default function WorkspaceHomePage(): JSX.Element {
                   <div className="connection-indicator">
                     <span className="status-dot" style={{ backgroundColor: 'var(--warning)' }} />
                     <span className="connection-label" style={{ color: 'var(--warning)' }}>
-                      等待手机连接...
+                      {t('workspace.waitingForMobile')}
                     </span>
                   </div>
                 </div>

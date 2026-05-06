@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useT } from '../../i18n/useT'
 import { useChatStore } from '../../stores/chat-store'
 import ChatMessage from './ChatMessage'
 import ThinkingIndicator from './ThinkingIndicator'
@@ -16,6 +17,7 @@ import {
 // ============================================================
 
 export default function MessageList(): JSX.Element {
+  const t = useT()
   // 订阅高频更新的 store 字段（每个 rAF 帧都可能变化）
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -160,8 +162,8 @@ export default function MessageList(): JSX.Element {
           </div>
         ) : (
           <div className="chat-empty">
-            向 AI 助手发送消息开始对话
-            <span className="chat-empty-hint">按 Enter 发送，Shift+Enter 换行</span>
+            {t('messageList.emptyState')}
+            <span className="chat-empty-hint">{t('messageList.hint')}</span>
           </div>
         )
       ) : (
@@ -169,17 +171,17 @@ export default function MessageList(): JSX.Element {
           {hiddenMessageCount > 0 && (
             <div className="history-window-banner">
               <div className="history-window-copy">
-                已优先渲染最近 {visibleMessages.length} 条消息，另外 {hiddenMessageCount} 条历史按需展开。
+                {t('messageList.historyBanner', { visible: visibleMessages.length, total: visibleMessages.length + hiddenMessageCount })}
               </div>
               <div className="history-window-actions">
                 <button className="history-window-btn" onClick={handleRevealMoreHistory}>
-                  再加载 {Math.min(hiddenMessageCount, INITIAL_HISTORY_RENDER_COUNT)} 条
+                  {t('messageList.loadMore', { count: Math.min(hiddenMessageCount, INITIAL_HISTORY_RENDER_COUNT) })}
                 </button>
                 <button
                   className="history-window-btn history-window-btn-secondary"
                   onClick={handleRevealAllHistory}
                 >
-                  展开全部
+                  {t('messageList.expandAll')}
                 </button>
               </div>
             </div>
@@ -201,7 +203,7 @@ export default function MessageList(): JSX.Element {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
           setUserScrolledUp(false)
         }}
-        title="滚动到底部"
+        title={t('messageList.scrollToBottom')}
       >
         ↓
       </button>

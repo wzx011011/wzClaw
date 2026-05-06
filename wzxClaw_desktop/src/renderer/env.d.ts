@@ -35,7 +35,7 @@ declare global {
       onPermissionRequest: (cb: (p: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => void) => () => void
       sendPermissionResponse: (response: { approved: boolean; sessionCache: boolean }) => Promise<void>
       // Settings
-      getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string }>
+      getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string; language?: string }>
       updateSettings: (request: Record<string, unknown>) => Promise<void>
       // Sessions
       listSessions: (request?: { activeWorkspaceId?: string }) => Promise<{ sessions: SessionMeta[]; runningSessionIds: string[] }>
@@ -70,7 +70,7 @@ declare global {
       listWorkspaces: (request?: { includeArchived?: boolean }) => Promise<Workspace[]>
       getWorkspace: (request: { workspaceId: string }) => Promise<Workspace | null>
       createWorkspace: (request: { title: string; description?: string }) => Promise<Workspace>
-      updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; progressSummary?: string } }) => Promise<Workspace>
+      updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }) => Promise<Workspace>
       deleteWorkspace: (request: { workspaceId: string }) => Promise<void>
       addWorkspaceProject: (request: { workspaceId: string; folderPath: string }) => Promise<Workspace>
       removeWorkspaceProject: (request: { workspaceId: string; projectId: string }) => Promise<Workspace>
@@ -111,6 +111,7 @@ declare global {
       onUsageUpdate: (cb: (p: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => () => void
       // Todo panel
       onTodoUpdated: (cb: (p: { todos: Array<{ content: string; status: string; activeForm: string }> }) => void) => () => void
+      loadTodos: (sessionId: string) => Promise<Array<{ content: string; status: string; activeForm: string }>>
       // Shell utilities
       openInExplorer: (folderPath: string) => Promise<void>
       getExtensionPaths: () => Promise<{ commandsDir: string; skillsDir: string }>

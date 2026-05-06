@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import type { Workspace } from '../../../shared/types'
+import type { Workspace, SessionMeta } from '../../../shared/types'
+import { useWorkspaceStore } from '../../stores/workspace-store'
+import { useT } from '../../i18n/useT'
+import { formatRelativeTime } from '../../i18n/formatRelativeTime'
 
 interface WorkspaceCardProps {
   workspace: Workspace
@@ -10,10 +13,17 @@ interface WorkspaceCardProps {
 }
 
 export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, onRename }: WorkspaceCardProps): JSX.Element {
+  const t = useT()
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(workspace.title)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const timeAgo = formatTimeAgo(workspace.updatedAt)
+  const timeAgo = formatRelativeTime(workspace.updatedAt)
+  const sessions = useWorkspaceStore((s) => s.workspaceSessions[workspace.id])
+
+  // Load sessions when card mounts
+  useEffect(() => {
+    useWorkspaceStore.getState().loadWorkspaceSessions(workspace.id)
+  }, [workspace.id])
 
   // 内联确认 5 秒后自动取消，防止误点后遗留状态
   useEffect(() => {
@@ -59,7 +69,7 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
           {!isRenaming && (
             <button
               className="workspace-card-btn"
-              title="重命名"
+              title={t('common.rename')}
               onClick={() => setIsRenaming(true)}
             >
               ✎
@@ -67,7 +77,7 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
           )}
           <button
             className="workspace-card-btn"
-            title={workspace.archived ? '取消归档' : '归档'}
+            title={workspace.archived ? t('workspaceCard.unarchive') : t('workspaceCard.archive')}
             onClick={() => onArchive(workspace.id)}
           >
             {workspace.archived ? '↩' : '📦'}
@@ -76,14 +86,14 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
             <>
               <button
                 className="workspace-card-btn workspace-card-btn-danger"
-                title="确认删除"
+                title={t('workspaceCard.confirmDelete')}
                 onClick={() => { onDelete(workspace.id); setConfirmingDelete(false) }}
               >
                 ✓
               </button>
               <button
                 className="workspace-card-btn"
-                title="取消"
+                title={t('workspaceCard.cancel')}
                 onClick={() => setConfirmingDelete(false)}
               >
                 ↩
@@ -92,7 +102,7 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
           ) : (
             <button
               className="workspace-card-btn workspace-card-btn-danger"
-              title="删除"
+              title={t('common.delete')}
               onClick={() => setConfirmingDelete(true)}
             >
               ✕
@@ -102,12 +112,6 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
       </div>
       {workspace.description && (
         <p className="workspace-card-desc">{workspace.description}</p>
-      )}
-      {workspace.progressSummary && (
-        <div className="workspace-card-progress">
-          <span className="workspace-card-progress-icon">📊</span>
-          <span className="workspace-card-progress-text">{workspace.progressSummary}</span>
-        </div>
       )}
       {workspace.projects.length > 0 && (
         <ul className="workspace-card-folders">
@@ -120,26 +124,33 @@ export default function WorkspaceCard({ workspace, onOpen, onArchive, onDelete, 
           ))}
         </ul>
       )}
+      {/* Session list with task status */}
+      {sessions && sessions.length > 0 && (
+        <ul className="workspace-card-sessions">
+          {sessions.slice(0, 5).map((session) => (
+            <li key={session.id} className="workspace-card-session-item">
+              <span className={`workspace-card-session-dot${session.isRunning ? ' running' : ''}`} />
+              <span className="workspace-card-session-title">{session.title || session.preview || '新会话'}</span>
+              {session.todoSummary && (
+                <span className="workspace-card-session-todo">{session.todoSummary}</span>
+              )}
+            </li>
+          ))}
+          {sessions.length > 5 && (
+            <li className="workspace-card-session-more">
+              +{sessions.length - 5} 更多会话
+            </li>
+          )}
+        </ul>
+      )}
       <div className="workspace-card-meta">
         {workspace.projects.length === 0 && (
-          <span className="workspace-card-no-folder">无绑定文件夹</span>
+          <span className="workspace-card-no-folder">{t('workspace.noFolder')}</span>
         )}
         <span className="workspace-card-time">{timeAgo}</span>
       </div>
     </div>
   )
-}
-
-function formatTimeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp
-  const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} 天前`
-  return new Date(timestamp).toLocaleDateString()
 }
 
 /** Show up to the last 2 path segments to keep the UI compact */

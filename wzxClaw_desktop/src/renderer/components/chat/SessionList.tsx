@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useT } from '../../i18n/useT'
+import { formatRelativeTime } from '../../i18n/formatRelativeTime'
 import { useChatStore } from '../../stores/chat-store'
 import { useLayoutStore } from '../../stores/layout-store'
 import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu'
@@ -8,23 +10,6 @@ import type { SessionMeta } from '../../../shared/types'
 // SessionList — 增强版会话列表
 // 支持：搜索过滤、时间分组、会话预览、右键菜单、置顶
 // ============================================================
-
-/** 相对时间格式化（中文） */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now()
-  const diff = now - timestamp
-  const minutes = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
-  if (hours < 24) return `${hours} 小时前`
-  if (days < 2) return '昨天'
-
-  const date = new Date(timestamp)
-  return `${date.getMonth() + 1}月${date.getDate()}日`
-}
 
 /** 判断会话属于哪个时间分组 */
 function getSessionGroup(timestamp: number): 'today' | 'yesterday' | 'earlier' {
@@ -37,19 +22,20 @@ function getSessionGroup(timestamp: number): 'today' | 'yesterday' | 'earlier' {
   return 'earlier'
 }
 
-const GROUP_LABELS: Record<string, string> = {
-  pinned: '📌 置顶',
-  today: '今天',
-  yesterday: '昨天',
-  earlier: '更早',
-}
-
 const GROUP_ORDER: string[] = ['pinned', 'today', 'yesterday', 'earlier']
 
 type ContextMenuState = { x: number; y: number; sessionId: string } | null
 
 export default function SessionList(): JSX.Element | null {
+  const t = useT()
   const sessions = useChatStore((s) => s.sessions)
+
+  const GROUP_LABELS: Record<string, string> = {
+    pinned: t('sessionList.pinned'),
+    today: t('sessionList.today'),
+    yesterday: t('sessionList.yesterday'),
+    earlier: t('sessionList.earlier'),
+  }
   const runningSessionIds = useChatStore((s) => s.runningSessionIds)
   const conversationId = useChatStore((s) => s.conversationId)
   const switchSession = useChatStore((s) => s.switchSession)
@@ -177,11 +163,11 @@ export default function SessionList(): JSX.Element | null {
     if (!session) return []
     const isPinned = pinnedSessionIds.includes(session.id)
     return [
-      { label: '重命名', shortcut: 'F2', onClick: () => handleStartRename(session.id, session.title) },
-      { label: isPinned ? '取消置顶' : '置顶', onClick: () => isPinned ? unpinSession(session.id) : pinSession(session.id) },
-      { label: '复制会话', onClick: () => duplicateSession(session.id) },
+      { label: t('sessionList.rename'), shortcut: 'F2', onClick: () => handleStartRename(session.id, session.title) },
+      { label: isPinned ? t('sessionList.unpin') : t('sessionList.pin'), onClick: () => isPinned ? unpinSession(session.id) : pinSession(session.id) },
+      { label: t('sessionList.duplicate'), onClick: () => duplicateSession(session.id) },
       { separator: true, label: '', onClick: () => {} },
-      { label: '删除', onClick: () => setConfirmDeleteId(session.id) },
+      { label: t('sessionList.delete'), onClick: () => setConfirmDeleteId(session.id) },
     ]
   }, [contextMenu, sessions, pinnedSessionIds, handleStartRename, unpinSession, pinSession, duplicateSession])
 
@@ -200,9 +186,9 @@ export default function SessionList(): JSX.Element | null {
     >
       {confirmDeleteId === session.id ? (
         <div className="session-item-confirm">
-          <span>确定删除此会话？此操作不可撤销。</span>
-          <button className="permission-btn permission-btn-deny" onClick={handleConfirmDelete}>删除</button>
-          <button className="permission-btn" onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); setContextMenu(null) }}>取消</button>
+          <span>{t('sessionList.deleteConfirm')}</span>
+          <button className="permission-btn permission-btn-deny" onClick={handleConfirmDelete}>{t('sessionList.delete')}</button>
+          <button className="permission-btn" onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); setContextMenu(null) }}>{t('common.cancel')}</button>
         </div>
       ) : (
         <>
@@ -224,9 +210,9 @@ export default function SessionList(): JSX.Element | null {
                   e.stopPropagation()
                   handleStartRename(session.id, session.title)
                 }}
-                title="双击重命名，右键更多操作"
+                title={t('sessionList.doubleClickHint')}
               >
-                {isRunning && <span className="session-item-running-dot" title="正在运行" />}
+                {isRunning && <span className="session-item-running-dot" title={t('sessionList.running')} />}
                 {session.title}
               </div>
             )}
@@ -237,7 +223,7 @@ export default function SessionList(): JSX.Element | null {
             )}
             <div className="session-item-time">
               {formatRelativeTime(session.updatedAt)}
-              {session.messageCount > 0 && ` · ${session.messageCount} 条消息`}
+              {session.messageCount > 0 && ` · ${t('sessionList.messageCount', { count: session.messageCount })}`}
             </div>
           </div>
         </>
@@ -256,7 +242,7 @@ export default function SessionList(): JSX.Element | null {
         <input
           ref={searchInputRef}
           type="text"
-          placeholder="搜索会话..."
+          placeholder={t('sessionList.searchPlaceholder')}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -273,8 +259,8 @@ export default function SessionList(): JSX.Element | null {
       <div className="session-list-body">
         {filteredSessions.length === 0 ? (
           <div className="session-list-empty">
-            <p>{searchQuery ? '没有匹配的会话' : '暂无会话'}</p>
-            <p>{searchQuery ? '尝试其他关键词' : '开始对话以创建会话'}</p>
+            <p>{searchQuery ? t('sessionList.noMatch') : t('sessionList.empty')}</p>
+            <p>{searchQuery ? t('sessionList.tryOtherKeywords') : t('sessionList.startChat')}</p>
           </div>
         ) : (
           GROUP_ORDER.filter(g => groupedSessions[g]?.length).map(group => (

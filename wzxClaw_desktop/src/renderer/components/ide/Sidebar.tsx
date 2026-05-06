@@ -1,6 +1,7 @@
 import React from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useT } from '../../i18n/useT'
 import FileExplorer from './FileExplorer'
 import SessionList from '../chat/SessionList'
 import type { SidebarPanel } from '../../stores/layout-store'
@@ -14,6 +15,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activePanel }: SidebarProps): JSX.Element {
+  const t = useT()
   const rootPath = useWorkspaceStore((s) => s.rootPath)
   const isLoading = useWorkspaceStore((s) => s.isLoading)
   const openFolder = useWorkspaceStore((s) => s.openFolder)
@@ -27,10 +29,10 @@ export default function Sidebar({ activePanel }: SidebarProps): JSX.Element {
         {activePanel === 'explorer' ? (
           !rootPath ? (
             <button className="open-folder-btn" onClick={openFolder}>
-              Open Folder
+              {t('sidebar.openFolder')}
             </button>
           ) : isLoading ? (
-            <div className="sidebar-loading">Loading...</div>
+            <div className="sidebar-loading">{t('common.loading')}</div>
           ) : (
             <>
               {workspaceName && (
@@ -42,10 +44,10 @@ export default function Sidebar({ activePanel }: SidebarProps): JSX.Element {
         ) : (
           <div className="sidebar-sessions">
             <div className="sidebar-sessions-header">
-              <span>会话列表</span>
+              <span>{t('sidebar.sessionList')}</span>
               <button
                 className="sidebar-new-session-btn"
-                title="新建会话"
+                title={t('sidebar.newSession')}
                 onClick={() => useChatStore.getState().createSession()}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

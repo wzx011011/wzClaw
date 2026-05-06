@@ -1,5 +1,6 @@
 import React from 'react'
 import { useTerminalStore } from '../../stores/terminal-store'
+import { useT } from '../../i18n/useT'
 
 // ============================================================
 // TerminalTabs — Tab bar for managing multiple terminal instances
@@ -7,6 +8,7 @@ import { useTerminalStore } from '../../stores/terminal-store'
 // ============================================================
 
 export default function TerminalTabs(): JSX.Element {
+  const t = useT()
   const tabs = useTerminalStore((s) => s.tabs)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const switchTerminal = useTerminalStore((s) => s.switchTerminal)
@@ -28,7 +30,7 @@ export default function TerminalTabs(): JSX.Element {
               e.stopPropagation()
               closeTerminal(tab.id)
             }}
-            title="Close terminal"
+            title={t('terminalTabs.closeTerminal')}
           >
             {'\u00D7'}
           </button>
@@ -37,7 +39,7 @@ export default function TerminalTabs(): JSX.Element {
       <button
         className="terminal-tab-new"
         onClick={() => createTerminal()}
-        title="New terminal (Ctrl+Shift+`)"
+        title={t('terminalTabs.newTerminal')}
       >
         +
       </button>
