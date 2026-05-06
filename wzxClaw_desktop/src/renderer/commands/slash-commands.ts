@@ -135,6 +135,16 @@ ${cmdLines}
     }
   },
   {
+    name: 'plan',
+    description: 'Toggle plan mode — read-only analysis before making changes',
+    handler: {
+      type: 'action',
+      execute: (_args: string) => {
+        window.wzxclaw.togglePlanMode?.().catch(() => {})
+      }
+    }
+  },
+  {
     name: 'insights',
     description: 'Analyze your coding sessions and generate optimization insights',
     handler: {

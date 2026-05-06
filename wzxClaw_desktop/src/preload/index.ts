@@ -265,6 +265,8 @@ const api = {
   },
   sendPlanDecision: (request: { approved: boolean }) =>
     ipcRenderer.invoke('agent:plan-decision', request),
+  togglePlanMode: () =>
+    ipcRenderer.invoke('agent:toggle_plan_mode'),
 
   // File history / revert (Phase 3.3)
   getFileHistory: (request: { filePath: string }) =>

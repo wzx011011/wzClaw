@@ -150,6 +150,17 @@ export default function ChatPanel(): JSX.Element {
   const handlePermissionChange = (mode: PermissionMode) => {
     setPermissionMode(mode)
     setShowPermissionDropdown(false)
+    // When selecting plan mode, activate actual plan mode if not already active
+    if (mode === 'plan' && !planModeActive) {
+      window.wzxclaw.togglePlanMode?.().then((result) => {
+        setPlanModeActive(result.active)
+      }).catch(() => {})
+    } else if (mode !== 'plan' && planModeActive) {
+      // Exiting plan mode via permission dropdown
+      window.wzxclaw.togglePlanMode?.().then((result) => {
+        setPlanModeActive(result.active)
+      }).catch(() => {})
+    }
     window.wzxclaw.setPermissionMode?.({ mode }).catch(() => {
       useToastStore.getState().show('权限模式切换失败', 'error')
     })
@@ -490,6 +501,14 @@ export default function ChatPanel(): JSX.Element {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Shift+Tab: toggle plan mode
+    if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault()
+      window.wzxclaw.togglePlanMode?.().then((result) => {
+        setPlanModeActive(result.active)
+      }).catch(() => {})
+      return
+    }
     // If mention or slash picker is visible, let them handle navigation keys
     if ((showMentionPicker || showSlashPicker) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Escape')) {
       return // Pickers handle these via window keydown

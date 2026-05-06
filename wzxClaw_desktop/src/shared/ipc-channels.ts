@@ -78,6 +78,7 @@ export const IPC_CHANNELS = {
   'agent:plan-mode-entered': 'agent:plan-mode-entered',
   'agent:plan-mode-exited': 'agent:plan-mode-exited',
   'agent:plan-decision': 'agent:plan-decision',
+  'agent:toggle_plan_mode': 'agent:toggle_plan_mode',
 
   // Context channels (renderer -> main)
   'agent:compact_context': 'agent:compact_context',
@@ -247,6 +248,7 @@ export interface IpcRequestPayloads {
   'file:revert': { toolCallId: string }
   'agent:compact_context': void
   'agent:plan-decision': { approved: boolean }
+  'agent:toggle_plan_mode': void
   'terminal:create': { cwd: string }
   'terminal:kill': { terminalId: string }
   'terminal:input': { terminalId: string; data: string }
@@ -340,6 +342,7 @@ export interface IpcResponsePayloads {
   'file:revert': { success: boolean; error?: string }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
   'agent:plan-decision': void
+  'agent:toggle_plan_mode': { active: boolean }
   'terminal:create': { terminalId: string }
   'terminal:kill': void
   'terminal:input': void

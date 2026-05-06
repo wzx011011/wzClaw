@@ -362,6 +362,21 @@ app.whenReady().then(async () => {
     planModeController.resolveDecision(request.approved)
   })
 
+  // IPC handler: user toggles plan mode from UI (/plan command or Shift+Tab)
+  ipcMain.handle(IPC_CHANNELS['agent:toggle_plan_mode'], () => {
+    const wasActive = permissionManager.isPlanMode()
+    const newActive = !wasActive
+    permissionManager.setPlanMode(newActive)
+    if (newActive) {
+      mainWindow.webContents.send(IPC_CHANNELS['agent:plan-mode-entered'])
+      relayClient.broadcast('stream:agent:plan_mode_entered', {})
+    } else {
+      mainWindow.webContents.send(IPC_CHANNELS['agent:plan-mode-exited'], { plan: '' })
+      relayClient.broadcast('stream:agent:plan_mode_exited', { plan: '' })
+    }
+    return { active: newActive }
+  })
+
   // File history manager — snapshots files before each AI write for session-scoped revert
   const historyManager = new FileHistoryManager()
 

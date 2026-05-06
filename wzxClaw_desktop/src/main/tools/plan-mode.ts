@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import path from 'path'
+import fs from 'fs'
+import { app } from 'electron'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import type { PermissionManager } from '../permission/permission-manager'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -138,6 +141,17 @@ export class ExitPlanModeTool implements Tool {
         output: 'Plan rejected by user. Planning mode cancelled.',
         isError: true
       }
+    }
+
+    // Persist plan to ~/.wzxclaw/plans/<timestamp-slug>.md
+    try {
+      const plansDir = path.join(app.getPath('home'), '.wzxclaw', 'plans')
+      fs.mkdirSync(plansDir, { recursive: true })
+      const slug = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const planFile = path.join(plansDir, `${slug}.md`)
+      fs.writeFileSync(planFile, plan, 'utf-8')
+    } catch {
+      // Non-critical — don't fail if persistence fails
     }
 
     return {

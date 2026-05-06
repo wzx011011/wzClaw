@@ -98,7 +98,7 @@ export class AgentLoop {
     this.conversation.appendUserMessage(userMessage, images)
 
     // 构建系统提示（委托给 SystemPromptBuilder）
-    const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace)
+    const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace, this.permissionManager.isPlanMode())
     const toolDefinitions = this.toolRegistry.getDefinitions().map(t => ({
       name: t.name,
       description: t.description,

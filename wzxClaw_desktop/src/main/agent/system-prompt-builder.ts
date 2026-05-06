@@ -12,6 +12,35 @@ import { buildEnvInfo } from '../context/env-info'
 import { MemoryManager } from '../memory/memory-manager'
 import { countTokens } from '../context/token-counter'
 
+// ============================================================
+// Plan Mode System Prompt — 5-stage workflow instructions
+// ============================================================
+
+const PLAN_MODE_INSTRUCTIONS = `
+<plan_mode>
+You are currently in PLANNING MODE. Follow this 5-stage workflow:
+
+1. **READ** — Thoroughly read and analyze all relevant files and code before proposing any changes. Use FileRead, Grep, Glob, and other read-only tools freely.
+
+2. **ANALYZE** — Identify the root cause, dependencies, and potential impact of changes. Consider edge cases and existing patterns.
+
+3. **PLAN** — Formulate a concrete, step-by-step implementation plan. Each step should be specific and actionable.
+
+4. **DOCUMENT** — When your analysis is complete, call ExitPlanMode with a markdown plan describing:
+   - What changes you will make and why
+   - The specific files and functions affected
+   - The order of implementation
+   - Any risks or trade-offs
+
+5. **EXECUTE** — After the user approves your plan, write operations will be unblocked and you may proceed with implementation.
+
+IMPORTANT:
+- Do NOT make any file changes (FileWrite, FileEdit, Bash) while in plan mode.
+- Focus on understanding the codebase thoroughly before proposing changes.
+- Be specific in your plan — vague plans will be rejected.
+</plan_mode>
+`
+
 export interface SystemPromptResult {
   /** 完整系统提示（含缓存边界） */
   systemPrompt: string
@@ -46,7 +75,8 @@ export interface SystemPromptBreakdown {
  */
 export async function buildSystemPromptBreakdown(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeWorkspace?: Workspace | null
+  activeWorkspace?: Workspace | null,
+  planModeActive?: boolean
 ): Promise<SystemPromptBreakdown> {
   const roots = config.projectRoots ?? [config.workingDirectory]
 
@@ -82,6 +112,7 @@ export async function buildSystemPromptBreakdown(
   if (mergedInstructions) dynamicParts.push(mergedInstructions)
   if (memorySection) dynamicParts.push(memorySection)
   if (taskContext) dynamicParts.push(taskContext)
+  if (planModeActive) dynamicParts.push(PLAN_MODE_INSTRUCTIONS)
 
   const dynamicTokens = envInfoTokens + gitContextTokens
     + countTokens(mergedInstructions)
@@ -116,9 +147,10 @@ export async function buildSystemPromptBreakdown(
  */
 export async function buildSystemPrompt(
   config: Pick<AgentConfig, 'systemPrompt' | 'workingDirectory' | 'projectRoots' | 'model' | 'provider'>,
-  activeWorkspace?: Workspace | null
+  activeWorkspace?: Workspace | null,
+  planModeActive?: boolean
 ): Promise<string> {
-  const breakdown = await buildSystemPromptBreakdown(config, activeWorkspace)
+  const breakdown = await buildSystemPromptBreakdown(config, activeWorkspace, planModeActive)
   return breakdown.systemPrompt
 }
 
