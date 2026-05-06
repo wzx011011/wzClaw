@@ -228,7 +228,7 @@ const api = {
   connectRelay: (request: { token: string }) => ipcRenderer.invoke('relay:connect', request),
   disconnectRelay: () => ipcRenderer.invoke('relay:disconnect'),
   onRelayStatus: (callback: (payload: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => void) => {
-    const handler = (_: unknown, payload: any) => callback(payload)
+    const handler = (_: unknown, payload: { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }) => callback(payload)
     ipcRenderer.on('relay:status', handler)
     return () => ipcRenderer.removeListener('relay:status', handler)
   },
@@ -311,7 +311,7 @@ const api = {
   onInsightsProgress: (callback: (payload: { stage: string; current: number; total: number; message: string }) => void) => {
     const handler = (_: unknown, payload: { stage: string; current: number; total: number; message: string }) => callback(payload)
     ipcRenderer.on('insights:progress', handler)
-    return () => ipcRenderer.removeAllListeners('insights:progress')
+    return () => ipcRenderer.removeListener('insights:progress', handler)
   },
 
   // Context breakdown — returns detailed token usage per category
@@ -321,6 +321,20 @@ const api = {
   // Skills — list, get prompt, reload, invoke
   listSkills: (): Promise<import('../shared/types-skill').SkillInfo[]> =>
     ipcRenderer.invoke('skill:list'),
+
+  // Tools — list registered agent tools
+  listTools: (): Promise<Array<{ name: string; description: string; isReadOnly: boolean; requiresApproval: boolean }>> =>
+    ipcRenderer.invoke('tools:list'),
+
+  // MCP — list servers, add/remove, list tools
+  listMcpServers: (): Promise<Array<{ name: string; transport: string; connected: boolean }>> =>
+    ipcRenderer.invoke('mcp:list_servers'),
+  addMcpServer: (request: { name: string; command?: string; args?: string[]; url?: string; transport: 'stdio' | 'sse' }): Promise<void> =>
+    ipcRenderer.invoke('mcp:add_server', request),
+  removeMcpServer: (request: { name: string }): Promise<void> =>
+    ipcRenderer.invoke('mcp:remove_server', request),
+  listMcpTools: (): Promise<Array<{ name: string; description: string; serverName: string }>> =>
+    ipcRenderer.invoke('mcp:list_tools'),
   getSkillPrompt: (request: { name: string; args: string }): Promise<string | null> =>
     ipcRenderer.invoke('skill:get-prompt', request),
   reloadSkills: (): Promise<void> =>
@@ -360,6 +374,8 @@ const api = {
     ipcRenderer.invoke('plugin:get-user-config', request),
   setPluginUserConfig: (request: { pluginName: string; values: Record<string, unknown> }): Promise<{ success: boolean; message: string }> =>
     ipcRenderer.invoke('plugin:set-user-config', request),
+  searchPluginMarketplace: (request?: { query?: string }): Promise<import('../shared/types-plugin').MarketplacePluginDisplay[]> =>
+    ipcRenderer.invoke('plugin:search_marketplace', request ?? {}),
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

@@ -63,6 +63,7 @@ function createMockPermissionManager(approved: boolean = true) {
       // Tools named file_read or similar read-only tools → no approval
       return name.includes('write') || name.includes('delete')
     }),
+    isPlanMode: vi.fn().mockReturnValue(false),
     getPlanModeRejection: vi.fn().mockReturnValue(null),
     clearSession: vi.fn(),
     isRendererConnected: vi.fn().mockReturnValue(true)
@@ -316,7 +317,7 @@ describe('AgentLoop', () => {
     loop.cancel()
 
     // Next call should complete (generator returns)
-    const nextEvent = await gen.next()
+    const _nextEvent = await gen.next()
     // Generator should be done after cancellation
     // The exact behavior depends on implementation — may get done or may end
     // We verify cancellation was triggered

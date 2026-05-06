@@ -76,6 +76,7 @@ function makePermissionMgr(approved = true) {
     requestApproval: vi.fn().mockResolvedValue(approved),
     isApproved: vi.fn().mockReturnValue(false),
     needsApproval: vi.fn((name: string) => name.includes('Write') || name.includes('Edit') || name.includes('Bash')),
+    isPlanMode: vi.fn().mockReturnValue(false),
     getPlanModeRejection: vi.fn().mockReturnValue(null),
     clearSession: vi.fn(),
     isRendererConnected: vi.fn().mockReturnValue(true),

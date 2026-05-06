@@ -229,7 +229,7 @@ export function registerIpcHandlers(
             break
           case 'agent:done':
             sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
-            relayEvent('agent:done', { usage: agentEvent.usage, turnCount: (agentEvent as any).turnCount })
+            relayEvent('agent:done', { usage: agentEvent.usage, turnCount: agentEvent.turnCount })
             // Track cost and push usage:update to renderer (Phase 4.4)
             costTracker.addUsage(
               agentConfig.model,
@@ -1274,7 +1274,7 @@ export function registerIpcHandlers(
     }, agentLoop.activeWorkspace)
 
     // 2. Tool definitions — separate built-in vs MCP
-    const allToolDefs = toolRegistry.getDefinitions()
+    const allToolDefs = agentLoop.getToolDefinitions()
     const allToolTokens = countTokens(JSON.stringify(allToolDefs))
     const mcpToolNames = new Set(mcpManager.listAllTools().map(t => t.name))
     const builtinDefs = allToolDefs.filter(d => !mcpToolNames.has(d.name))
@@ -1384,6 +1384,22 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
+  // Tools — list registered tools
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['tools:list'], async () => {
+    // Intentionally accesses registry for approval/readonly checks — data flows
+    // out as plain objects, registry reference stays in main process
+    const toolRegistry = agentLoop.getToolRegistry()
+    const approvalRequired = new Set(toolRegistry.getApprovalRequired())
+    return toolRegistry.getDefinitions().map(d => ({
+      name: d.name,
+      description: d.description,
+      isReadOnly: toolRegistry.isReadOnly(d.name),
+      requiresApproval: approvalRequired.has(d.name),
+    }))
+  })
+
+  // ============================================================
   // Plugins — list, get, install, uninstall, enable, disable, reload, get-skills
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['plugin:list'], async () => {
@@ -1470,6 +1486,12 @@ export function registerIpcHandlers(
   // Plugins: install-from-source (marketplace: git/npm/url)
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['plugin:install-from-source'], async (_event, request) => {
+    // Validate request with Zod schema
+    const schema = IpcSchemas['plugin:install-from-source'].request
+    const parsed = schema.safeParse(request)
+    if (!parsed.success) {
+      return { success: false, message: `Invalid request: ${parsed.error.message}` }
+    }
     const { PluginInstaller } = await import('./plugins')
     const scope = request.scope ?? 'user'
     const projectRoot = scope === 'project'
@@ -1482,7 +1504,7 @@ export function registerIpcHandlers(
   // Plugins: get-output-styles — merged CSS from all enabled plugins
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['plugin:get-output-styles'], async () => {
-    const { pluginRegistry, loadOutputStyles } = await import('./plugins')
+    const { pluginRegistry } = await import('./plugins')
     const { getAllOutputStylesCss } = await import('./plugins/plugin-output-styles')
     const plugins = pluginRegistry.getAll().filter(p => p.enabled)
     return getAllOutputStylesCss(plugins)
@@ -1512,5 +1534,122 @@ export function registerIpcHandlers(
       userConfigValues: plugin.userConfigValues,
     })
     return { success: true, message: `User config saved for '${request.pluginName}'` }
+  })
+
+  // ============================================================
+  // Plugin: search_marketplace — discover installable plugins
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['plugin:search_marketplace'], async (_event, request?: { query?: string }) => {
+    // Validate request with Zod schema
+    const schema = IpcSchemas['plugin:search_marketplace'].request
+    const parsed = schema.safeParse(request ?? {})
+    if (!parsed.success) {
+      return []
+    }
+    const query = parsed.data?.query?.toLowerCase() ?? ''
+    try {
+      // Built-in marketplace: curated list of known plugins
+      // NOTE: These are placeholder entries for UI demonstration.
+      // installSource repos do not exist yet — isPlaceholder disables install button.
+      const builtins: import('../shared/types-plugin').MarketplacePluginDisplay[] = [
+        {
+          name: 'git-workflow',
+          description: 'Git workflow automation — commit, branch, rebase, and PR management',
+          tags: ['git', 'workflow', 'vcs'],
+          category: 'Version Control',
+          installSource: { source: 'github', repo: 'anthropics/git-workflow-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'code-quality',
+          description: 'Code quality analysis — linting, formatting, and best practices enforcement',
+          tags: ['quality', 'linting', 'formatting'],
+          category: 'Code Quality',
+          installSource: { source: 'github', repo: 'anthropics/code-quality-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'project-analysis',
+          description: 'Project structure analysis and documentation generation',
+          tags: ['analysis', 'documentation', 'structure'],
+          category: 'Analysis',
+          installSource: { source: 'github', repo: 'anthropics/project-analysis-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'context-aware-agent',
+          description: 'Context-aware code suggestions based on project structure and dependencies',
+          tags: ['agent', 'context', 'suggestions'],
+          category: 'AI Enhancement',
+          installSource: { source: 'github', repo: 'anthropics/context-aware-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'test-runner',
+          description: 'Automated test discovery, execution, and coverage reporting',
+          tags: ['testing', 'coverage', 'automation'],
+          category: 'Testing',
+          installSource: { source: 'github', repo: 'anthropics/test-runner-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'docker-helper',
+          description: 'Docker container management and Dockerfile optimization',
+          tags: ['docker', 'containers', 'devops'],
+          category: 'DevOps',
+          installSource: { source: 'github', repo: 'anthropics/docker-helper-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'database-tools',
+          description: 'Database schema analysis, migration management, and query optimization',
+          tags: ['database', 'sql', 'migrations'],
+          category: 'Data',
+          installSource: { source: 'github', repo: 'anthropics/database-tools-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+        {
+          name: 'security-scanner',
+          description: 'Security vulnerability scanning and dependency audit',
+          tags: ['security', 'audit', 'vulnerabilities'],
+          category: 'Security',
+          installSource: { source: 'github', repo: 'anthropics/security-scanner-plugin' },
+          installed: false,
+          isPlaceholder: true,
+        },
+      ]
+
+      // Mark installed plugins
+      const { pluginRegistry } = await import('./plugins')
+      const installedNames = new Set(pluginRegistry.getAll().map(p => p.name))
+      for (const entry of builtins) {
+        entry.installed = installedNames.has(entry.name)
+        if (entry.installed) {
+          const plugin = pluginRegistry.find(entry.name)
+          entry.enabled = plugin?.enabled ?? false
+        }
+      }
+
+      // Filter by query
+      if (query) {
+        return builtins.filter(p =>
+          p.name.toLowerCase().includes(query) ||
+          (p.description?.toLowerCase().includes(query) ?? false) ||
+          (p.tags?.some(t => t.toLowerCase().includes(query)) ?? false) ||
+          (p.category?.toLowerCase().includes(query) ?? false)
+        )
+      }
+      return builtins
+    } catch (err) {
+      console.error('[plugin:search_marketplace]', err)
+      return []
+    }
   })
 }

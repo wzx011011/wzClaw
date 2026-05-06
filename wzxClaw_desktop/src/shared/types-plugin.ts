@@ -300,6 +300,27 @@ export type MarketplacePluginSource =
   | { source: 'url'; url: string }
 
 /**
+ * A plugin entry ready for display in the marketplace tab.
+ */
+export interface MarketplacePluginDisplay {
+  name: string
+  description?: string
+  version?: string
+  author?: string
+  homepage?: string
+  tags?: string[]
+  category?: string
+  /** Installation source */
+  installSource: MarketplacePluginSource
+  /** Whether already installed */
+  installed: boolean
+  /** Whether currently enabled */
+  enabled?: boolean
+  /** Placeholder entry — install not yet available */
+  isPlaceholder?: boolean
+}
+
+/**
  * Plugin installation result.
  */
 export interface PluginInstallResult {

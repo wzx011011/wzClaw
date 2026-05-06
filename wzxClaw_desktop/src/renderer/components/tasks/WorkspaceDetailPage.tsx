@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
-import { useWorkspaceStore } from '../../stores/workspace-store'
 
 export default function WorkspaceDetailPage(): JSX.Element {
   const viewingWorkspace = useWorkspaceStore((s) => s.getViewingWorkspace)()
@@ -9,7 +8,7 @@ export default function WorkspaceDetailPage(): JSX.Element {
   const addProject = useWorkspaceStore((s) => s.addProject)
   const removeProject = useWorkspaceStore((s) => s.removeProject)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
-  const openFolder = useWorkspaceStore((s) => s.openFolder)
+  const _openFolder = useWorkspaceStore((s) => s.openFolder)
 
   const [isAddingFolder, setIsAddingFolder] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)

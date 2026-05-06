@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { UserMessageSchema, TokenUsageSchema } from './types'
 import type { FileTreeNode, SessionMeta, AgentStep, Workspace } from './types'
 
 // ============================================================
@@ -179,6 +178,9 @@ export const IPC_CHANNELS = {
   'skill:reload': 'skill:reload',
   'skill:invoke': 'skill:invoke',
 
+  // Tool list (renderer -> main)
+  'tools:list': 'tools:list',
+
   // Plugin channels (renderer -> main)
   'plugin:list': 'plugin:list',
   'plugin:get': 'plugin:get',
@@ -192,6 +194,7 @@ export const IPC_CHANNELS = {
   'plugin:get-output-styles': 'plugin:get-output-styles',
   'plugin:get-user-config': 'plugin:get-user-config',
   'plugin:set-user-config': 'plugin:set-user-config',
+  'plugin:search_marketplace': 'plugin:search_marketplace',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -290,6 +293,8 @@ export interface IpcRequestPayloads {
   'skill:reload': void
   'skill:invoke': { name: string; args: string }
 
+  'tools:list': void
+
   // Plugin channels
   'plugin:list': void
   'plugin:get': { name: string }
@@ -303,6 +308,7 @@ export interface IpcRequestPayloads {
   'plugin:get-output-styles': void
   'plugin:get-user-config': { pluginName: string }
   'plugin:set-user-config': { pluginName: string; values: Record<string, unknown> }
+  'plugin:search_marketplace': { query?: string }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -356,6 +362,7 @@ export interface IpcResponsePayloads {
   'git:status': { branch: string; changedFiles: number }
   'permission:get_mode': { mode: string }
   'permission:set_mode': void
+  'tools:list': Array<{ name: string; description: string; isReadOnly: boolean; requiresApproval: boolean }>
   'mcp:list_servers': Array<{ name: string; transport: string; connected: boolean }>
   'mcp:add_server': void
   'mcp:remove_server': void
@@ -397,6 +404,7 @@ export interface IpcResponsePayloads {
   'plugin:get-output-styles': { css: string; styleNames: string[] }
   'plugin:get-user-config': Record<string, unknown>
   'plugin:set-user-config': { success: boolean; message: string }
+  'plugin:search_marketplace': import('./types-plugin').MarketplacePluginDisplay[]
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -521,5 +529,44 @@ export const IpcSchemas = {
   'session:duplicate': {
     request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ newSessionId: z.string() })
+  },
+  'plugin:install-from-source': {
+    request: z.object({
+      source: z.union([
+        z.object({ source: z.literal('github'), repo: z.string().min(1), ref: z.string().optional(), path: z.string().optional() }),
+        z.object({ source: z.literal('git'), url: z.string().min(1), ref: z.string().optional(), path: z.string().optional() }),
+        z.object({ source: z.literal('url'), url: z.string().min(1), headers: z.record(z.string()).optional() }),
+        z.object({ source: z.literal('directory'), path: z.string().min(1) }),
+      ]),
+      scope: z.enum(['user', 'project', 'local', 'managed']).optional()
+    }),
+    response: z.object({
+      success: z.boolean(),
+      message: z.string(),
+      pluginId: z.string().optional(),
+      pluginName: z.string().optional(),
+      scope: z.enum(['user', 'project', 'local', 'managed']).optional()
+    })
+  },
+  'plugin:search_marketplace': {
+    request: z.object({ query: z.string().optional() }).optional(),
+    response: z.array(z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      version: z.string().optional(),
+      author: z.string().optional(),
+      homepage: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      category: z.string().optional(),
+      installSource: z.union([
+        z.object({ source: z.literal('github'), repo: z.string().min(1), ref: z.string().optional(), path: z.string().optional() }),
+        z.object({ source: z.literal('git'), url: z.string().min(1), ref: z.string().optional() }),
+        z.object({ source: z.literal('npm'), package: z.string().min(1), version: z.string().optional() }),
+        z.object({ source: z.literal('url'), url: z.string().min(1) }),
+      ]),
+      installed: z.boolean(),
+      enabled: z.boolean().optional(),
+      isPlaceholder: z.boolean().optional(),
+    }))
   }
 } as const

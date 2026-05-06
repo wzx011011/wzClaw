@@ -42,6 +42,16 @@ export class AgentLoop {
     return this._running
   }
 
+  /** Expose tool definitions for IPC handlers (read-only, no mutable registry reference) */
+  getToolDefinitions() {
+    return this.toolRegistry.getDefinitions()
+  }
+
+  /** Expose tool registry for internal main-process use only */
+  getToolRegistry(): ToolRegistry {
+    return this.toolRegistry
+  }
+
   constructor(
     private gateway: LLMGateway,
     private toolRegistry: ToolRegistry,
@@ -134,7 +144,7 @@ export class AgentLoop {
     //   4. 安全天花板 (200 轮) — 意外死循环的最后防线
     // 子 Agent 仍通过 config.maxTurns 限制（默认 10，最大 20）
     let toolsDisabled = false  // 降级标志：上下文过长时禁用工具（用局部变量而非破坏原数组）
-    // eslint-disable-next-line no-constant-condition
+     
     while (true) {
       // 每轮开始检查 abort（turn 间隙的 compact/eval/microcompact 操作也能响应取消）
       if (this.abortController?.signal.aborted) {
