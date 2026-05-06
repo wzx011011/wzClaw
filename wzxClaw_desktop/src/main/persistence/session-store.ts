@@ -38,7 +38,24 @@ export interface SessionMeta {
   createdAt: number
   updatedAt: number
   messageCount: number
+  preview?: string
 }
+
+// ============================================================
+// 会话元数据缓存 — 避免 listSessions 每次全量解析 JSONL
+// ============================================================
+
+interface CachedMeta {
+  title: string
+  preview?: string
+  messageCount: number
+  createdAt: number
+  updatedAt: number
+  mtimeMs: number
+  fileSize: number
+}
+
+type MetadataCache = Record<string, CachedMeta>
 
 /**
  * Manages session persistence using JSONL files stored in Electron's userData directory.
@@ -55,11 +72,43 @@ export class SessionStore {
 
   // Per-session 写锁：串行化同一 JSONL 文件的并发 append，防止写入交错损坏
   private _writeLocks = new Map<string, Promise<void>>()
+  // 内存中的元数据缓存
+  private _metaCache: MetadataCache | null = null
+  private get cachePath(): string { return path.join(this.sessionsDir, '_metadata_cache.json') }
 
   constructor(workspaceRoot: string) {
     const projectHash = crypto.createHash('sha256').update(workspaceRoot).digest('hex').substring(0, 16)
     this.sessionsDir = getSessionsDir(projectHash)
     fs.mkdirSync(this.sessionsDir, { recursive: true })
+  }
+
+  private async readMetaCache(): Promise<MetadataCache> {
+    if (this._metaCache) return this._metaCache
+    try {
+      const raw = await fsp.readFile(this.cachePath, 'utf-8')
+      this._metaCache = JSON.parse(raw)
+    } catch {
+      this._metaCache = {}
+    }
+    return this._metaCache
+  }
+
+  private async writeMetaCache(cache: MetadataCache): Promise<void> {
+    this._metaCache = cache
+    try {
+      const tmpPath = this.cachePath + '.tmp'
+      await fsp.writeFile(tmpPath, JSON.stringify(cache), 'utf-8')
+      await fsp.rename(tmpPath, this.cachePath)
+    } catch {
+      // 缓存写入失败不影响功能
+    }
+  }
+
+  /** 使指定会话的缓存条目失效 */
+  invalidateCacheEntry(sessionId: string): void {
+    if (this._metaCache && this._metaCache[sessionId]) {
+      delete this._metaCache[sessionId]
+    }
   }
 
   /**
@@ -95,6 +144,8 @@ export class SessionStore {
     const next = pending.then(() => fsp.appendFile(filePath, content, 'utf-8')).finally(() => resolveLock())
     this._writeLocks.set(sessionId, lockPromise)
     await next
+    // 写入后使缓存失效（mtime 会变，下次 listSessions 自动重解析）
+    this.invalidateCacheEntry(sessionId)
   }
 
   /**
@@ -178,40 +229,53 @@ export class SessionStore {
 
   /**
    * List all sessions for the current project, sorted by most recently updated first.
-   * Returns metadata including id, title, timestamps, and message count.
-   *
-   * Title is derived from the first user message: content.substring(0, 50) + "..." if longer.
-   * Falls back to "Untitled" if no user message is found.
+   * Uses metadata cache — only re-parses JSONL files whose mtime has changed.
    */
   async listSessions(): Promise<SessionMeta[]> {
     try {
       const files = await fsp.readdir(this.sessionsDir)
       const jsonlFiles = files.filter(f => f.endsWith('.jsonl'))
+      const cache = await this.readMetaCache()
       const sessions: SessionMeta[] = []
+      let cacheChanged = false
 
       for (const file of jsonlFiles) {
         const sessionId = path.basename(file, '.jsonl')
         const filePath = path.join(this.sessionsDir, file)
+        const stats = await fsp.stat(filePath)
+        const cached = cache[sessionId]
+
+        // 缓存命中且 mtime/fileSize 未变 → 直接用缓存
+        if (cached && cached.mtimeMs === stats.mtimeMs && cached.fileSize === stats.size) {
+          sessions.push({
+            id: sessionId,
+            title: cached.title,
+            createdAt: cached.createdAt,
+            updatedAt: cached.updatedAt,
+            messageCount: cached.messageCount,
+            preview: cached.preview,
+          })
+          continue
+        }
+
+        // 缓存未命中或文件已变 → 解析 JSONL 提取元数据
         const content = await fsp.readFile(filePath, 'utf-8')
         const lines = content.split('\n').filter(l => l.trim())
 
-        // Extract title: check for meta line first, then fall back to first user message
         let title = 'Untitled'
         let preview: string | undefined
         let messageLines = lines
-        // Check if first line is a meta line
         if (lines.length > 0) {
           try {
             const parsed = JSON.parse(lines[0])
             if (parsed.type === 'meta' && parsed.title) {
               title = parsed.title
-              messageLines = lines.slice(1) // exclude meta line from message count
+              messageLines = lines.slice(1)
             }
           } catch {
-            // not a meta line, proceed normally
+            // not a meta line
           }
         }
-        // Fall back to first user message if title still default
         if (title === 'Untitled') {
           for (const line of lines) {
             try {
@@ -223,12 +287,10 @@ export class SessionStore {
                 break
               }
             } catch {
-              // skip corrupted lines when extracting title
+              // skip
             }
           }
         }
-
-        // 提取 preview：第一条用户消息摘要（与 title 独立，即使被重命名也保留）
         for (const line of lines) {
           try {
             const parsed = JSON.parse(line)
@@ -248,18 +310,40 @@ export class SessionStore {
           }
         }
 
-        const stats = await fsp.stat(filePath)
+        const messageCount = messageLines.length
+        // 更新缓存
+        cache[sessionId] = {
+          title,
+          preview,
+          messageCount,
+          createdAt: stats.birthtimeMs,
+          updatedAt: stats.mtimeMs,
+          mtimeMs: stats.mtimeMs,
+          fileSize: stats.size,
+        }
+        cacheChanged = true
+
         sessions.push({
           id: sessionId,
           title,
           createdAt: stats.birthtimeMs,
           updatedAt: stats.mtimeMs,
-          messageCount: messageLines.filter(l => l.trim()).length,
+          messageCount,
           preview,
         })
       }
 
-      // Sort by updatedAt descending (most recent first)
+      // 清理缓存中已不存在的会话
+      const activeIds = new Set(jsonlFiles.map(f => path.basename(f, '.jsonl')))
+      for (const id of Object.keys(cache)) {
+        if (!activeIds.has(id)) {
+          delete cache[id]
+          cacheChanged = true
+        }
+      }
+
+      if (cacheChanged) await this.writeMetaCache(cache)
+
       sessions.sort((a, b) => b.updatedAt - a.updatedAt)
       return sessions
     } catch (err: unknown) {
@@ -279,6 +363,7 @@ export class SessionStore {
     const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
     try {
       await fsp.unlink(filePath)
+      this.invalidateCacheEntry(sessionId)
       return true
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -330,6 +415,7 @@ export class SessionStore {
       const tmpPath = path.join(this.sessionsDir, `${sessionId}.jsonl.tmp.${Date.now()}`)
       await fsp.writeFile(tmpPath, lines.join('\n'), 'utf-8')
       await fsp.rename(tmpPath, filePath)
+      this.invalidateCacheEntry(sessionId)
       return true
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {

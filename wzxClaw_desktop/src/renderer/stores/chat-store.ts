@@ -86,6 +86,8 @@ type ChatStore = ChatState & ChatActions
 // ============================================================
 
 const MAX_SESSIONS_CACHE_SIZE = 10
+/** 单条会话缓存大小上限（估算字符数），超过时不缓存（避免图片消息吃掉大量内存） */
+const MAX_SESSION_CACHE_CHARS = 5 * 1024 * 1024
 const LAST_SESSION_RESTORE_DELAY_MS = 80
 const sessionAccessOrder: string[] = []
 // 会话缓存独立于 Zustand state，切换/更新缓存不触发全局重渲染
@@ -105,6 +107,21 @@ function scheduleDeferredStartupTask(task: () => void, delayMs: number): () => v
  * 直接操作 _sessionsCache，不产生新对象，不触发 Zustand 重渲染。
  */
 function touchSession(sessionId: string): void {
+  // 单条目大小检查：估算缓存字符数，超大消息不缓存
+  const msgs = _sessionsCache[sessionId]
+  if (msgs) {
+    let charCount = 0
+    for (const m of msgs) {
+      charCount += m.content.length + (m.thinkingContent?.length ?? 0)
+      if (charCount > MAX_SESSION_CACHE_CHARS) {
+        delete _sessionsCache[sessionId]
+        const idx = sessionAccessOrder.indexOf(sessionId)
+        if (idx >= 0) sessionAccessOrder.splice(idx, 1)
+        return
+      }
+    }
+  }
+
   // Move session to most-recent position
   const idx = sessionAccessOrder.indexOf(sessionId)
   if (idx >= 0) {
@@ -196,14 +213,14 @@ function stripToolSteps(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((msg) => {
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       // Drop toolCalls, keep only text content
-      const { toolCalls, ...rest } = msg
+      const { toolCalls: _toolCalls, ...rest } = msg
       return rest
     }
     return msg
   })
 }
 
-function findMessageIndexById(messages: ChatMessage[], messageId: string): number {
+function _findMessageIndexById(messages: ChatMessage[], messageId: string): number {
   const lastIndex = messages.length - 1
   if (lastIndex >= 0 && messages[lastIndex]?.id === messageId) {
     return lastIndex
@@ -1155,15 +1172,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Persist last session so it can be restored on next app launch
     window.wzxclaw.saveLastSession?.({ sessionId }).catch(() => {})
 
-    // Restore todos for the active workspace
-    const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
-    if (activeWorkspaceId) {
-      window.wzxclaw.loadTodos?.(activeWorkspaceId).then((todos) => {
-        if (todos && todos.length > 0 && get().activeSessionId === sessionId) {
-          set({ currentTodos: todos })
-        }
-      }).catch(() => {})
-    }
+    // Note: Todos are workspace-scoped, not session-scoped. They were loaded
+    // when the workspace was opened and updated via real-time IPC (todo:updated).
+    // No need to reload them on session switch — cleanState already clears them
+    // and the onTodoUpdated listener will push fresh ones if the model writes new todos.
 
     // Reload steps for the new session context
     useStepStore.getState().loadSteps()

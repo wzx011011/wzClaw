@@ -181,6 +181,14 @@
   min-height: 16px;
 }
 
+/* Streaming text — 纯文本渲染（跳过 ReactMarkdown 解析），保留换行和基本排版 */
+.streaming-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  line-height: inherit;
+}
+
 /* Streaming content — rendered as live Markdown; no pre-wrap override needed.
    使用与 Android 一致的渐变 shimmer 条，统一两端流式状态的设计语言。 */
 .chat-message-content-streaming::after {
@@ -398,8 +406,18 @@
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  /* Opacity transition is driven by ThinkingIndicator JS for smooth fade-out+in */
   animation: thinking-shimmer 2s linear infinite;
+}
+
+/* CSS-only fade animation for phrase transitions */
+.thinking-fade {
+  animation: thinking-shimmer 2s linear infinite, thinking-fade 3s ease-in-out infinite;
+}
+
+@keyframes thinking-fade {
+  0%, 90% { opacity: 1; }
+  93%, 97% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 @keyframes thinking-shimmer {
@@ -3200,12 +3218,12 @@
 }
 
 /* ============================================================
-   Plugin Manager
+   Plugin Manager — 3-tab layout (Discover / Installed / Marketplace)
    ============================================================ */
 
 .plugin-manager.settings-modal {
-  max-width: 580px;
-  width: 90vw;
+  max-width: 680px;
+  width: 94vw;
 }
 
 .plugin-status-bar {
@@ -3217,7 +3235,7 @@
 }
 
 .plugin-empty {
-  padding: 24px 16px;
+  padding: 32px 16px;
   text-align: center;
   color: var(--text-secondary);
   font-size: 13px;
@@ -3236,81 +3254,165 @@
   font-size: 11px;
 }
 
+/* ---- Tab bar ---- */
+
+.plugin-tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.plugin-tab {
+  flex: 1;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.plugin-tab:hover {
+  color: var(--text-primary);
+}
+
+.plugin-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.plugin-tab-count {
+  font-size: 10px;
+  background: rgba(79, 195, 247, 0.2);
+  color: var(--accent);
+  padding: 0 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 16px;
+}
+
+/* ---- Search bar ---- */
+
+.plugin-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.plugin-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.plugin-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.plugin-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ---- Plugin list ---- */
+
 .plugin-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.plugin-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+/* ---- Plugin card ---- */
+
+.plugin-card {
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-primary);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.plugin-item.enabled {
+.plugin-card:hover {
+  border-color: rgba(79, 195, 247, 0.3);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.plugin-card.enabled {
   border-left: 3px solid var(--tool-completed);
 }
 
-.plugin-item.disabled {
+.plugin-card.disabled {
   border-left: 3px solid var(--text-muted);
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
-.plugin-item-info {
-  flex: 1;
-  min-width: 0;
+.plugin-card.installed {
+  border-left: 3px solid var(--tool-completed);
 }
 
-.plugin-item-name {
+.plugin-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-card-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
-.plugin-badge {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(79, 195, 247, 0.15);
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.plugin-version {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
-.plugin-item-desc {
+.plugin-card-desc {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 2px;
-  line-height: 1.4;
+  margin-top: 4px;
+  line-height: 1.45;
 }
 
-.plugin-item-meta {
+.plugin-card-tags {
   display: flex;
-  gap: 10px;
-  margin-top: 4px;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.plugin-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 8px;
+}
+
+.plugin-card-source {
   font-size: 11px;
   color: var(--text-muted);
 }
 
-.plugin-item-errors {
-  margin-top: 4px;
+.plugin-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.plugin-card-errors {
+  margin-top: 6px;
 }
 
 .plugin-error {
@@ -3322,15 +3424,61 @@
   margin-top: 2px;
 }
 
-.plugin-item-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-  align-items: center;
+/* ---- Badges ---- */
+
+.plugin-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.plugin-item-actions button {
-  padding: 4px 10px;
+.plugin-badge.builtin {
+  background: rgba(79, 195, 247, 0.15);
+  color: var(--accent);
+}
+
+.plugin-badge.installed {
+  background: rgba(137, 209, 133, 0.18);
+  color: var(--tool-completed);
+}
+
+.plugin-badge.category {
+  background: rgba(187, 134, 252, 0.15);
+  color: #bb86fc;
+}
+
+.plugin-version {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* ---- Tags (Agent, Command, Skill, MCP, Hooks) ---- */
+
+.plugin-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.plugin-tag-agent { background: rgba(137, 209, 133, 0.15); color: #89d185; }
+.plugin-tag-command { background: rgba(79, 195, 247, 0.15); color: var(--accent); }
+.plugin-tag-skill { background: rgba(255, 183, 77, 0.15); color: #ffb74d; }
+.plugin-tag-mcp { background: rgba(187, 134, 252, 0.15); color: #bb86fc; }
+.plugin-tag-hooks { background: rgba(244, 135, 113, 0.12); color: #f48771; }
+
+/* ---- Small buttons inside cards ---- */
+
+.btn-sm {
+  padding: 3px 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 11px;
@@ -3341,31 +3489,34 @@
   color: var(--text-primary);
 }
 
-.plugin-item-actions button:hover {
-  opacity: 0.85;
-}
+.btn-sm:hover { opacity: 0.85; }
+.btn-sm:disabled { opacity: 0.4; cursor: default; }
 
-.plugin-item-actions .btn-primary {
+.btn-sm.btn-primary {
   background: rgba(137, 209, 133, 0.2);
-  border-color: var(--tool-completed);
+  border-color: rgba(137, 209, 133, 0.4);
   color: var(--tool-completed);
 }
 
-.plugin-item-actions .btn-warning {
+.btn-sm.btn-warning {
   background: rgba(255, 183, 77, 0.15);
-  border-color: var(--warning);
+  border-color: rgba(255, 183, 77, 0.4);
   color: var(--warning);
 }
 
-.plugin-item-actions .btn-danger {
+.btn-sm.btn-danger {
   background: rgba(244, 135, 113, 0.1);
-  border-color: var(--tool-error);
+  border-color: rgba(244, 135, 113, 0.4);
   color: var(--tool-error);
 }
 
-/* ============================================================
-   Plugin Manager — Install & Config additions
-   ============================================================ */
+.btn-sm.btn-success {
+  background: rgba(137, 209, 133, 0.15);
+  border-color: rgba(137, 209, 133, 0.3);
+  color: var(--tool-completed);
+}
+
+/* ---- Install bar ---- */
 
 .plugin-install-bar {
   display: flex;
@@ -3390,6 +3541,8 @@
 .plugin-install-input:focus {
   border-color: var(--accent);
 }
+
+/* ---- Config editor overlay ---- */
 
 .plugin-config-overlay {
   position: absolute;
@@ -3427,28 +3580,9 @@
   outline: none;
 }
 
-.plugin-tag-mcp,
-.plugin-tag-hooks,
-.plugin-tag-config {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 5px;
-  border-radius: 3px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.plugin-tag-mcp {
-  background: rgba(187, 134, 252, 0.15);
-  color: #bb86fc;
-}
-
-.plugin-tag-hooks {
-  background: rgba(255, 183, 77, 0.15);
-  color: #ffb74d;
-}
-
-.plugin-tag-config {
-  background: rgba(79, 195, 247, 0.15);
-  color: var(--accent);
+.config-error {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--tool-error);
+  background: rgba(244, 135, 113, 0.08);
 }

@@ -4,12 +4,12 @@
 // Modeled after Claude Code's loadSkillsDir.ts
 // ============================================================
 
-import { realpath } from 'fs/promises'
-import { basename, dirname, join, sep as pathSep, relative, isAbsolute } from 'path'
+import { realpath, readdir, stat, readFile, access } from 'fs/promises'
+import { basename, dirname, join, sep as pathSep } from 'path'
 import type { Skill, SkillSource, SkillLoadResult } from '../../shared/types-skill'
 import { resolveModelName } from '../../shared/types-skill'
 import { parseFrontmatter, extractDescriptionFromMarkdown, splitAndExpandBraces } from './frontmatter-parser'
-import { parseArgumentNames, substituteArguments } from './argument-substitution'
+import { substituteArguments } from './argument-substitution'
 import { getSkillsDir, getCommandsDir } from '../paths'
 
 // ============================================================
@@ -60,18 +60,19 @@ interface SkillWithPath {
 /**
  * Load a single skill from a .md file.
  */
-function loadSkillFromFile(
+async function loadSkillFromFile(
   filePath: string,
   skillName: string,
   source: SkillSource,
   baseDir?: string,
-): Skill | null {
+): Promise<Skill | null> {
   try {
-    // Synchronous read — we're called inside an async map
-    const fs = require('fs')
-    if (!fs.existsSync(filePath)) return null
-
-    const content = fs.readFileSync(filePath, 'utf-8')
+    let content: string
+    try {
+      content = await readFile(filePath, 'utf-8')
+    } catch {
+      return null
+    }
     const { frontmatter, content: markdownContent } = parseFrontmatter(content, filePath)
 
     const displayName = frontmatter.name || skillName
@@ -160,11 +161,10 @@ async function loadSkillsFromSkillsDir(
   basePath: string,
   source: SkillSource,
 ): Promise<SkillWithPath[]> {
-  const fs = require('fs')
   let entries: string[]
 
   try {
-    entries = fs.readdirSync(basePath)
+    entries = await readdir(basePath)
   } catch {
     return []
   }
@@ -173,21 +173,25 @@ async function loadSkillsFromSkillsDir(
 
   for (const entry of entries) {
     const entryPath = join(basePath, entry)
-    let stat: { isDirectory(): boolean; isSymbolicLink(): boolean }
+    let entryStat: { isDirectory(): boolean; isSymbolicLink(): boolean }
     try {
-      stat = fs.statSync(entryPath)
+      entryStat = await stat(entryPath)
     } catch {
       continue
     }
 
     // Only directories (or symlinks to directories) in /skills/
-    if (!stat.isDirectory() && !stat.isSymbolicLink()) continue
+    if (!entryStat.isDirectory() && !entryStat.isSymbolicLink()) continue
 
     const skillFilePath = join(entryPath, 'SKILL.md')
-    if (!fs.existsSync(skillFilePath)) continue
+    try {
+      await access(skillFilePath)
+    } catch {
+      continue
+    }
 
     const skillName = entry
-    const skill = loadSkillFromFile(skillFilePath, skillName, source, entryPath)
+    const skill = await loadSkillFromFile(skillFilePath, skillName, source, entryPath)
     if (skill) {
       results.push({ skill, filePath: skillFilePath })
     }
@@ -240,7 +244,7 @@ function buildNamespace(targetDir: string, baseDir: string): string {
  * When a directory has both SKILL.md and other .md files,
  * only SKILL.md is loaded (takes the directory name).
  */
-function transformSkillFiles(files: string[], baseDir: string): string[] {
+function transformSkillFiles(files: string[], _baseDir: string): string[] {
   const filesByDir = new Map<string, string[]>()
 
   for (const file of files) {
@@ -266,10 +270,8 @@ async function loadSkillsFromCommandsDir(
   basePath: string,
   source: SkillSource,
 ): Promise<SkillWithPath[]> {
-  const fs = require('fs')
-
   // Walk directory recursively for .md files
-  const mdFiles = walkDirForMd(basePath, basePath)
+  const mdFiles = await walkDirForMd(basePath, basePath)
   const processedFiles = transformSkillFiles(mdFiles, basePath)
 
   const results: SkillWithPath[] = []
@@ -278,7 +280,7 @@ async function loadSkillsFromCommandsDir(
     const skillDirectory = isSkill ? dirname(filePath) : undefined
     const cmdName = getCommandName(filePath, basePath)
 
-    const skill = loadSkillFromFile(filePath, cmdName, source, skillDirectory)
+    const skill = await loadSkillFromFile(filePath, cmdName, source, skillDirectory)
     if (skill) {
       results.push({ skill, filePath })
     }
@@ -287,28 +289,27 @@ async function loadSkillsFromCommandsDir(
   return results
 }
 
-function walkDirForMd(dir: string, baseDir: string): string[] {
-  const fs = require('fs')
+async function walkDirForMd(dir: string, baseDir: string): Promise<string[]> {
   const results: string[] = []
 
   let entries: string[]
   try {
-    entries = fs.readdirSync(dir)
+    entries = await readdir(dir)
   } catch {
     return results
   }
 
   for (const entry of entries) {
     const fullPath = join(dir, entry)
-    let stat: { isDirectory(): boolean }
+    let entryStat: { isDirectory(): boolean }
     try {
-      stat = fs.statSync(fullPath)
+      entryStat = await stat(fullPath)
     } catch {
       continue
     }
 
-    if (stat.isDirectory()) {
-      results.push(...walkDirForMd(fullPath, baseDir))
+    if (entryStat.isDirectory()) {
+      results.push(...await walkDirForMd(fullPath, baseDir))
     } else if (entry.endsWith('.md')) {
       results.push(fullPath)
     }
@@ -468,7 +469,6 @@ export async function discoverSkillDirsForPaths(
   filePaths: string[],
   cwd: string,
 ): Promise<string[]> {
-  const fs = require('fs')
   const resolvedCwd = cwd.endsWith(pathSep) ? cwd.slice(0, -1) : cwd
   const newDirs: string[] = []
 
@@ -484,7 +484,7 @@ export async function discoverSkillDirsForPaths(
       if (!dynamicSkillDirs.has(skillDir)) {
         dynamicSkillDirs.add(skillDir)
         try {
-          fs.statSync(skillDir)
+          await stat(skillDir)
           // Check if containing directory is gitignored
           if (await isPathGitignored(currentDir, resolvedCwd)) {
             console.log(`[skills] Skipped gitignored skills dir: ${skillDir}`)

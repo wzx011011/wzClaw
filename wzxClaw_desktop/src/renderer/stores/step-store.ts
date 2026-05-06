@@ -7,6 +7,8 @@ import { useChatStore } from './chat-store'
 // (per TASK-01 through TASK-05)
 // ============================================================
 
+const MAX_STEPS = 500
+
 interface StepState {
   steps: AgentStep[]
   panelVisible: boolean
@@ -35,7 +37,9 @@ export const useStepStore = create<StepStore>((set, get) => ({
       const { steps } = get()
       // Avoid duplicates
       if (!steps.find((t) => t.id === step.id)) {
-        set({ steps: [...steps, step] })
+        const next = [...steps, step]
+        // 截断最早的步骤，防止无限增长
+        set({ steps: next.length > MAX_STEPS ? next.slice(-MAX_STEPS) : next })
       }
     })
 

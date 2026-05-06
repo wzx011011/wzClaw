@@ -33,7 +33,7 @@ export class MCPClient extends EventEmitter {
   private process: ChildProcess | null = null
   private buffer = ''
   private nextId = 1
-  private pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+  private pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }>()
   private connected = false
   private serverName: string
 
@@ -116,6 +116,7 @@ export class MCPClient extends EventEmitter {
       const pending = this.pendingRequests.get(msg.id as number)
       if (pending) {
         this.pendingRequests.delete(msg.id as number)
+        if (pending.timer) clearTimeout(pending.timer)
         if (msg.error) {
           pending.reject(new Error(`MCP error: ${msg.error.message}`))
         } else {
@@ -144,17 +145,22 @@ export class MCPClient extends EventEmitter {
       this.process?.stdin?.write(data, (err) => {
         if (err) {
           this.pendingRequests.delete(id)
+          clearTimeout(timer)
           reject(err)
         }
       })
 
       // Timeout after 30 seconds
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id)
           reject(new Error(`MCP request "${method}" timed out`))
         }
       }, 30000)
+
+      // Store timer on pending entry so handleMessage can clear it
+      const entry = this.pendingRequests.get(id)
+      if (entry) entry.timer = timer
     })
   }
 

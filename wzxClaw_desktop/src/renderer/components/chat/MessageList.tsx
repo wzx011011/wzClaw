@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useChatStore } from '../../stores/chat-store'
 import ChatMessage from './ChatMessage'
 import ThinkingIndicator from './ThinkingIndicator'
@@ -36,36 +36,44 @@ export default function MessageList(): JSX.Element {
   const previousSessionIdRef = useRef(activeSessionId)
   const previousLoadingSessionRef = useRef(isLoadingSession)
 
-  // ---- 派生值 ----
+  // ---- 派生值（useMemo 避免每帧重算） ----
   const lastMessage = messages[messages.length - 1]
-  const lastToolSignature =
-    lastMessage?.toolCalls
-      ?.map((tc) => `${tc.id}:${tc.status}:${tc.output?.length ?? 0}`)
-      .join('|') ?? ''
-  const { visibleMessages, hiddenMessageCount } = getVisibleHistoryWindow(
-    messages,
-    historyWindowed,
-    historyRenderCount
+  const { visibleMessages, hiddenMessageCount } = useMemo(
+    () => getVisibleHistoryWindow(messages, historyWindowed, historyRenderCount),
+    [messages, historyWindowed, historyRenderCount]
   )
-  const scrollAnchorKey = [
-    messages.length,
-    lastMessage?.id ?? '',
-    lastMessage?.content.length ?? 0,
-    lastMessage?.thinkingContent?.length ?? 0,
-    lastMessage?.isStreaming ? 1 : 0,
-    lastToolSignature,
-    isWaitingForResponse ? 1 : 0,
-    streamingMessageId ?? '',
-  ].join(':')
+  const scrollAnchorKey = useMemo(() => {
+    const lastToolSignature =
+      lastMessage?.toolCalls
+        ?.map((tc) => `${tc.id}:${tc.status}:${tc.output?.length ?? 0}`)
+        .join('|') ?? ''
+    return [
+      messages.length,
+      lastMessage?.id ?? '',
+      lastMessage?.content.length ?? 0,
+      lastMessage?.thinkingContent?.length ?? 0,
+      lastMessage?.isStreaming ? 1 : 0,
+      lastToolSignature,
+      isWaitingForResponse ? 1 : 0,
+      streamingMessageId ?? '',
+    ].join(':')
+  }, [messages.length, lastMessage, isWaitingForResponse, streamingMessageId])
 
   // ---- 自动滚动到底部 ----
-  // 使用 'instant' 避免会话切换/加载时出现缓慢滑动动画
+  // 流式期间用 scrollTop 直接设置（无强制同步 layout），
+  // 非流式保持 scrollIntoView 行为
   useEffect(() => {
     if (userScrolledUp) return
-    const raf = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
-    })
-    return () => cancelAnimationFrame(raf)
+    if (isStreaming) {
+      // 流式：直接设置 scrollTop，避免 scrollIntoView 的强制同步 layout
+      const container = messagesContainerRef.current
+      if (container) container.scrollTop = container.scrollHeight
+    } else {
+      const raf = requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+      })
+      return () => cancelAnimationFrame(raf)
+    }
   }, [scrollAnchorKey, userScrolledUp, isStreaming])
 
   // ---- 流结束后强制滚到底部 ----
@@ -73,9 +81,8 @@ export default function MessageList(): JSX.Element {
     if (streamJustEnded) {
       setUserScrolledUp(false)
       useChatStore.setState({ streamJustEnded: false })
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
-      })
+      const container = messagesContainerRef.current
+      if (container) container.scrollTop = container.scrollHeight
     }
   }, [streamJustEnded])
 
@@ -194,7 +201,7 @@ export default function MessageList(): JSX.Element {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
           setUserScrolledUp(false)
         }}
-        title="Scroll to bottom"
+        title="滚动到底部"
       >
         ↓
       </button>

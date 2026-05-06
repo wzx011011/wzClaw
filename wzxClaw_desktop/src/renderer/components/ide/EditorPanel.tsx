@@ -15,10 +15,8 @@ import WelcomeScreen from './WelcomeScreen'
  */
 
 export default function EditorPanel(): JSX.Element {
-  const activeTab = useTabStore((s) => {
-    const tabId = s.activeTabId
-    return s.tabs.find((t) => t.id === tabId)
-  })
+  const activeTabId = useTabStore((s) => s.activeTabId)
+  const activeTab = useTabStore((s) => s.tabs.find((t) => t.id === activeTabId))
   const updateTabContent = useTabStore((s) => s.updateTabContent)
   const saveTab = useTabStore((s) => s.saveTab)
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
@@ -38,7 +36,7 @@ export default function EditorPanel(): JSX.Element {
 
       // Register Ctrl+S keybinding inside Monaco to prevent browser default
       editor.addCommand(
-        // eslint-disable-next-line no-bitwise
+         
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
         () => {
           const currentActiveId = useTabStore.getState().activeTabId
@@ -50,7 +48,7 @@ export default function EditorPanel(): JSX.Element {
 
       // Ctrl+Enter: Accept all pending diffs for current file
       editor.addCommand(
-        // eslint-disable-next-line no-bitwise
+         
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
         () => {
           const { activeDiffId, pendingDiffs, acceptAll } = useDiffStore.getState()
@@ -65,7 +63,7 @@ export default function EditorPanel(): JSX.Element {
 
       // Ctrl+Backspace: Reject all pending diffs for current file
       editor.addCommand(
-        // eslint-disable-next-line no-bitwise
+         
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backspace,
         () => {
           const { activeDiffId, pendingDiffs, rejectAll } = useDiffStore.getState()
@@ -112,7 +110,7 @@ export default function EditorPanel(): JSX.Element {
             className: 'diff-deleted-line',
             glyphMarginClassName: 'diff-deleted-glyph',
             overviewRuler: {
-              color: '#f48771',
+              color: 'var(--tool-error)',
               position: monaco.editor.OverviewRulerLane.Full
             }
           }

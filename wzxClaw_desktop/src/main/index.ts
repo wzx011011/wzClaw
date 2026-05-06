@@ -52,15 +52,13 @@ import { AgentLoop } from './agent/agent-loop'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import type { AgentConfig } from './agent/types'
 import { WorkspaceManager } from './workspace/workspace-manager'
-import { SessionStore } from './persistence/session-store'
+import { SessionStore, type SessionMeta } from './persistence/session-store'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
 import { StepManager } from './steps/step-manager'
 import { WorkspaceStore } from './tasks/workspace-store'
 import { HookRegistry } from './hooks/hook-registry'
 import { registerBuiltInHooks } from './hooks/built-in-hooks'
-import { CreateStepTool } from './tools/create-step'
-import { UpdateStepTool } from './tools/update-step'
 import { IndexingEngine } from './indexing/indexing-engine'
 import { EmbeddingClient } from './indexing/embedding-client'
 import { SettingsManager } from './settings-manager'
@@ -86,6 +84,7 @@ import { getMobileSessionTransition, isPathWithinWorkspace } from './mobile/mobi
 import { ensureAppDirs, ensureMcpConfig } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
 import { initLangfuse, shutdownLangfuse } from './observability/langfuse-observer'
+import { cleanupToolResults, cleanupExpiredToolResults } from './context/tool-result-storage'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()
@@ -163,7 +162,7 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
-function buildMenuBar(): Menu {
+function _buildMenuBar(): Menu {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: 'File',
@@ -263,7 +262,7 @@ function handleWorkspaceOpened(rootPath: string, toolRegistry: ToolRegistry): vo
   // Update SemanticSearchTool with the new engine
   const searchTool = toolRegistry.get('SemanticSearch')
   if (searchTool && 'setIndexingEngine' in searchTool) {
-    ;(searchTool as any).setIndexingEngine(indexingEngine)
+    ;(searchTool as import('./tools/semantic-search').SemanticSearchTool).setIndexingEngine(indexingEngine)
   }
 
   // Forward indexing progress to all renderer windows
@@ -287,6 +286,7 @@ app.whenReady().then(async () => {
   // 清理 7 天以上的旧文件（一次性，非热路径）
   cleanOldDebugFiles().catch(() => {})
   cleanOldMediaFiles().catch(() => {})
+  cleanupExpiredToolResults().catch(() => {})
 
   // Load persisted settings for embedding API config
   await settingsManager.load()
@@ -396,7 +396,7 @@ app.whenReady().then(async () => {
       // fsp imported at top
       await fsp.writeFile(entry.filePath, entry.content, 'utf-8')
       return { success: true }
-    } catch (err: any) {
+    } catch (err: unknown) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
@@ -408,6 +408,8 @@ app.whenReady().then(async () => {
   const agentLoopFactory = () => new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
   // Per-session AgentLoop 运行时管理器。
   const runtimes = new SessionRuntimeManager(agentLoopFactory)
+  // 启动定期清理：每 5 分钟检查，超过 30 分钟无活动的 runtime 被回收
+  runtimes.startIdleCleanup(5 * 60 * 1000, 30 * 60 * 1000)
   // 默认 / 退退使用的 AgentLoop 实例：作为"全局 workspace"镜像（agentLoop.activeWorkspace）以及部分老接口读取。
   // 实际会话 run() 调用走 runtimes；该实例不被 .run()。
   const agentLoop = agentLoopFactory()
@@ -427,7 +429,7 @@ app.whenReady().then(async () => {
   // Pass a getLatestConfig getter so sub-agents always use the current model/provider
   toolRegistry.register(
     new AgentTool(gateway, toolRegistry, permissionManager, contextManager, undefined, {
-      provider: 'anthropic' as any,
+      provider: 'anthropic' as 'openai' | 'anthropic',
       model: '',
       workingDirectory,
       projectRoots: [workingDirectory],
@@ -559,11 +561,12 @@ app.whenReady().then(async () => {
   }
 
   // Dedup set for command:send — prevents relay-replayed messages from running the agent twice.
-  // Map of messageId — expiry timestamp (cleaned up lazily on insert).
+  // LRU Map with max 1000 entries. Oldest entries pruned on insert.
+  const PROCESSED_IDS_MAX = 1000
   const processedMessageIds = new Map<string, number>()
 
   // Handle mobile client commands — agent (from relay)
-  const handleClientMessage = async (msg: { clientId: string; event: string; data: any }) => {
+  const handleClientMessage = async (msg: { clientId: string; event: string; data: Record<string, unknown> }) => {
     console.log('[handleClientMessage]', msg.clientId, msg.event, JSON.stringify(msg.data)?.substring(0, 200))
     try {
 
@@ -587,8 +590,8 @@ app.whenReady().then(async () => {
           runningSessionIds: runtimes.listRunning(),
           activeSessionId: settingsManager.getLastSessionId() ?? null
         })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -614,8 +617,8 @@ app.whenReady().then(async () => {
           offset,
           hasMore: (offset + limit) < total
         })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'SESSION_NOT_FOUND' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'SESSION_NOT_FOUND' })
       }
       return
     }
@@ -647,8 +650,8 @@ app.whenReady().then(async () => {
         // 通知桌面渲染器：手机端创建了新会话
         const wcCreate = BrowserWindow.getAllWindows()[0]?.webContents
         if (wcCreate && !wcCreate.isDestroyed()) wcCreate.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'created', data: { sessionId } })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -673,8 +676,8 @@ app.whenReady().then(async () => {
         // Notify desktop renderer
         const wcDel = BrowserWindow.getAllWindows()[0]?.webContents
         if (wcDel && !wcDel.isDestroyed()) wcDel.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'deleted', data: { sessionId } })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -696,8 +699,8 @@ app.whenReady().then(async () => {
         // Notify desktop renderer
         const wcRen = BrowserWindow.getAllWindows()[0]?.webContents
         if (wcRen && !wcRen.isDestroyed()) wcRen.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'session', action: 'renamed', data: { sessionId, title } })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -722,7 +725,7 @@ app.whenReady().then(async () => {
         mobilePersistedMessageCounts.delete(sessionId)
         stepManager.clearSession(sessionId)
         broadcastToMobile('session:clear:response', { success: true })
-      } catch (err: any) {
+      } catch {
         broadcastToMobile('session:clear:response', { success: false })
       }
       return
@@ -761,8 +764,8 @@ app.whenReady().then(async () => {
           success: true,
           workspaceName: path.basename(workspacePath),
         })
-      } catch (err: any) {
-        broadcastToMobile('workspace:switch:response', { requestId, success: false, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:switch:response', { requestId, success: false, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -780,8 +783,8 @@ app.whenReady().then(async () => {
         const depth = msg.data?.depth || 2
         const nodes = await workspaceManager.getDirectoryTree(dirPath, depth)
         broadcastToMobile('file:tree:response', { requestId, nodes })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -839,8 +842,8 @@ app.whenReady().then(async () => {
           size: stat.size,
           filePath: path.relative(workspaceRoot, absolutePath).replace(/\\\\/g, '/'),
         })
-      } catch (err: any) {
-        broadcastToMobile('session:error', { requestId, error: err.message, code: 'INTERNAL_ERROR' })
+      } catch (err: unknown) {
+        broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
       }
       return
     }
@@ -875,8 +878,8 @@ app.whenReady().then(async () => {
       if (mode) {
         try {
           permissionManager.setMode(mode)
-        } catch (err: any) {
-          broadcastToMobile('permission:mode:response', { requestId, error: err.message })
+        } catch (err: unknown) {
+          broadcastToMobile('permission:mode:response', { requestId, error: err instanceof Error ? err.message : String(err) })
           return
         }
       }
@@ -893,23 +896,23 @@ app.whenReady().then(async () => {
       try {
         const tasks = await workspaceStore.listWorkspaces(msg.data?.includeArchived)
         // 为每个 workspace 附加最近 10 个会话
-        const enriched = await Promise.all(tasks.map(async (t: any) => {
+        const enriched = await Promise.all(tasks.map(async (t) => {
           const root = t.projects?.[0]?.path as string | undefined
-          let sessions: any[] = []
+          let sessions: SessionMeta[] = []
           if (root) {
             try {
               const ss = getCachedSessionStore(root)
               const all = await ss.listSessions()
               sessions = all
-                .sort((a: any, b: any) => b.updatedAt - a.updatedAt)
+                .sort((a, b) => b.updatedAt - a.updatedAt)
                 .slice(0, 10)
             } catch { /* workspace 可能还没有 sessions 目录 */ }
           }
           return { ...t, sessions }
         }))
         broadcastToMobile('workspace:list:response', { requestId, tasks: enriched })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -923,8 +926,8 @@ app.whenReady().then(async () => {
         // Notify desktop renderer
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'created', data: workspace })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -937,8 +940,8 @@ app.whenReady().then(async () => {
         broadcastToMobile('workspace:update:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -951,8 +954,8 @@ app.whenReady().then(async () => {
         broadcastToMobile('workspace:delete:response', { requestId, success: true })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'deleted', data: { workspaceId: msg.data?.workspaceId } })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -963,8 +966,8 @@ app.whenReady().then(async () => {
       try {
         const workspace = await workspaceStore.getWorkspace(msg.data?.workspaceId)
         broadcastToMobile('workspace:get:response', { requestId, workspace })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -977,8 +980,8 @@ app.whenReady().then(async () => {
         broadcastToMobile('workspace:add-project:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -991,8 +994,8 @@ app.whenReady().then(async () => {
         broadcastToMobile('workspace:remove-project:response', { requestId, workspace })
         const wc = BrowserWindow.getAllWindows()[0]?.webContents
         if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS['data:changed'], { source: 'mobile', entity: 'workspace', action: 'updated', data: workspace })
-      } catch (err: any) {
-        broadcastToMobile('workspace:error', { requestId, error: err.message })
+      } catch (err: unknown) {
+        broadcastToMobile('workspace:error', { requestId, error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -1003,9 +1006,14 @@ app.whenReady().then(async () => {
       const incomingId = msg.data.messageId as string | undefined
       if (incomingId) {
         const now = Date.now()
-        // Lazy cleanup of expired entries (TTL: 10 minutes).
-        for (const [id, expiry] of processedMessageIds) {
-          if (now > expiry) processedMessageIds.delete(id)
+        // Bounded LRU cleanup: prune oldest entries when over limit
+        if (processedMessageIds.size >= PROCESSED_IDS_MAX) {
+          const toDelete = Math.ceil(PROCESSED_IDS_MAX * 0.25)
+          let i = 0
+          for (const key of processedMessageIds.keys()) {
+            if (i++ >= toDelete) break
+            processedMessageIds.delete(key)
+          }
         }
         if (processedMessageIds.has(incomingId)) {
           broadcastToMobile('command:ack', { messageId: incomingId, status: 'duplicate' })
@@ -1047,8 +1055,8 @@ app.whenReady().then(async () => {
                 }
                 const sid = settingsManager.getLastSessionId() ?? mobileSessionId
                 broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: sid })
-              }).catch((err: any) => {
-                broadcastToMobile('stream:error', { error: err.message })
+              }).catch((err: unknown) => {
+                broadcastToMobile('stream:error', { error: err instanceof Error ? err.message : String(err) })
               })
             } else {
               const sid = settingsManager.getLastSessionId() ?? mobileSessionId
@@ -1303,6 +1311,10 @@ app.whenReady().then(async () => {
                 } catch (saveErr) {
                   console.error('[mobile] Failed to persist session:', saveErr)
                 }
+                // 清理该会话的工具结果磁盘文件
+                cleanupToolResults(sessionId).catch(() => {})
+                // 清理移动端持久化计数（会话结束）
+                mobilePersistedMessageCounts.delete(sessionId)
                 break
               case 'agent:compacted':
                 wc.send(IPC_CHANNELS['session:compacted'], {
@@ -1332,8 +1344,8 @@ app.whenReady().then(async () => {
         } finally {
           runtimes.notifyRunningChanged(sessionId, false)
         }
-      } catch (err: any) {
-        relayClient.broadcast('stream:error', { error: err.message })
+      } catch (err: unknown) {
+        relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err) })
       }
       return
     }
@@ -1342,7 +1354,7 @@ app.whenReady().then(async () => {
       // 仅取消当前手机会话（不会跨会话误杀）
       if (mobileSessionId) runtimes.cancel(mobileSessionId)
     }
-    } catch (topErr: any) {
+    } catch (topErr: unknown) {
       console.error('[handleClientMessage] UNCAUGHT ERROR:', topErr)
     }
   }
@@ -1355,15 +1367,15 @@ app.whenReady().then(async () => {
     // 也推送工作区列表，让手机端能同步最新工作区状态（使用 WorkspaceStore 而非 recentWorkspaces 历史）
     try {
       const tasks = await workspaceStore.listWorkspaces()
-      const enriched = await Promise.all(tasks.map(async (t: any) => {
+      const enriched = await Promise.all(tasks.map(async (t) => {
         const root = t.projects?.[0]?.path as string | undefined
-        let sessions: any[] = []
+        let sessions: SessionMeta[] = []
         if (root) {
           try {
             const ss = getCachedSessionStore(root)
             const all = await ss.listSessions()
             sessions = all
-              .sort((a: any, b: any) => b.updatedAt - a.updatedAt)
+              .sort((a, b) => b.updatedAt - a.updatedAt)
               .slice(0, 10)
           } catch { /* workspace 可能还没有 sessions 目录 */ }
         }
@@ -1487,7 +1499,7 @@ app.whenReady().then(async () => {
     for (const win of wins) {
       try {
         win.setTitleBarOverlay({ color: payload.color, symbolColor: payload.symbolColor, height: 38 })
-      } catch (_) {
+      } catch {
         // setTitleBarOverlay may not be available on all platforms
       }
     }

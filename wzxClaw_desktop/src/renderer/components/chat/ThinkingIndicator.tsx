@@ -1,44 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 
 // ============================================================
 // ThinkingIndicator — Shimmer "Thinking..." shown while waiting
 // for the first token from the agent.
+// Uses CSS animations instead of JS state for opacity transitions.
 // ============================================================
 
-const PHRASES = ['Thinking...', 'Reasoning...', 'Analyzing...', 'Evaluating...']
+const PHRASES = ['思考中...', '推理中...', '分析中...', '评估中...']
 const CYCLE_MS = 3000
-const FADE_MS = 280
 
 export default function ThinkingIndicator(): JSX.Element {
   const [phraseIndex, setPhraseIndex] = useState(
     () => Math.floor(Math.random() * PHRASES.length)
   )
-  const [opacity, setOpacity] = useState(1)
-  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const interval = setInterval(() => {
-      // Fade out, swap text, fade in
-      setOpacity(0)
-      fadeTimer.current = setTimeout(() => {
-        setPhraseIndex((prev) => (prev + 1) % PHRASES.length)
-        setOpacity(1)
-      }, FADE_MS)
+      setPhraseIndex((prev) => (prev + 1) % PHRASES.length)
     }, CYCLE_MS)
-
-    return () => {
-      clearInterval(interval)
-      if (fadeTimer.current !== null) clearTimeout(fadeTimer.current)
-    }
+    return () => clearInterval(interval)
   }, [])
 
   return (
     <div className="thinking-indicator">
       <span className="thinking-dot" />
-      <span
-        className="thinking-phrase"
-        style={{ opacity, transition: `opacity ${FADE_MS}ms ease` }}
-      >
+      <span className="thinking-phrase thinking-fade">
         {PHRASES[phraseIndex]}
       </span>
     </div>

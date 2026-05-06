@@ -1,11 +1,20 @@
-import React, { useState, useRef, useMemo } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeRaw from 'rehype-raw'
-import remarkGfm from 'remark-gfm'
+import React, { useState, lazy, Suspense } from 'react'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
 import CodeBlock from './CodeBlock'
 import ThinkingIndicator from './ThinkingIndicator'
 import ToolCard from './ToolCard'
+
+// Lazy-load react-markdown — 仅在非流式渲染时需要
+const ReactMarkdown = lazy(() => import('react-markdown'))
+// 插件在 ReactMarkdown 加载时一起加载（同一 chunk）
+const rehypeRawPromise = import('rehype-raw').then(m => m.default)
+const remarkGfmPromise = import('remark-gfm').then(m => m.default)
+
+// 预加载完成的插件引用（resolve 后不变）
+let _rehypeRaw: unknown = null
+let _remarkGfm: unknown = null
+rehypeRawPromise.then(v => { _rehypeRaw = v })
+remarkGfmPromise.then(v => { _remarkGfm = v })
 
 // ============================================================
 // 模块级稳定引用 — 不随每次渲染重建
@@ -14,10 +23,9 @@ import ToolCard from './ToolCard'
 // 在渲染路径上被 100% 丢弃——保留它只会产生 O(content) 的无用开销。
 // ============================================================
 
-/** 唯一的 rehype 插件集：仅做基础 HTML 处理（内联 HTML 支持），不运行高亮 */
-const REHYPE_PLUGINS = [rehypeRaw] as const
-/** 稳定的 remark 插件引用 */
-const REMARK_PLUGINS = [remarkGfm] as const
+/** 动态获取 rehype 插件集（首次渲染时可能为空，此时 ReactMarkdown 降级为纯文本） */
+const getRehypePlugins = () => _rehypeRaw ? [_rehypeRaw] as const : [] as const
+const getRemarkPlugins = () => _remarkGfm ? [_remarkGfm] as const : [] as const
 const extractText = (nodes: React.ReactNode): string => {
   if (typeof nodes === 'string') return nodes
   if (typeof nodes === 'number') return String(nodes)
@@ -58,76 +66,24 @@ const MD_COMPONENTS = {
 }
 
 // ============================================================
-// MemoizedMarkdown — 缓存 ReactMarkdown 解析结果
-// 流式场景下 content 每帧增长，ReactMarkdown 会重解析全文。
-// 通过 useRef 缓存上次解析结果 + 长内容拆分前缀/尾部，
-// 避免每帧 O(n) 的全文 markdown 解析开销。
+// MarkdownContent — React.memo 包裹的 ReactMarkdown 渲染器
+// 仅在非流式状态下使用，content 不变时跳过重解析。
+// 流式期间由 StreamingText 接管，完全跳过 ReactMarkdown。
 // ============================================================
 
-/** 前缀缓存阈值：超过此长度的内容拆分为已缓存前缀 + 响应式尾部 */
-const PREFIX_CACHE_THRESHOLD = 4000
-
-function MemoizedMarkdown({ content }: { content: string }): JSX.Element {
-  const cacheRef = useRef<{ content: string; element: JSX.Element } | null>(null)
-
-  // 完全匹配缓存 — content 未变时直接返回
-  if (cacheRef.current && cacheRef.current.content === content) {
-    return cacheRef.current.element
-  }
-
-  // 长内容拆分：前缀走 dangerouslySetInnerHTML（已解析的 HTML 缓存），
-  // 仅尾部走 ReactMarkdown 实时解析
-  let element: JSX.Element
-
-  if (content.length > PREFIX_CACHE_THRESHOLD && cacheRef.current) {
-    // 找到缓存前缀的边界（在阈值附近找最后一个换行符）
-    const prevContent = cacheRef.current.content
-    // 如果新内容以旧内容开头（流式追加），前缀可复用
-    if (content.startsWith(prevContent) && prevContent.length > PREFIX_CACHE_THRESHOLD) {
-      // 将缓存的 element 作为前缀，新尾部走 ReactMarkdown
-      const tail = content.slice(prevContent.length)
-      element = (
-        <>
-          {cacheRef.current.element}
-          {tail && (
-            <ReactMarkdown
-              rehypePlugins={REHYPE_PLUGINS}
-              remarkPlugins={REMARK_PLUGINS}
-              components={MD_COMPONENTS}
-            >
-              {tail}
-            </ReactMarkdown>
-          )}
-        </>
-      )
-    } else {
-      // 内容完全不同（非追加），重新解析
-      element = (
-        <ReactMarkdown
-          rehypePlugins={REHYPE_PLUGINS}
-          remarkPlugins={REMARK_PLUGINS}
-          components={MD_COMPONENTS}
-        >
-          {content}
-        </ReactMarkdown>
-      )
-    }
-  } else {
-    // 短内容或首次渲染 — 直接 ReactMarkdown
-    element = (
+const MarkdownContent = React.memo(function MarkdownContent({ content }: { content: string }) {
+  return (
+    <Suspense fallback={<div className="streaming-text">{content}</div>}>
       <ReactMarkdown
-        rehypePlugins={REHYPE_PLUGINS}
-        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={getRehypePlugins()}
+        remarkPlugins={getRemarkPlugins()}
         components={MD_COMPONENTS}
       >
         {content}
       </ReactMarkdown>
-    )
-  }
-
-  cacheRef.current = { content, element }
-  return element
-}
+    </Suspense>
+  )
+})
 
 // ============================================================
 // ChatMessage — Single message rendering (per D-58, D-59)
@@ -145,7 +101,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
   const [expanded, setExpanded] = useState(false)
   const isFolder = mention.type === 'folder_mention'
   const sizeLabel = isFolder
-    ? `${mention.size} entries`
+    ? `${mention.size} 个条目`
     : mention.size < 1024
       ? `${mention.size}B`
       : mention.size < 1024 * 1024
@@ -241,15 +197,19 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
       {/* Thinking block — always starts open; no key so user state is preserved during streaming */}
       {displayThinking && (
         <details className="chat-message-thinking" defaultOpen>
-          <summary>Thinking</summary>
+          <summary>思考过程</summary>
           <div className="chat-message-thinking-content">{displayThinking}</div>
         </details>
       )}
 
-      {/* Content — always rendered via ReactMarkdown so streaming and final output look identical. */}
+      {/* Content — 流式期间渲染纯文本（跳过 ReactMarkdown 解析），流式结束后一次 Markdown 解析 */}
       {displayContent && (
         <div className={`chat-message-content${isStreaming ? ' chat-message-content-streaming' : ''}`}>
-          <MemoizedMarkdown content={displayContent} />
+          {isStreaming ? (
+            <div className="streaming-text">{displayContent}</div>
+          ) : (
+            <MarkdownContent content={displayContent} />
+          )}
         </div>
       )}
 
@@ -265,8 +225,8 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
       {/* Usage info */}
       {!isStreaming && usage && (
         <div className="chat-usage-info">
-          <span>In: {usage.inputTokens}</span>
-          <span>Out: {usage.outputTokens}</span>
+          <span>输入: {usage.inputTokens}</span>
+          <span>输出: {usage.outputTokens}</span>
           {model && <span className="chat-usage-model">{model}</span>}
         </div>
       )}
