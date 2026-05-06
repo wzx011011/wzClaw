@@ -25,6 +25,7 @@ wzxClaw_desktop/out/
 wzxClaw_desktop/.claude/
 wzxClaw_desktop/.eval-reports/
 wzxClaw_desktop/.eval-workspaces/
+wzxClaw_desktop/coverage/
 
 wzxClaw_android/.dart_tool/
 wzxClaw_android/.claude/
