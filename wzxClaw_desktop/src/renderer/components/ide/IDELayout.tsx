@@ -1,4 +1,4 @@
-import React, { useEffect, lazy, Suspense, useState, useRef } from 'react'
+import React, { useEffect, lazy, Suspense, useState, useRef, useCallback } from 'react'
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
 import { useT } from '../../i18n/useT'
@@ -69,6 +69,14 @@ export default function IDELayout(): JSX.Element {
 
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = React.useState(false)
+
+  // 稳定 TitleBar 回调 — 避免每次 IDELayout 重渲染时生成新函数导致 memo 失效
+  const handleOpenFolder = useCallback(() => useWorkspaceStore.getState().openFolder(), [])
+  const handleToggleTerminal = useCallback(() => useTerminalStore.getState().togglePanel(), [])
+  const handleConnectPhone = useCallback(() => setMobileModalOpen(true), [])
+  const handleOpenBrowser = useCallback(() => {
+    useLayoutStore.getState().setRightSidebarTab('preview')
+  }, [])
 
   // 拖拽分割线时启用全屏 overlay，防止 Monaco/xterm 在每个像素变化时触发内部重计算
   const [isDragging, setIsDragging] = useState(false)
@@ -267,16 +275,12 @@ export default function IDELayout(): JSX.Element {
   return (
     <div className="ide-container">
       <TitleBar
-        onOpenFolder={() => useWorkspaceStore.getState().openFolder()}
-        onToggleTerminal={() => useTerminalStore.getState().togglePanel()}
+        onOpenFolder={handleOpenFolder}
+        onToggleTerminal={handleToggleTerminal}
         onToggleRightSidebar={toggleRightSidebar}
         rightSidebarVisible={rightSidebarVisible}
-        onConnectPhone={() => {
-          setMobileModalOpen(true)
-        }}
-        onOpenBrowser={() => {
-          setRightSidebarTab('preview')
-        }}
+        onConnectPhone={handleConnectPhone}
+        onOpenBrowser={handleOpenBrowser}
         onBackToTasks={closeWorkspace}
         activeWorkspaceTitle={activeWorkspace?.title}
       />

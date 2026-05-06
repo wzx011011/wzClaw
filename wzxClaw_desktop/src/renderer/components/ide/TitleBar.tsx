@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, memo } from 'react'
 import { useT } from '../../i18n/useT'
 
 type ThemeMode = 'midnight' | 'dark' | 'light'
@@ -26,7 +26,7 @@ interface TitleBarProps {
  * The native window controls (minimize/maximize/close) are rendered
  * by the OS overlay on the right side.
  */
-export default function TitleBar({
+export default memo(function TitleBar({
   onOpenFolder,
   onToggleTerminal,
   onToggleRightSidebar,
@@ -180,4 +180,4 @@ export default function TitleBar({
       </div>
     </div>
   )
-}
+})

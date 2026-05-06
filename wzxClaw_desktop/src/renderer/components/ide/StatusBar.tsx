@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, memo } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
@@ -20,6 +20,44 @@ interface UsageDisplay {
   model: string
 }
 
+/** 隔离的索引状态显示 — 只有 status/fileCount 变化时才重渲染 */
+const IndexStatusDisplay = memo(function IndexStatusDisplay() {
+  const t = useT()
+  const indexStatus = useIndexStore((s) => s.status)
+  const indexFileCount = useIndexStore((s) => s.fileCount)
+
+  return (
+    <span className="status-item status-index">
+      {indexStatus === 'indexing' && (
+        <span title={t('statusBar.indexingTooltip')}>
+          {t('statusBar.indexing', { count: indexFileCount })}
+        </span>
+      )}
+      {indexStatus === 'ready' && (
+        <span title={t('statusBar.indexedTooltip', { count: indexFileCount })}>
+          {t('statusBar.indexed', { count: indexFileCount })}
+        </span>
+      )}
+      {indexStatus === 'error' && (
+        <span className="index-error" title={t('statusBar.indexErrorTooltip')}>
+          ! {t('statusBar.indexError')}
+        </span>
+      )}
+    </span>
+  )
+})
+
+/** 隔离的 Agent 流式状态显示 — 只有 isStreaming 变化时才重渲染 */
+const AgentStatusDisplay = memo(function AgentStatusDisplay() {
+  const t = useT()
+  const isStreaming = useChatStore((s) => s.isStreaming)
+  return (
+    <span className="status-item">
+      {isStreaming ? t('statusBar.agentWorking') : t('statusBar.agentReady')}
+    </span>
+  )
+})
+
 /**
  * StatusBar -- bottom status bar showing workspace path, agent status,
  * terminal info, index status, relay connection status, and cost (Phase 4.4).
@@ -30,21 +68,16 @@ export default function StatusBar(): JSX.Element {
   const panelVisible = useTerminalStore((s) => s.panelVisible)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const tabs = useTerminalStore((s) => s.tabs)
-  const indexStatus = useIndexStore((s) => s.status)
-  const indexFileCount = useIndexStore((s) => s.fileCount)
-  const isStreaming = useChatStore((s) => s.isStreaming)
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
   const [usage, setUsage] = useState<UsageDisplay | null>(null)
 
   useEffect(() => {
     // Fetch initial relay status (events may have fired before mount)
     window.wzxclaw.getRelayStatus().then((status: RelayStatus) => {
-      console.log('[StatusBar] initial relay status:', JSON.stringify(status))
       if (status) setRelayStatus(status)
-    }).catch((err) => console.error('[StatusBar] getRelayStatus error:', err))
+    }).catch(() => {})
     // Subscribe to relay status updates
     const unsubRelay = window.wzxclaw.onRelayStatus((status) => {
-      console.log('[StatusBar] relay status event:', JSON.stringify(status))
       setRelayStatus(status)
     })
     // Subscribe to usage/cost updates (Phase 4.4)
@@ -80,23 +113,7 @@ export default function StatusBar(): JSX.Element {
         {activeTerminal && (
           <span className="status-item">{t('statusBar.terminal', { title: activeTerminal.title })}</span>
         )}
-        <span className="status-item status-index">
-          {indexStatus === 'indexing' && (
-            <span title={t('statusBar.indexingTooltip')}>
-              {t('statusBar.indexing', { count: indexFileCount })}
-            </span>
-          )}
-          {indexStatus === 'ready' && (
-            <span title={t('statusBar.indexedTooltip', { count: indexFileCount })}>
-              {t('statusBar.indexed', { count: indexFileCount })}
-            </span>
-          )}
-          {indexStatus === 'error' && (
-            <span className="index-error" title={t('statusBar.indexErrorTooltip')}>
-              ! {t('statusBar.indexError')}
-            </span>
-          )}
-        </span>
+        <IndexStatusDisplay />
         {/* Cost / token usage display (Phase 4.4) */}
         {usage && (
           <span
@@ -106,9 +123,7 @@ export default function StatusBar(): JSX.Element {
             {formatUsage(usage)}
           </span>
         )}
-        <span className="status-item">
-          {isStreaming ? t('statusBar.agentWorking') : t('statusBar.agentReady')}
-        </span>
+        <AgentStatusDisplay />
         {relayStatus && relayStatus.connected && (
           <span className="status-item status-relay" title={relayStatus.mobileConnected ? t('statusBar.mobileConnectedTooltip', { identity: relayStatus.mobileIdentity ?? 'Mobile' }) : t('statusBar.relayConnectedTooltip')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
