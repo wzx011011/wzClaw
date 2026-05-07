@@ -94,6 +94,7 @@ function makeContextMgr(opts?: { shouldCompact?: boolean }) {
     getTotalUsage: vi.fn().mockReturnValue({ inputTokens: 0, outputTokens: 0 }),
     resetUsage: vi.fn(),
     estimateTokens: vi.fn().mockReturnValue(5000),
+    estimateOverheadTokens: vi.fn().mockReturnValue(0),
     getMicrocompactConfig: vi.fn().mockReturnValue({ gapMinutes: 60, keepRecent: 5 }),
   }
 }
@@ -220,16 +221,18 @@ describe('Harness E2E', () => {
     // Verify turn_end appears after each tool turn
     const types = events.map(e => e.type)
     expect(types).toEqual([
-      'agent:text',       // Turn 1 text
-      'agent:tool_call',  // Turn 1 tool
-      'agent:tool_result',// Turn 1 result
-      'agent:turn_end',   // ← between turn 1 and 2
-      'agent:text',       // Turn 2 text
-      'agent:tool_call',  // Turn 2 tool
-      'agent:tool_result',// Turn 2 result
-      'agent:turn_end',   // ← between turn 2 and 3
-      'agent:text',       // Turn 3 text
-      'agent:done',       // ← final
+      'agent:text',              // Turn 1 text
+      'agent:tool_call_preview', // Turn 1 tool preview
+      'agent:tool_call',         // Turn 1 tool
+      'agent:tool_result',       // Turn 1 result
+      'agent:turn_end',          // ← between turn 1 and 2
+      'agent:text',              // Turn 2 text
+      'agent:tool_call_preview', // Turn 2 tool preview
+      'agent:tool_call',         // Turn 2 tool
+      'agent:tool_result',       // Turn 2 result
+      'agent:turn_end',          // ← between turn 2 and 3
+      'agent:text',              // Turn 3 text
+      'agent:done',              // ← final
     ])
 
     const done = events.find(e => e.type === 'agent:done') as any
@@ -261,17 +264,19 @@ describe('Harness E2E', () => {
     const loop = new AgentLoop(gw as any, makeRegistry([tool]) as any, makePermissionMgr() as any, makeContextMgr() as any)
     const events = await collect(loop.run('test interleave', cfg()))
 
-    // Verify event order is: text, text, tool_call, text, tool_call, tool_result, tool_result, turn_end, text, done
+    // Verify event order is: text, text, tool_call_preview, tool_call, text, tool_call_preview, tool_call, tool_result, tool_result, turn_end, text, done
     const types = events.map(e => e.type)
     expect(types[0]).toBe('agent:text')  // "First "
     expect(types[1]).toBe('agent:text')  // "text."
-    expect(types[2]).toBe('agent:tool_call') // c1
-    expect(types[3]).toBe('agent:text')  // "Middle text."
-    expect(types[4]).toBe('agent:tool_call') // c2
+    expect(types[2]).toBe('agent:tool_call_preview') // c1 preview
+    expect(types[3]).toBe('agent:tool_call') // c1
+    expect(types[4]).toBe('agent:text')  // "Middle text."
+    expect(types[5]).toBe('agent:tool_call_preview') // c2 preview
+    expect(types[6]).toBe('agent:tool_call') // c2
     // After stream completes, tool results come in order
-    expect(types[5]).toBe('agent:tool_result') // c1 result
-    expect(types[6]).toBe('agent:tool_result') // c2 result
-    expect(types[7]).toBe('agent:turn_end')
+    expect(types[7]).toBe('agent:tool_result') // c1 result
+    expect(types[8]).toBe('agent:tool_result') // c2 result
+    expect(types[9]).toBe('agent:turn_end')
 
     // Verify contentBlocks on internal messages
     const msgs = loop.getMessages()

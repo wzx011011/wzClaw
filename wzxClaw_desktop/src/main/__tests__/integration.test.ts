@@ -57,16 +57,16 @@ describe('IPC Channels', () => {
 // Test 2: Tool registry wiring
 // ============================================================
 describe('Default Tool Registry', () => {
-  it('should register all 11 base tools', () => {
+  it('should register all 12 base tools', () => {
     const registry = createDefaultTools(process.cwd())
     const tools = registry.getAll()
 
-    expect(tools).toHaveLength(11)
+    expect(tools).toHaveLength(12)
 
     const toolNames = tools.map((t) => t.name).sort()
     expect(toolNames).toEqual([
       'Bash', 'FileEdit', 'FileRead', 'FileWrite', 'Glob', 'Grep',
-      'LS', 'MultiEdit', 'SemanticSearch', 'WebFetch', 'WebSearch'
+      'LS', 'MultiEdit', 'SemanticSearch', 'ToolSearch', 'WebFetch', 'WebSearch'
     ])
   })
 
@@ -94,7 +94,7 @@ describe('Default Tool Registry', () => {
     const registry = createDefaultTools(process.cwd())
     const definitions = registry.getDefinitions()
 
-    expect(definitions).toHaveLength(11)
+    expect(definitions).toHaveLength(12)
 
     for (const def of definitions) {
       expect(def.name).toBeTruthy()

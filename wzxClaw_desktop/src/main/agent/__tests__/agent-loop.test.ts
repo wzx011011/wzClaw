@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import type { StreamEvent } from '../../../shared/types'
 import type { AgentEvent } from '../types'
 
@@ -79,6 +79,7 @@ function createMockContextManager() {
     getTotalUsage: vi.fn().mockReturnValue({ inputTokens: 0, outputTokens: 0 }),
     resetUsage: vi.fn(),
     estimateTokens: vi.fn().mockReturnValue(0),
+    estimateOverheadTokens: vi.fn().mockReturnValue(0),
     getMicrocompactConfig: vi.fn().mockReturnValue({ gapMinutes: 60, keepRecent: 5 }),
   }
 }
@@ -101,12 +102,18 @@ describe('AgentLoop', () => {
   // Since AgentLoop depends on concrete classes, we'll construct it with mock-like objects
   // that satisfy the same interfaces.
 
+  let AgentLoop: any
+
+  beforeAll(async () => {
+    const mod = await import('../agent-loop')
+    AgentLoop = mod.AgentLoop
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('completes single turn with text-only response', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const gateway = createMockGateway([
       [
         { type: 'text_delta', content: 'Hello! ' },
@@ -143,7 +150,6 @@ describe('AgentLoop', () => {
   })
 
   it('completes multi-turn with tool execution', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileReadTool = createMockTool('file_read', false, 'file contents here')
 
     const gateway = createMockGateway([
@@ -194,7 +200,6 @@ describe('AgentLoop', () => {
   })
 
   it('detects loop after 3 identical tool calls', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileReadTool = createMockTool('file_read', false, 'file contents')
 
     const gateway = createMockGateway([
@@ -237,7 +242,6 @@ describe('AgentLoop', () => {
   })
 
   it('stops at max turns', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileReadTool = createMockTool('file_read', false, 'file contents')
 
     // Gateway always returns a tool call with different inputs each time to avoid loop detection
@@ -282,7 +286,6 @@ describe('AgentLoop', () => {
   })
 
   it('cancels mid-stream', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const gateway = {
       stream: vi.fn().mockImplementation(() => {
         return (async function* () {
@@ -325,7 +328,6 @@ describe('AgentLoop', () => {
   })
 
   it('handles tool not found', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const gateway = createMockGateway([
       [
         { type: 'tool_use_start', id: 'call_1', name: 'nonexistent_tool' },
@@ -360,7 +362,6 @@ describe('AgentLoop', () => {
   })
 
   it('requests permission for destructive tool and executes when approved', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileWriteTool = createMockTool('file_write', true, 'File written successfully')
 
     const gateway = createMockGateway([
@@ -401,7 +402,6 @@ describe('AgentLoop', () => {
   })
 
   it('handles permission denied', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileWriteTool = createMockTool('file_write', true, 'File written')
 
     const gateway = createMockGateway([
@@ -445,7 +445,6 @@ describe('AgentLoop', () => {
   })
 
   it('auto-approves read-only tools without calling permissionManager', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const fileReadTool = createMockTool('file_read', false, 'file contents')
 
     const gateway = createMockGateway([
@@ -487,7 +486,6 @@ describe('AgentLoop', () => {
   })
 
   it('resets clears conversation', async () => {
-    const { AgentLoop } = await import('../agent-loop')
     const gateway = createMockGateway([
       [
         { type: 'text_delta', content: 'Hello' },
