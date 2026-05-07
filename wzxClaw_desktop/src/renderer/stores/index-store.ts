@@ -61,9 +61,10 @@ export const useIndexStore = create<IndexStore>((set, get) => ({
     }
 
     const unsubscribe = window.wzxclaw.onIndexProgress((payload: IndexProgressPayload) => {
-      // 状态切换（indexing→ready / error）立即更新，不节流
+      // 状态切换（idle→indexing, indexing→ready/error）立即更新，不节流
       const newStatus = (payload.status as IndexingStatus) || 'idle'
-      if (newStatus !== 'indexing' || newStatus !== get().status) {
+      const isTransition = newStatus !== get().status
+      if (newStatus !== 'indexing' || isTransition) {
         applyProgress(payload)
         if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null }
         return

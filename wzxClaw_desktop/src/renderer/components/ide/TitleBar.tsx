@@ -17,7 +17,7 @@ interface TitleBarProps {
   onConnectPhone: () => void
   onOpenBrowser: () => void
   onBackToTasks?: () => void
-  activeTaskTitle?: string
+  activeWorkspaceTitle?: string
 }
 
 /**
@@ -34,7 +34,7 @@ export default memo(function TitleBar({
   onConnectPhone,
   onOpenBrowser,
   onBackToTasks,
-  activeTaskTitle
+  activeWorkspaceTitle
 }: TitleBarProps): JSX.Element {
   const t = useT()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -66,7 +66,7 @@ export default memo(function TitleBar({
     }
     // Update native window control button colors to match theme
     const overlayColors = theme === 'light'
-      ? { color: '#f5f5f5', symbolColor: '#333333' }
+      ? { color: '#ffffff', symbolColor: '#333333' }
       : { color: '#181818', symbolColor: '#e0e0e0' }
     window.wzxclaw.setTitleBarOverlay?.(overlayColors)
   }
@@ -76,7 +76,7 @@ export default memo(function TitleBar({
       {/* Back to tasks */}
       {onBackToTasks && (
         <button className="workspace-back-btn" onClick={onBackToTasks} title={t('titleBar.backToWorkspaces')}>
-          ← {activeTaskTitle || t('titleBar.workspace')}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg> {activeWorkspaceTitle || t('titleBar.workspace')}
         </button>
       )}
 
