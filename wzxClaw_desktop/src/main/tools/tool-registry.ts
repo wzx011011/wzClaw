@@ -17,6 +17,9 @@ import { SemanticSearchTool } from './semantic-search'
 import { TodoWriteTool } from './todo-write'
 import { LsTool } from './ls'
 import { MultiEditTool } from './multi-edit'
+import { TaskOutputTool } from './task-output-tool'
+import { BackgroundTaskManager } from '../tasks/background-task-manager'
+import { ToolSearchTool } from './tool-search-tool'
 import type { StepManager } from '../steps/step-manager'
 import type { IndexingEngine } from '../indexing/indexing-engine'
 
@@ -31,6 +34,10 @@ export class ToolRegistry {
 
   register(tool: Tool): void {
     this.tools.set(tool.name, tool)
+  }
+
+  unregister(name: string): boolean {
+    return this.tools.delete(name)
   }
 
   get(name: string): Tool | undefined {
@@ -68,7 +75,8 @@ export function createDefaultTools(
   terminalManager?: TerminalManager,
   getWebContents?: () => Electron.WebContents | null,
   stepManager?: StepManager,
-  indexingEngine?: IndexingEngine
+  indexingEngine?: IndexingEngine,
+  backgroundTaskManager?: BackgroundTaskManager
 ): ToolRegistry {
   const registry = new ToolRegistry()
 
@@ -77,6 +85,9 @@ export function createDefaultTools(
   registry.register(new GrepTool())
   registry.register(new GlobTool())
   registry.register(new LsTool())
+
+  // Tool search — help LLM find the right tool (read-only)
+  registry.register(new ToolSearchTool(registry))
 
   // Semantic search tool (read-only, requires IndexingEngine)
   const semanticSearch = new SemanticSearchTool()
@@ -111,7 +122,12 @@ export function createDefaultTools(
   registry.register(new FileWriteTool())
   registry.register(new FileEditTool())
   registry.register(new MultiEditTool())
-  registry.register(new BashTool(workingDirectory, terminalManager))
+  registry.register(new BashTool(workingDirectory, terminalManager, backgroundTaskManager))
+
+  // Background task output tool (read-only)
+  if (backgroundTaskManager) {
+    registry.register(new TaskOutputTool(backgroundTaskManager))
+  }
 
   return registry
 }

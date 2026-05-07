@@ -27,6 +27,8 @@ import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-
 import { maybeTimeBasedMicrocompact } from '../context/microcompact'
 import { ToolResultReplacementState } from '../context/tool-result-storage'
 import { restoreFiles, formatRestoredFilesMessage } from '../context/compact-file-restore'
+// Dynamic import to avoid pulling in Electron during tests
+// (paths.ts → electron import breaks vitest node environment)
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -191,14 +193,16 @@ export class AgentLoop {
       }
 
       // 上下文压缩检查（LLM 调用前）
-      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
+      // 计算 system prompt + tool definitions 的 token 开销（不在 messages 数组中但占用 context window）
+      const overheadTokens = this.contextManager.estimateOverheadTokens(systemPrompt, toolDefinitions, config.model)
+      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model, overheadTokens)) {
         const compacted = await this.doCompaction(config)
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           yield compacted
           // Compaction succeeded — only re-enable tools if context is now below threshold
-          if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
+          if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model, overheadTokens)) {
             toolsDisabled = false
           }
         }
@@ -348,6 +352,10 @@ export class AgentLoop {
       if (turnResult.shouldStop) {
         debugLogger.log('EXIT', `{ reason: 'completed', turnCount: ${turnCount}, inputTokens: ${totalUsage.inputTokens}, outputTokens: ${totalUsage.outputTokens} }`)
         debugLogger.close()
+
+        // 自动记忆提取（fire-and-forget，不阻塞 agent:done 事件）
+        this.triggerAutoMemory(config).catch(() => {})
+
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, false, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
@@ -416,6 +424,38 @@ export class AgentLoop {
       }
     }
     return null
+  }
+
+  // ---- 自动记忆提取 ----
+
+  /**
+   * 对话自然结束时触发自动记忆提取。
+   * 从最近对话中提取稳定事实写入 MEMORY.md。
+   * Fire-and-forget：失败不影响用户体验。
+   */
+  private async triggerAutoMemory(config: AgentConfig): Promise<void> {
+    try {
+      const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
+      if (!workingDir) return
+
+      // Dynamic import: paths.ts pulls in Electron which breaks vitest
+      const { MemoryManager } = await import('../memory/memory-manager')
+      const { AutoExtractor } = await import('../memory/auto-extractor')
+
+      const mm = new MemoryManager(workingDir)
+      const existingMemory = await mm.readMemory()
+
+      await AutoExtractor.extractAndAppend(
+        this.conversation.getMessages(),
+        existingMemory,
+        mm.getMemoryPath(),
+        this.gateway,
+        config.model,
+        config.provider,
+      )
+    } catch {
+      // 记忆提取失败不应影响用户体验
+    }
   }
 
   // ---- 公共 API（保持签名不变） ----

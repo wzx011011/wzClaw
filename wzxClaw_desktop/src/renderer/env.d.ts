@@ -10,6 +10,7 @@ declare global {
       onStreamText: (cb: (p: { content: string }) => void) => () => void
       onStreamThinking: (cb: (p: { content: string }) => void) => () => void
       onStreamToolStart: (cb: (p: { id: string; name: string; input?: Record<string, unknown> }) => void) => () => void
+      onStreamToolCallPreview: (cb: (p: { id: string; name: string }) => void) => () => void
       onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean; toolName: string }) => void) => () => void
       onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number } }) => void) => () => void
       onStreamTurnEnd: (cb: () => void) => () => void

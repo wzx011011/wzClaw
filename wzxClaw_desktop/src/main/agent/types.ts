@@ -21,6 +21,12 @@ export interface AgentToolCallEvent {
   input: Record<string, unknown>
 }
 
+export interface AgentToolCallPreviewEvent {
+  type: 'agent:tool_call_preview'
+  toolCallId: string
+  toolName: string
+}
+
 export interface AgentToolResultEvent {
   type: 'agent:tool_result'
   toolCallId: string
@@ -64,6 +70,7 @@ export type AgentEvent =
   | AgentTextEvent
   | AgentThinkingEvent
   | AgentToolCallEvent
+  | AgentToolCallPreviewEvent
   | AgentToolResultEvent
   | AgentErrorEvent
   | AgentDoneEvent

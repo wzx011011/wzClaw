@@ -259,6 +259,75 @@ ${t('slashCmd.helpShortcuts')}`,
         })
       }
     }
+  },
+  {
+    name: 'doctor',
+    description: 'Run diagnostics: check Node, Git, API keys, MCP servers, disk space',
+    handler: {
+      type: 'action',
+      execute: async (_args: string) => {
+        try {
+          const result = await window.wzxclaw.runDoctor()
+          useChatStore.setState({
+            messages: [
+              ...useChatStore.getState().messages,
+              { id: uuidv4(), role: 'assistant' as const, content: result, timestamp: Date.now() }
+            ]
+          })
+        } catch (err) {
+          useChatStore.setState({
+            messages: [
+              ...useChatStore.getState().messages,
+              {
+                id: uuidv4(),
+                role: 'assistant' as const,
+                content: `Doctor failed: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: Date.now()
+              }
+            ]
+          })
+        }
+      }
+    }
+  },
+  {
+    name: 'export',
+    description: 'Export conversation to Markdown or JSON file',
+    handler: {
+      type: 'action',
+      execute: async (args: string) => {
+        const format = args.trim() === 'json' ? 'json' as const : 'markdown' as const
+        try {
+          const { activeSessionId } = useChatStore.getState()
+          const result = await window.wzxclaw.exportSession({ sessionId: activeSessionId, format })
+          const { messages } = useChatStore.getState()
+          useChatStore.setState({
+            messages: [
+              ...messages,
+              {
+                id: uuidv4(),
+                role: 'assistant' as const,
+                content: `Exported ${result.messageCount} messages to:\n\`${result.filePath}\``,
+                timestamp: Date.now()
+              }
+            ]
+          })
+        } catch (err) {
+          const { messages } = useChatStore.getState()
+          useChatStore.setState({
+            messages: [
+              ...messages,
+              {
+                id: uuidv4(),
+                role: 'assistant' as const,
+                content: `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: Date.now()
+              }
+            ]
+          })
+        }
+      }
+    }
   }
 ]
 

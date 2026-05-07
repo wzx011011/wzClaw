@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import { DEFAULT_MODELS } from '../../shared/constants'
+import { getScratchpadDir } from '../paths'
 
 // 缓存 shell 检测结果（bash.exe 路径不会频繁变化）
 let cachedShellInfo: string | null = null
@@ -113,6 +114,7 @@ export function buildEnvInfo(options: {
     ` - Shell: ${shellInfo}`,
     ` - You are powered by the model ${modelName} (model ID: ${model}, provider: ${provider}).`,
     ` - Current date: ${date}`,
+    ` - Scratchpad: ${getScratchpadDir()} (use for temporary files)`,
   )
 
   return lines.join('\n')

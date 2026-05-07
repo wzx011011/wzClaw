@@ -139,6 +139,8 @@ export async function* executeStreamPhase(
 
         case 'tool_use_start': {
           toolNameMap.set(event.id, event.name)
+          // Notify UI early that a tool call is starting (before JSON input finishes streaming)
+          yield { type: 'agent:tool_call_preview', toolCallId: event.id, toolName: event.name }
           break
         }
 
@@ -224,12 +226,13 @@ export async function* executeStreamPhase(
 
       // 出错时 yield 错误结果（让 UI 工具卡片退出 running 状态）
       if (hadError) {
+        toolResults.push(result)
         yield {
           type: 'agent:tool_result',
           toolCallId: result.toolCallId,
           toolName: result.toolName,
           output: result.output,
-          isError: true,
+          isError: result.isError,
         }
         continue
       }

@@ -1,4 +1,5 @@
 import fs from 'fs/promises'
+import fsp from 'fs/promises'
 
 // ============================================================
 // FileHistoryManager (Phase 3.3)
@@ -75,5 +76,52 @@ export class FileHistoryManager {
    */
   clear(): void {
     this.entries = []
+  }
+
+  /**
+   * Revert all file writes that occurred after the given timestamp.
+   * Used by the "rewind to here" feature to undo file changes made after a message.
+   *
+   * @returns Array of reverted file paths.
+   */
+  async revertAfterTimestamp(timestamp: number): Promise<string[]> {
+    // 找到目标时间之后的所有快照（每个文件取最早的快照来恢复）
+    const entriesToRevert = this.entries.filter(e => e.timestamp > timestamp)
+    if (entriesToRevert.length === 0) return []
+
+    // 对每个文件，找到时间之后最早的一个快照（即目标时刻之后第一次写入前的内容）
+    const fileEarliest = new Map<string, FileHistoryEntry>()
+    for (const entry of entriesToRevert) {
+      const existing = fileEarliest.get(entry.filePath)
+      if (!existing || entry.timestamp < existing.timestamp) {
+        fileEarliest.set(entry.filePath, entry)
+      }
+    }
+
+    const revertedPaths: string[] = []
+    for (const [filePath, snapshot] of fileEarliest) {
+      try {
+        if (snapshot.content === '') {
+          // 文件在目标时间后新建的，删除它
+          try {
+            await fsp.unlink(filePath)
+            revertedPaths.push(filePath)
+          } catch {
+            console.warn(`[FileHistory] Failed to delete new file ${filePath}`)
+          }
+        } else {
+          // 恢复到快照内容
+          await fsp.writeFile(filePath, snapshot.content, 'utf-8')
+          revertedPaths.push(filePath)
+        }
+      } catch (err) {
+        console.warn(`[FileHistory] Failed to revert ${filePath}:`, err)
+      }
+    }
+
+    // 清理已回退的条目
+    this.entries = this.entries.filter(e => e.timestamp <= timestamp)
+
+    return revertedPaths
   }
 }

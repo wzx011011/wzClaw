@@ -23,6 +23,11 @@ const api = {
     ipcRenderer.on('stream:tool_use_start', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_start', handler)
   },
+  onStreamToolCallPreview: (callback: (payload: { id: string; name: string }) => void) => {
+    const handler = (_: unknown, payload: { id: string; name: string }) => callback(payload)
+    ipcRenderer.on('stream:tool_call_preview', handler)
+    return () => ipcRenderer.removeListener('stream:tool_call_preview', handler)
+  },
   onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean; toolName: string }) => void) => {
     const handler = (_: unknown, payload: { id: string; output: string; isError: boolean; toolName: string }) => callback(payload)
     ipcRenderer.on('stream:tool_use_end', handler)
@@ -143,6 +148,7 @@ const api = {
 
   // Compact context (manual trigger via /compact command)
   compactContext: () => ipcRenderer.invoke('agent:compact_context'),
+  runDoctor: () => ipcRenderer.invoke('system:doctor'),
 
   // Diff: apply accepted hunks to disk
   applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) =>
@@ -273,6 +279,10 @@ const api = {
     ipcRenderer.invoke('file:get-history', request),
   revertFile: (request: { toolCallId: string }) =>
     ipcRenderer.invoke('file:revert', request),
+  rewindSession: (request: { sessionId: string; targetMessageId: string }) =>
+    ipcRenderer.invoke('session:rewind', request),
+  exportSession: (request: { sessionId: string; format: 'markdown' | 'json' }) =>
+    ipcRenderer.invoke('session:export', request),
 
   // AskUserQuestion — main pushes question, renderer invokes answer (Phase 4.2)
   onAskUserQuestion: (callback: (payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => void) => {

@@ -1,4 +1,4 @@
-import { countMessagesTokens } from './token-counter'
+import { countMessagesTokens, countTokens } from './token-counter'
 import type { Message } from '../../shared/types'
 import { DEFAULT_MODELS } from '../../shared/constants'
 import type { LLMGateway } from '../llm/gateway'
@@ -65,17 +65,21 @@ export class ContextManager {
    *   contextWindow - maxOutputTokens - safetyBuffer
    * 若 compactThreshold > 0 则使用旧式比例模式。
    * 无下限——充分利用 context window，避免过早压缩浪费 token。
+   *
+   * @param overheadTokens - 额外的 token 开销（system prompt + tool definitions 等），
+   *                         这些不在 messages 数组中但会占用 context window。
    */
-  shouldCompact(messages: Message[], modelId: string): boolean {
+  shouldCompact(messages: Message[], modelId: string, overheadTokens: number = 0): boolean {
     if (this.isCompacting) return false
     if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
 
-    const tokens = countMessagesTokens(messages, modelId)
+    const messageTokens = countMessagesTokens(messages, modelId)
+    const totalTokens = messageTokens + overheadTokens
     const contextWindow = this.getContextWindowForModel(modelId)
 
     // 兼容旧式比例模式
     if (this.config.compactThreshold > 0) {
-      return tokens > contextWindow * this.config.compactThreshold
+      return totalTokens > contextWindow * this.config.compactThreshold
     }
 
     // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
@@ -86,7 +90,7 @@ export class ContextManager {
       contextWindow - maxOutputTokens - this.config.compactSafetyBuffer,
       contextWindow * 0.7
     )
-    return tokens > threshold
+    return totalTokens > threshold
   }
 
   /**
@@ -259,6 +263,31 @@ Provide a detailed summary following the sections above. Be especially thorough 
 
   estimateTokens(messages: Message[], modelId?: string): number {
     return countMessagesTokens(messages, modelId)
+  }
+
+  /**
+   * 估算 system prompt + tool definitions 的 token 开销。
+   * 这些内容不在 messages 数组中，但会占用 context window。
+   */
+  estimateOverheadTokens(
+    systemPrompt: string,
+    toolDefinitions: Array<{ name: string; description: string; input_schema: unknown }>,
+    modelId?: string
+  ): number {
+    let overhead = 0
+    // System prompt tokens
+    if (systemPrompt) {
+      overhead += countTokens(systemPrompt)
+      overhead += 4 // per-message overhead
+    }
+    // Tool definitions tokens
+    for (const def of toolDefinitions) {
+      overhead += countTokens(def.name)
+      overhead += countTokens(def.description)
+      overhead += countTokens(JSON.stringify(def.input_schema))
+      overhead += 8 // per-tool overhead (schema wrapper, separators)
+    }
+    return overhead
   }
 }
 

@@ -33,6 +33,10 @@ export default function MessageList(): JSX.Element {
   const [historyRenderCount, setHistoryRenderCount] = useState(INITIAL_HISTORY_RENDER_COUNT)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
 
+  const handleRewind = useCallback((targetMessageId: string) => {
+    useChatStore.getState().rewindToMessage(targetMessageId)
+  }, [])
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const previousSessionIdRef = useRef(activeSessionId)
@@ -187,7 +191,7 @@ export default function MessageList(): JSX.Element {
             </div>
           )}
           {visibleMessages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
+            <ChatMessage key={msg.id} message={msg} onRewind={handleRewind} />
           ))}
         </>
       )}

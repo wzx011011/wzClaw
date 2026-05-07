@@ -120,6 +120,11 @@ export function getMediaDir(): string {
   return path.join(getUserDir(), 'media')
 }
 
+/** 临时草稿目录：~/.wzxclaw/scratchpad/（Agent 可写入临时文件，手动清理） */
+export function getScratchpadDir(): string {
+  return path.join(getUserDir(), 'scratchpad')
+}
+
 /** Insights facet 缓存目录：~/.wzxclaw/insights-cache/ */
 export function getInsightsCacheDir(): string {
   return path.join(getUserDir(), 'insights-cache')
@@ -187,6 +192,7 @@ export async function ensureAppDirs(): Promise<void> {
     getSkillsDir(),
     getPluginsDir(),
     getMediaDir(),
+    getScratchpadDir(),
     getInsightsCacheDir(),
     getInsightsReportDir(),
     // AppData 级

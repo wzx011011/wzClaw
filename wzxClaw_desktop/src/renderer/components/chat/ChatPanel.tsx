@@ -124,8 +124,11 @@ export default function ChatPanel(): JSX.Element {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('always-ask')
   const [showThinkingDropdown, setShowThinkingDropdown] = useState(false)
   const [showPermissionDropdown, setShowPermissionDropdown] = useState(false)
+  const [showContextPopover, setShowContextPopover] = useState(false)
+  const [compacting, setCompacting] = useState(false)
   const thinkingRef = useRef<HTMLDivElement>(null)
   const permissionRef = useRef<HTMLDivElement>(null)
+  const contextRef = useRef<HTMLDivElement>(null)
 
   // Plan mode state
   const [planModeActive, setPlanModeActive] = useState(false)
@@ -157,7 +160,7 @@ export default function ChatPanel(): JSX.Element {
 
   // Close dropdowns on outside click
   useEffect(() => {
-    if (!showThinkingDropdown && !showPermissionDropdown) return
+    if (!showThinkingDropdown && !showPermissionDropdown && !showContextPopover) return
     const handler = (e: MouseEvent) => {
       if (showThinkingDropdown && thinkingRef.current && !thinkingRef.current.contains(e.target as Node)) {
         setShowThinkingDropdown(false)
@@ -165,10 +168,13 @@ export default function ChatPanel(): JSX.Element {
       if (showPermissionDropdown && permissionRef.current && !permissionRef.current.contains(e.target as Node)) {
         setShowPermissionDropdown(false)
       }
+      if (showContextPopover && contextRef.current && !contextRef.current.contains(e.target as Node)) {
+        setShowContextPopover(false)
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [showThinkingDropdown, showPermissionDropdown])
+  }, [showThinkingDropdown, showPermissionDropdown, showContextPopover])
 
   const handlePermissionChange = (mode: PermissionMode) => {
     setPermissionMode(mode)
@@ -837,10 +843,47 @@ n            style={{ display: 'none' }}
             </button>
           </div>
           <div className="chat-toolbar-right">
-            {/* Context usage percentage */}
-            <span className={`chat-toolbar-context${contextPercent > 80 ? ' danger' : contextPercent > 60 ? ' warning' : ''}`} title={`${currentTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`}>
-              {contextPercent}%
-            </span>
+            {/* Context usage percentage with popover */}
+            <div ref={contextRef} style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                className={`chat-toolbar-context${contextPercent > 80 ? ' danger' : contextPercent > 60 ? ' warning' : ''}`}
+                title={`${currentTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`}
+                onClick={() => setShowContextPopover(!showContextPopover)}
+              >
+                {contextPercent}%
+              </button>
+              {showContextPopover && (
+                <div className="chat-toolbar-context-popover">
+                  <div className="context-popover-header">
+                    <span>{t('context.usagePercent')}</span>
+                    <span className={`context-popover-pct${contextPercent > 80 ? ' danger' : contextPercent > 60 ? ' warning' : ''}`}>{contextPercent}%</span>
+                  </div>
+                  <div className="context-popover-bar-track">
+                    <div
+                      className={`context-popover-bar-fill${contextPercent > 80 ? ' danger' : contextPercent > 60 ? ' warning' : ''}`}
+                      style={{ width: `${contextPercent}%` }}
+                    />
+                  </div>
+                  <div className="context-popover-detail">
+                    <span>{currentTokens.toLocaleString()} / {maxTokens.toLocaleString()} tokens</span>
+                  </div>
+                  <button
+                    className="context-popover-compact-btn"
+                    onClick={async () => {
+                      setCompacting(true)
+                      try {
+                        await window.wzxclaw.compactContext()
+                      } catch { /* ignore */ }
+                      setCompacting(false)
+                      setShowContextPopover(false)
+                    }}
+                    disabled={compacting || isStreaming}
+                  >
+                    {compacting ? t('context.compacting') : t('context.compactNow')}
+                  </button>
+                </div>
+              )}
+            </div>
             {/* Permission mode selector */}
             <div ref={permissionRef} style={{ position: 'relative', display: 'inline-flex' }}>
               <button

@@ -87,6 +87,34 @@
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+  position: relative;
+}
+
+/* Rewind button on user messages — visible on hover */
+.chat-message-rewind-btn {
+  position: absolute;
+  top: 4px;
+  left: -28px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-message-user:hover .chat-message-rewind-btn {
+  opacity: 1;
+}
+.chat-message-rewind-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
 }
 
 /* Image display in user messages */
@@ -1074,6 +1102,16 @@
   font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-toolbar-context:hover {
+  background: var(--hover-bg);
 }
 
 .chat-toolbar-context.warning {
@@ -1082,6 +1120,92 @@
 
 .chat-toolbar-context.danger {
   color: var(--tool-error);
+}
+
+/* Context popover */
+.chat-toolbar-context-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: 12px;
+  z-index: 1000;
+}
+
+.context-popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.context-popover-pct {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.context-popover-pct.warning {
+  color: var(--tool-running);
+}
+
+.context-popover-pct.danger {
+  color: var(--tool-error);
+}
+
+.context-popover-bar-track {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.context-popover-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.context-popover-bar-fill.warning {
+  background: var(--tool-running);
+}
+
+.context-popover-bar-fill.danger {
+  background: var(--tool-error);
+}
+
+.context-popover-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.context-popover-compact-btn {
+  width: 100%;
+  padding: 6px 0;
+  font-size: 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.context-popover-compact-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.context-popover-compact-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-toolbar-select {

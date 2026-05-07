@@ -14,6 +14,8 @@ export default function GeneralPanel(): JSX.Element {
   const [showToolSteps, setShowToolSteps] = useState(settings.showToolSteps ?? true)
   const [thinkingDepth, setThinkingDepth] = useState(settings.thinkingDepth ?? 'none')
   const [systemPrompt, setSystemPrompt] = useState(settings.systemPrompt ?? '')
+  const [notificationSound, setNotificationSound] = useState(settings.notificationSound ?? true)
+  const [notificationDesktop, setNotificationDesktop] = useState(settings.notificationDesktop ?? true)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
 
@@ -24,6 +26,8 @@ export default function GeneralPanel(): JSX.Element {
         showToolSteps,
         thinkingDepth,
         systemPrompt,
+        notificationSound,
+        notificationDesktop,
       })
       await settings.loadSettings()
       setStatus(t('settings.general.saved'))
@@ -95,6 +99,26 @@ export default function GeneralPanel(): JSX.Element {
           </div>
 
           <div className="settings-form-group">
+            <label className="settings-label">{t('settings.general.notification')}</label>
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={notificationSound}
+                onChange={(e) => setNotificationSound(e.target.checked)}
+              />
+              <span>{t('settings.general.notificationSound')}</span>
+            </label>
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={notificationDesktop}
+                onChange={(e) => setNotificationDesktop(e.target.checked)}
+              />
+              <span>{t('settings.general.notificationDesktop')}</span>
+            </label>
+          </div>
+
+          <div className="settings-form-group">
             <label className="settings-label">{t('settings.general.extensionPath')}</label>
             <div className="settings-input-row">
               <button
@@ -111,10 +135,15 @@ export default function GeneralPanel(): JSX.Element {
               </button>
               <button
                 className="settings-btn-secondary"
-                onClick={() => {
-                  const dir = window.wzxclaw.openInExplorer?.('~/.wzxclaw')
-                  // fallback
-                  if (!dir) window.wzxclaw.openInExplorer?.(process.env.USERPROFILE ?? '~')
+                onClick={async () => {
+                  try {
+                    const paths = await window.wzxclaw.getExtensionPaths?.()
+                    if (paths) {
+                      await window.wzxclaw.openInExplorer?.(paths.commandsDir)
+                    }
+                  } catch {
+                    // 路径被阻止或不可用
+                  }
                 }}
               >
                 {t('settings.general.openConfigDir')}

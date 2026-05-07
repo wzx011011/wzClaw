@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import path from 'path'
+import os from 'os'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
 import { getCommandsDir, getSkillsDir, getAppDataDir, getInsightsCacheDir, getInsightsReportDir } from './paths'
@@ -62,6 +63,9 @@ export function registerIpcHandlers(
   // Track how many messages were already persisted so we only append new ones
   let persistedMessageCount = 0
 
+  // Guard against concurrent agent:send_message calls
+  let isAgentRunning = false
+
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
   // events to the renderer via webContents.send
@@ -71,6 +75,11 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
+
+    if (isAgentRunning) {
+      throw new Error('Agent is already processing a message. Please wait for it to finish or stop it first.')
+    }
+    isAgentRunning = true
 
     const sender = event.sender
 
@@ -175,6 +184,9 @@ export function registerIpcHandlers(
           case 'agent:thinking':
             sender.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
             break
+          case 'agent:tool_call_preview':
+            sender.send(IPC_CHANNELS['stream:tool_call_preview'], { id: agentEvent.toolCallId, name: agentEvent.toolName })
+            break
           case 'agent:tool_call':
             // Store tool input so we can extract file path on tool_result (per D-52)
             toolCallInputs.set(agentEvent.toolCallId, agentEvent.input)
@@ -244,12 +256,17 @@ export function registerIpcHandlers(
               const allMessages = runtime.getMessages()
               const newMessages = allMessages.slice(persistedMessageCount)
               if (newMessages.length > 0) {
-                // Inject usage into last assistant message for /insights cost tracking
-                const lastAsst = [...newMessages].reverse().find(m => m.role === 'assistant')
-                if (lastAsst) {
-                  (lastAsst as Record<string, unknown>).usage = {
-                    inputTokens: agentEvent.usage.inputTokens,
-                    outputTokens: agentEvent.usage.outputTokens,
+                // Inject usage into last assistant message for /insights cost tracking.
+                // Create a copy to avoid mutating the shared message object in ConversationManager.
+                const lastAsstIdx = [...newMessages].reverse().findIndex(m => m.role === 'assistant')
+                if (lastAsstIdx >= 0) {
+                  const realIdx = newMessages.length - 1 - lastAsstIdx
+                  newMessages[realIdx] = {
+                    ...newMessages[realIdx],
+                    usage: {
+                      inputTokens: agentEvent.usage.inputTokens,
+                      outputTokens: agentEvent.usage.outputTokens,
+                    }
                   }
                 }
                 await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
@@ -268,6 +285,7 @@ export function registerIpcHandlers(
         error: error instanceof Error ? error.message : String(error),
       })
     } finally {
+      isAgentRunning = false
       sender.removeListener('destroyed', onWindowClosed)
     }
   })
@@ -1673,5 +1691,33 @@ export function registerIpcHandlers(
       console.error('[plugin:search_marketplace]', err)
       return []
     }
+  })
+
+  // ============================================================
+  // System: doctor — run diagnostics (/doctor command)
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['system:doctor'], async () => {
+    const { Doctor } = await import('./diagnostics/doctor')
+    const apiKey = settingsManager.getApiKey(settingsManager.getSettings().provider)
+    const checks = await Doctor.run({
+      mcpManager,
+      apiKeyConfigured: !!apiKey,
+      provider: settingsManager.getSettings().provider,
+      model: settingsManager.getSettings().model,
+    })
+    return Doctor.formatResults(checks)
+  })
+
+  // ============================================================
+  // Session: export — export conversation to file
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json' }) => {
+    const { ConversationExporter } = await import('./export/conversation-exporter')
+    const store = getSessionStore()
+    const messages = await store.loadSession(request.sessionId)
+    const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
+    const filePath = path.join(exportDir, `conversation-${request.sessionId.slice(0, 8)}`)
+    const result = await ConversationExporter.exportToFile(messages as any, filePath, request.format)
+    return { filePath: result, messageCount: messages.length }
   })
 }

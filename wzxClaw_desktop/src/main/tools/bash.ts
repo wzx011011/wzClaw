@@ -8,6 +8,7 @@ import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-int
 import type { TerminalManager } from '../terminal/terminal-manager'
 import { analyzeBashCommand } from './bash-security'
 import { getShellSnapshotsDir } from '../paths'
+import type { BackgroundTaskManager } from '../tasks/background-task-manager'
 
 // ============================================================
 // Bash Tool — 对齐 Claude Code 的 Windows 策略：
@@ -81,7 +82,8 @@ function rewriteWindowsNullRedirect(command: string): string {
 
 const BashSchema = z.object({
   command: z.string().min(1),
-  timeout: z.number().positive().optional()
+  timeout: z.number().positive().optional(),
+  run_in_background: z.boolean().optional().describe('Run command in background and return immediately. Use for long-running commands like builds, servers, watches.')
 })
 
 export class BashTool implements Tool {
@@ -124,15 +126,21 @@ Always quote file paths containing spaces with double quotes.`
       timeout: {
         type: 'number',
         description: `Timeout in milliseconds (default: ${DEFAULT_TIMEOUT})`
+      },
+      run_in_background: {
+        type: 'boolean',
+        description: 'Run command in background. Use for long-running commands (builds, servers, file watches). Returns a task_id immediately.'
       }
     },
     required: ['command']
   }
 
   private terminalManager?: TerminalManager
+  private backgroundTaskManager?: BackgroundTaskManager
 
-  constructor(_workingDirectory: string, terminalManager?: TerminalManager) {
+  constructor(_workingDirectory: string, terminalManager?: TerminalManager, backgroundTaskManager?: BackgroundTaskManager) {
     this.terminalManager = terminalManager
+    this.backgroundTaskManager = backgroundTaskManager
   }
 
   async execute(
@@ -148,7 +156,7 @@ Always quote file paths containing spaces with double quotes.`
       }
     }
 
-    const { command, timeout } = parsed.data
+    const { command, timeout, run_in_background } = parsed.data
     const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT
 
     // Security analysis — block dangerous commands before execution
@@ -174,6 +182,23 @@ Always quote file paths containing spaces with double quotes.`
     const snapshotFile = path.join(getShellSnapshotsDir(), `history-${today}.sh`)
     const snapshotLine = `# ${new Date().toISOString()} cwd=${context.workingDirectory}\n${command}\n`
     appendFile(snapshotFile, snapshotLine, 'utf-8', () => {/* ignore */})
+
+    // ---- 后台执行模式 ----
+    if (run_in_background && this.backgroundTaskManager) {
+      const useGitBash = process.platform === 'win32' && detectedShell
+      let bgCommand = command
+      if (useGitBash) bgCommand = rewriteWindowsNullRedirect(command)
+      const taskId = this.backgroundTaskManager.startTask(bgCommand, {
+        cwd: context.workingDirectory,
+        timeout: effectiveTimeout,
+        shell: useGitBash ? detectedShell : undefined,
+        abortSignal: context.abortSignal ?? undefined,
+      })
+      return {
+        output: `Background task started (id: ${taskId}). Use the TaskOutput tool to check status and retrieve output when complete.`,
+        isError: false,
+      }
+    }
 
     // Route through visible terminal when TerminalManager and active terminal exist (per TERM-04)
     if (this.terminalManager) {

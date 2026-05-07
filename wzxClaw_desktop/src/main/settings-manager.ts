@@ -28,6 +28,8 @@ interface StoredSettings {
   showToolSteps?: boolean
   pluginStates?: Record<string, { enabled: boolean; scope: string }>
   language?: string
+  notificationSound?: boolean
+  notificationDesktop?: boolean
 }
 
 interface EncryptedKeys {
@@ -44,6 +46,8 @@ export interface SettingsResponse {
   thinkingDepth?: string
   showToolSteps?: boolean
   language?: string
+  notificationSound?: boolean
+  notificationDesktop?: boolean
 }
 
 export interface FullConfig {
@@ -266,7 +270,9 @@ export class SettingsManager {
       relayToken: this.settings.relayToken,
       thinkingDepth: this.settings.thinkingDepth,
       showToolSteps: this.settings.showToolSteps,
-      language: this.settings.language
+      language: this.settings.language,
+      notificationSound: this.settings.notificationSound,
+      notificationDesktop: this.settings.notificationDesktop
     }
   }
 
@@ -290,6 +296,8 @@ export class SettingsManager {
     thinkingDepth?: string
     showToolSteps?: boolean
     language?: string
+    notificationSound?: boolean
+    notificationDesktop?: boolean
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
@@ -300,6 +308,8 @@ export class SettingsManager {
     if (request.thinkingDepth !== undefined) this.settings.thinkingDepth = request.thinkingDepth as StoredSettings['thinkingDepth']
     if (request.showToolSteps !== undefined) this.settings.showToolSteps = request.showToolSteps
     if (request.language !== undefined) this.settings.language = request.language
+    if (request.notificationSound !== undefined) this.settings.notificationSound = request.notificationSound
+    if (request.notificationDesktop !== undefined) this.settings.notificationDesktop = request.notificationDesktop
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)

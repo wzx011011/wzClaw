@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   // Stream channels (main -> renderer, fire-and-forget via webContents.send)
   'stream:text_delta': 'stream:text_delta',
   'stream:thinking_delta': 'stream:thinking_delta',
+  'stream:tool_call_preview': 'stream:tool_call_preview',
   'stream:tool_use_start': 'stream:tool_use_start',
   'stream:tool_use_end': 'stream:tool_use_end',
   'stream:tool_progress': 'stream:tool_progress',
@@ -72,6 +73,8 @@ export const IPC_CHANNELS = {
   // File history / revert channels (renderer -> main)
   'file:get-history': 'file:get-history',
   'file:revert': 'file:revert',
+  'session:rewind': 'session:rewind',
+  'session:export': 'session:export',
 
   // Plan mode channels (main -> renderer events, renderer -> main decision)
   'agent:plan-mode-entered': 'agent:plan-mode-entered',
@@ -81,6 +84,7 @@ export const IPC_CHANNELS = {
 
   // Context channels (renderer -> main)
   'agent:compact_context': 'agent:compact_context',
+  'system:doctor': 'system:doctor',
 
   // Terminal channels (renderer <-> main)
   'terminal:create': 'terminal:create',
@@ -250,7 +254,10 @@ export interface IpcRequestPayloads {
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
+  'session:rewind': { sessionId: string; targetMessageId: string }
+  'session:export': { sessionId: string; format: 'markdown' | 'json' }
   'agent:compact_context': void
+  'system:doctor': void
   'agent:plan-decision': { approved: boolean }
   'agent:toggle_plan_mode': void
   'terminal:create': { cwd: string }
@@ -348,7 +355,10 @@ export interface IpcResponsePayloads {
   'file:apply-hunk': { success: boolean }
   'file:get-history': Array<{ toolCallId: string; timestamp: number; filePath: string }>
   'file:revert': { success: boolean; error?: string }
+  'session:rewind': { success: boolean; removedCount: number; revertedFiles: string[]; error?: string }
+  'session:export': { filePath: string; messageCount: number }
   'agent:compact_context': { beforeTokens: number; afterTokens: number } | null
+  'system:doctor': string
   'agent:plan-decision': void
   'agent:toggle_plan_mode': { active: boolean }
   'terminal:create': { terminalId: string }
@@ -413,6 +423,7 @@ export interface IpcResponsePayloads {
 export interface IpcStreamPayloads {
   'stream:text_delta': { content: string }
   'stream:thinking_delta': { content: string }
+  'stream:tool_call_preview': { id: string; name: string }
   'stream:tool_use_start': { id: string; name: string }
   'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
   'stream:error': { error: string }
@@ -513,6 +524,7 @@ export const IpcSchemas = {
   },
   'stream:text_delta': z.object({ content: z.string() }),
   'stream:thinking_delta': z.object({ content: z.string() }),
+  'stream:tool_call_preview': z.object({ id: z.string(), name: z.string() }),
   'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
   'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),
   'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) }),

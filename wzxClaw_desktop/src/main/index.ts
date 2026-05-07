@@ -46,6 +46,8 @@ const optimizer = {
 import { LLMGateway } from './llm/gateway'
 import { registerIpcHandlers } from './ipc-handlers'
 import { createDefaultTools } from './tools/tool-registry'
+import { BackgroundTaskManager } from './tasks/background-task-manager'
+import { NotificationService } from './notification/notification-service'
 import { AgentTool } from './tools/agent-tool'
 import { PermissionManager } from './permission/permission-manager'
 import { AgentLoop } from './agent/agent-loop'
@@ -311,7 +313,9 @@ app.whenReady().then(async () => {
   // Create tool registry with workspace root when available
   const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
   const getWebContents = () => BrowserWindow.getAllWindows()[0]?.webContents ?? null
-  const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, stepManager, indexingEngine)
+  const backgroundTaskManager = new BackgroundTaskManager()
+  const notificationService = new NotificationService()
+  const toolRegistry = createDefaultTools(workingDirectory, terminalManager, getWebContents, stepManager, indexingEngine, backgroundTaskManager)
   permissionManager = new PermissionManager()
   // Load persisted alwaysAllow rules from previous sessions
   permissionManager.loadAlwaysAllowRules(settingsManager.getAlwaysAllowRules())
@@ -393,6 +397,40 @@ app.whenReady().then(async () => {
     }
   })
 
+  // 会话回退：截断消息 + 回退文件变更
+  ipcMain.handle(IPC_CHANNELS['session:rewind'], async (_event, request: { sessionId: string; targetMessageId: string }) => {
+    try {
+      // 1. 截断消息（使用 messageId 精确匹配）并获取目标消息的 timestamp
+      const store = getActiveSessionStore()
+      const result = await store.truncateAfterMessage(request.sessionId, request.targetMessageId)
+
+      if (!result) {
+        return { success: false, removedCount: 0, revertedFiles: [], error: 'Target message not found in session' }
+      }
+
+      // 2. 回退文件变更（使用返回的 targetTimestamp）
+      const revertedFiles = result.targetTimestamp
+        ? await historyManager.revertAfterTimestamp(result.targetTimestamp)
+        : []
+
+      // 3. 重置该会话的 AgentLoop 状态
+      const runtime = runtimes.get(request.sessionId)
+      if (runtime) {
+        const messages = await store.loadSession(request.sessionId)
+        runtime.reset()
+        const validMessages = messages.filter(m => m.type !== 'meta')
+        if (validMessages.length > 0) {
+          runtime.replaceMessages(validMessages as any)
+        }
+      }
+
+      console.log(`[Rewind] Session ${request.sessionId}: removed ${result.removedCount} messages, reverted ${revertedFiles.length} files`)
+      return { success: true, removedCount: result.removedCount, revertedFiles }
+    } catch (err: unknown) {
+      return { success: false, removedCount: 0, revertedFiles: [], error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   // Instantiate Hooks system and register built-in hooks
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
@@ -410,6 +448,11 @@ app.whenReady().then(async () => {
   // 实例化 MCPManager（IPC 注册需要引用），但推迟 loadAndConnect 到 did-finish-load
   // 避免外部进程启动阻塞窗口创建
   const mcpManager = new MCPManager(toolRegistry)
+
+  // 注册 MCP 资源工具（MCPManager 创建后才能注入，避免循环依赖）
+  const { MCPListResourcesTool, MCPReadResourceTool } = await import('./tools/mcp-resource-tool')
+  toolRegistry.register(new MCPListResourcesTool(mcpManager))
+  toolRegistry.register(new MCPReadResourceTool(mcpManager))
 
   // Wire plugin registry with hook and MCP systems
   const { pluginRegistry } = await import('./plugins')
@@ -1306,6 +1349,11 @@ app.whenReady().then(async () => {
                 break
               case 'agent:done':
                 wc.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+                // Agent 完成通知（声音 + 桌面通知）
+                try {
+                  const isFocused = BrowserWindow.getAllWindows()[0]?.isFocused() ?? false
+                  notificationService.notify(isFocused, 'wzxClaw', 'AI 任务已完成')
+                } catch {}
                 // Persist mobile messages to session file (Unit 4 bug fix)
                 try {
                   const activeStore = getActiveSessionStore()
@@ -1355,7 +1403,7 @@ app.whenReady().then(async () => {
           runtimes.notifyRunningChanged(sessionId, false)
         }
       } catch (err: unknown) {
-        relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err) })
+        relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err), sessionId: mobileSessionId })
       }
       return
     }

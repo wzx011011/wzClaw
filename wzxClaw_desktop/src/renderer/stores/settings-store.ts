@@ -15,6 +15,8 @@ interface SettingsState {
   thinkingDepth?: string
   showToolSteps?: boolean
   language?: string
+  notificationSound?: boolean
+  notificationDesktop?: boolean
   isLoading: boolean
 }
 
@@ -35,6 +37,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   thinkingDepth: undefined,
   showToolSteps: true,
   language: 'zh-CN',
+  notificationSound: true,
+  notificationDesktop: true,
   isLoading: false,
 
   /**
@@ -54,6 +58,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         thinkingDepth: settings.thinkingDepth,
         showToolSteps: settings.showToolSteps ?? true,
         language: settings.language ?? 'zh-CN',
+        notificationSound: settings.notificationSound ?? true,
+        notificationDesktop: settings.notificationDesktop ?? true,
         isLoading: false
       })
     } catch (err) {

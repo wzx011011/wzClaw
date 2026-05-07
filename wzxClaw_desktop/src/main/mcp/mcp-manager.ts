@@ -3,7 +3,7 @@
 // ============================================================
 
 import fs from 'fs'
-import { MCPClient, type MCPServerConfig } from './mcp-client'
+import { MCPClient, type MCPServerConfig, type MCPResource, type MCPResourceContent } from './mcp-client'
 import { MCPToolWrapper } from './mcp-tool-wrapper'
 import type { ToolRegistry } from '../tools/tool-registry'
 import { getMcpConfigPath } from '../paths'
@@ -73,6 +73,14 @@ export class MCPManager {
       client.disconnect()
       this.clients.delete(name)
     }
+    // 从 ToolRegistry 中移除该 server 的所有工具
+    const prefix = `mcp_${name}_`
+    const tools = this.toolRegistry.getAll()
+    for (const tool of tools) {
+      if (tool.name.startsWith(prefix)) {
+        this.toolRegistry.unregister(tool.name)
+      }
+    }
   }
 
   /**
@@ -138,6 +146,41 @@ export class MCPManager {
       }
     }
     return result
+  }
+
+  /**
+   * List all resources from connected MCP servers.
+   * If serverName is specified, only list from that server.
+   */
+  async listAllResources(serverName?: string): Promise<Array<MCPResource & { serverName: string }>> {
+    const result: Array<MCPResource & { serverName: string }> = []
+    const targets = serverName
+      ? [[serverName, this.clients.get(serverName)] as const]
+      : Array.from(this.clients.entries())
+
+    for (const [name, client] of targets) {
+      if (!client?.isConnected()) continue
+      try {
+        const resources = await client.listResources()
+        for (const r of resources) {
+          result.push({ ...r, serverName: name })
+        }
+      } catch {
+        // Resource listing not supported or server error
+      }
+    }
+    return result
+  }
+
+  /**
+   * Read a specific resource from an MCP server.
+   */
+  async readResource(serverName: string, uri: string): Promise<MCPResourceContent[]> {
+    const client = this.clients.get(serverName)
+    if (!client?.isConnected()) {
+      throw new Error(`MCP server "${serverName}" is not connected`)
+    }
+    return client.readResource(uri)
   }
 
   /**

@@ -424,4 +424,76 @@ export class SessionStore {
       throw err
     }
   }
+
+  /**
+   * Truncate a session to only include messages up to and including the target message.
+   * Used by the "rewind to here" feature — removes all messages after the specified one.
+   * File meta line (if any) is preserved at the top.
+   *
+   * @returns Object with truncated message count and removed file snapshot count,
+   *          or null if session/message not found.
+   */
+  async truncateAfterMessage(
+    sessionId: string,
+    targetMessageId: string
+  ): Promise<{ removedCount: number; targetTimestamp?: number } | null> {
+    this.validateSessionId(sessionId)
+    const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
+
+    try {
+      const content = await fsp.readFile(filePath, 'utf-8')
+      const lines = content.split('\n')
+      const keptLines: string[] = []
+      let removedCount = 0
+      let foundTarget = false
+      let metaLine: string | null = null
+      let targetTimestamp: number | undefined
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+
+        try {
+          const parsed = JSON.parse(line)
+
+          // 保留 meta 行
+          if (parsed.type === 'meta') {
+            metaLine = line
+            continue
+          }
+
+          // 找到目标消息后停止保留
+          if (!foundTarget) {
+            keptLines.push(line)
+            if (parsed.id === targetMessageId) {
+              foundTarget = true
+              targetTimestamp = parsed.timestamp
+            }
+          } else {
+            removedCount++
+          }
+        } catch {
+          // 损坏的行：如果在目标之前就保留，之后丢弃
+          if (!foundTarget) keptLines.push(line)
+          else removedCount++
+        }
+      }
+
+      if (!foundTarget) return null
+
+      // 重写文件（meta 在最前）
+      const outputLines: string[] = []
+      if (metaLine) outputLines.push(metaLine)
+      outputLines.push(...keptLines)
+
+      const tmpPath = path.join(this.sessionsDir, `${sessionId}.jsonl.tmp.${Date.now()}`)
+      await fsp.writeFile(tmpPath, outputLines.join('\n') + '\n', 'utf-8')
+      await fsp.rename(tmpPath, filePath)
+      this.invalidateCacheEntry(sessionId)
+
+      return { removedCount, targetTimestamp }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
+  }
 }

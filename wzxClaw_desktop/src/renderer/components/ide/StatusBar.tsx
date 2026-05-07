@@ -1,9 +1,11 @@
-import React, { useEffect, useState, memo } from 'react'
+import React, { useEffect, useState, useRef, memo } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useIndexStore } from '../../stores/index-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useSettingsStore } from '../../stores/settings-store'
 import { useT } from '../../i18n/useT'
+import { DEFAULT_MODELS } from '../../../shared/constants'
 
 interface RelayStatus {
   connected: boolean; connecting: boolean; reconnectAttempt: number
@@ -57,6 +59,59 @@ const AgentStatusDisplay = memo(function AgentStatusDisplay() {
     </span>
   )
 })
+
+/** Model Picker — 点击展开模型选择下拉 */
+function ModelPicker(): JSX.Element {
+  const t = useT()
+  const model = useSettingsStore((s) => s.model)
+  const provider = useSettingsStore((s) => s.provider)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const currentPreset = DEFAULT_MODELS.find(m => m.id === model)
+  const displayLabel = currentPreset?.name ?? model
+
+  const handleSelect = async (modelId: string, modelProvider: string) => {
+    await window.wzxclaw.updateSettings({ model: modelId, provider: modelProvider })
+    await useSettingsStore.getState().loadSettings()
+    setOpen(false)
+  }
+
+  return (
+    <div className="status-model-picker" ref={ref}>
+      <button
+        className="status-item status-model-btn"
+        onClick={() => setOpen(!open)}
+        title={t('statusBar.switchModel')}
+      >
+        {displayLabel}
+      </button>
+      {open && (
+        <div className="status-model-dropdown">
+          {DEFAULT_MODELS.map((m) => (
+            <button
+              key={m.id}
+              className={`status-model-option${m.id === model ? ' active' : ''}`}
+              onClick={() => handleSelect(m.id, m.provider)}
+            >
+              <span className="status-model-name">{m.name}</span>
+              <span className="status-model-provider">{m.provider}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /**
  * StatusBar -- bottom status bar showing workspace path, agent status,
@@ -114,6 +169,7 @@ export default function StatusBar(): JSX.Element {
           <span className="status-item">{t('statusBar.terminal', { title: activeTerminal.title })}</span>
         )}
         <IndexStatusDisplay />
+        <ModelPicker />
         {/* Cost / token usage display (Phase 4.4) */}
         {usage && (
           <span

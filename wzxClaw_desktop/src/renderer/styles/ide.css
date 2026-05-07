@@ -29,8 +29,8 @@
   --border-active: #4a9eff;
   --border-focus: var(--accent);
   --table-border: rgba(255, 255, 255, 0.14);
-  --scrollbar-thumb: rgba(255, 255, 255, 0.08);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.30);
 
   /* Tabs */
   --tab-active-bg: #181818;
@@ -139,10 +139,10 @@ html, body, #root {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Scrollbar styling — thin and subtle */
+/* Scrollbar styling — visible on hover */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -150,10 +150,17 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 4px;
+  background: transparent;
+  border-radius: 5px;
+  transition: background 0.2s;
 }
 
+*:hover > ::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb);
+}
+
+*:hover > ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
@@ -1402,6 +1409,69 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   letter-spacing: 0.02em;
+}
+
+/* Model Picker dropdown in StatusBar */
+.status-model-picker {
+  position: relative;
+}
+.status-model-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  transition: background 0.15s;
+}
+.status-model-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+.status-model-dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-1);
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  margin-bottom: 4px;
+}
+.status-model-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  transition: background 0.1s;
+}
+.status-model-option:hover {
+  background: var(--bg-active);
+}
+.status-model-option.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.status-model-name {
+  font-weight: 500;
+}
+.status-model-provider {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 
 /* ============================================================
@@ -2704,6 +2774,7 @@ textarea:focus-visible,
   top: 100%;
   left: 0;
   min-width: 200px;
+  -webkit-app-region: no-drag;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

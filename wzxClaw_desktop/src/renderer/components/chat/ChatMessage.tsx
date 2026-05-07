@@ -93,6 +93,7 @@ const MarkdownContent = React.memo(function MarkdownContent({ content }: { conte
 
 interface ChatMessageProps {
   message: ChatMessageType
+  onRewind?: (messageId: string) => void
 }
 
 /**
@@ -133,7 +134,7 @@ function MentionBlock({ mention }: { mention: { type: string; path: string; cont
   )
 }
 
-function ChatMessage({ message }: ChatMessageProps): JSX.Element {
+function ChatMessage({ message, onRewind }: ChatMessageProps): JSX.Element {
   const { role, content, thinkingContent, isStreaming, toolCalls, usage, mentions, model, images } = message
   const t = useT()
 
@@ -146,6 +147,16 @@ function ChatMessage({ message }: ChatMessageProps): JSX.Element {
 
     return (
       <div className="chat-message chat-message-user">
+        {/* Rewind button — appears on hover */}
+        {onRewind && !message.isStreaming && (
+          <button
+            className="chat-message-rewind-btn"
+            title={t('chatMessage.rewindToHere')}
+            onClick={() => onRewind(message.id)}
+          >
+            &#8634;
+          </button>
+        )}
         {mentions && mentions.length > 0 && (
           <div className="mention-blocks">
             {mentions.map((m, i) => (

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTerminalStore } from '../../stores/terminal-store'
 import TerminalTabs from './TerminalTabs'
 
@@ -29,10 +29,10 @@ interface XtermWebLinksAddon {
   dispose?(): void
 }
 
-let Terminal: (new (options: Record<string, unknown>) => XtermTerminal) | null = null
-let FitAddon: (new () => XtermFitAddon) | null = null
-let WebLinksAddon: (new () => XtermWebLinksAddon) | null = null
-let xtermLoaded = false
+// Cached module references after dynamic import
+let CachedTerminal: (new (options: Record<string, unknown>) => XtermTerminal) | null = null
+let CachedFitAddon: (new () => XtermFitAddon) | null = null
+let CachedWebLinksAddon: (new () => XtermWebLinksAddon) | null = null
 
 // 根据当前主题返回 xterm 配色
 function getXtermTheme(): Record<string, string> {
@@ -88,27 +88,51 @@ function getXtermTheme(): Record<string, string> {
   }
 }
 
-function loadXtermModules(): void {
-  if (xtermLoaded) return
+/**
+ * Dynamically import xterm and its addons.
+ * Returns module references or null if loading failed.
+ * Uses Vite-compatible dynamic import() instead of require().
+ */
+async function loadXtermModules(): Promise<{
+  Terminal: (new (options: Record<string, unknown>) => XtermTerminal)
+  FitAddon: (new () => XtermFitAddon)
+  WebLinksAddon: (new () => XtermWebLinksAddon)
+} | null> {
+  // Return cached modules if already loaded
+  if (CachedTerminal && CachedFitAddon && CachedWebLinksAddon) {
+    return { Terminal: CachedTerminal, FitAddon: CachedFitAddon, WebLinksAddon: CachedWebLinksAddon }
+  }
   try {
-     
-    Terminal = require('xterm').Terminal
-     
-    FitAddon = require('@xterm/addon-fit').FitAddon
-     
-    WebLinksAddon = require('@xterm/addon-web-links').WebLinksAddon
-    // Load xterm CSS
-     
-    require('xterm/css/xterm.css')
-    xtermLoaded = true
+    const [xtermMod, fitMod, webLinksMod] = await Promise.all([
+      import('xterm'),
+      import('@xterm/addon-fit'),
+      import('@xterm/addon-web-links')
+    ])
+    // Import xterm CSS
+    await import('xterm/css/xterm.css')
+
+    CachedTerminal = xtermMod.Terminal as (new (options: Record<string, unknown>) => XtermTerminal)
+    CachedFitAddon = fitMod.FitAddon as (new () => XtermFitAddon)
+    CachedWebLinksAddon = webLinksMod.WebLinksAddon as (new () => XtermWebLinksAddon)
+
+    return { Terminal: CachedTerminal, FitAddon: CachedFitAddon, WebLinksAddon: CachedWebLinksAddon }
   } catch (err) {
     console.error('Failed to load xterm modules:', err)
+    return null
   }
 }
 
 export default function TerminalPanel(): JSX.Element {
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const tabs = useTerminalStore((s) => s.tabs)
+
+  // Tracks whether xterm modules are loaded
+  const [xtermReady, setXtermReady] = useState(false)
+  const xtermModulesRef = useRef<{
+    Terminal: (new (options: Record<string, unknown>) => XtermTerminal)
+    FitAddon: (new () => XtermFitAddon)
+    WebLinksAddon: (new () => XtermWebLinksAddon)
+  } | null>(null)
 
   // Maps terminal IDs to xterm Terminal instances and FitAddon instances
   const terminalsRef = useRef<Map<string, XtermTerminal>>(new Map())
@@ -118,12 +142,20 @@ export default function TerminalPanel(): JSX.Element {
 
   // Load xterm modules on first render
   useEffect(() => {
-    loadXtermModules()
+    let cancelled = false
+    loadXtermModules().then((modules) => {
+      if (cancelled || !modules) return
+      xtermModulesRef.current = modules
+      setXtermReady(true)
+    })
+    return () => { cancelled = true }
   }, [])
 
   // Create and manage xterm instance for active terminal
   useEffect(() => {
-    if (!activeTerminalId || !Terminal || !containerRef.current) return
+    if (!activeTerminalId || !xtermReady || !xtermModulesRef.current || !containerRef.current) return
+
+    const { Terminal: TerminalCtor, FitAddon: FitAddonCtor, WebLinksAddon: WebLinksAddonCtor } = xtermModulesRef.current
 
     // Skip if we already have an instance for this terminal
     if (terminalsRef.current.has(activeTerminalId)) {
@@ -143,7 +175,7 @@ export default function TerminalPanel(): JSX.Element {
     }
 
     // Create new xterm instance
-    const term = new Terminal({
+    const term = new TerminalCtor({
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 14,
@@ -155,8 +187,8 @@ export default function TerminalPanel(): JSX.Element {
     })
 
     // Load addons
-    const fitAddon = new FitAddon()
-    const webLinksAddon = new WebLinksAddon()
+    const fitAddon = new FitAddonCtor()
+    const webLinksAddon = new WebLinksAddonCtor()
     term.loadAddon(fitAddon)
     term.loadAddon(webLinksAddon)
 
@@ -203,7 +235,7 @@ export default function TerminalPanel(): JSX.Element {
     return () => {
       // Cleanup is handled in the separate cleanup effect below
     }
-  }, [activeTerminalId])
+  }, [activeTerminalId, xtermReady])
 
   // Handle resize with ResizeObserver — 防抖 80ms，避免 Allotment 拖拽时每像素触发 IPC
   useEffect(() => {
@@ -290,7 +322,13 @@ export default function TerminalPanel(): JSX.Element {
         className="terminal-container"
         role="tabpanel"
         aria-label="Terminal"
-      />
+      >
+        {!xtermReady && (
+          <div style={{ padding: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Loading terminal...
+          </div>
+        )}
+      </div>
     </div>
   )
 }

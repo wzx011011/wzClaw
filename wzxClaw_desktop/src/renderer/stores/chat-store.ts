@@ -75,6 +75,7 @@ interface ChatActions {
   switchSession: (sessionId: string) => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
   deleteSessionTab: (sessionId: string) => Promise<void>
+  rewindToMessage: (targetMessageId: string) => Promise<void>
   addMention: (mention: MentionItem) => void
   removeMention: (path: string) => void
   clearMentions: () => void
@@ -415,6 +416,44 @@ export const useChatStore = create<ChatStore>((set, get) => {
       scheduleThinkingFlush()
     }) ?? (() => {})
 
+    const unsubToolCallPreview = window.wzxclaw.onStreamToolCallPreview?.((payload) => {
+      // Show a preview tool card before the full tool input finishes streaming
+      if (!useSettingsStore.getState().showToolSteps) return
+      set((state) => {
+        if (!state.isStreaming && !state.streamingMessageId) return state
+
+        const { messages } = state
+        const streamingMessageId = state.streamingMessageId
+        const nextMessages = streamingMessageId
+          ? updateMessageById(messages, streamingMessageId, (message) => ({
+              ...message,
+              toolCalls: [
+                ...(message.toolCalls ?? []),
+                { id: payload.id, name: payload.name, status: 'running' as const }
+              ]
+            }))
+          : null
+
+        if (nextMessages) {
+          return { isWaitingForResponse: false, messages: nextMessages }
+        }
+
+        const newMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          toolCalls: [{ id: payload.id, name: payload.name, status: 'running' as const }]
+        }
+        return {
+          isWaitingForResponse: false,
+          streamingMessageId: newMsg.id,
+          messages: [...messages, newMsg]
+        }
+      })
+    }) ?? (() => {})
+
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
       // Skip tool step UI when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
@@ -425,6 +464,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
         const { messages } = state
         const streamingMessageId = state.streamingMessageId
+
+        // Check if a preview tool card already exists for this tool call id
+        const existingTool = streamingMessageId
+          ? messages.find(m => m.id === streamingMessageId)?.toolCalls?.find(tc => tc.id === payload.id)
+          : null
+
+        if (existingTool && streamingMessageId) {
+          // Update existing preview card with full input
+          const nextMessages = updateMessageById(messages, streamingMessageId, (message) => ({
+            ...message,
+            toolCalls: (message.toolCalls ?? []).map(tc =>
+              tc.id === payload.id ? { ...tc, status: 'running' as const, input: payload.input } : tc
+            )
+          }))
+          return { isWaitingForResponse: false, messages: nextMessages }
+        }
+
         const nextMessages = streamingMessageId
           ? updateMessageById(messages, streamingMessageId, (message) => ({
               ...message,
@@ -872,6 +928,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubText()
       unsubThinking()
       unsubToolStart()
+      unsubToolCallPreview()
       unsubToolResult()
       unsubToolProgress()
       unsubEnd()
@@ -935,15 +992,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
       isStreaming: true,
       isWaitingForResponse: true,
       error: null,
+      streamJustEnded: false,
       streamingMessageId: assistantMsg.id,
       pendingMentions: []
     })
 
+    const SEND_TIMEOUT = 10 * 60 * 1000 // 10 minutes
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Agent response timed out after 10 minutes')), SEND_TIMEOUT)
+    )
+
     try {
-      await window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined, images })
+      await Promise.race([
+        window.wzxclaw.sendMessage({ conversationId, content: formattedAgentContent, activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined, images }),
+        timeoutPromise
+      ])
     } catch (err) {
       set({
         isStreaming: false,
+        streamingMessageId: null,
         error: err instanceof Error ? err.message : String(err)
       })
     }
@@ -1240,6 +1307,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
       await get().loadSessionList()
     } catch (err) {
       console.error('Failed to delete session tab:', err)
+    }
+  },
+
+  /**
+   * Rewind conversation to a specific message.
+   * Removes all messages after the target and reverts file changes.
+   */
+  rewindToMessage: async (targetMessageId: string) => {
+    const { activeSessionId } = get()
+    try {
+      const result = await window.wzxclaw.rewindSession({ sessionId: activeSessionId, targetMessageId })
+      if (result.success) {
+        // Reload session to reflect truncated messages
+        await get().loadSession(activeSessionId)
+        console.log(`Rewound session: removed ${result.removedCount} messages, reverted ${result.revertedFiles.length} files`)
+      } else {
+        console.error('Rewind failed:', result.error)
+      }
+    } catch (err) {
+      console.error('Rewind failed:', err)
     }
   },
 
