@@ -504,6 +504,10 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
             } else if (_selectedDesktopId != null &&
                 _desktops.any((d) => d.desktopId == _selectedDesktopId)) {
               _syncSelectedDesktopTarget();
+            } else if (_selectedDesktopId == null && _desktops.length == 1) {
+              // 桌面重连后 UUID 变化，旧 savedId 已失效。
+              // 仅一台桌面时自动重选，避免工作区视图永久消失。
+              _selectDesktop(_desktops.first.desktopId);
             }
           });
           // Clear selection if selected desktop is gone.

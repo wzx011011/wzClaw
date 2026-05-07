@@ -42,6 +42,9 @@ export class RelayClient extends EventEmitter {
   // 重连期间待发消息缓冲（上限 50 条，超出丢弃最旧的）
   private _outboundQueue: string[] = []
   private static readonly MAX_QUEUE = 50
+  // 统计 open 事件次数：首次连接 = 1，之后均为重连。
+  // 用于区分「初次连接时 relay 推送的 mobile_list」与「重连后推送的 mobile_list」。
+  private _openCount = 0
 
   get connected(): boolean {
     return this._connected
@@ -107,6 +110,7 @@ export class RelayClient extends EventEmitter {
 
     this.ws.on('open', () => {
       console.log('[RelayClient] connected')
+      this._openCount++
       this._updateState(true, false)
       this.reconnectAttempt = 0
       this._startHeartbeat()
@@ -160,6 +164,14 @@ export class RelayClient extends EventEmitter {
             }
           }
           this.emitStatus()
+          // 重连后 relay 推送 mobile_list：若已有手机在线，补发 mobile-connected，
+          // 让桌面重新推送 workspace info / 工作区列表给手机端，
+          // 避免手机因桌面 UUID 变化而永久失去工作区视图。
+          // _openCount > 1 表示这是重连（首次连接时手机的 mobile_connected 已单独处理）。
+          if (this._openCount > 1 && this._mobileConnected) {
+            console.log('[RelayClient] reconnect: mobiles already present, re-emitting mobile-connected')
+            this.emit('mobile-connected')
+          }
           return
         }
 
