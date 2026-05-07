@@ -147,21 +147,48 @@ ${t('slashCmd.helpShortcuts')}`,
     handler: {
       type: 'action',
       execute: async (_args: string) => {
+        const progressMsgId = uuidv4()
         const { messages } = useChatStore.getState()
         useChatStore.setState({
           messages: [
             ...messages,
             {
-              id: uuidv4(),
+              id: progressMsgId,
               role: 'assistant' as const,
-              content: 'Analyzing your coding sessions... This may take 30-60 seconds.\n\nScanning session files...',
+              content: '⏳ Analyzing your coding sessions...\n\nScanning session files...',
               timestamp: Date.now()
             }
           ]
         })
 
+        // Listen for progress updates from main process
+        let lastProgress = ''
+        const unsubscribe = window.wzxclaw.onInsightsProgress((payload) => {
+          lastProgress = `${payload.stage} — ${payload.message}`
+          const { messages: msgs } = useChatStore.getState()
+          const stageLabels: Record<string, string> = {
+            scanning: '📂 Scanning',
+            extracting_facets: '🔍 Analyzing',
+            aggregating: '📊 Aggregating',
+            generating_insights: '💡 Generating insights',
+            rendering: '🎨 Rendering report',
+            done: '✅ Done',
+          }
+          const label = stageLabels[payload.stage] || payload.stage
+          const progressText = payload.total > 0
+            ? ` (${payload.current}/${payload.total})`
+            : ''
+          const updatedMessages = msgs.map(m =>
+            m.id === progressMsgId
+              ? { ...m, content: `⏳ ${label}${progressText}\n\n${payload.message}` }
+              : m
+          )
+          useChatStore.setState({ messages: updatedMessages })
+        })
+
         try {
           const result = await window.wzxclaw.generateInsights()
+          unsubscribe()
           const { messages: currentMessages } = useChatStore.getState()
           useChatStore.setState({
             messages: [
@@ -169,12 +196,14 @@ ${t('slashCmd.helpShortcuts')}`,
               {
                 id: uuidv4(),
                 role: 'assistant' as const,
-                content: `## Insights Report\n\n${result.summary}\n\n---\n*Report saved to: \`${result.htmlPath}\`*`,
+                content: `## ✅ Insights Report\n\n${result.summary}\n\n---\n*Report saved to: \`${result.htmlPath}\`*\n*Total sessions analyzed: ${result.totalSessions} | Estimated cost: ${result.totalCostUSD.toFixed(4)}*`,
                 timestamp: Date.now()
               }
             ]
           })
         } catch (err) {
+          unsubscribe()
+          console.error('[insights] Error:', err)
           const { messages: currentMessages } = useChatStore.getState()
           useChatStore.setState({
             messages: [
@@ -182,7 +211,7 @@ ${t('slashCmd.helpShortcuts')}`,
               {
                 id: uuidv4(),
                 role: 'assistant' as const,
-                content: `Failed to generate insights: ${err instanceof Error ? err.message : String(err)}`,
+                content: `❌ Failed to generate insights: ${err instanceof Error ? err.message : String(err)}`,
                 timestamp: Date.now()
               }
             ]

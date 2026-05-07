@@ -487,7 +487,7 @@ new Chart(document.getElementById('chartGoals'), { type: 'bar', data: { labels: 
 export async function saveAndOpenReport(html: string, reportDir: string): Promise<string> {
   await fsp.mkdir(reportDir, { recursive: true })
 
-  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15)
+  const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14)
   const htmlPath = path.join(reportDir, `report-${timestamp}.html`)
   await fsp.writeFile(htmlPath, html, 'utf-8')
 

@@ -30,11 +30,8 @@ export class ConversationManager {
   // ---- 追加消息 ----
 
   /** 追加用户消息 */
-  appendUserMessage(content: string, images?: import('../../shared/types').ImageContent[]): Message {
+  appendUserMessage(content: string): Message {
     const msg: Message = { role: 'user', content, timestamp: Date.now() }
-    if (images && images.length > 0) {
-      msg.images = images
-    }
     this.messages.push(msg)
     return msg
   }

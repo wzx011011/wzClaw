@@ -1,4 +1,4 @@
-import { countMessagesTokens, countTokens } from './token-counter'
+import { countMessagesTokens } from './token-counter'
 import type { Message } from '../../shared/types'
 import { DEFAULT_MODELS } from '../../shared/constants'
 import type { LLMGateway } from '../llm/gateway'
@@ -65,62 +65,28 @@ export class ContextManager {
    *   contextWindow - maxOutputTokens - safetyBuffer
    * 若 compactThreshold > 0 则使用旧式比例模式。
    * 无下限——充分利用 context window，避免过早压缩浪费 token。
-   *
-   * @param overheadTokens - 额外的 token 开销（system prompt + tool definitions 等），
-   *                         这些不在 messages 数组中但会占用 context window。
    */
-  shouldCompact(messages: Message[], modelId: string, overheadTokens: number = 0): boolean {
+  shouldCompact(messages: Message[], modelId: string): boolean {
     if (this.isCompacting) return false
     if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
 
-    const messageTokens = countMessagesTokens(messages, modelId)
-    return this.shouldCompactEstimated(messageTokens, modelId, overheadTokens)
-  }
-
-  /**
-   * 使用已经算好的 token 数判断是否需要压缩，避免调用方重复 BPE 统计。
-   */
-  shouldCompactEstimated(messageTokens: number, modelId: string, overheadTokens: number = 0): boolean {
-    if (this.isCompacting) return false
-    if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
-
-    return messageTokens + overheadTokens > this.getCompactionThreshold(modelId)
-  }
-
-  /**
-   * 快速保守估算消息 token。用于启动/切换会话恢复路径，避免首帧后立即 BPE 扫完整历史。
-   */
-  estimateTokensCheap(messages: Message[]): number {
-    let total = 0
-    for (const msg of messages) {
-      total += 4
-      total += typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content ?? '').length
-      if (msg.role === 'assistant' && msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          total += JSON.stringify(tc.input ?? '').length + 4
-        }
-      }
-    }
-    return total
-  }
-
-  /** 获取当前模型的自动压缩阈值。 */
-  getCompactionThreshold(modelId: string): number {
+    const tokens = countMessagesTokens(messages, modelId)
     const contextWindow = this.getContextWindowForModel(modelId)
 
     // 兼容旧式比例模式
     if (this.config.compactThreshold > 0) {
-      return contextWindow * this.config.compactThreshold
+      return tokens > contextWindow * this.config.compactThreshold
     }
 
     // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
     // 参考 Claude Code：~93% 触发（safetyBuffer 13K + maxOutputTokens）
     // 保底下限：至少利用 70% 的 context window 再压缩，避免小窗口模型过早触发
     const maxOutputTokens = this.getMaxOutputTokensForModel(modelId)
-    return Math.max(
+    const threshold = Math.max(
       contextWindow - maxOutputTokens - this.config.compactSafetyBuffer,
       contextWindow * 0.7
     )
+    return tokens > threshold
   }
 
   /**
@@ -132,8 +98,8 @@ export class ContextManager {
     messages: Message[],
     gateway: LLMGateway,
     model: string,
-    _provider: string,
-    _systemPrompt?: string
+    provider: string,
+    systemPrompt?: string
   ): Promise<CompactResult> {
     const beforeTokens = countMessagesTokens(messages, model)
     this.isCompacting = true
@@ -293,31 +259,6 @@ Provide a detailed summary following the sections above. Be especially thorough 
 
   estimateTokens(messages: Message[], modelId?: string): number {
     return countMessagesTokens(messages, modelId)
-  }
-
-  /**
-   * 估算 system prompt + tool definitions 的 token 开销。
-   * 这些内容不在 messages 数组中，但会占用 context window。
-   */
-  estimateOverheadTokens(
-    systemPrompt: string,
-    toolDefinitions: Array<{ name: string; description: string; input_schema: unknown }>,
-    modelId?: string
-  ): number {
-    let overhead = 0
-    // System prompt tokens
-    if (systemPrompt) {
-      overhead += countTokens(systemPrompt)
-      overhead += 4 // per-message overhead
-    }
-    // Tool definitions tokens
-    for (const def of toolDefinitions) {
-      overhead += countTokens(def.name)
-      overhead += countTokens(def.description)
-      overhead += countTokens(JSON.stringify(def.input_schema))
-      overhead += 8 // per-tool overhead (schema wrapper, separators)
-    }
-    return overhead
   }
 }
 

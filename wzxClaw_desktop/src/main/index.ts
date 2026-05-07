@@ -1,4 +1,4 @@
-import { config as dotenvConfig } from 'dotenv'
+﻿import { config as dotenvConfig } from 'dotenv'
 import path from 'path'
 // Explicitly resolve .env from project root (cwd is unreliable in packaged Electron)
 const _envResult = dotenvConfig({ path: path.resolve(__dirname, '../../.env') })
@@ -135,13 +135,15 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  // 窗口显示策略：splash drag div 在 index.html 内联脚本里同步注入，
+  // Chromium 在 ready-to-show 前已完成 hit-test 区域缓存，
+  // 因此不再需要等待 renderer IPC 回报 —— 直接在 ready-to-show 时显示窗口。
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
     mainWindow.focus()
   })
 
-  // Fallback: 万一 ready-to-show 因为 renderer 错误未触发，3s 后强制显示
-  // 避免出现「进程在跑但窗口看不见，只能工作区管理器结束」的窘境
+  // 兜底：ready-to-show 超 3s 未触发时强制显示（避免白屏）
   const safetyShowTimer = setTimeout(() => {
     if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       console.warn('[STARTUP] ready-to-show 未触发，3s 后兜底显示窗口')
@@ -226,7 +228,6 @@ function _buildMenuBar(): Menu {
 
 /**
  * Create an IndexingEngine for a given workspace root.
- * Uses the current settings to configure the EmbeddingClient.
  */
 function createIndexingEngineForWorkspace(rootPath: string): IndexingEngine {
   const config = settingsManager.getCurrentConfig()

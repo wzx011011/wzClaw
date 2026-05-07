@@ -18,7 +18,6 @@ interface TitleBarProps {
   onOpenBrowser: () => void
   onBackToTasks?: () => void
   activeWorkspaceTitle?: string
-  startupBusy?: boolean
 }
 
 /**
@@ -35,8 +34,7 @@ export default memo(function TitleBar({
   onConnectPhone,
   onOpenBrowser,
   onBackToTasks,
-  activeWorkspaceTitle,
-  startupBusy = false
+  activeWorkspaceTitle
 }: TitleBarProps): JSX.Element {
   const t = useT()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -74,7 +72,7 @@ export default memo(function TitleBar({
   }
 
   return (
-    <div className={`ide-titlebar${startupBusy ? ' startup-busy' : ''}`}>
+    <div className="ide-titlebar">
       {/* Back to tasks */}
       {onBackToTasks && (
         <button className="workspace-back-btn" onClick={onBackToTasks} title={t('titleBar.backToWorkspaces')}>
@@ -118,7 +116,6 @@ export default memo(function TitleBar({
       </div>
 
       <span className="ide-titlebar-brand">wzxClaw</span>
-      {startupBusy && <span className="titlebar-startup-spinner" aria-label="Loading" />}
 
       <div className="ide-titlebar-actions">
         {/* Folder — open workspace folder */}

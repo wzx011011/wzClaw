@@ -81,36 +81,29 @@ export async function cleanupToolResults(sessionId: string): Promise<void> {
 }
 
 /**
- * 清理所有超过 TTL 的工具结果目录。
- * 在应用启动时调用，扫描 tool-results 根目录删除过期会话。
+ * 清理所有过期的工具结果目录（appData 下 30 天未访问的）。
+ * 在应用启动时后台静默执行，不影响主流程。
  */
-export async function cleanupExpiredToolResults(maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
-  const baseDir = getToolResultsDir('')
-  // getToolResultsDir('') 返回的父目录可能以 / 结尾，取其 dirname
-  const resultsRoot = baseDir.endsWith('/') || baseDir.endsWith('\\') ? baseDir.slice(0, -1) : baseDir
-
-  let entries: string[]
+export async function cleanupExpiredToolResults(): Promise<void> {
+  const { getAppDataDir } = await import('../paths')
+  const toolResultsBase = require('path').join(getAppDataDir(), 'tool-results')
   try {
-    entries = await fs.readdir(resultsRoot)
-  } catch {
-    return 0
-  }
-
-  const now = Date.now()
-  let removed = 0
-  for (const entry of entries) {
-    const entryPath = path.join(resultsRoot, entry)
-    try {
-      const stat = await fs.stat(entryPath)
-      if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
-        await fs.rm(entryPath, { recursive: true, force: true })
-        removed++
+    const sessionDirs = await fs.readdir(toolResultsBase)
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000 // 30 days
+    for (const dir of sessionDirs) {
+      const fullPath = require('path').join(toolResultsBase, dir)
+      try {
+        const stat = await fs.stat(fullPath)
+        if (stat.mtimeMs < cutoff) {
+          await fs.rm(fullPath, { recursive: true, force: true })
+        }
+      } catch {
+        // 单个目录失败时静默跳过
       }
-    } catch {
-      // 权限错误等静默跳过
     }
+  } catch {
+    // tool-results 目录不存在时静默忽略
   }
-  return removed
 }
 
 // ============================================================

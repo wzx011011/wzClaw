@@ -27,8 +27,6 @@ import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-
 import { maybeTimeBasedMicrocompact } from '../context/microcompact'
 import { ToolResultReplacementState } from '../context/tool-result-storage'
 import { restoreFiles, formatRestoredFilesMessage } from '../context/compact-file-restore'
-// Dynamic import to avoid pulling in Electron during tests
-// (paths.ts → electron import breaks vitest node environment)
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -42,16 +40,6 @@ export class AgentLoop {
   /** 当前是否正在运行（run() 进入到 finally 退出之间为 true） */
   get isRunning(): boolean {
     return this._running
-  }
-
-  /** Expose tool definitions for IPC handlers (read-only, no mutable registry reference) */
-  getToolDefinitions() {
-    return this.toolRegistry.getDefinitions()
-  }
-
-  /** Expose tool registry for internal main-process use only */
-  getToolRegistry(): ToolRegistry {
-    return this.toolRegistry
   }
 
   constructor(
@@ -70,8 +58,7 @@ export class AgentLoop {
   async *run(
     userMessage: string,
     config: AgentConfig,
-    sender?: Electron.WebContents,
-    images?: import('../../shared/types').ImageContent[]
+    sender?: Electron.WebContents
   ): AsyncGenerator<AgentEvent> {
     this._running = true
     try {
@@ -89,11 +76,10 @@ export class AgentLoop {
     this.abortController = new AbortController()
     this.turnManager.reset()
 
-    // 恢复上次会话的 todos（如有持久化文件）— session-scoped
+    // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool) {
-      const sessionId = config.conversationId
-      const saved = await TodoWriteTool.loadForSession(sessionId)
+    if (todoTool && this.activeWorkspace) {
+      const saved = await TodoWriteTool.loadForWorkspace(this.activeWorkspace.id)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately
@@ -108,10 +94,10 @@ export class AgentLoop {
     let reactiveCompactCount = 0
 
     // 追加用户消息
-    this.conversation.appendUserMessage(userMessage, images)
+    this.conversation.appendUserMessage(userMessage)
 
     // 构建系统提示（委托给 SystemPromptBuilder）
-    const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace, this.permissionManager.isPlanMode())
+    const systemPrompt = await buildSystemPrompt(config, this.activeWorkspace)
     const toolDefinitions = this.toolRegistry.getDefinitions().map(t => ({
       name: t.name,
       description: t.description,
@@ -137,7 +123,6 @@ export class AgentLoop {
     let totalUsage = { inputTokens: 0, outputTokens: 0 }
     let turnCount = 0
     let stopHookCooldown = 0  // 防止 blockingError → stop hook → 无限循环
-    let idleTimeoutRetried = false  // stream idle timeout 重试标记（仅重试一次）
 
     // ---- 主循环 ----
     // 参考 Claude Code：主对话不设硬性轮数上限，靠以下条件自然终止：
@@ -147,23 +132,13 @@ export class AgentLoop {
     //   4. 安全天花板 (200 轮) — 意外死循环的最后防线
     // 子 Agent 仍通过 config.maxTurns 限制（默认 10，最大 20）
     let toolsDisabled = false  // 降级标志：上下文过长时禁用工具（用局部变量而非破坏原数组）
-     
+    // eslint-disable-next-line no-constant-condition
     while (true) {
-      // 每轮开始检查 abort（turn 间隙的 compact/eval/microcompact 操作也能响应取消）
-      if (this.abortController?.signal.aborted) {
-        debugLogger.log('EXIT', `{ reason: 'aborted_between_turns', turnCount: ${turnCount} }`)
-        debugLogger.close()
-        yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-        endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
-        await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
-        return
-      }
-
       turnCount++
 
       // 安全天花板检查
       if (turnCount > safetyCeiling) {
-        debugLogger.log('EXIT', `{ reason: 'safety_ceiling', turnCount: ${turnCount} }`)
+        debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
@@ -174,7 +149,7 @@ export class AgentLoop {
 
       // 子 Agent 轮数限制检查
       if (maxTurns && turnCount > maxTurns) {
-        debugLogger.log('EXIT', `{ reason: 'sub_agent_max_turns', turnCount: ${turnCount}, maxTurns: ${maxTurns} }`)
+        debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
         debugLogger.close()
         yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
@@ -193,16 +168,14 @@ export class AgentLoop {
       }
 
       // 上下文压缩检查（LLM 调用前）
-      // 计算 system prompt + tool definitions 的 token 开销（不在 messages 数组中但占用 context window）
-      const overheadTokens = this.contextManager.estimateOverheadTokens(systemPrompt, toolDefinitions, config.model)
-      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model, overheadTokens)) {
+      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
         const compacted = await this.doCompaction(config)
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           yield compacted
           // Compaction succeeded — only re-enable tools if context is now below threshold
-          if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model, overheadTokens)) {
+          if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
             toolsDisabled = false
           }
         }
@@ -248,7 +221,7 @@ export class AgentLoop {
           const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
           const compacted = this.contextManager.reactiveCompactByTurns(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
-          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
 
           debugLogger.log('REACTIVE_COMPACT', `PTL turn-based eviction: ${beforeTokens} -> ${afterTokens} tokens`)
 
@@ -267,7 +240,7 @@ export class AgentLoop {
           if (turnCount > 0) turnCount--
           continue
         } else {
-          debugLogger.log('EXIT', `{ reason: 'ptl_fatal', turnCount: ${turnCount} }`)
+          debugLogger.log('ERROR', 'context too long, all recovery exhausted')
           debugLogger.close()
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('fatal')
           yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
@@ -278,19 +251,7 @@ export class AgentLoop {
       }
 
       if (turnResult.hadError) {
-        // Stream idle timeout 重试：看门狗超时（模型 prefill 过慢/过载）时重试一次
-        // 而不是直接终止整个 agent loop
-        const isIdleTimeout = turnResult.errorMessage?.includes('Stream idle timeout') ?? false
-        if (isIdleTimeout && !idleTimeoutRetried) {
-          idleTimeoutRetried = true
-          debugLogger.log('RETRY', 'stream idle timeout, retrying once')
-          yield { type: 'agent:error', error: 'Stream timed out — retrying once...', recoverable: true }
-          await new Promise(resolve => setTimeout(resolve, 3000))
-          turnCount--
-          continue
-        }
-
-        debugLogger.log('EXIT', `{ reason: 'turn_error', turnCount: ${turnCount}, error: '${turnResult.errorMessage?.substring(0, 60) ?? 'unknown'}' }`)
+        debugLogger.log('ERROR', 'turn had error, stopping')
         debugLogger.close()
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
@@ -308,7 +269,7 @@ export class AgentLoop {
 
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
-        debugLogger.log('EXIT', `{ reason: 'token_budget_exceeded', turnCount: ${turnCount}, inputTokens: ${totalUsage.inputTokens}, budget: ${config.maxBudgetTokens} }`)
+        debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
         yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
@@ -332,7 +293,7 @@ export class AgentLoop {
         })
 
         if (hookResult.preventContinuation) {
-          debugLogger.log('EXIT', `{ reason: 'hook_prevent_continuation', turnCount: ${turnCount} }`)
+          debugLogger.log('HOOK', 'stop hook prevented continuation')
           debugLogger.close()
           yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
           endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
@@ -350,12 +311,8 @@ export class AgentLoop {
 
       // 无工具调用 → 正常结束
       if (turnResult.shouldStop) {
-        debugLogger.log('EXIT', `{ reason: 'completed', turnCount: ${turnCount}, inputTokens: ${totalUsage.inputTokens}, outputTokens: ${totalUsage.outputTokens} }`)
+        debugLogger.log('DONE', `completed in ${turnCount} turns`, { inputTokens: totalUsage.inputTokens, outputTokens: totalUsage.outputTokens })
         debugLogger.close()
-
-        // 自动记忆提取（fire-and-forget，不阻塞 agent:done 事件）
-        this.triggerAutoMemory(config).catch(() => {})
-
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
         endTrace(config.conversationId, totalUsage, turnCount, false, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
@@ -386,7 +343,7 @@ export class AgentLoop {
 
       if (result.summarizedMessages.length > 0) {
         const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
-        const restoredFiles = await restoreFiles(result.summarizedMessages, workingDir)
+        const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
         if (restoredFiles.length > 0) {
           postCompactParts.push(formatRestoredFilesMessage(restoredFiles))
         }
@@ -426,38 +383,6 @@ export class AgentLoop {
     return null
   }
 
-  // ---- 自动记忆提取 ----
-
-  /**
-   * 对话自然结束时触发自动记忆提取。
-   * 从最近对话中提取稳定事实写入 MEMORY.md。
-   * Fire-and-forget：失败不影响用户体验。
-   */
-  private async triggerAutoMemory(config: AgentConfig): Promise<void> {
-    try {
-      const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
-      if (!workingDir) return
-
-      // Dynamic import: paths.ts pulls in Electron which breaks vitest
-      const { MemoryManager } = await import('../memory/memory-manager')
-      const { AutoExtractor } = await import('../memory/auto-extractor')
-
-      const mm = new MemoryManager(workingDir)
-      const existingMemory = await mm.readMemory()
-
-      await AutoExtractor.extractAndAppend(
-        this.conversation.getMessages(),
-        existingMemory,
-        mm.getMemoryPath(),
-        this.gateway,
-        config.model,
-        config.provider,
-      )
-    } catch {
-      // 记忆提取失败不应影响用户体验
-    }
-  }
-
   // ---- 公共 API（保持签名不变） ----
 
   cancel(): void {
@@ -488,15 +413,9 @@ export class AgentLoop {
       .filter((m) => m.type !== 'meta' && m.role != null)
       .map((m) => m as unknown as Message)
 
-    const cheapTokens = this.contextManager.estimateTokensCheap(messages)
-    if (!this.contextManager.shouldCompactEstimated(cheapTokens, config.model)) {
-      this.conversation.loadFromExternal(messages)
-      return { messageCount: messages.length, compacted: false, beforeTokens: cheapTokens, afterTokens: cheapTokens }
-    }
+    const beforeTokens = this.contextManager.estimateTokens(messages)
 
-    const beforeTokens = this.contextManager.estimateTokens(messages, config.model)
-
-    if (this.contextManager.shouldCompactEstimated(beforeTokens, config.model)) {
+    if (this.contextManager.shouldCompact(messages, config.model)) {
       const result = await this.contextManager.compact(
         messages, this.gateway, config.model,
         config.provider as 'openai' | 'anthropic',
@@ -505,7 +424,7 @@ export class AgentLoop {
       if (result.summary) {
         const recentMessages = messages.slice(-result.keptRecentCount)
         this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
-        const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+        const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
         return { messageCount: this.conversation.length, compacted: true, beforeTokens, afterTokens }
       }
     }

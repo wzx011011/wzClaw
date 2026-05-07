@@ -1,11 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WebSearchTool } from '../web-search'
 
+/** 生成 DuckDuckGo HTML lite 格式的 mock 响应 */
+function makeDdgHtml(results: { title: string; url: string; snippet?: string }[]): string {
+  return results
+    .map(({ title, url, snippet }) => {
+      const encoded = encodeURIComponent(url)
+      return (
+        `<div class="result results_links_deep">` +
+        `<a class="result__a" href="/?uddg=${encoded}">${title}</a>` +
+        (snippet ? `<td class="result__snippet">${snippet}</td>` : '') +
+        `</div>`
+      )
+    })
+    .join('\n')
+}
+
 describe('WebSearchTool', () => {
   let tool: WebSearchTool
 
   beforeEach(() => {
     tool = new WebSearchTool()
+    vi.unstubAllGlobals()
   })
 
   it('has correct name, description, and requiresApproval', () => {
@@ -35,16 +51,14 @@ describe('WebSearchTool', () => {
     expect(result.output).toContain('Invalid input')
   })
 
-  it('returns results from SearXNG JSON API', async () => {
-    const mockJson = {
-      results: [
-        { title: 'TypeScript: Documentation', url: 'https://www.typescriptlang.org/docs', content: 'TypeScript is a strongly typed programming language.' },
-        { title: 'microsoft/TypeScript', url: 'https://github.com/microsoft/TypeScript', content: 'TypeScript is a superset of JavaScript.' }
-      ]
-    }
+  it('returns results from DuckDuckGo HTML search', async () => {
+    const html = makeDdgHtml([
+      { title: 'TypeScript: Documentation', url: 'https://www.typescriptlang.org/docs', snippet: 'TypeScript is a strongly typed programming language.' },
+      { title: 'microsoft/TypeScript', url: 'https://github.com/microsoft/TypeScript', snippet: 'TypeScript is a superset of JavaScript.' }
+    ])
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(mockJson)
+      text: () => Promise.resolve(html)
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -54,17 +68,16 @@ describe('WebSearchTool', () => {
     expect(result.output).toContain('typescriptlang.org')
     expect(result.output).toContain('microsoft/TypeScript')
     expect(result.output).toContain('github.com')
-    // 验证调用了 SearXNG 端点
+    // 验证调用了 DuckDuckGo HTML 端点
     expect(mockFetch).toHaveBeenCalledOnce()
-    expect(mockFetch.mock.calls[0][0]).toContain('searxng.5945.top')
-    expect(mockFetch.mock.calls[0][0]).toContain('format=json')
+    expect(mockFetch.mock.calls[0][0]).toContain('html.duckduckgo.com')
+    expect(mockFetch.mock.calls[0][0]).toContain('typescript')
   })
 
-  it('returns no-results message when SearXNG returns empty results', async () => {
-    const mockJson = { results: [] }
+  it('returns no-results message when DuckDuckGo returns empty results', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(mockJson)
+      text: () => Promise.resolve('<html><body>No results.</body></html>')
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -74,7 +87,6 @@ describe('WebSearchTool', () => {
   })
 
   it('returns error on fetch failure', async () => {
-    // 重试逻辑会重试一次（2s 延迟），需要足够超时
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -85,9 +97,9 @@ describe('WebSearchTool', () => {
     const result = await tool.execute({ query: 'test' }, { workingDirectory: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.output).toContain('500')
-    // 重试后应该调用了 2 次 fetch
-    expect(mockFetch).toHaveBeenCalledTimes(2)
-  }, 10000)
+    // 新实现不重试，只调用一次
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
 
   it('returns error on network failure', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
@@ -96,19 +108,18 @@ describe('WebSearchTool', () => {
     const result = await tool.execute({ query: 'test' }, { workingDirectory: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.output).toContain('Network error')
-    expect(mockFetch).toHaveBeenCalledTimes(2)
-  }, 10000)
+    // 新实现不重试，只调用一次
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
 
   it('filters by allowed_domains', async () => {
-    const mockJson = {
-      results: [
-        { title: 'GitHub Result', url: 'https://github.com/test', content: 'from github' },
-        { title: 'Other Result', url: 'https://other.com/test', content: 'from other' }
-      ]
-    }
+    const html = makeDdgHtml([
+      { title: 'GitHub Result', url: 'https://github.com/test', snippet: 'from github' },
+      { title: 'Other Result', url: 'https://other.com/test', snippet: 'from other' }
+    ])
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(mockJson)
+      text: () => Promise.resolve(html)
     })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -122,15 +133,13 @@ describe('WebSearchTool', () => {
   })
 
   it('filters by blocked_domains', async () => {
-    const mockJson = {
-      results: [
-        { title: 'Pinterest Junk', url: 'https://pinterest.com/pin/123', content: 'junk' },
-        { title: 'Good Result', url: 'https://example.com/page', content: 'useful' }
-      ]
-    }
+    const html = makeDdgHtml([
+      { title: 'Pinterest Junk', url: 'https://pinterest.com/pin/123', snippet: 'junk' },
+      { title: 'Good Result', url: 'https://example.com/page', snippet: 'useful' }
+    ])
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(mockJson)
+      text: () => Promise.resolve(html)
     })
     vi.stubGlobal('fetch', mockFetch)
 

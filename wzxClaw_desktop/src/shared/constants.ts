@@ -151,6 +151,3 @@ export const WEB_FETCH_CACHE_MAX_ENTRIES = 100
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 export const GLM_BASE_URL = 'https://open.bigmodel.cn/api/anthropic'
-
-// SearXNG 自建元搜索引擎（NAS Docker）
-export const SEARXNG_BASE_URL = 'https://searxng.5945.top'

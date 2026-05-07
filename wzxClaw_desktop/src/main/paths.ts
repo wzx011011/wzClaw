@@ -87,16 +87,15 @@ export function getSkillsDir(): string {
   return path.join(getUserDir(), 'skills')
 }
 
-/** 用户插件目录：~/.wzxclaw/plugins/（只读扫描） */
-export function getPluginsDir(): string {
-  return path.join(getUserDir(), 'plugins')
-}
-
 /** 用户自定义 agent 目录：~/.wzxclaw/agents/（只读扫描） */
 export function getAgentsDir(): string {
   return path.join(getUserDir(), 'agents')
 }
 
+/** 插件目录：~/.wzxclaw/plugins/ */
+export function getPluginsDir(): string {
+  return path.join(getUserDir(), 'plugins')
+}
 /** 粘贴缓存目录：~/.wzxclaw/paste-cache/ */
 export function getPasteCacheDir(): string {
   return path.join(getUserDir(), 'paste-cache')
@@ -120,11 +119,10 @@ export function getMediaDir(): string {
   return path.join(getUserDir(), 'media')
 }
 
-/** 临时草稿目录：~/.wzxclaw/scratchpad/（Agent 可写入临时文件，手动清理） */
+/** 临时文件暂存目录：~/.wzxclaw/scratchpad/ */
 export function getScratchpadDir(): string {
   return path.join(getUserDir(), 'scratchpad')
 }
-
 /** Insights facet 缓存目录：~/.wzxclaw/insights-cache/ */
 export function getInsightsCacheDir(): string {
   return path.join(getUserDir(), 'insights-cache')
@@ -190,9 +188,7 @@ export async function ensureAppDirs(): Promise<void> {
     getShellSnapshotsDir(),
     getCommandsDir(),
     getSkillsDir(),
-    getPluginsDir(),
     getMediaDir(),
-    getScratchpadDir(),
     getInsightsCacheDir(),
     getInsightsReportDir(),
     // AppData 级

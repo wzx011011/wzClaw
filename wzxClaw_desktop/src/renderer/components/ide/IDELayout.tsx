@@ -71,7 +71,6 @@ export default function IDELayout(): JSX.Element {
 
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = React.useState(false)
-  const [startupBusy, setStartupBusy] = React.useState(true)
 
   // 稳定 TitleBar 回调 — 避免每次 IDELayout 重渲染时生成新函数导致 memo 失效
   const handleOpenFolder = useCallback(() => useWorkspaceStore.getState().openFolder(), [])
@@ -231,15 +230,11 @@ export default function IDELayout(): JSX.Element {
         ? setFolders(activeWorkspace.projects)
         : initWorkspace()
 
-      restore.finally(() => {
-        window.setTimeout(() => setStartupBusy(false), 250)
-      })
+      restore.finally(() => {})
     }, WORKSPACE_RESTORE_DELAY_MS)
 
     return cancelDeferredWorkspaceInit
   }, [activeWorkspace?.id])
-
-  const titlebarBusy = startupBusy || workspaceLoading || (Boolean(activeWorkspace) && !rootPath)
 
   // Index status is useful but not a first-paint dependency.
   useEffect(() => {
@@ -280,7 +275,7 @@ export default function IDELayout(): JSX.Element {
   }
 
   return (
-    <div className={`ide-container${titlebarBusy ? ' startup-busy' : ''}`}>
+    <div className="ide-container">
       <TitleBar
         onOpenFolder={handleOpenFolder}
         onToggleTerminal={handleToggleTerminal}
@@ -290,7 +285,6 @@ export default function IDELayout(): JSX.Element {
         onOpenBrowser={handleOpenBrowser}
         onBackToTasks={closeWorkspace}
         activeWorkspaceTitle={activeWorkspace?.title}
-        startupBusy={titlebarBusy}
       />
       <div className="ide-main">
         <div className="ide-content">

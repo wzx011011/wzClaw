@@ -74,9 +74,9 @@ Usage:
     let regex: RegExp
     try {
       regex = new RegExp(pattern, 'i')
-    } catch (err: unknown) {
+    } catch (err: any) {
       return {
-        output: `Invalid regex pattern: ${err instanceof Error ? err.message : String(err)}`,
+        output: `Invalid regex pattern: ${err.message}`,
         isError: true
       }
     }
@@ -85,7 +85,7 @@ Usage:
       const includeRegex = include ? globToRegex(include) : null
       const results: string[] = []
 
-      await searchDirectory(dir, dir, regex, includeRegex, results, context.onProgress)
+      searchDirectory(dir, dir, regex, includeRegex, results)
 
       let output = results.join('\n')
 
@@ -95,9 +95,9 @@ Usage:
       }
 
       return { output, isError: false }
-    } catch (err: unknown) {
+    } catch (err: any) {
       return {
-        output: err instanceof Error ? err.message : String(err),
+        output: err.message || String(err),
         isError: true
       }
     }
@@ -123,20 +123,18 @@ function globToRegex(glob: string): RegExp {
 }
 
 /**
- * 异步递归搜索目录中匹配正则的文件内容。
- * 使用 fs.promises 避免阻塞主进程事件循环。
+ * Recursively search a directory for files matching the regex pattern.
  */
-async function searchDirectory(
+function searchDirectory(
   rootDir: string,
   currentDir: string,
   regex: RegExp,
   includeRegex: RegExp | null,
-  results: string[],
-  onProgress?: (msg: string) => void
-): Promise<void> {
+  results: string[]
+): void {
   let entries: fs.Dirent[]
   try {
-    entries = await fs.promises.readdir(currentDir, { withFileTypes: true })
+    entries = fs.readdirSync(currentDir, { withFileTypes: true })
   } catch {
     return // Skip directories we can't read
   }
@@ -150,8 +148,7 @@ async function searchDirectory(
     const fullPath = path.join(currentDir, entry.name)
 
     if (entry.isDirectory()) {
-      onProgress?.(`Scanning ${fullPath.replace(/\\/g, '/')}...`)
-      await searchDirectory(rootDir, fullPath, regex, includeRegex, results, onProgress)
+      searchDirectory(rootDir, fullPath, regex, includeRegex, results)
     } else if (entry.isFile()) {
       // Check include filter
       if (includeRegex && !includeRegex.test(entry.name)) {
@@ -159,7 +156,7 @@ async function searchDirectory(
       }
 
       try {
-        const content = await fs.promises.readFile(fullPath, 'utf-8')
+        const content = fs.readFileSync(fullPath, 'utf-8')
         const lines = content.split('\n')
         // Normalize to forward slashes for cross-platform output
         const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, '/')

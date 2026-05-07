@@ -6,7 +6,7 @@
 // v2: executeTurn 为 async generator，事件逐条 yield
 // ============================================================
 
-import type { ToolCall } from '../../shared/types'
+import type { Message, ToolCall, LLMProvider, ContentBlock } from '../../shared/types'
 import type { StreamOptions } from '../llm/types'
 import type { AgentEvent, AgentConfig } from './types'
 import type { ToolExecResult } from './streaming-tool-executor'
@@ -19,7 +19,7 @@ import type { LLMGateway } from '../llm/gateway'
 import { LoopDetector } from './loop-detector'
 import { MessageBuilder } from './message-builder'
 import { FileChangeTracker, buildTurnAttachments } from '../context/turn-attachments'
-import { truncateToolResult, enforceContextBudget } from '../context/tool-result-budget'
+import { truncateToolResult, enforceContextBudget, ToolResultEntry } from '../context/tool-result-budget'
 import { maybePersistLargeToolResult, ToolResultReplacementState } from '../context/tool-result-storage'
 import { ContextManager as ContextManagerClass } from '../context/context-manager'
 import { executeStreamPhase, type StreamPhaseMeta, type ExecuteToolFn, type StreamFn } from './stream-phase'
@@ -61,8 +61,6 @@ export interface TurnResult {
   usage: { inputTokens: number; outputTokens: number }
   /** 是否有不可恢复错误 */
   hadError: boolean
-  /** 错误信息（hadError 时有值，供 agent-loop 判断是否可重试） */
-  errorMessage?: string
   /** 本轮调用的工具名列表（供 stop hooks 使用） */
   toolNames: string[]
 }
@@ -94,7 +92,7 @@ export class TurnManager {
     abortSignal: AbortSignal,
     sender?: Electron.WebContents,
     workspaceId?: string,
-    _replacementState?: ToolResultReplacementState,
+    replacementState?: ToolResultReplacementState,
   ): ExecuteToolFn {
     return async (toolCall: ToolCall): Promise<ToolExecResult> => {
       const _eval = getActiveTrace(config.conversationId)?.evalCollector
@@ -157,21 +155,10 @@ export class TurnManager {
         const result = await tool.execute(toolCall.input, {
           workingDirectory: config.workingDirectory,
           workspaceId,
-          sessionId: config.conversationId,
           projectRoots: config.projectRoots,
           abortSignal,
           // tool:Agent span 전달 → sub-agent 의 observations 이 이 span 하위에 nested 로 기록됨
           langfuseParentSpan: toolSpan,
-          // 工具进度回调 — 直接通过 IPC 发送到渲染端，不经过 agent event yield
-          onProgress: sender ? (message: string) => {
-            if (!sender.isDestroyed()) {
-              sender.send(IPC_CHANNELS['stream:tool_progress'], {
-                toolCallId: toolCall.id,
-                toolName: toolCall.name,
-                message,
-              })
-            }
-          } : undefined,
           onSubAgentEvent: sender ? (event) => {
             if (sender.isDestroyed()) return
             if (event['type'] === 'agent:tool_call') {
@@ -307,7 +294,7 @@ export class TurnManager {
     }
 
     if (phaseMeta.hadError) {
-      return { shouldStop: true, usage: phaseMeta.usage, hadError: true, errorMessage: phaseMeta.errorMessage, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
+      return { shouldStop: true, usage: phaseMeta.usage, hadError: true, toolNames: phaseMeta.toolCalls.map(tc => tc.name) }
     }
 
     // 6. 通过 ConversationManager 记录 assistant 消息

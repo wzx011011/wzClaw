@@ -68,23 +68,16 @@ Usage:
       ? filePath
       : path.resolve(context.workingDirectory, filePath)
 
-    // Workspace boundary check — allow reads within any projectRoot (multi-folder Task support)
-    const allowedRoots = context.projectRoots?.length
-      ? context.projectRoots
-      : [context.workingDirectory]
+    // Workspace boundary check — block out-of-workspace reads (case-insensitive on Windows)
+    const normalizedWorkspace = path.resolve(context.workingDirectory).toLowerCase()
     const normalizedPath = absolutePath.toLowerCase()
-    const isWithinWorkspace = allowedRoots.some((root) => {
-      const normalized = path.resolve(root).toLowerCase()
-      return normalizedPath.startsWith(normalized + path.sep) || normalizedPath === normalized
-    })
+    const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
     if (!isWithinWorkspace) {
       return { output: `Blocked: FileRead target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
-    // Check file exists (async — 不阻塞事件循环)
-    try {
-      await fs.promises.access(absolutePath)
-    } catch {
+    // Check file exists
+    if (!fs.existsSync(absolutePath)) {
       return {
         output: `File not found: ${filePath}`,
         isError: true
@@ -129,9 +122,9 @@ Usage:
       let output = numberedLines.join('\n')
 
       return { output, isError: false }
-    } catch (err: unknown) {
+    } catch (err: any) {
       return {
-        output: err instanceof Error ? err.message : String(err),
+        output: err.message || String(err),
         isError: true
       }
     }

@@ -9,6 +9,31 @@
     </style>
   </head>
   <body>
+    <!--
+      Splash drag region — injected synchronously before any module JS loads.
+      Chromium processes -webkit-app-region during layout, which completes before
+      ready-to-show fires. This means WM_NCHITTEST hits the cached region map
+      immediately on first drag, with no IPC roundtrip to the renderer needed.
+      VS Code uses the same pattern (partsSplash / showDefaultSplash).
+      The div is removed by App.tsx useLayoutEffect after React mounts.
+    -->
+    <script>
+      (function () {
+        var d = document.createElement('div')
+        d.id = 'wzx-drag-splash'
+        d.style.cssText = [
+          'position:fixed',
+          'top:0',
+          'left:0',
+          'right:0',
+          'height:38px',
+          '-webkit-app-region:drag',
+          'z-index:9999',
+          'pointer-events:none'
+        ].join(';')
+        document.body.appendChild(d)
+      })()
+    </script>
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
   </body>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect } from 'react'
 import WorkspaceHomePage from './components/tasks/WorkspaceHomePage'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toast from './components/Toast'
@@ -27,6 +27,12 @@ function App(): JSX.Element {
       initLocale(language)
     })
   }, [])
+
+    // 首次 layout 完成后移除 splash drag div（它的使命已完成：确保启动时拖拽区域在第一帧就绪）
+    useLayoutEffect(() => {
+      const splash = document.getElementById('wzx-drag-splash')
+      if (splash) splash.remove()
+    }, [])
 
   if (activeWorkspaceId) return (
     <ErrorBoundary scope="IDELayout">

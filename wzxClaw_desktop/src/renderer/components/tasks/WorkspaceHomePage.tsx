@@ -121,8 +121,7 @@ export default function WorkspaceHomePage(): JSX.Element {
 
   return (
     <div className="workspace-home">
-      <div className={`workspace-home-dragbar${isLoading ? ' loading' : ''}`}>
-        {isLoading && <span className="workspace-home-drag-spinner" aria-label="Loading" />}
+      <div className="workspace-home-dragbar">
       </div>
       <div className="workspace-home-header">
         <h1 className="workspace-home-title">{t('workspace.title')}</h1>
