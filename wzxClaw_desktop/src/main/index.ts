@@ -302,7 +302,7 @@ app.whenReady().then(async () => {
   // Restore last workspace if saved
   const lastWsPath = settingsManager.getLastWorkspacePath()
   if (lastWsPath && fs.existsSync(lastWsPath)) {
-    workspaceManager.setWorkspaceRoot(lastWsPath)
+    workspaceManager.setWorkspaceRoot(lastWsPath, { startWatching: false })
   }
 
   // relay connect 推迟到 did-finish-load 后执行 — 不阻塞启动链
@@ -1573,15 +1573,21 @@ app.whenReady().then(async () => {
   mainWindow.webContents.once('did-finish-load', () => {
     logStartup('renderer did-finish-load')
     // Restore workspace if saved
-    if (lastWsPath && fs.existsSync(lastWsPath)) {
-      handleWorkspaceOpened(lastWsPath, toolRegistry)
-      sessionStore = new SessionStore(lastWsPath)
-      sendWorkspaceInfoToMobile()
-    }
+    setTimeout(() => {
+      if (lastWsPath && fs.existsSync(lastWsPath)) {
+        handleWorkspaceOpened(lastWsPath, toolRegistry)
+        sessionStore = new SessionStore(lastWsPath)
+        sendWorkspaceInfoToMobile()
+      }
+    }, 1200)
     // Restore last active session into renderer
     const lastSessionId = settingsManager.getLastSessionId()
     if (lastSessionId) {
-      mainWindow.webContents.send(IPC_CHANNELS['session:restore'], { sessionId: lastSessionId })
+      setTimeout(() => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS['session:restore'], { sessionId: lastSessionId })
+        }
+      }, 1200)
     }
     // Auto-connect to relay after renderer loads (non-blocking for first frame)
     if (savedRelayToken) {

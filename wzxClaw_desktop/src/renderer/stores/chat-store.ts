@@ -90,7 +90,7 @@ type ChatStore = ChatState & ChatActions
 const MAX_SESSIONS_CACHE_SIZE = 10
 /** 单条会话缓存大小上限（估算字符数），超过时不缓存（避免图片消息吃掉大量内存） */
 const MAX_SESSION_CACHE_CHARS = 5 * 1024 * 1024
-const LAST_SESSION_RESTORE_DELAY_MS = 80
+const LAST_SESSION_RESTORE_DELAY_MS = 1200
 const sessionAccessOrder: string[] = []
 // 会话缓存独立于 Zustand state，切换/更新缓存不触发全局重渲染
 const _sessionsCache: Record<string, ChatMessage[]> = {}
@@ -881,8 +881,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }).catch(() => {})
     }, LAST_SESSION_RESTORE_DELAY_MS)
 
-    // 立即加载会话列表，确保侧边栏在首帧可见
-    void get().loadSessionList()
+    const cancelLoadSessionList = scheduleDeferredStartupTask(() => {
+      void get().loadSessionList()
+    }, 300)
 
     // Keep the push listener as a fallback (e.g. if main delays the send)
     const unsubRestore = window.wzxclaw.onSessionRestore?.((payload) => {
@@ -940,6 +941,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubRunningChanged()
       unsubRetrying()
       cancelRestoreLastSession()
+      cancelLoadSessionList()
       unsubRestore()
       unsubTodo()
       unsubDataChanged()

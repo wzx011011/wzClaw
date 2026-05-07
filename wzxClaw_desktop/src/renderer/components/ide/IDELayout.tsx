@@ -52,6 +52,8 @@ export default function IDELayout(): JSX.Element {
   const showTerminal = useTerminalStore((s) => s.panelVisible)
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace)
   const activeWorkspace = useWorkspaceStore((s) => s.getActiveWorkspace)()
+  const workspaceLoading = useWorkspaceStore((s) => s.isLoading)
+  const rootPath = useWorkspaceStore((s) => s.rootPath)
 
   // 布局状态 — 从 layout-store 读取（持久化到 localStorage）
   const sidebarVisible = useLayoutStore((s) => s.sidebarVisible)
@@ -69,6 +71,7 @@ export default function IDELayout(): JSX.Element {
 
   // Mobile modal state
   const [mobileModalOpen, setMobileModalOpen] = React.useState(false)
+  const [startupBusy, setStartupBusy] = React.useState(true)
 
   // 稳定 TitleBar 回调 — 避免每次 IDELayout 重渲染时生成新函数导致 memo 失效
   const handleOpenFolder = useCallback(() => useWorkspaceStore.getState().openFolder(), [])
@@ -224,15 +227,19 @@ export default function IDELayout(): JSX.Element {
   // Restore workspace after the shell paints so ChatPanel can appear first.
   useEffect(() => {
     const cancelDeferredWorkspaceInit = scheduleDeferredUiWork(() => {
-      if (activeWorkspace?.projects && activeWorkspace.projects.length > 0) {
-        void setFolders(activeWorkspace.projects)
-      } else {
-        void initWorkspace()
-      }
+      const restore = activeWorkspace?.projects && activeWorkspace.projects.length > 0
+        ? setFolders(activeWorkspace.projects)
+        : initWorkspace()
+
+      restore.finally(() => {
+        window.setTimeout(() => setStartupBusy(false), 250)
+      })
     }, WORKSPACE_RESTORE_DELAY_MS)
 
     return cancelDeferredWorkspaceInit
   }, [activeWorkspace?.id])
+
+  const titlebarBusy = startupBusy || workspaceLoading || (Boolean(activeWorkspace) && !rootPath)
 
   // Index status is useful but not a first-paint dependency.
   useEffect(() => {
@@ -273,7 +280,7 @@ export default function IDELayout(): JSX.Element {
   }
 
   return (
-    <div className="ide-container">
+    <div className={`ide-container${titlebarBusy ? ' startup-busy' : ''}`}>
       <TitleBar
         onOpenFolder={handleOpenFolder}
         onToggleTerminal={handleToggleTerminal}
@@ -283,6 +290,7 @@ export default function IDELayout(): JSX.Element {
         onOpenBrowser={handleOpenBrowser}
         onBackToTasks={closeWorkspace}
         activeWorkspaceTitle={activeWorkspace?.title}
+        startupBusy={titlebarBusy}
       />
       <div className="ide-main">
         <div className="ide-content">
