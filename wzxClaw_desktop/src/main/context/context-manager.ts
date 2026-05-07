@@ -74,23 +74,53 @@ export class ContextManager {
     if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
 
     const messageTokens = countMessagesTokens(messages, modelId)
-    const totalTokens = messageTokens + overheadTokens
+    return this.shouldCompactEstimated(messageTokens, modelId, overheadTokens)
+  }
+
+  /**
+   * 使用已经算好的 token 数判断是否需要压缩，避免调用方重复 BPE 统计。
+   */
+  shouldCompactEstimated(messageTokens: number, modelId: string, overheadTokens: number = 0): boolean {
+    if (this.isCompacting) return false
+    if (this.consecutiveCompactFailures >= this.config.maxConsecutiveCompactFailures) return false
+
+    return messageTokens + overheadTokens > this.getCompactionThreshold(modelId)
+  }
+
+  /**
+   * 快速保守估算消息 token。用于启动/切换会话恢复路径，避免首帧后立即 BPE 扫完整历史。
+   */
+  estimateTokensCheap(messages: Message[]): number {
+    let total = 0
+    for (const msg of messages) {
+      total += 4
+      total += typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content ?? '').length
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          total += JSON.stringify(tc.input ?? '').length + 4
+        }
+      }
+    }
+    return total
+  }
+
+  /** 获取当前模型的自动压缩阈值。 */
+  getCompactionThreshold(modelId: string): number {
     const contextWindow = this.getContextWindowForModel(modelId)
 
     // 兼容旧式比例模式
     if (this.config.compactThreshold > 0) {
-      return totalTokens > contextWindow * this.config.compactThreshold
+      return contextWindow * this.config.compactThreshold
     }
 
     // 自动公式：contextWindow - maxOutputTokens - safetyBuffer
     // 参考 Claude Code：~93% 触发（safetyBuffer 13K + maxOutputTokens）
     // 保底下限：至少利用 70% 的 context window 再压缩，避免小窗口模型过早触发
     const maxOutputTokens = this.getMaxOutputTokensForModel(modelId)
-    const threshold = Math.max(
+    return Math.max(
       contextWindow - maxOutputTokens - this.config.compactSafetyBuffer,
       contextWindow * 0.7
     )
-    return totalTokens > threshold
   }
 
   /**

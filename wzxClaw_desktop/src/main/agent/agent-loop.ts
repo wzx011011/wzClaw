@@ -248,7 +248,7 @@ export class AgentLoop {
           const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
           const compacted = this.contextManager.reactiveCompactByTurns(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
-          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
+          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
 
           debugLogger.log('REACTIVE_COMPACT', `PTL turn-based eviction: ${beforeTokens} -> ${afterTokens} tokens`)
 
@@ -488,9 +488,15 @@ export class AgentLoop {
       .filter((m) => m.type !== 'meta' && m.role != null)
       .map((m) => m as unknown as Message)
 
-    const beforeTokens = this.contextManager.estimateTokens(messages)
+    const cheapTokens = this.contextManager.estimateTokensCheap(messages)
+    if (!this.contextManager.shouldCompactEstimated(cheapTokens, config.model)) {
+      this.conversation.loadFromExternal(messages)
+      return { messageCount: messages.length, compacted: false, beforeTokens: cheapTokens, afterTokens: cheapTokens }
+    }
 
-    if (this.contextManager.shouldCompact(messages, config.model)) {
+    const beforeTokens = this.contextManager.estimateTokens(messages, config.model)
+
+    if (this.contextManager.shouldCompactEstimated(beforeTokens, config.model)) {
       const result = await this.contextManager.compact(
         messages, this.gateway, config.model,
         config.provider as 'openai' | 'anthropic',
@@ -499,7 +505,7 @@ export class AgentLoop {
       if (result.summary) {
         const recentMessages = messages.slice(-result.keptRecentCount)
         this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
-        const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
+        const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
         return { messageCount: this.conversation.length, compacted: true, beforeTokens, afterTokens }
       }
     }

@@ -780,42 +780,36 @@ export function registerIpcHandlers(
     // Reset persisted counter to match loaded message count
     persistedMessageCount = rawMessages.length
 
-    // Restore agent loop context so subsequent messages continue the conversation.
-    // Run asynchronously after returning messages to the renderer — the renderer
-    // shows the chat immediately while the (potentially slow) compaction runs.
     const config = settingsManager.getCurrentConfig()
     const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
     const restoreRoots = resolvedWorkspace
       ? resolvedWorkspace.projects.map(p => p.path)
       : [restoreCwd]
-    agentLoop.restoreContext(rawMessages, {
-      model: config.model,
-      provider: config.provider as 'openai' | 'anthropic',
-      systemPrompt: config.systemPrompt,
-      workingDirectory: restoreCwd,
-      projectRoots: restoreRoots,
-    }).catch(() => {})
-    // 将消息射入对应的 per-session runtime（同时更新 agentLoop 镜像上面已完成）
-    loadRuntime.restoreContext(rawMessages, {
-      model: config.model,
-      provider: config.provider as 'openai' | 'anthropic',
-      systemPrompt: config.systemPrompt,
-      workingDirectory: restoreCwd,
-      projectRoots: restoreRoots,
-    }).then((info) => {
-      const sender = event.sender
-      if (!sender.isDestroyed()) {
-        sender.send(IPC_CHANNELS['session:context-restored'], {
-          sessionId,
-          messageCount: info.messageCount,
-          compacted: info.compacted,
-          beforeTokens: info.beforeTokens,
-          afterTokens: info.afterTokens
-        })
-      }
-    }).catch((err) => {
-      console.error('[session:load] restoreContext failed:', err)
-    })
+
+    // 会话上下文恢复不是首屏依赖。延迟到窗口可交互后再射入当前 runtime，
+    // 避免启动后立即拖动窗口时，主进程被历史 token 统计抢占。
+    const restoreSender = event.sender
+    setTimeout(() => {
+      loadRuntime.restoreContext(rawMessages, {
+        model: config.model,
+        provider: config.provider as 'openai' | 'anthropic',
+        systemPrompt: config.systemPrompt,
+        workingDirectory: restoreCwd,
+        projectRoots: restoreRoots,
+      }).then((info) => {
+        if (!restoreSender.isDestroyed()) {
+          restoreSender.send(IPC_CHANNELS['session:context-restored'], {
+            sessionId,
+            messageCount: info.messageCount,
+            compacted: info.compacted,
+            beforeTokens: info.beforeTokens,
+            afterTokens: info.afterTokens
+          })
+        }
+      }).catch((err) => {
+        console.error('[session:load] restoreContext failed:', err)
+      })
+    }, 1000)
 
     return rawMessages
   })
