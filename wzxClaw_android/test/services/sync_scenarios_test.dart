@@ -313,4 +313,143 @@ void main() {
           reason: '第二次 fetch 应被 inflight dedup 逻辑拦截',);
     });
   });
+
+  group('S9: 选中桌面/工作区后，切换不同会话内容保持隔离', () {
+    test('s1 ↔ s2 来回切换时，各自消息内容同步正确且不串台', () async {
+      final h = SyncTestHarness.fresh();
+      addTearDown(h.dispose);
+      await h.settle();
+
+      // 模拟先未选桌面，再选中一台桌面
+      h.transport.setSelectedDesktop(null);
+      await h.settle();
+      h.transport.setSelectedDesktop('desktop-1');
+      await h.settle();
+
+      // 桌面返回工作区信息与会话列表
+      h.transport.pumpFromDesktop(WsEvents.sessionWorkspaceInfo, {
+        'workspaceName': 'ws',
+        'workspacePath': '/ws',
+        'activeSessionId': 's1',
+        'sessionCount': 2,
+      });
+      await h.settle();
+
+      final listReqId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionListRequest)
+          .message
+          .data['requestId'] as String;
+      h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
+        'requestId': listReqId,
+        'workspacePath': '/ws',
+        'workspaceName': 'ws',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'id': 's1',
+            'title': 'S1',
+            'createdAt': 1,
+            'updatedAt': 1,
+            'messageCount': 1,
+          },
+          {
+            'id': 's2',
+            'title': 'S2',
+            'createdAt': 2,
+            'updatedAt': 2,
+            'messageCount': 1,
+          },
+        ],
+      });
+      await h.settle();
+
+      expect(h.sessionSync.workspaceInfo?.workspacePath, '/ws');
+      expect(h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']));
+
+      // 拉取并进入 s1
+      final s1Future = h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
+      final s1ReqId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': s1ReqId,
+        'sessionId': 's1',
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'from-s1',
+            'timestamp': 1000,
+          },
+        ],
+        'total': 1,
+        'offset': 0,
+        'hasMore': false,
+      });
+      final s1Msgs = await s1Future;
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      h.chatStore.loadFetchedMessages('s1', s1Msgs);
+      await h.settle();
+      expect(h.chatStore.currentSessionId, 's1');
+      expect(h.chatStore.messages.map((m) => m.content).join('\n'), contains('from-s1'));
+
+      // 切到 s2，确保展示内容来自 s2，不残留 s1
+      final s2Future = h.sessionSync.loadAllSessionMessages('s2', forceRefresh: true);
+      final s2ReqId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': s2ReqId,
+        'sessionId': 's2',
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'from-s2',
+            'timestamp': 2000,
+          },
+        ],
+        'total': 1,
+        'offset': 0,
+        'hasMore': false,
+      });
+      final s2Msgs = await s2Future;
+      await h.chatStore.switchToSession('s2', userInitiated: true);
+      h.chatStore.loadFetchedMessages('s2', s2Msgs);
+      await h.settle();
+      expect(h.chatStore.currentSessionId, 's2');
+      final s2Content = h.chatStore.messages.map((m) => m.content).join('\n');
+      expect(s2Content, contains('from-s2'));
+      expect(s2Content, isNot(contains('from-s1')));
+
+      // 再切回 s1，确认 s1 内容可恢复
+      final s1AgainFuture = h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
+      final s1AgainReqId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': s1AgainReqId,
+        'sessionId': 's1',
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'from-s1',
+            'timestamp': 3000,
+          },
+        ],
+        'total': 1,
+        'offset': 0,
+        'hasMore': false,
+      });
+      final s1AgainMsgs = await s1AgainFuture;
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      h.chatStore.loadFetchedMessages('s1', s1AgainMsgs);
+      await h.settle();
+      expect(h.chatStore.currentSessionId, 's1');
+      final s1Content = h.chatStore.messages.map((m) => m.content).join('\n');
+      expect(s1Content, contains('from-s1'));
+      expect(s1Content, isNot(contains('from-s2')));
+    });
+  });
 }

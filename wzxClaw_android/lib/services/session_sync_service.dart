@@ -388,10 +388,17 @@ class SessionSyncService {
           final localCount = await ChatDatabase.instance
               .getSessionMessageCount(currentSessionId);
           if (desktopSession.messageCount != localCount) {
-            unawaited(loadAllSessionMessages(
+            // Bug fix: 旧版只调了 loadAllSessionMessages（写 DB），
+            // 没调 ChatStore.loadFetchedMessages（更新 UI），
+            // 导致切换会话后手机显示的内容与桌面不一致。
+            final refreshed = await loadAllSessionMessages(
               currentSessionId,
               forceRefresh: true,
-            ));
+            );
+            // 加载期间用户可能切走了，不覆盖
+            if (ChatStore.instance.currentSessionId == currentSessionId) {
+              ChatStore.instance.loadFetchedMessages(currentSessionId, refreshed);
+            }
           }
         }
       }
@@ -901,10 +908,21 @@ class SessionSyncService {
   }
 
   /// App 从后台切回前台时调用：刷新当前会话消息。
+  ///
+  /// Bug fix: 旧版只调了 loadAllSessionMessages（写 DB），
+  /// 没调 ChatStore.loadFetchedMessages（更新 UI），
+  /// 导致重连后消息"丢失"（DB 有但 UI 空）。
   void onAppForegrounded() {
     final currentId = ChatStore.instance.currentSessionId;
-    if (currentId != null && !ChatStore.instance.isStreaming) {
-      unawaited(loadAllSessionMessages(currentId, forceRefresh: true));
+    if (currentId == null || ChatStore.instance.isStreaming) return;
+    unawaited(_onAppForegroundedImpl(currentId));
+  }
+
+  Future<void> _onAppForegroundedImpl(String sessionId) async {
+    final messages = await loadAllSessionMessages(sessionId, forceRefresh: true);
+    // 推到 ChatStore UI — 如果用户在加载期间切换了会话，不覆盖
+    if (ChatStore.instance.currentSessionId == sessionId) {
+      ChatStore.instance.loadFetchedMessages(sessionId, messages);
     }
   }
 
