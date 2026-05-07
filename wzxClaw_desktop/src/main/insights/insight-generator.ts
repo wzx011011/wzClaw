@@ -184,7 +184,7 @@ export function aggregateData(
         inputTokens: modelTokens[model]?.input || 0,
         outputTokens: modelTokens[model]?.output || 0,
       })),
-    topLanguages: topN(languageCounts, 8),
+    topLanguages: topN(languageCounts, 8).map(({ name: lang, count }) => ({ lang, count })),
     topProjects: projectCounts,
     avgTokensPerSession: Math.round((totalInput + totalOutput) / n),
     avgCostPerSession: totalCost / n,
@@ -327,34 +327,42 @@ List 3 friction categories. For each: explain the problem with 1-2 sentences, gi
   {
     id: 'suggestions',
     title: 'Optimization Suggestions',
-    promptFn: (d) => `Based on this usage data, suggest concrete optimizations.
+    promptFn: (d) => `Based on this usage data, suggest concrete optimizations for wzxClaw (an AI coding assistant desktop app).
 
-Total cost: $${d.totalCostUSD.toFixed(2)}, Avg/session: $${d.avgCostPerSession.toFixed(4)}
+Total cost: ${d.totalCostUSD.toFixed(2)}, Avg/session: ${d.avgCostPerSession.toFixed(4)}
 Tokens: ${(d.totalTokens.input + d.totalTokens.output).toLocaleString()}
 Top models: ${d.topModels.map(m => `${m.model}(${m.sessions}s)`).join(', ')}
 Top tools: ${d.topTools.slice(0, 5).map(t => t.name).join(', ')}
-Languages: ${d.topLanguages.slice(0, 5).map(l => l.lang).join(', ')}
+Languages: ${d.topLanguages.slice(0, 5).map(l => l.lang).join(', ') || 'unknown'}
 Recurring instructions: ${d.sessionSummaries.filter(s => s.goal).slice(0, 3).map(s => s.goal).join('; ')}
 
 Provide suggestions:
-1. **WZXCLAW.md additions**: What instructions would reduce repetition? Prioritize instructions the user gave in 2+ sessions.
-2. **Features to try**: Agent delegation, MCP servers, custom skills, headless mode
-3. **Usage patterns**: Better model routing, cost optimization
+1. **MEMORY.md additions**: What instructions would reduce repetition? Prioritize instructions the user gave in 2+ sessions. MEMORY.md is a persistent memory file that carries across sessions.
+2. **Features to try**: Agent delegation, MCP servers, custom skills (slash commands in .md files), multi-edit
+3. **Usage patterns**: Session splitting, cost optimization, reducing redundant exploration
+
+IMPORTANT: This is wzxClaw, NOT Claude Code. Do NOT reference CLAUDE.md, .claude/commands/, /compact, or claude CLI commands. Instead reference:
+- MEMORY.md for persistent instructions
+- Custom skills (slash commands defined as .md files)
+- Built-in slash commands (/insights, /clear, etc.)
+- Agent tool for autonomous task delegation
 
 Use markdown. Be specific with copyable examples.`,
   },
   {
     id: 'on_the_horizon',
     title: 'On the Horizon',
-    promptFn: (d) => `Analyze this usage data and identify future opportunities.
+    promptFn: (d) => `Analyze this usage data and identify future opportunities for wzxClaw (an AI coding assistant desktop app).
 
 Current patterns: ${fmtRecord(d.sessionsByType)}
-Languages: ${d.topLanguages.map(l => l.lang).join(', ')}
+Languages: ${d.topLanguages.map(l => l.lang).join(', ') || 'unknown'}
 Agents used: ${d.sessionsUsingTaskAgent}/${d.totalSessions} sessions
 Multi-clauding: ${d.multiClauding.overlapEvents} overlap events
 Success areas: ${fmtRecord(d.success)}
 
-Identify 3 future opportunities. For each: title (4-8 words), what's possible (2-3 ambitious sentences), how to try (1-2 sentences), and a copyable prompt. Think BIG — autonomous workflows, parallel agents, iterating against tests.`,
+Identify 3 future opportunities. For each: title (4-8 words), what's possible (2-3 ambitious sentences), how to try (1-2 sentences), and a copyable prompt. Think BIG — autonomous workflows, parallel agents, iterating against tests.
+
+IMPORTANT: This is wzxClaw, NOT Claude Code. Reference wzxClaw features: Agent tool, custom skills, MEMORY.md, built-in slash commands. Do NOT reference CLAUDE.md or claude CLI.`,
   },
   {
     id: 'fun_ending',
@@ -366,7 +374,9 @@ Session summaries: ${d.sessionSummaries.slice(0, 10).map(s => `${s.date}: ${s.su
 Find something genuinely interesting, funny, or surprising from the session summaries. Respond with JSON:
 {"headline": "A memorable QUALITATIVE moment", "detail": "Brief context"}
 
-If nothing stands out, make a witty observation about the usage patterns.`,
+If nothing stands out, make a witty observation about the usage patterns.
+
+IMPORTANT: This is wzxClaw, NOT Claude Code. Do NOT reference "Claude" — use "the AI assistant" or "wzxClaw" instead.`,
   },
 ]
 
@@ -581,7 +591,7 @@ async function callLlmForInsight(prompt: string, apiKey: string, baseUrl: string
         body: JSON.stringify({
           model,
           messages: [
-            { role: 'system', content: 'You are an AI coding assistant usage analyst. Write clear, actionable analysis in markdown. Use second person ("you"). Be specific with examples.' },
+            { role: 'system', content: 'You are an AI coding assistant usage analyst for wzxClaw (a desktop AI coding tool). Write clear, actionable analysis in markdown. Use second person ("you"). Be specific with examples. IMPORTANT: This is wzxClaw, NOT Claude Code. Never reference CLAUDE.md, .claude/commands/, /compact, or claude CLI. Instead use MEMORY.md, custom skills, Agent tool, and built-in slash commands.' },
             { role: 'user', content: prompt },
           ],
           max_tokens: 2048,

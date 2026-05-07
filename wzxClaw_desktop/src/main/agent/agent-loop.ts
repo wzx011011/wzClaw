@@ -78,8 +78,8 @@ export class AgentLoop {
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool && this.activeWorkspace) {
-      const saved = await TodoWriteTool.loadForWorkspace(this.activeWorkspace.id)
+    if (todoTool && config.conversationId) {
+      const saved = await TodoWriteTool.loadForSession(config.conversationId)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately

@@ -26,6 +26,7 @@
   display: flex;
   align-items: center;
   padding-left: var(--sp-3);
+  cursor: grab;
 }
 
 .workspace-home-header {
@@ -575,6 +576,103 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Task Detail — Session List
+   ============================================================ */
+
+.workspace-detail-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.workspace-detail-session-item {
+  display: flex;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-8);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.workspace-detail-session-item:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.workspace-detail-session-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-detail-session-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.workspace-detail-session-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.workspace-detail-session-dot.running {
+  background: #4caf50;
+  animation: session-running-pulse 1.4s ease-in-out infinite;
+}
+
+.workspace-detail-session-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-detail-session-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.workspace-detail-session-badge.running {
+  background: rgba(76, 175, 80, 0.15);
+  color: #4caf50;
+}
+
+.workspace-detail-session-todo {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-detail-session-meta {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@keyframes session-running-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 /* ============================================================

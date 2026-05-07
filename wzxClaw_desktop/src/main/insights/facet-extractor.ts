@@ -217,7 +217,8 @@ RESPOND WITH ONLY A VALID JSON OBJECT:
   "friction_detail": "One sentence describing friction or empty string",
   "primary_success": "none|fast_accurate_search|correct_code_edits|good_explanations|proactive_help|multi_file_changes|handled_complexity|good_debugging",
   "brief_summary": "One sentence: what user wanted and whether they got it",
-  "user_instructions_to_claude": ["instruction repeated by user", ...]
+  "user_instructions_to_claude": ["instruction repeated by user", ...],
+  "user_instructions_to_ai": ["instruction repeated by user", ...]
 }`
 
 async function callLlmForFacets(
@@ -291,13 +292,13 @@ async function callLlmForFacets(
     parsed.underlyingGoal = goal
     parsed.goalCategories = parsed.goalCategories || parsed.goal_categories || {}
     parsed.userSatisfaction = parsed.userSatisfaction || parsed.user_satisfaction || {}
-    parsed.claudeHelpfulness = parsed.claudeHelpfulness || parsed.claude_helpfulness || 'moderately_helpful'
+    parsed.claudeHelpfulness = parsed.claudeHelpfulness || parsed.claude_helpfulness || parsed.ai_helpfulness || 'moderately_helpful'
     parsed.sessionType = parsed.sessionType || parsed.session_type || 'single_task'
     parsed.frictionCounts = parsed.frictionCounts || parsed.friction_counts || {}
     parsed.frictionDetail = parsed.frictionDetail || parsed.friction_detail || ''
     parsed.primarySuccess = parsed.primarySuccess || parsed.primary_success || 'none'
     parsed.briefSummary = parsed.briefSummary || parsed.brief_summary || ''
-    parsed.userInstructionsToClaude = parsed.userInstructionsToClaude || parsed.user_instructions_to_claude || []
+    parsed.userInstructionsToClaude = parsed.userInstructionsToClaude || parsed.user_instructions_to_claude || parsed.user_instructions_to_ai || []
 
     // Clamp enum values
     const validOutcomes = ['fully_achieved', 'mostly_achieved', 'partially_achieved', 'not_achieved', 'unclear']

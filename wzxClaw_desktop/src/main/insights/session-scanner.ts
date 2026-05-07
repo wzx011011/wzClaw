@@ -43,6 +43,11 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   '.sh': 'Shell', '.sql': 'SQL', '.vue': 'Vue',
   '.kt': 'Kotlin', '.swift': 'Swift', '.c': 'C',
   '.cpp': 'C++', '.h': 'C/C++ Header',
+  '.dart': 'Dart', '.scala': 'Scala', '.r': 'R',
+  '.lua': 'Lua', '.zig': 'Zig', '.nim': 'Nim',
+  '.toml': 'TOML', '.ini': 'INI', '.xml': 'XML',
+  '.graphql': 'GraphQL', '.proto': 'Protocol Buffers',
+  '.less': 'Less', '.scss': 'SCSS', '.sass': 'Sass',
 }
 
 function getLanguageFromPath(filePath: string): string | null {
@@ -265,7 +270,7 @@ async function extractSessionMeta(filePath: string, projectHash: string): Promis
             const lang = getLanguageFromPath(fp)
             if (lang) languageSet.add(lang)
 
-            if (tc.name === 'FileEdit' || tc.name === 'FileWrite') {
+            if (tc.name === 'FileEdit' || tc.name === 'FileWrite' || tc.name === 'MultiEdit') {
               filesModifiedSet.add(fp)
             }
           }
@@ -277,6 +282,15 @@ async function extractSessionMeta(filePath: string, projectHash: string): Promis
             const diff = countLineDiff(oldStr, newStr)
             linesAdded += diff.added
             linesRemoved += diff.removed
+          }
+
+          // Lines diff for MultiEdit tool (array of edits)
+          if (tc.name === 'MultiEdit' && Array.isArray(input.edits)) {
+            for (const edit of input.edits as Array<{ old_string?: string; new_string?: string }>) {
+              const diff = countLineDiff(edit.old_string || '', edit.new_string || '')
+              linesAdded += diff.added
+              linesRemoved += diff.removed
+            }
           }
 
           // Lines from Write tool

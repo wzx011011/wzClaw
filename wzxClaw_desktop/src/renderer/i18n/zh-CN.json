@@ -271,8 +271,8 @@
   "workspaceCard.confirmDelete": "确认删除",
   "workspaceCard.cancel": "取消",
 
-  "workspaceDetail.backToList": "← 返回工作区列表",
-  "workspaceDetail.enterWorkspace": "进入工作区 →",
+  "workspaceDetail.backToList": "返回工作区列表",
+  "workspaceDetail.enterWorkspace": "进入工作区",
   "workspaceDetail.rename": "重命名",
   "workspaceDetail.createdAt": "创建于",
   "workspaceDetail.lastUpdated": "最后更新",

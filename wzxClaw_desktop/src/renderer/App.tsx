@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect } from 'react'
 import WorkspaceHomePage from './components/tasks/WorkspaceHomePage'
+import WorkspaceDetailPage from './components/tasks/WorkspaceDetailPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toast from './components/Toast'
 import { useWorkspaceStore } from './stores/workspace-store'
@@ -10,9 +11,8 @@ import './styles/chat.css'
 import './styles/workspaces.css'
 import 'highlight.js/styles/vs2015.css'
 
-// 懒加载：IDELayout 拉入 monaco/xterm/allotment 等重量级模块；WorkspaceDetailPage 也按需加载
+// 懒加载：IDELayout 拉入 monaco/xterm/allotment 等重量级模块
 const IDELayout = lazy(() => import('./components/ide/IDELayout'))
-const WorkspaceDetailPage = lazy(() => import('./components/tasks/WorkspaceDetailPage'))
 
 function App(): JSX.Element {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -28,11 +28,8 @@ function App(): JSX.Element {
     })
   }, [])
 
-    // 首次 layout 完成后移除 splash drag div（它的使命已完成：确保启动时拖拽区域在第一帧就绪）
-    useLayoutEffect(() => {
-      const splash = document.getElementById('wzx-drag-splash')
-      if (splash) splash.remove()
-    }, [])
+    // splash drag div 保留不删除 — 它提供永久的窗口拖拽区域（pointer-events:none 不影响交互）
+    // 页面切换时组件级 dragbar 可能无法被 Chromium hit-test 缓存识别，splash div 确保始终可拖
 
   if (activeWorkspaceId) return (
     <ErrorBoundary scope="IDELayout">
@@ -44,9 +41,7 @@ function App(): JSX.Element {
   )
   if (viewingWorkspaceId) return (
     <ErrorBoundary scope="WorkspaceDetailPage">
-      <Suspense fallback={<div style={{ background: 'var(--bg-primary)', height: '100vh' }} />}>
-        <WorkspaceDetailPage />
-      </Suspense>
+      <WorkspaceDetailPage />
       <Toast />
     </ErrorBoundary>
   )

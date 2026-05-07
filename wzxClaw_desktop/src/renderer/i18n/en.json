@@ -271,8 +271,8 @@
   "workspaceCard.confirmDelete": "Confirm Delete",
   "workspaceCard.cancel": "Cancel",
 
-  "workspaceDetail.backToList": "← Back to Workspace List",
-  "workspaceDetail.enterWorkspace": "Enter Workspace →",
+  "workspaceDetail.backToList": "Back to Workspace List",
+  "workspaceDetail.enterWorkspace": "Enter Workspace",
   "workspaceDetail.rename": "Rename",
   "workspaceDetail.createdAt": "Created",
   "workspaceDetail.lastUpdated": "Last Updated",

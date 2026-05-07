@@ -133,7 +133,7 @@ export default function WorkspaceHomePage(): JSX.Element {
             {showArchived ? t('workspace.showActive') : t('workspace.showArchived')}
           </button>
           <button className="workspace-btn-primary" onClick={() => setShowCreateModal(true)}>
-            + {t('workspace.newWorkspace')}
+            {t('workspace.newWorkspace')}
           </button>
         </div>
       </div>

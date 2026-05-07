@@ -193,7 +193,8 @@ html, body, #root {
   user-select: none;
   padding-left: var(--sp-3);
   border-bottom: 1px solid var(--border-subtle);
-  contain: layout style;
+  position: relative;
+  z-index: 100;
 }
 
 .ide-titlebar-brand {
