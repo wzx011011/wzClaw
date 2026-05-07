@@ -179,6 +179,9 @@ function buildChatMessagesFromRaw(rawMessages: Array<Record<string, unknown>>): 
   const result: ChatMessage[] = []
   for (const msg of parsed) {
     if (msg.role === 'tool_result') continue
+    // Filter out system-reminder messages injected as user role for LLM context
+    // (e.g. turn attachments, post-compact file restores, todo state snapshots)
+    if (msg.role === 'user' && msg.content && msg.content.startsWith('<system-reminder>')) continue
     const chatMsg: ChatMessage = {
       id: msg.id,
       role: msg.role,

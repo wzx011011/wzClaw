@@ -70,7 +70,7 @@ export default function WorkspaceHomePage(): JSX.Element {
     setCurrentTheme(theme)
     document.documentElement.setAttribute('data-theme', theme)
     const overlayColors = theme === 'light'
-      ? { color: '#f5f5f5', symbolColor: '#333333' }
+      ? { color: '#ffffff', symbolColor: '#333333' }
       : { color: '#181818', symbolColor: '#e0e0e0' }
     window.wzxclaw.setTitleBarOverlay?.(overlayColors)
   }

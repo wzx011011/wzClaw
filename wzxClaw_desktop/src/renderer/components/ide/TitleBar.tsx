@@ -76,7 +76,7 @@ export default memo(function TitleBar({
       {/* Back to tasks */}
       {onBackToTasks && (
         <button className="workspace-back-btn" onClick={onBackToTasks} title={t('titleBar.backToWorkspaces')}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg> {activeWorkspaceTitle || t('titleBar.workspace')}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg> {activeWorkspaceTitle || t('titleBar.workspace')}
         </button>
       )}
 
@@ -96,7 +96,7 @@ export default memo(function TitleBar({
         {menuOpen && (
           <div className="titlebar-dropdown-menu">
             <button className="titlebar-menu-item" onClick={() => { onOpenFolder(); setMenuOpen(false) }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
               {t('titleBar.openFolder')}
             </button>
             <div className="titlebar-menu-separator" />

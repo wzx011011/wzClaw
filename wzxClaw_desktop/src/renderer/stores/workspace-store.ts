@@ -78,6 +78,8 @@ interface WorkspaceStoreState {
   workspaceSessions: Record<string, SessionMeta[]>
   // 通用状态
   isLoading: boolean
+  /** 正在加载子目录的路径集合 — 独立于 isLoading，避免全局闪烁 */
+  loadingDirs: Set<string>
   error: string | null
 }
 
@@ -87,7 +89,7 @@ interface WorkspaceStoreActions {
   setFolder: (folderPath: string) => Promise<void>
   setFolders: (projects: Array<{ name: string; path: string }>) => Promise<void>
   initWorkspace: () => Promise<void>
-  loadTree: (dirPath?: string, depth?: number) => Promise<void>
+  loadTree: (dirPath?: string, depth?: number, silent?: boolean) => Promise<void>
   expandNode: (dirPath: string) => Promise<void>
   collapseNode: (dirPath: string) => void
   collapseAll: () => void
@@ -119,6 +121,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   viewingWorkspaceId: null,
   workspaceSessions: {},
   isLoading: false,
+  loadingDirs: new Set<string>(),
   error: null,
 
   // ============================================================
@@ -209,8 +212,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  loadTree: async (dirPath?: string, depth?: number) => {
-    set({ isLoading: true, error: null })
+  /**
+   * 加载文件树。
+   * @param silent 为 true 时不修改全局 isLoading（用于子目录展开），避免整个 UI 闪烁。
+   */
+  loadTree: async (dirPath?: string, depth?: number, silent?: boolean) => {
+    if (!silent) set({ isLoading: true, error: null })
+    if (dirPath) {
+      // 标记该目录正在加载
+      const next = new Set(get().loadingDirs)
+      next.add(dirPath)
+      set({ loadingDirs: next })
+    }
     try {
       const tree = await window.wzxclaw.getDirectoryTree({
         dirPath,
@@ -245,24 +258,46 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) })
     } finally {
-      set({ isLoading: false })
+      const updates: Partial<WorkspaceStoreState> = {}
+      if (!silent) updates.isLoading = false
+      if (dirPath) {
+        const next = new Set(get().loadingDirs)
+        next.delete(dirPath)
+        updates.loadingDirs = next
+      }
+      set(updates)
     }
   },
 
   expandNode: async (dirPath: string) => {
-    // Check if already expanded with children
+    // Check if already expanded with children — 直接复用缓存，跳过 IPC
     const found = findNodeInTree(get().tree, dirPath)
-    if (found && found.node.isExpanded && found.node.children && found.node.children.length > 0) {
+    if (found && found.node.children && found.node.children.length > 0) {
+      // 有缓存 children，只切换 isExpanded 标记，不需要重新加载
+      if (!found.node.isExpanded) {
+        const expandInTree = (nodes: FileTreeNode[]): FileTreeNode[] =>
+          nodes.map((n) => {
+            if (n.path === dirPath) return { ...n, isExpanded: true }
+            if (n.isDirectory && n.children) return { ...n, children: expandInTree(n.children) }
+            return n
+          })
+        set({ tree: expandInTree(get().tree) })
+      }
       return
     }
-    await get().loadTree(dirPath, 1)
+    // 没有缓存，静默加载（不触发全局 isLoading）
+    await get().loadTree(dirPath, 1, true)
   },
 
+  /**
+   * 收起目录 — 保留 children 缓存（只切换 isExpanded），再次展开时免 IPC。
+   */
   collapseNode: (dirPath: string) => {
     const collapseInTree = (nodes: FileTreeNode[]): FileTreeNode[] => {
       return nodes.map((n) => {
         if (n.path === dirPath) {
-          return { ...n, isExpanded: false, children: undefined }
+          // 保留 children，只设 isExpanded = false
+          return { ...n, isExpanded: false }
         }
         if (n.isDirectory && n.children) {
           return { ...n, children: collapseInTree(n.children) }
