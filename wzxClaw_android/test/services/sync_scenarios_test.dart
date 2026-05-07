@@ -162,7 +162,7 @@ void main() {
 
       h.transport.pumpFromDesktop(WsEvents.agentText, {
         'sessionId': 's1',
-        'text': 'hello world',
+        'content': 'hello world',
       });
       h.transport.pumpFromDesktop(WsEvents.agentDone, {
         'sessionId': 's1',

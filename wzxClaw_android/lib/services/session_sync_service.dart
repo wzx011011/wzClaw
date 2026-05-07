@@ -878,6 +878,7 @@ class SessionSyncService {
 
     // 2. 失效内存中的会话与活动会话
     _fetchGeneration++; // 让任何在途的 fetch 响应作废
+    _currentListRequestId = null; // 让任何旧 requestId 的响应被拒绝
     _sessions = const [];
     _activeSessionId = null;
     _sessionsController.add(const []);
