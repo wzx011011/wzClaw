@@ -18,6 +18,10 @@ vi.mock('electron', () => {
   return {
     app: {
       getPath: (name: string) => {
+        // E2E tests can override userData per-suite via env var
+        if (name === 'userData' && process.env.WZXCLAW_TEST_USER_DATA) {
+          return process.env.WZXCLAW_TEST_USER_DATA
+        }
         const paths: Record<string, string> = {
           userData: 'C:/Users/test/AppData/Roaming/wzxclaw',
           home: 'C:/Users/test',
