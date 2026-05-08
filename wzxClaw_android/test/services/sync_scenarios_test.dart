@@ -712,6 +712,11 @@ void main() {
       expect(h.sessionSync.sessions.single.isRunning, isTrue);
       expect(h.sessionSync.sessions.single.taskState?.status, 'running');
 
+        final initialLoadRequestId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+
       await h.chatStore.switchToSession('s1', userInitiated: true);
       h.transport.clearSent();
       h.transport.pumpFromDesktop(WsEvents.sessionTaskStatus, {
@@ -724,6 +729,22 @@ void main() {
         'updatedAt': 2000,
         'completedAt': 2000,
         'persistedMessageCount': 2,
+      });
+      await h.settle();
+
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': initialLoadRequestId,
+        'sessionId': 's1',
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'before-complete',
+            'timestamp': 1000,
+          },
+        ],
+        'total': 1,
+        'offset': 0,
+        'hasMore': false,
       });
       await h.settle();
 

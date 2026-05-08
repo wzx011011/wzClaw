@@ -286,7 +286,7 @@ class SessionSyncService {
     }
     if (state.isTerminal && state.sessionId == _activeSessionId && _hasSelectedDesktopTarget) {
       final generation = ++_fetchGeneration;
-      unawaited(_applySessionSelection(state.sessionId, generation));
+      unawaited(_refreshSessionAfterInflight(state.sessionId, generation));
     }
   }
 
@@ -887,10 +887,11 @@ class SessionSyncService {
   Future<List<ChatMessage>> loadAllSessionMessages(
     String sessionId, {
     bool forceRefresh = false,
+    bool bypassInflightDedup = false,
     int pageSize = 200,
   }) {
     final existing = _inflightLoadAll[sessionId];
-    if (existing != null) {
+    if (existing != null && !bypassInflightDedup) {
       // ignore: avoid_print
       print('[SyncDiag] loadAll dedup hit for session=$sessionId');
       return existing;
@@ -1229,6 +1230,33 @@ class SessionSyncService {
   }
 
   Future<void> _applySessionSelection(String sessionId, int generation) async {
+    await _applySessionSelectionImpl(sessionId, generation);
+  }
+
+  Future<void> _refreshSessionAfterInflight(
+    String sessionId,
+    int generation,
+  ) async {
+    final inflight = _inflightLoadAll[sessionId];
+    if (inflight != null) {
+      try {
+        await inflight;
+      } catch (_) {
+        // 后续强制刷新会重新向桌面拉取，旧 inflight 的错误不应阻断终态刷新。
+      }
+    }
+    await _applySessionSelectionImpl(
+      sessionId,
+      generation,
+      bypassInflightDedup: true,
+    );
+  }
+
+  Future<void> _applySessionSelectionImpl(
+    String sessionId,
+    int generation, {
+    bool bypassInflightDedup = false,
+  }) async {
     if (generation != _fetchGeneration) return;
 
     _activeSessionId = sessionId;
@@ -1243,6 +1271,7 @@ class SessionSyncService {
     final allMessages = await loadAllSessionMessages(
       sessionId,
       forceRefresh: true,
+      bypassInflightDedup: bypassInflightDedup,
     );
     if (generation != _fetchGeneration) return;
 
