@@ -10,7 +10,26 @@
   <div id="app">
     <header class="header">
       <h1 class="logo">wzxClaw</h1>
-      <span class="status" id="status">连接中…</span>
+      <div class="header-right">
+        <span class="status" id="status">连接中…</span>
+        <button id="settingsBtn" class="settings-btn" title="设置">⚙️</button>
+      </div>
+      <div id="settingsPanel" class="settings-panel hidden">
+        <label class="settings-item">
+          <span>显示工具调用</span>
+          <div class="toggle">
+            <input type="checkbox" id="showToolSteps" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+        <label class="settings-item">
+          <span>显示推理过程</span>
+          <div class="toggle">
+            <input type="checkbox" id="showThinking" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+      </div>
     </header>
 
     <main class="messages" id="messages">

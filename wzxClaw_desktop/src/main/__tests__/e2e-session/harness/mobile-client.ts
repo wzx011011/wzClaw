@@ -271,6 +271,50 @@ export class MobileClient extends EventEmitter {
     await this.connect(timeoutMs)
   }
 
+  /** Issue a session:list:request and resolve with the returned session metas. */
+  async listSessions(timeoutMs = 3000): Promise<unknown[]> {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const wait = new Promise<unknown[]>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Mobile timeout waiting for session:list:response (req=${requestId})`)),
+        timeoutMs,
+      )
+      const handler = (data: unknown) => {
+        const d = data as { requestId?: string; sessions?: unknown[] }
+        if (d.requestId === requestId) {
+          clearTimeout(timer)
+          this.off('event:session:list:response', handler as never)
+          resolve(d.sessions ?? [])
+        }
+      }
+      this.on('event:session:list:response', handler as never)
+    })
+    this._send({ event: 'session:list:request', data: { requestId } })
+    return wait
+  }
+
+  /** Issue a session:delete:request and resolve with success flag. */
+  async deleteSession(sessionId: string, timeoutMs = 3000): Promise<boolean> {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const wait = new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Mobile timeout waiting for session:delete:response (req=${requestId})`)),
+        timeoutMs,
+      )
+      const handler = (data: unknown) => {
+        const d = data as { requestId?: string; sessionId?: string; success?: boolean }
+        if (d.requestId === requestId) {
+          clearTimeout(timer)
+          this.off('event:session:delete:response', handler as never)
+          resolve(d.success ?? false)
+        }
+      }
+      this.on('event:session:delete:response', handler as never)
+    })
+    this._send({ event: 'session:delete:request', data: { requestId, sessionId } })
+    return wait
+  }
+
   /** Issue a session:load:request and resolve with the returned messages. */
   async loadSessionHistory(sessionId: string, timeoutMs = 3000): Promise<unknown[]> {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`

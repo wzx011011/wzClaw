@@ -13,6 +13,40 @@
   let isGenerating = false
   let activeWorkspaceId = null
 
+  // Settings (persisted in localStorage)
+  var showToolSteps = localStorage.getItem('wzxclaw_showToolSteps') !== 'false'
+  var showThinking = localStorage.getItem('wzxclaw_showThinking') !== 'false'
+
+  // Settings UI
+  var settingsBtn = document.getElementById('settingsBtn')
+  var settingsPanel = document.getElementById('settingsPanel')
+  var showToolStepsCheckbox = document.getElementById('showToolSteps')
+  var showThinkingCheckbox = document.getElementById('showThinking')
+
+  showToolStepsCheckbox.checked = showToolSteps
+  showThinkingCheckbox.checked = showThinking
+
+  settingsBtn.addEventListener('click', function (e) {
+    e.stopPropagation()
+    settingsPanel.classList.toggle('hidden')
+  })
+
+  document.addEventListener('click', function (e) {
+    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+      settingsPanel.classList.add('hidden')
+    }
+  })
+
+  showToolStepsCheckbox.addEventListener('change', function () {
+    showToolSteps = this.checked
+    localStorage.setItem('wzxclaw_showToolSteps', showToolSteps)
+  })
+
+  showThinkingCheckbox.addEventListener('change', function () {
+    showThinking = this.checked
+    localStorage.setItem('wzxclaw_showThinking', showThinking)
+  })
+
   // Extract token from URL query params
   const params = new URLSearchParams(window.location.search)
   const token = params.get('token')
@@ -72,11 +106,11 @@
 
       case 'stream:tool_use_start':
       case 'stream:agent:tool_call':
-        addToolBadge(msg.data.name || msg.data.toolName)
+        if (showToolSteps) addToolBadge(msg.data.name || msg.data.toolName)
         break
 
       case 'stream:agent:tool_result':
-        updateToolResult(msg.data.toolName, msg.data.isError)
+        if (showToolSteps) updateToolResult(msg.data.toolName, msg.data.isError)
         break
 
       case 'stream:agent:turn_end':
@@ -207,6 +241,7 @@
 
   var thinkingEl = null
   function showThinkingIndicator() {
+    if (!showThinking) return
     removeThinkingIndicator()
     if (emptyState) emptyState.style.display = 'none'
     thinkingEl = document.createElement('div')

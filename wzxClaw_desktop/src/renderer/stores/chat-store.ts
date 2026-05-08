@@ -1172,10 +1172,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // No-op if switching to same session, or the same load is already in flight.
     if (activeSessionId === sessionId || loadingSessionId === sessionId) return
 
-    // 中断正在进行的生成，避免切换后残留流式事件污染新会话
-    if (isStreaming) {
-      try { await window.wzxclaw.stopGeneration() } catch { /* abort may fail if nothing running */ }
-    }
+    // 不再中断正在进行的生成！切走只清除渲染器端流式状态，
+    // agent loop 在主进程继续运行。切回来时如果任务仍在进行，
+    // 通过 runningSessionIds 检测并恢复 streaming 状态。
+    // 流式事件通过 isStreaming/streamingMessageId 的空值过滤（见 flushTextBatch 等处）。
 
     // 保存当前消息到模块级缓存（无 spread，无 Zustand 触发）
     if (messages.length > 0) {
@@ -1263,6 +1263,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Reload steps for the new session context
     useStepStore.getState().loadSteps()
+
+    // 恢复：如果目标会话仍在运行（后台 agent loop 未结束），恢复 isStreaming 状态
+    // 以便后续流式事件能被正确接收和渲染（而不是被 isStreaming==null 守卫丢弃）
+    if (get().runningSessionIds.has(sessionId)) {
+      // 找到最后一条 isStreaming 的 assistant 消息，恢复其 streamingMessageId
+      // 否则后续 text_delta 会创建新的 assistant 消息导致内容重复
+      const currentMessages = get().messages
+      const lastStreamingMsg = [...currentMessages].reverse().find(m => m.role === 'assistant' && m.isStreaming)
+      set({
+        isStreaming: true,
+        isWaitingForResponse: true,
+        ...(lastStreamingMsg ? { streamingMessageId: lastStreamingMsg.id } : {})
+      })
+    }
   },
 
   /**

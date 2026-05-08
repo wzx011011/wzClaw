@@ -173,6 +173,21 @@ export class DesktopFixture extends EventEmitter {
         .catch(() => {
           this.broadcast('session:list:response', { requestId, sessions: [] })
         })
+    } else if (event === 'session:delete:request') {
+      const requestId = (data?.requestId as string | undefined) ?? ''
+      const sid = data?.sessionId as string | undefined
+      if (sid) {
+        void this.sessionStore
+          .deleteSession(sid)
+          .then((ok) => {
+            this.runtimes.delete(sid)
+            this.persistedCounts.delete(sid)
+            this.broadcast('session:delete:response', { requestId, sessionId: sid, success: ok })
+          })
+          .catch(() => {
+            this.broadcast('session:delete:response', { requestId, sessionId: sid, success: false })
+          })
+      }
     }
   }
 
@@ -349,6 +364,38 @@ export class DesktopFixture extends EventEmitter {
   dropRuntime(sessionId: string): void {
     this.runtimes.delete(sessionId)
     this.persistedCounts.delete(sessionId)
+  }
+
+  /** Terminate WS abruptly, preserving in-memory runtimes + counters (simulates process kill). */
+  async forceDisconnect(): Promise<void> {
+    if (!this.ws) return
+    const sock = this.ws
+    return new Promise<void>((resolve) => {
+      sock.once('close', () => {
+        this.connected = false
+        resolve()
+      })
+      sock.terminate()
+      setTimeout(() => resolve(), 500)
+    })
+  }
+
+  /** Reconnect WS. Preserves runtimes / persistedCounts (session state survives reconnect). */
+  async reconnect(timeoutMs = 3000): Promise<void> {
+    this.ws = null
+    await this.connect(timeoutMs)
+  }
+
+  /**
+   * Switch to a different workspace root.
+   * Creates a new SessionStore for the new root, clears in-memory runtimes and counters.
+   * Simulates the desktop user switching workspace in the IDE.
+   */
+  switchWorkspace(newWorkspaceRoot: string): void {
+    ;(this.opts as DesktopFixtureOptions & { workspaceRoot: string }).workspaceRoot = newWorkspaceRoot
+    ;(this as unknown as { sessionStore: SessionStore }).sessionStore = new SessionStore(newWorkspaceRoot)
+    this.runtimes.clear()
+    this.persistedCounts.clear()
   }
 
   async close(): Promise<void> {
