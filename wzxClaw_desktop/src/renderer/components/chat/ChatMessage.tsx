@@ -3,7 +3,7 @@ import { useT } from '../../i18n/useT'
 import type { ChatMessage as ChatMessageType } from '../../stores/chat-store'
 import CodeBlock from './CodeBlock'
 import ThinkingIndicator from './ThinkingIndicator'
-import ToolCard from './ToolCard'
+import ToolCallGroup from './ToolCallGroup'
 
 // Lazy-load react-markdown — 仅在非流式渲染时需要
 const ReactMarkdown = lazy(() => import('react-markdown'))
@@ -227,12 +227,10 @@ function ChatMessage({ message, onRewind }: ChatMessageProps): JSX.Element {
         </div>
       )}
 
-      {/* Tool calls */}
+      {/* Tool calls — 使用 ToolCallGroup 组件（竖线 + WorkflowHeader 折叠） */}
       {toolCalls && toolCalls.length > 0 && (
         <div className="chat-message-tools">
-          {toolCalls.map((tc) => (
-            <ToolCard key={tc.id} toolCall={tc} />
-          ))}
+          <ToolCallGroup toolCalls={toolCalls} />
         </div>
       )}
 

@@ -50,7 +50,7 @@
   padding: var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   /* GPU-accelerated compositing */
   will-change: scroll-position;
   -webkit-overflow-scrolling: touch;
@@ -83,7 +83,7 @@
   background: var(--accent);
   color: #ffffff;
   padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius-lg) var(--radius-lg) var(--sp-1) var(--radius-lg);
+  border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius-tail) var(--bubble-radius);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -196,11 +196,11 @@
 
 .chat-message-assistant {
   align-self: flex-start;
-  max-width: 95%;
+  max-width: 100%;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--sp-1);
+  padding: 10px 12px;
+  border-radius: var(--bubble-radius-tail) var(--bubble-radius) var(--bubble-radius) var(--bubble-radius);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -756,6 +756,21 @@
   background: rgba(220, 182, 122, 0.1);
 }
 
+/* Running 状态文字 shimmer 动画（对标手机端 _ShimmerText） */
+.tool-status-running .tool-status-text {
+  background: linear-gradient(
+    90deg,
+    var(--tool-running) 0%,
+    #fff8ee 50%,
+    var(--tool-running) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-shimmer 1.5s linear infinite;
+}
+
 .tool-status-completed {
   color: var(--tool-completed);
   background: rgba(137, 209, 133, 0.1);
@@ -794,6 +809,139 @@
 
 @keyframes tool-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ============================================================
+   ToolCard — Smooth accordion body animation
+   body 始终渲染，由 CSS max-height/opacity 控制展开/折叠（对标手机 AnimatedSize）
+   ============================================================ */
+
+.tool-card-body {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition:
+    max-height var(--anim-tool-expand) ease-in-out,
+    opacity 120ms ease;
+}
+
+.tool-card-body.expanded {
+  max-height: 800px;
+  opacity: 1;
+  transition:
+    max-height var(--anim-tool-expand) ease-in-out,
+    opacity 120ms ease 30ms;
+}
+
+/* ============================================================
+   ToolCallGroup — 工具组容器（竖线 + WorkflowHeader）
+   对标手机端 ToolCallGroup + _WorkflowHeader
+   ============================================================ */
+
+.tool-call-group {
+  margin: 4px 0 6px 0;
+}
+
+.tool-call-group-rail {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.tool-call-group-line {
+  width: var(--tool-rail-width);
+  border-radius: 1px;
+  background: var(--tool-rail-color-active);
+  flex-shrink: 0;
+  margin: 2px 0 2px 12px;
+  transition: background 0.3s ease;
+}
+
+.tool-call-group-line.done {
+  background: var(--tool-rail-color-done);
+}
+
+.tool-call-group-tools {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Workflow Header — 3+ 工具时显示的折叠汇总条 */
+.tool-workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.tool-workflow-header:hover {
+  background: var(--hover-bg);
+}
+
+.tool-workflow-toggle {
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.tool-workflow-label {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-workflow-status {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.tool-workflow-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(16, 185, 129, 0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tool-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Shimmer 文字 — ToolCallGroup Running 状态 "Working..." */
+.tool-workflow-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--accent) 50%,
+    var(--text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-shimmer 1.5s linear infinite;
+}
+
+/* ToolCallGroup 工具列表入场动画 */
+.tool-call-group-tools-enter {
+  animation: tool-group-enter 150ms ease-out;
+}
+
+@keyframes tool-group-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Expand/collapse toggle */

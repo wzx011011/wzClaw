@@ -70,6 +70,19 @@
   --radius-md: 6px;
   --radius-lg: 8px;
 
+  /* 会话气泡圆角（对标手机端 16px，桌面略缩） */
+  --bubble-radius: 14px;
+  --bubble-radius-tail: 4px;
+
+  /* 工具组连接线 */
+  --tool-rail-width: 2px;
+  --tool-rail-color-active: rgba(16, 185, 129, 0.4);
+  --tool-rail-color-done: rgba(16, 185, 129, 0.18);
+
+  /* 工具卡片展开/折叠动画 */
+  --anim-tool-expand: 180ms;
+  --anim-tool-collapse: 150ms;
+
   /* Transitions */
   --transition-fast: 120ms ease;
   --transition-normal: 200ms ease;

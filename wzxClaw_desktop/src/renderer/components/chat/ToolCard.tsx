@@ -473,7 +473,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
           )}
           <span className={`tool-status tool-status-${status}`}>
             <span className="tool-status-icon" />
-            {statusLabel}
+            <span className="tool-status-text">{statusLabel}</span>
           </span>
           <span className={`tool-card-toggle ${expanded ? 'expanded' : ''}`}>
             &#9654;
@@ -484,7 +484,8 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
       {toolCall.progress && status === 'running' && (
         <div className="tool-card-progress">{toolCall.progress}</div>
       )}
-      {expanded && (
+      {/* 始终渲染 body — CSS max-height/opacity 控制展开/折叠动画 */}
+      <div className={`tool-card-body${expanded ? ' expanded' : ''}`}>
         <div className="tool-card-details">
           {/* ExitPlanMode: plan text is displayed in ChatPanel — suppress here */}
           {isExitPlanMode ? (
@@ -584,7 +585,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
             </>
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
