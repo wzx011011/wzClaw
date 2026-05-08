@@ -303,7 +303,9 @@ export class AgentLoop {
 
         if (hookResult.blockingError) {
           debugLogger.log('HOOK', `blocking error injected: ${hookResult.blockingError.substring(0, 80)}`)
-          this.conversation.appendUserMessage(`[System] ${hookResult.blockingError}`)
+          this.conversation.appendSystemReminder(`<system-reminder>
+${hookResult.blockingError}
+</system-reminder>`)
           stopHookCooldown = 2  // 跳过 2 轮再重新评估，防止振荡
           continue
         }
