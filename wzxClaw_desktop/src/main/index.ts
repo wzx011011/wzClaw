@@ -1175,6 +1175,8 @@ app.whenReady().then(async () => {
             if (mobileSessionId) {
               stepManager.clearSession(mobileSessionId)
               runtimes.delete(mobileSessionId)
+              // runtime 已销毁，必须同步清除持久化计数，避免下次 send 时 counter 与新 runtime 不一致
+              mobilePersistedMessageCounts.delete(mobileSessionId)
             }
             mobileSessionId = null
             broadcastToMobile('session:create:response', { success: true })
@@ -1406,7 +1408,9 @@ app.whenReady().then(async () => {
                   sessionTaskStates.finish(sessionId, 'completed', { message: '任务已完成（保存历史时出错）' })
                 }
                 cleanupToolResults(sessionId).catch(() => {})
-                mobilePersistedMessageCounts.delete(sessionId)
+                // 注意：不要在此清除 mobilePersistedMessageCounts —— runtime 仍保留全部消息，
+                // 同一 session 下次 send 若 counter 归零，会导致整段历史被再次追加（重复持久化 bug）。
+                // 计数器仅在 runtime 被销毁/会话切换/clear/delete 时重置。
                 break
               }
             }
@@ -1470,8 +1474,9 @@ app.whenReady().then(async () => {
                 }
                 // 清理该会话的工具结果磁盘文件
                 cleanupToolResults(sessionId).catch(() => {})
-                // 清理移动端持久化计数（会话结束）
-                mobilePersistedMessageCounts.delete(sessionId)
+                // 注意：不要在此清除 mobilePersistedMessageCounts —— runtime 仍保留全部消息，
+                // 同一 session 下次 send 若 counter 归零，会导致整段历史被再次追加（重复持久化 bug）。
+                // 计数器仅在 runtime 被销毁/会话切换/clear/delete 时重置。
                 break
               case 'agent:compacted':
                 wc.send(IPC_CHANNELS['session:compacted'], {
