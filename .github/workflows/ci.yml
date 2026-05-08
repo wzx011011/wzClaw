@@ -20,8 +20,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
@@ -42,8 +42,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install relay dependencies (forked by E2E harness)
@@ -74,8 +74,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
@@ -99,8 +99,8 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.x"
-          channel: "stable"
+          flutter-version: '3.x'
+          channel: 'stable'
           cache: true
 
       - name: Get dependencies
@@ -127,14 +127,14 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.x"
-          channel: "stable"
+          flutter-version: '3.x'
+          channel: 'stable'
           cache: true
 
       - name: Get dependencies
