@@ -37,5 +37,6 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
+  include: build/uninstaller.nsh
   shortcutName: wzxClaw
 npmRebuild: false

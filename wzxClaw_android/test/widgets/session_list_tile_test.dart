@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/config/app_colors.dart';
 import 'package:wzxclaw_android/models/session_meta.dart';
+import 'package:wzxclaw_android/models/session_task_state.dart';
 import 'package:wzxclaw_android/widgets/session_list_tile.dart';
 
 Widget wrapWithTheme(Widget child) {
@@ -17,6 +18,7 @@ SessionMeta makeSession({
   int messageCount = 5,
   bool isSynced = true,
   int? updatedAt,
+  SessionTaskState? taskState,
 }) {
   final now = DateTime.now().millisecondsSinceEpoch;
   return SessionMeta(
@@ -28,6 +30,8 @@ SessionMeta makeSession({
     updatedAt: updatedAt ?? now,
     messageCount: messageCount,
     isSynced: isSynced,
+    isRunning: taskState?.isActive ?? false,
+    taskState: taskState,
   );
 }
 
@@ -91,6 +95,27 @@ void main() {
       ));
 
       expect(find.textContaining('缓存'), findsOneWidget);
+    });
+
+
+    testWidgets('shows task status badge for running sessions', (tester) async {
+      await tester.pumpWidget(wrapWithTheme(
+        SessionListTile(
+          session: makeSession(
+            taskState: const SessionTaskState(
+              sessionId: 'sess-1',
+              runId: 'run-1',
+              status: 'waiting_permission',
+              startedAt: 1000,
+              updatedAt: 1000,
+            ),
+          ),
+          isActive: false,
+          onTap: () {},
+        ),
+      ));
+
+      expect(find.text('等待'), findsOneWidget);
     });
 
     testWidgets('calls onTap when tapped', (tester) async {

@@ -3,6 +3,7 @@ import fsp from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
 import { getSessionsDir } from '../paths'
+import type { SessionTaskState } from '../../shared/types'
 
 // ============================================================
 // SessionStore — JSONL-based session persistence (per PERSIST-01 through PERSIST-06)
@@ -39,6 +40,9 @@ export interface SessionMeta {
   updatedAt: number
   messageCount: number
   preview?: string
+  isRunning?: boolean
+  taskStatus?: SessionTaskState
+  todoSummary?: string
 }
 
 // ============================================================

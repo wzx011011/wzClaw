@@ -452,6 +452,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         _waitingForPong = false;
         _heartbeatTimeoutTimer?.cancel();
         _reconnectAttempt = 0;
+        // 刷新在心跳探测期间被队列缓存的消息
+        _flushQueue();
         return;
       }
 

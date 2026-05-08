@@ -136,6 +136,9 @@ class WsEvents {
   // -- Agent running state changed (desktop -> mobile, per-session real-time update) --
   static const String agentRunningChanged = 'stream:agent:running_changed';
 
+  // -- Authoritative per-session task lifecycle (desktop -> mobile) --
+  static const String sessionTaskStatus = 'session:task_status';
+
   // -- Desktop user message (desktop -> mobile, user question from desktop) --
   static const String desktopUserMessage = 'stream:desktop_user_message';
 

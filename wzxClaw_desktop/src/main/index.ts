@@ -52,6 +52,7 @@ import { AgentTool } from './tools/agent-tool'
 import { PermissionManager } from './permission/permission-manager'
 import { AgentLoop } from './agent/agent-loop'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
+import { SessionTaskStateManager, isActiveSessionTaskStatus } from './agent/session-task-state-manager'
 import type { AgentConfig } from './agent/types'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore, type SessionMeta } from './persistence/session-store'
@@ -520,6 +521,8 @@ app.whenReady().then(async () => {
   let mobileSessionId: string | null = null
   // Track how many messages have already been persisted per mobile session
   const mobilePersistedMessageCounts = new Map<string, number>()
+  const mobilePersistLocks = new Map<string, Promise<void>>()
+  const sessionTaskStates = new SessionTaskStateManager()
   // Cache SessionStore instances by primaryRoot to avoid repeated mkdirSync per request
   const sessionStoreCache = new Map<string, SessionStore>()
 
@@ -566,6 +569,33 @@ app.whenReady().then(async () => {
   // Helper: broadcast to mobile via relay
   const broadcastToMobile = (event: string, data: unknown) => {
     relayClient.broadcast(event, data)
+  }
+
+  sessionTaskStates.onChanged((state) => {
+    const wc = BrowserWindow.getAllWindows()[0]?.webContents
+    if (wc && !wc.isDestroyed()) {
+      wc.send(IPC_CHANNELS['session:task_status_changed'], state)
+    }
+    broadcastToMobile('session:task_status', state)
+  })
+
+  const persistRuntimeDelta = async (sessionId: string, runtime: AgentLoop, reason: string): Promise<number> => {
+    const run = async () => {
+      const activeStore = getActiveSessionStore()
+      const allMsgs = runtime.getMessages()
+      const persistedCount = mobilePersistedMessageCounts.get(sessionId) ?? 0
+      const newMessages = allMsgs.slice(persistedCount)
+      if (newMessages.length > 0) {
+        await activeStore.appendMessages(sessionId, newMessages)
+        mobilePersistedMessageCounts.set(sessionId, allMsgs.length)
+        sessionTaskStates.update(sessionId, { persistedMessageCount: allMsgs.length, message: reason })
+      }
+      return allMsgs.length
+    }
+    const pending = mobilePersistLocks.get(sessionId) ?? Promise.resolve()
+    const next = pending.catch(() => {}).then(run)
+    mobilePersistLocks.set(sessionId, next.then(() => undefined, () => undefined))
+    return next
   }
 
   // 订阅 running 状态变化，推送给渲染进程 + 手机端（Phase B: session:running_changed）
@@ -620,9 +650,11 @@ app.whenReady().then(async () => {
         const sessions = await store.listSessions()
         // Enrich sessions with todo summary
         const runningIds = runtimes.listRunning()
+        const taskStatuses = sessionTaskStates.snapshot()
         const { TodoWriteTool } = await import('./tools/todo-write')
         for (const session of sessions) {
           session.isRunning = runningIds.includes(session.id)
+          session.taskStatus = sessionTaskStates.get(session.id) ?? undefined
           try {
             const todos = await TodoWriteTool.loadForSession(session.id)
             if (todos.length > 0) {
@@ -642,6 +674,7 @@ app.whenReady().then(async () => {
           workspacePath: workspaceRoot,
           sessions,
           runningSessionIds: runningIds,
+          taskStatuses,
           activeSessionId: settingsManager.getLastSessionId() ?? null
         })
       } catch (err: unknown) {
@@ -652,15 +685,29 @@ app.whenReady().then(async () => {
 
     // -- Session sync: load session messages (with pagination) --
     if (msg.event === 'session:load:request') {
-      const { requestId = '', sessionId, offset = 0, limit = 50 } = msg.data ?? {}
-      const activeWorkspaceId = msg.data?.activeWorkspaceId ?? null
+      const data = (msg.data ?? {}) as Record<string, unknown>
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      const sessionId = typeof data.sessionId === 'string' ? data.sessionId : ''
+      const offset = typeof data.offset === 'number' && Number.isFinite(data.offset) ? data.offset : 0
+      const limit = typeof data.limit === 'number' && Number.isFinite(data.limit) ? data.limit : 50
+      const activeWorkspaceId = typeof data.activeWorkspaceId === 'string' ? data.activeWorkspaceId : null
       const store = await getStoreForMobile(activeWorkspaceId)
       if (!store) {
         broadcastToMobile('session:error', { requestId, error: 'No workspace open', code: 'NO_WORKSPACE' })
         return
       }
       try {
-        const allMessages = await store.loadSession(sessionId)
+        const rawMessages = await store.loadSession(sessionId)
+        const showToolSteps = settingsManager.getShowToolSteps()
+        const allMessages = showToolSteps
+          ? rawMessages
+          : rawMessages
+              .filter(message => message.role !== 'tool_result')
+              .map(message => {
+                if (message.role !== 'assistant' || !message.toolCalls) return message
+                const { toolCalls: _toolCalls, ...rest } = message
+                return rest
+              })
         const total = allMessages.length
         const sliced = allMessages.slice(offset, offset + limit)
         broadcastToMobile('session:load:response', {
@@ -962,7 +1009,12 @@ app.whenReady().then(async () => {
                 .slice(0, 10)
             } catch { /* workspace 可能还没有 sessions 目录 */ }
           }
-          return { ...t, sessions }
+          const workspaceSessionIds = new Set(sessions.map(session => session.id))
+          const runningSessionIds = runtimes.listRunning().filter(sessionId => workspaceSessionIds.has(sessionId))
+          const taskStatuses = Object.fromEntries(
+            Object.entries(sessionTaskStates.snapshot()).filter(([sessionId]) => workspaceSessionIds.has(sessionId))
+          )
+          return { ...t, sessions, runningSessionIds, taskStatuses }
         }))
         broadcastToMobile('workspace:list:response', { requestId, tasks: enriched })
       } catch (err: unknown) {
@@ -1176,6 +1228,7 @@ app.whenReady().then(async () => {
         generatedSessionId: crypto.randomUUID(),
       })
       const sessionId = sessionTransition.sessionId
+      const runId = crypto.randomUUID()
       mobileSessionId = sessionId
       stepManager.setActiveSession(sessionId)
       const toolCallInputs = new Map<string, Record<string, unknown>>()
@@ -1216,6 +1269,8 @@ app.whenReady().then(async () => {
         conversationId: sessionId,
         thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
       }
+
+      sessionTaskStates.start(sessionId, runId, '收到手机端任务')
 
       // Broadcast the assigned session ID back to mobile so it can track it
       broadcastToMobile('session:active', { sessionId })
@@ -1274,8 +1329,12 @@ app.whenReady().then(async () => {
             if (channel === IPC_CHANNELS['stream:retrying']) {
               if (showToolSteps) relayClient.broadcast('stream:retrying', args[0] ?? {})
             }
+            if (channel === IPC_CHANNELS['agent:permission_request']) {
+              sessionTaskStates.update(sessionId, { status: 'waiting_permission', phase: 'permission', message: '等待权限确认' })
+            }
             if (channel === IPC_CHANNELS['ask-user:question']) {
-              relayClient.broadcast('stream:agent:ask_user_question', args[0])
+              sessionTaskStates.update(sessionId, { status: 'waiting_user', phase: 'ask_user', message: '等待用户回答' })
+              relayClient.broadcast('stream:agent:ask_user_question', { ...(args[0] as Record<string, unknown> | undefined), sessionId })
             }
             if (channel === IPC_CHANNELS['stream:sub_tool_use_start']) {
               if (showToolSteps) relayClient.broadcast('stream:sub:tool_call', args[0] ?? {})
@@ -1309,10 +1368,49 @@ app.whenReady().then(async () => {
         }
 
         runtimes.notifyRunningChanged(sessionId, true)
+        let sawFirstEvent = false
+        let sawDone = false
+        let lastAgentError: { error: string; recoverable: boolean } | null = null
         try {
         for await (const agentEvent of runtime.run(msg.data.content, agentConfig, mobileSender)) {
+          if (!sawFirstEvent) {
+            sawFirstEvent = true
+            sessionTaskStates.update(sessionId, { status: 'running', phase: 'streaming', message: 'AI 正在生成' })
+            await persistRuntimeDelta(sessionId, runtime, '已保存用户消息')
+          }
           // Forward stream events to renderer — only when mobile session matches desktop's current session
           const wc = shouldForwardToRenderer ? BrowserWindow.getAllWindows()[0]?.webContents : null
+          if (!wc) {
+            switch (agentEvent.type) {
+              case 'agent:tool_call':
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'tool_call', message: `正在执行 ${agentEvent.toolName}` })
+                break
+              case 'agent:tool_result':
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'tool_result', message: `${agentEvent.toolName} 执行完成` })
+                break
+              case 'agent:error':
+                lastAgentError = { error: agentEvent.error, recoverable: agentEvent.recoverable }
+                sessionTaskStates.update(sessionId, { status: 'running', phase: agentEvent.recoverable ? 'recoverable_error' : 'error', message: agentEvent.error, error: agentEvent.error, recoverable: agentEvent.recoverable })
+                break
+              case 'agent:turn_end':
+                await persistRuntimeDelta(sessionId, runtime, '已保存完整轮次')
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'turn_end', message: '轮次已保存' })
+                break
+              case 'agent:done': {
+                sawDone = true
+                try {
+                  const persistedMessageCount = await persistRuntimeDelta(sessionId, runtime, '任务完成，历史已保存')
+                  sessionTaskStates.finish(sessionId, 'completed', { message: '任务已完成', persistedMessageCount })
+                } catch (saveErr) {
+                  console.error('[mobile] Failed to persist session:', saveErr)
+                  sessionTaskStates.finish(sessionId, 'completed', { message: '任务已完成（保存历史时出错）' })
+                }
+                cleanupToolResults(sessionId).catch(() => {})
+                mobilePersistedMessageCounts.delete(sessionId)
+                break
+              }
+            }
+          }
           if (wc) {
             switch (agentEvent.type) {
               case 'agent:text':
@@ -1322,6 +1420,7 @@ app.whenReady().then(async () => {
                 wc.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
                 break
               case 'agent:tool_call':
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'tool_call', message: `正在执行 ${agentEvent.toolName}` })
                 toolCallInputs.set(agentEvent.toolCallId, agentEvent.input)
                 wc.send(IPC_CHANNELS['stream:tool_use_start'], {
                   id: agentEvent.toolCallId,
@@ -1330,6 +1429,7 @@ app.whenReady().then(async () => {
                 })
                 break
               case 'agent:tool_result':
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'tool_result', message: `${agentEvent.toolName} 执行完成` })
                 wc.send(IPC_CHANNELS['stream:tool_use_end'], { id: agentEvent.toolCallId, output: agentEvent.output, isError: agentEvent.isError, toolName: agentEvent.toolName })
                 // Forward file changes for write tools (same as ipc-handlers path)
                 if (!agentEvent.isError && (agentEvent.toolName === 'FileWrite' || agentEvent.toolName === 'FileEdit')) {
@@ -1343,32 +1443,30 @@ app.whenReady().then(async () => {
                 toolCallInputs.delete(agentEvent.toolCallId)
                 break
               case 'agent:error':
+                lastAgentError = { error: agentEvent.error, recoverable: agentEvent.recoverable }
+                sessionTaskStates.update(sessionId, { status: 'running', phase: agentEvent.recoverable ? 'recoverable_error' : 'error', message: agentEvent.error, error: agentEvent.error, recoverable: agentEvent.recoverable })
                 wc.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
                 break
               case 'agent:turn_end':
                 wc.send(IPC_CHANNELS['stream:turn_end'], {})
+                await persistRuntimeDelta(sessionId, runtime, '已保存完整轮次')
+                sessionTaskStates.update(sessionId, { status: 'running', phase: 'turn_end', message: '轮次已保存' })
                 break
               case 'agent:done':
+                sawDone = true
                 wc.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
                 // Agent 完成通知（声音 + 桌面通知）
                 try {
                   const isFocused = BrowserWindow.getAllWindows()[0]?.isFocused() ?? false
                   notificationService.notify(isFocused, 'wzxClaw', 'AI 任务已完成')
                 } catch {}
-                // Persist mobile messages to session file (Unit 4 bug fix)
+                // Persist mobile messages before announcing terminal completion.
                 try {
-                  const activeStore = getActiveSessionStore()
-                  if (activeStore) {
-                    const allMsgs = runtime.getMessages()
-                    const persistedCount = mobilePersistedMessageCounts.get(sessionId) ?? 0
-                    const newMessages = allMsgs.slice(persistedCount)
-                    if (newMessages.length > 0) {
-                      await activeStore.appendMessages(sessionId, newMessages)
-                      mobilePersistedMessageCounts.set(sessionId, allMsgs.length)
-                    }
-                  }
+                  const persistedMessageCount = await persistRuntimeDelta(sessionId, runtime, '任务完成，历史已保存')
+                  sessionTaskStates.finish(sessionId, 'completed', { message: '任务已完成', persistedMessageCount })
                 } catch (saveErr) {
                   console.error('[mobile] Failed to persist session:', saveErr)
+                  sessionTaskStates.finish(sessionId, 'completed', { message: '任务已完成（保存历史时出错）' })
                 }
                 // 清理该会话的工具结果磁盘文件
                 cleanupToolResults(sessionId).catch(() => {})
@@ -1400,8 +1498,36 @@ app.whenReady().then(async () => {
             }
           }
         }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err)
+          try {
+            const persistedMessageCount = await persistRuntimeDelta(sessionId, runtime, '异常结束，已保存可用历史')
+            sessionTaskStates.finish(sessionId, 'failed', { message, error: message, recoverable: false, persistedMessageCount })
+          } catch {}
+          throw err
         } finally {
+          if (!sawDone) {
+            const currentStatus = sessionTaskStates.get(sessionId)?.status
+            if (currentStatus === 'stopping') {
+              try {
+                const persistedMessageCount = await persistRuntimeDelta(sessionId, runtime, '任务已停止，历史已保存')
+                sessionTaskStates.finish(sessionId, 'cancelled', { message: '任务已停止', persistedMessageCount })
+              } catch {
+                sessionTaskStates.finish(sessionId, 'cancelled', { message: '任务已停止（保存历史时出错）' })
+              }
+            } else if (lastAgentError && !lastAgentError.recoverable) {
+              try {
+                const persistedMessageCount = await persistRuntimeDelta(sessionId, runtime, '任务失败，历史已保存')
+                sessionTaskStates.finish(sessionId, 'failed', { message: lastAgentError.error, error: lastAgentError.error, recoverable: false, persistedMessageCount })
+              } catch {
+                sessionTaskStates.finish(sessionId, 'failed', { message: lastAgentError.error, error: lastAgentError.error, recoverable: false })
+              }
+            } else if (currentStatus && isActiveSessionTaskStatus(currentStatus)) {
+              sessionTaskStates.finish(sessionId, 'interrupted', { message: '任务异常中断' })
+            }
+          }
           runtimes.notifyRunningChanged(sessionId, false)
+          mobilePersistLocks.delete(sessionId)
         }
       } catch (err: unknown) {
         relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err), sessionId: mobileSessionId })
@@ -1411,7 +1537,11 @@ app.whenReady().then(async () => {
 
     if (msg.event === 'command:stop') {
       // 仅取消当前手机会话（不会跨会话误杀）
-      if (mobileSessionId) runtimes.cancel(mobileSessionId)
+      const stopSessionId = typeof msg.data?.sessionId === 'string' ? msg.data.sessionId : mobileSessionId
+      if (stopSessionId) {
+        sessionTaskStates.update(stopSessionId, { status: 'stopping', phase: 'stopping', message: '正在停止' })
+        runtimes.cancel(stopSessionId)
+      }
     }
     } catch (topErr: unknown) {
       console.error('[handleClientMessage] UNCAUGHT ERROR:', topErr)
@@ -1438,7 +1568,12 @@ app.whenReady().then(async () => {
               .slice(0, 10)
           } catch { /* workspace 可能还没有 sessions 目录 */ }
         }
-        return { ...t, sessions }
+        const workspaceSessionIds = new Set(sessions.map(session => session.id))
+        const runningSessionIds = runtimes.listRunning().filter(sessionId => workspaceSessionIds.has(sessionId))
+        const taskStatuses = Object.fromEntries(
+          Object.entries(sessionTaskStates.snapshot()).filter(([sessionId]) => workspaceSessionIds.has(sessionId))
+        )
+        return { ...t, sessions, runningSessionIds, taskStatuses }
       }))
       broadcastToMobile('workspace:list:response', { requestId: '', tasks: enriched })
     } catch {}
@@ -1448,6 +1583,9 @@ app.whenReady().then(async () => {
         sessionId: sid,
         messageCount: runtimes.getOrCreate(sid).getMessages().length,
       })
+    }
+    for (const state of sessionTaskStates.listActive()) {
+      broadcastToMobile('session:task_status', state)
     }
   })
 

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
+import '../models/session_task_state.dart';
 import '../models/ws_message.dart';
 import 'app_restore_state.dart';
 import 'chat_database.dart';
@@ -95,6 +96,8 @@ class ChatStore {
   final List<ChatMessage> _messages = [];
   ChatMessage? _streamingMessage;
   bool _isStreaming = false;
+  final Map<String, _LiveSessionState> _liveSessions = {};
+  final Map<String, SessionTaskState> _taskStates = {};
 
   // Cached display list — rebuilt only when _messages or _streamingMessage changes.
   List<ChatMessage> _cachedDisplayMessages = const [];
@@ -108,8 +111,8 @@ class ChatStore {
   final Map<String, bool> _pendingMessageIds = {}; // messageId tracking for ack
 
   // -- Clear guard: 防止 fetchSessions 延迟响应覆盖用户消息 --
-  int _clearGeneration = 0;     // 每次 loadFetchedMessages([]) 清空时递增
-  int _lastUserMsgGen = 0;      // 用户最后发消息时的 generation
+  int _clearGeneration = 0; // 每次 loadFetchedMessages([]) 清空时递增
+  int _lastUserMsgGen = 0; // 用户最后发消息时的 generation
 
   // -- 用户主动切换追踪 --
   bool _userManuallySwitched = false; // 只有用户从 UI 主动点会话时为 true
@@ -136,12 +139,15 @@ class ChatStore {
 
   bool get isStreaming => _isStreaming;
   bool get isWaitingForResponse => _isWaitingForResponse;
+  SessionTaskState? get currentTaskState =>
+      _currentSessionId == null ? null : _taskStates[_currentSessionId];
   String? get currentSessionId => _currentSessionId;
   set currentSessionId(String? id) => _currentSessionId = id;
   bool get isBrowsingHistory => _isBrowsingHistory;
   bool get userManuallySwitched => _userManuallySwitched;
 
-  List<ChatMessage> get messages => List.unmodifiable(_messages);
+  List<ChatMessage> get messages =>
+      List.unmodifiable(_messages.where((m) => !m.isSystemInjected));
 
   List<ChatMessage> get displayMessages {
     final hasStreaming = _streamingMessage != null;
@@ -153,16 +159,20 @@ class ChatStore {
     }
     _cachedMessagesLength = msgLen;
     if (hasStreaming) {
-      _cachedDisplayMessages = [..._messages, _streamingMessage!];
+      _cachedDisplayMessages = [
+        ..._messages.where((m) => !m.isSystemInjected),
+        if (!_streamingMessage!.isSystemInjected) _streamingMessage!,
+      ];
     } else {
-      _cachedDisplayMessages = List.unmodifiable(_messages);
+      _cachedDisplayMessages = List.unmodifiable(
+        _messages.where((m) => !m.isSystemInjected),
+      );
     }
     return _cachedDisplayMessages;
   }
 
   void _init() {
-    _wsSubscription =
-        _transport.incoming.listen(_handleWsMessage);
+    _wsSubscription = _transport.incoming.listen(_handleWsMessage);
     _transport.stateStream.listen(_handleConnectionState);
   }
 
@@ -219,6 +229,9 @@ class ChatStore {
         case WsEvents.agentRunning:
           _handleAgentRunning(wsMsg.data);
           break;
+        case WsEvents.sessionTaskStatus:
+          _handleSessionTaskStatus(wsMsg.data);
+          break;
         case WsEvents.desktopUserMessage:
           _handleDesktopUserMessage(wsMsg.data);
           break;
@@ -249,9 +262,13 @@ class ChatStore {
   // 节流：text chunk 先写入 buffer，由定时器统一刷到 UI（~16 FPS），
   // 避免每个 token 都触发 setState + ListView rebuild。
   void _handleAgentText(dynamic data) {
-    if (_isWrongSession(data)) return;
     final content = _extractContent(data);
     if (content.isEmpty) return;
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      _handleInactiveAgentText(inactiveSessionId, content);
+      return;
+    }
 
     if (_streamingMessage == null) {
       _setWaiting(false);
@@ -284,11 +301,6 @@ class ChatStore {
 
   // ── stream:agent:tool_call ─────────────────────────────────────────
   void _handleAgentToolCall(dynamic data) {
-    if (_isWrongSession(data)) return;
-    // Finalize any in-progress streaming text
-    _finalizeStreamingMessage();
-    _setWaiting(false);
-
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final toolCallId = map['toolCallId'] as String? ?? '';
     final toolName = map['toolName'] as String? ?? 'Unknown';
@@ -299,6 +311,25 @@ class ChatStore {
     if (input != null) {
       inputSummary = _summarizeToolInput(toolName, input);
     }
+
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      _finalizeInactiveStreamingMessage(inactiveSessionId);
+      _liveStateFor(inactiveSessionId).messages.add(ChatMessage(
+            role: MessageRole.tool,
+            content: toolName,
+            toolName: toolName,
+            toolStatus: ToolCallStatus.running,
+            toolCallId: toolCallId,
+            toolInput: inputSummary,
+            createdAt: DateTime.now(),
+          ));
+      return;
+    }
+
+    // Finalize any in-progress streaming text
+    _finalizeStreamingMessage();
+    _setWaiting(false);
 
     final toolMsg = ChatMessage(
       role: MessageRole.tool,
@@ -320,11 +351,16 @@ class ChatStore {
 
   // ── stream:agent:tool_result ───────────────────────────────────────
   void _handleAgentToolResult(dynamic data) {
-    if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final toolCallId = map['toolCallId'] as String? ?? '';
     final output = map['output'] as String? ?? '';
     final isError = map['isError'] as bool? ?? false;
+
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      _updateInactiveToolResult(inactiveSessionId, toolCallId, output, isError);
+      return;
+    }
 
     // Find the matching tool message and update it
     for (int i = _messages.length - 1; i >= 0; i--) {
@@ -333,7 +369,10 @@ class ChatStore {
         final truncatedOutput =
             output.length > 500 ? '${output.substring(0, 500)}…' : output;
         final summary = _extractResultSummary(
-            _messages[i].toolName ?? '', output, isError,);
+          _messages[i].toolName ?? '',
+          output,
+          isError,
+        );
         _messages[i] = _messages[i].copyWith(
           toolStatus: isError ? ToolCallStatus.error : ToolCallStatus.done,
           toolOutput: truncatedOutput,
@@ -363,13 +402,48 @@ class ChatStore {
     _streamingController.add(true);
   }
 
+  // ── session:task_status ───────────────────────────────────────────
+  void _handleSessionTaskStatus(dynamic data) {
+    if (data is! Map) return;
+    final state = SessionTaskState.fromJson(Map<String, dynamic>.from(data));
+    if (state.sessionId.isEmpty) return;
+    _taskStates[state.sessionId] = state;
+
+    if (state.sessionId == _currentSessionId) {
+      final active = state.isActive;
+      _isStreaming = active;
+      _streamingController.add(active);
+      _setWaiting(state.status == 'starting');
+      if (state.isTerminal) {
+        _finalizeStreamingMessage();
+        _setWaiting(false);
+      }
+    }
+    _notifyListeners();
+  }
+
   // ── stream:desktop_user_message ───────────────────────────────────
   /// 桌面端用户发送的提问，手机端以用户气泡展示
   void _handleDesktopUserMessage(dynamic data) {
     if (data is! Map<String, dynamic>) return;
-    if (_isWrongSession(data)) return;
     final content = data['content'] as String?;
     if (content == null || content.isEmpty) return;
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      final state = _liveStateFor(inactiveSessionId);
+      if (state.messages.isNotEmpty &&
+          state.messages.last.role == MessageRole.user &&
+          state.messages.last.content == content) {
+        return;
+      }
+      state.messages.add(ChatMessage(
+        role: MessageRole.user,
+        content: content,
+        createdAt: DateTime.now(),
+      ));
+      state.isWaiting = true;
+      return;
+    }
     // 若最后一条消息已经是相同内容的用户气泡（手机会话加载时可能已存在），则跳过
     if (_messages.isNotEmpty &&
         _messages.last.role == MessageRole.user &&
@@ -386,7 +460,15 @@ class ChatStore {
 
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
-    if (_isWrongSession(data)) return;
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      _finalizeInactiveStreamingMessage(inactiveSessionId);
+      final state = _liveStateFor(inactiveSessionId);
+      state.isStreaming = false;
+      state.isWaiting = false;
+      _markInactiveToolsDone(inactiveSessionId);
+      return;
+    }
     _finalizeStreamingMessage();
     _setWaiting(false);
 
@@ -430,9 +512,16 @@ class ChatStore {
   }
 
   // ── stream:agent:error ─────────────────────────────────────────────
-  void _handleAgentError(dynamic data) {    if (_isWrongSession(data)) return;    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+  void _handleAgentError(dynamic data) {
+    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final errorText = map['error'] as String? ?? data.toString();
     final recoverable = map['recoverable'] as bool? ?? false;
+
+    final inactiveSessionId = _inactiveSessionId(data);
+    if (inactiveSessionId != null) {
+      _handleInactiveAgentError(inactiveSessionId, errorText, recoverable);
+      return;
+    }
 
     _setWaiting(false);
 
@@ -476,7 +565,9 @@ class ChatStore {
   }
 
   // ── stream:agent:compacted ─────────────────────────────────────────
-  void _handleAgentCompacted(dynamic data) {    if (_isWrongSession(data)) return;    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+  void _handleAgentCompacted(dynamic data) {
+    if (_isWrongSession(data)) return;
+    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final before = map['beforeTokens'] as int? ?? 0;
     final after = map['afterTokens'] as int? ?? 0;
     final auto = map['auto'] as bool? ?? false;
@@ -513,10 +604,12 @@ class ChatStore {
   // ── stream:agent:thinking ─────────────────────────────────────────
   void _handleAgentThinking(dynamic data) {
     if (_isWrongSession(data)) return;
-    final content = data is Map ? data['content'] as String? ?? '' : data?.toString() ?? '';
+    final content =
+        data is Map ? data['content'] as String? ?? '' : data?.toString() ?? '';
     if (_thinkingContent.length + content.length > _maxThinkingChars) {
       // 截断：保留后半部分（更新的内容更有价值）
-      _thinkingContent = _thinkingContent.substring(_thinkingContent.length ~/ 2);
+      _thinkingContent =
+          _thinkingContent.substring(_thinkingContent.length ~/ 2);
     }
     _thinkingContent += content;
     _thinkingController.add(_thinkingContent);
@@ -536,10 +629,12 @@ class ChatStore {
 
   /// Send a permission response back to the desktop.
   void respondToPermission(String toolCallId, bool approved) {
-    _transport.send(WsMessage(
-      event: WsEvents.permissionResponse,
-      data: {'toolCallId': toolCallId, 'approved': approved},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.permissionResponse,
+        data: {'toolCallId': toolCallId, 'approved': approved},
+      ),
+    );
     if (!_permissionController.isClosed) {
       _permissionController.add(null); // Clear the request
     }
@@ -579,10 +674,12 @@ class ChatStore {
 
   /// Send a plan approval/rejection decision back to the desktop.
   void respondToPlan(bool approved) {
-    _transport.send(WsMessage(
-      event: WsEvents.planDecision,
-      data: {'approved': approved},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.planDecision,
+        data: {'approved': approved},
+      ),
+    );
     if (!_planModeController.isClosed) {
       _planModeController.add(null); // Clear plan mode bar
     }
@@ -592,15 +689,13 @@ class ChatStore {
   void _handleAskUserQuestion(dynamic data) {
     if (_isWrongSession(data)) return;
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
-    final options = (map['options'] as List<dynamic>? ?? [])
-        .map((o) {
-          final m = o is Map<String, dynamic> ? o : <String, dynamic>{};
-          return {
-            'label': m['label'] as String? ?? '',
-            'description': m['description'] as String? ?? '',
-          };
-        })
-        .toList();
+    final options = (map['options'] as List<dynamic>? ?? []).map((o) {
+      final m = o is Map<String, dynamic> ? o : <String, dynamic>{};
+      return {
+        'label': m['label'] as String? ?? '',
+        'description': m['description'] as String? ?? '',
+      };
+    }).toList();
     final question = AskUserQuestion(
       questionId: map['questionId'] as String? ?? '',
       question: map['question'] as String? ?? '',
@@ -613,16 +708,21 @@ class ChatStore {
   }
 
   /// Send an answer to an AskUserQuestion back to the desktop.
-  void respondToAskUser(String questionId, List<String> selectedLabels,
-      {String? customText,}) {
-    _transport.send(WsMessage(
-      event: WsEvents.askUserAnswer,
-      data: {
-        'questionId': questionId,
-        'selectedLabels': selectedLabels,
-        if (customText != null) 'customText': customText,
-      },
-    ),);
+  void respondToAskUser(
+    String questionId,
+    List<String> selectedLabels, {
+    String? customText,
+  }) {
+    _transport.send(
+      WsMessage(
+        event: WsEvents.askUserAnswer,
+        data: {
+          'questionId': questionId,
+          'selectedLabels': selectedLabels,
+          if (customText != null) 'customText': customText,
+        },
+      ),
+    );
     if (!_askUserController.isClosed) {
       _askUserController.add(null); // Clear the question
     }
@@ -688,15 +788,16 @@ class ChatStore {
   /// Switch to a specific session (for browsing history).
   /// Pass null to return to the live/default chat.
   /// [userInitiated]: true 当且仅当用户从 UI 主动点击了会话，false 表示系统自动切换。
-  Future<void> switchToSession(String? sessionId, {bool userInitiated = false}) async {
+  Future<void> switchToSession(String? sessionId,
+      {bool userInitiated = false}) async {
     // 用户主动切换时立即更新标志（即使 same-session 提前返回也需生效）
     if (userInitiated) _userManuallySwitched = true;
 
     if (sessionId == _currentSessionId) return;
 
-    // Finalize any in-progress streaming before switching
+    // 切走运行中的会话时不要落库未完成 assistant；先暂存，之后切回来继续显示。
     if (_isStreaming) {
-      _finalizeStreamingMessage();
+      _stashCurrentStreamingState();
     }
 
     // 系统切换时重置手动标志
@@ -728,6 +829,7 @@ class ChatStore {
     // 注入从桌面拉取的最新数据，避免先显示旧缓存再闪烁刷新。
     if (userInitiated && sessionId != null) {
       _isBrowsingHistory = true;
+      _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else if (sessionId != null) {
       _isBrowsingHistory = true;
@@ -735,14 +837,16 @@ class ChatStore {
         sessionId,
         limit: 100,
       );
-      _messages.addAll(messages);
+      _messages.addAll(messages.where((m) => !m.isSystemInjected));
+      _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else {
       _isBrowsingHistory = false;
-      _messages.addAll(await ChatDatabase.instance.getMessages(
+      final messages = await ChatDatabase.instance.getMessages(
         desktopId: _transport.selectedDesktopId,
         limit: 100,
-      ));
+      );
+      _messages.addAll(messages.where((m) => !m.isSystemInjected));
     }
     _notifyListeners();
   }
@@ -765,8 +869,11 @@ class ChatStore {
     }
     // 用户在清空后已发过消息 → 不覆盖
     if (_lastUserMsgGen > _clearGeneration) return;
+    final visibleMessages =
+        messages.where((m) => !m.isSystemInjected).toList(growable: false);
     _messages.clear();
-    _messages.addAll(messages);
+    _messages.addAll(visibleMessages);
+    _restoreLiveSessionState(sessionId);
     _notifyListeners();
   }
 
@@ -778,6 +885,7 @@ class ChatStore {
     _setWaiting(false);
     _isStreaming = false;
     _streamingMessage = null;
+    _liveSessions.clear();
     _thinkingContent = '';
     _todos = [];
     _pendingMessageIds.clear();
@@ -807,7 +915,8 @@ class ChatStore {
     _lastUserMsgGen = _clearGeneration + 1;
     _userManuallySwitched = false; // 发消息 = 回到实时模式，允许系统跟随桌面
 
-    final messageId = '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1000000)}';
+    final messageId =
+        '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1000000)}';
     final msg = ChatMessage(
       role: MessageRole.user,
       content: text,
@@ -825,11 +934,14 @@ class ChatStore {
       _pendingMessageIds.remove(_pendingMessageIds.keys.first);
     }
     _transport.send(
-      WsMessage(event: WsEvents.commandSend, data: {
-        'content': text,
-        'messageId': messageId,
-        if (_currentSessionId != null) 'sessionId': _currentSessionId,
-      },),
+      WsMessage(
+        event: WsEvents.commandSend,
+        data: {
+          'content': text,
+          'messageId': messageId,
+          if (_currentSessionId != null) 'sessionId': _currentSessionId,
+        },
+      ),
       priority: 10,
     );
     _setWaiting(true);
@@ -837,7 +949,10 @@ class ChatStore {
   }
 
   void stopGeneration() {
-    _transport.send(const WsMessage(event: WsEvents.commandStop));
+    _transport.send(WsMessage(
+      event: WsEvents.commandStop,
+      data: {if (_currentSessionId != null) 'sessionId': _currentSessionId},
+    ));
     _finalizeStreamingMessage();
     _isStreaming = false;
     _setWaiting(false);
@@ -849,6 +964,7 @@ class ChatStore {
     _messages.clear();
     _streamingMessage = null;
     _isStreaming = false;
+    _liveSessions.clear();
     _notifyListeners();
   }
 
@@ -860,15 +976,19 @@ class ChatStore {
     _messages.clear();
     _streamingMessage = null;
     _isStreaming = false;
+    if (_currentSessionId != null) {
+      _liveSessions.remove(_currentSessionId);
+    }
     _notifyListeners();
   }
 
   Future<void> loadHistory() async {
     _messages.clear();
-    _messages.addAll(await ChatDatabase.instance.getMessages(
+    final messages = await ChatDatabase.instance.getMessages(
       desktopId: _transport.selectedDesktopId,
       limit: 100,
-    ));
+    );
+    _messages.addAll(messages.where((m) => !m.isSystemInjected));
     _cleanupStaleTools();
     _notifyListeners();
   }
@@ -889,7 +1009,7 @@ class ChatStore {
       );
     }
     if (older.isEmpty) return;
-    _messages.insertAll(0, older);
+    _messages.insertAll(0, older.where((m) => !m.isSystemInjected));
     _notifyListeners();
   }
 
@@ -909,7 +1029,9 @@ class ChatStore {
     if (isError) {
       // First line of error, truncated
       final firstLine = output.split('\n').first.trim();
-      return firstLine.length > 60 ? '${firstLine.substring(0, 57)}...' : firstLine;
+      return firstLine.length > 60
+          ? '${firstLine.substring(0, 57)}...'
+          : firstLine;
     }
     switch (toolName) {
       case 'Read':
@@ -921,7 +1043,9 @@ class ChatStore {
         final trimmed = output.trim();
         if (trimmed.isEmpty) return 'done';
         final firstLine = trimmed.split('\n').first.trim();
-        return firstLine.length > 50 ? '${firstLine.substring(0, 47)}...' : firstLine;
+        return firstLine.length > 50
+            ? '${firstLine.substring(0, 47)}...'
+            : firstLine;
       case 'Grep':
         final matches = '\n'.allMatches(output).length + 1;
         return '$matches matches';
@@ -941,7 +1065,9 @@ class ChatStore {
       default:
         final firstLine = output.split('\n').first.trim();
         if (firstLine.isEmpty) return null;
-        return firstLine.length > 50 ? '${firstLine.substring(0, 47)}...' : firstLine;
+        return firstLine.length > 50
+            ? '${firstLine.substring(0, 47)}...'
+            : firstLine;
     }
   }
 
@@ -981,6 +1107,137 @@ class ChatStore {
     }
   }
 
+  _LiveSessionState _liveStateFor(String sessionId) =>
+      _liveSessions.putIfAbsent(sessionId, _LiveSessionState.new);
+
+  void _handleInactiveAgentText(String sessionId, String content) {
+    final state = _liveStateFor(sessionId);
+    if (state.streamingMessage == null) {
+      state.streamingMessage = ChatMessage(
+        role: MessageRole.assistant,
+        content: content,
+        createdAt: DateTime.now(),
+        isStreaming: true,
+      );
+    } else {
+      state.streamingMessage = state.streamingMessage!.copyWith(
+        content: state.streamingMessage!.content + content,
+      );
+    }
+    state.isStreaming = true;
+    state.isWaiting = false;
+  }
+
+  void _finalizeInactiveStreamingMessage(String sessionId) {
+    final state = _liveSessions[sessionId];
+    if (state?.streamingMessage == null) return;
+    state!.messages.add(state.streamingMessage!.copyWith(isStreaming: false));
+    state.streamingMessage = null;
+  }
+
+  void _updateInactiveToolResult(
+    String sessionId,
+    String toolCallId,
+    String output,
+    bool isError,
+  ) {
+    final state = _liveStateFor(sessionId);
+    for (int i = state.messages.length - 1; i >= 0; i--) {
+      final message = state.messages[i];
+      if (message.role == MessageRole.tool && message.toolCallId == toolCallId) {
+        final truncatedOutput =
+            output.length > 500 ? '${output.substring(0, 500)}…' : output;
+        state.messages[i] = message.copyWith(
+          toolStatus: isError ? ToolCallStatus.error : ToolCallStatus.done,
+          toolOutput: truncatedOutput,
+          toolResultSummary:
+              _extractResultSummary(message.toolName ?? '', output, isError),
+        );
+        break;
+      }
+    }
+  }
+
+  void _markInactiveToolsDone(String sessionId) {
+    final state = _liveSessions[sessionId];
+    if (state == null) return;
+    for (int i = 0; i < state.messages.length; i++) {
+      if (state.messages[i].role == MessageRole.tool &&
+          state.messages[i].toolStatus == ToolCallStatus.running) {
+        state.messages[i] =
+            state.messages[i].copyWith(toolStatus: ToolCallStatus.done);
+      }
+    }
+  }
+
+  void _handleInactiveAgentError(
+    String sessionId,
+    String errorText,
+    bool recoverable,
+  ) {
+    final state = _liveSessions[sessionId];
+    if (recoverable && state?.streamingMessage == null) return;
+    if (state?.streamingMessage != null) {
+      state!.messages.add(state.streamingMessage!.copyWith(
+        content: state.streamingMessage!.content +
+            (errorText.isNotEmpty ? '\n\n⚠ Error: $errorText' : ''),
+        isStreaming: false,
+      ));
+      state.streamingMessage = null;
+    } else {
+      _liveStateFor(sessionId).messages.add(ChatMessage(
+        role: MessageRole.assistant,
+        content: '⚠ Error: $errorText',
+        createdAt: DateTime.now(),
+      ));
+    }
+    _liveStateFor(sessionId).isStreaming = false;
+    _liveStateFor(sessionId).isWaiting = false;
+  }
+
+  void _stashCurrentStreamingState() {
+    _textFlushTimer?.cancel();
+    _textFlushTimer = null;
+    if (_textBuffer.isNotEmpty && _streamingMessage != null) {
+      _streamingMessage = _streamingMessage!.copyWith(
+        content: _streamingMessage!.content + _textBuffer.toString(),
+      );
+      _textBuffer.clear();
+    }
+    if (_currentSessionId == null || _streamingMessage == null) {
+      _finalizeStreamingMessage();
+      return;
+    }
+    final state = _liveStateFor(_currentSessionId!);
+    state.streamingMessage = _streamingMessage;
+    state.isStreaming = true;
+    state.isWaiting = _isWaitingForResponse;
+    _streamingMessage = null;
+  }
+
+  void _restoreLiveSessionState(String sessionId) {
+    final state = _liveSessions.remove(sessionId);
+    if (state == null) return;
+    for (final message in state.messages) {
+      if (!_hasEquivalentMessage(message)) {
+        _messages.add(message);
+      }
+    }
+    if (state.streamingMessage != null) {
+      _streamingMessage = state.streamingMessage;
+    }
+    _isStreaming = state.isStreaming || _streamingMessage != null;
+    _setWaiting(state.isWaiting);
+    _streamingController.add(_isStreaming);
+  }
+
+  bool _hasEquivalentMessage(ChatMessage candidate) => _messages.any(
+        (message) =>
+            message.role == candidate.role &&
+            message.content == candidate.content &&
+            message.toolCallId == candidate.toolCallId,
+      );
+
   String _extractContent(dynamic data) {
     if (data is Map) return data['content'] as String? ?? '';
     return data?.toString() ?? '';
@@ -995,6 +1252,13 @@ class ChatStore {
     return incoming != _currentSessionId;
   }
 
+  String? _inactiveSessionId(dynamic data) {
+    if (data is! Map) return null;
+    final incoming = data['sessionId'] as String?;
+    if (incoming == null || _currentSessionId == null) return null;
+    return incoming == _currentSessionId ? null : incoming;
+  }
+
   /// Build a human-readable one-line summary of tool input.
   String _summarizeToolInput(String toolName, Map<String, dynamic> input) {
     switch (toolName) {
@@ -1002,14 +1266,19 @@ class ChatStore {
         return input['command'] as String? ?? '';
       case 'Read':
       case 'file-read':
-        return input['file_path'] as String? ?? input['filePath'] as String? ?? '';
+        return input['file_path'] as String? ??
+            input['filePath'] as String? ??
+            '';
       case 'Write':
       case 'file-write':
-        final path = input['file_path'] as String? ?? input['filePath'] as String? ?? '';
+        final path =
+            input['file_path'] as String? ?? input['filePath'] as String? ?? '';
         return path;
       case 'Edit':
       case 'file-edit':
-        return input['file_path'] as String? ?? input['filePath'] as String? ?? '';
+        return input['file_path'] as String? ??
+            input['filePath'] as String? ??
+            '';
       case 'Glob':
         return input['pattern'] as String? ?? '';
       case 'Grep':
@@ -1062,4 +1331,11 @@ class ChatStore {
     _planModeController.close();
     _askUserController.close();
   }
+}
+
+class _LiveSessionState {
+  final List<ChatMessage> messages = [];
+  ChatMessage? streamingMessage;
+  bool isStreaming = false;
+  bool isWaiting = false;
 }

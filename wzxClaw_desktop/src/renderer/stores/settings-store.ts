@@ -9,6 +9,7 @@ interface SettingsState {
   provider: string
   model: string
   hasApiKey: boolean
+  maskedApiKey?: string
   baseURL?: string
   systemPrompt?: string
   relayToken?: string
@@ -32,6 +33,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   provider: 'openai',
   model: 'gpt-4o',
   hasApiKey: false,
+  maskedApiKey: undefined,
   baseURL: undefined,
   systemPrompt: undefined,
   thinkingDepth: undefined,
@@ -52,6 +54,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         provider: settings.provider,
         model: settings.model,
         hasApiKey: settings.hasApiKey,
+        maskedApiKey: settings.maskedApiKey,
         baseURL: settings.baseURL,
         systemPrompt: settings.systemPrompt,
         relayToken: settings.relayToken,

@@ -206,7 +206,34 @@ export interface SessionMeta {
   messageCount: number
   preview?: string // 第一条用户消息摘要
   isRunning?: boolean // 是否正在生成
+  taskStatus?: SessionTaskState // 桌面端权威任务状态
   todoSummary?: string // e.g. "3/5 完成 · 当前: 编写测试"
+}
+
+export type SessionTaskStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'waiting_permission'
+  | 'waiting_user'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface SessionTaskState {
+  sessionId: string
+  runId: string
+  status: SessionTaskStatus
+  phase?: string | null
+  message?: string | null
+  startedAt: number
+  updatedAt: number
+  completedAt?: number | null
+  error?: string | null
+  recoverable?: boolean | null
+  persistedMessageCount?: number
 }
 
 // ============================================================

@@ -20,6 +20,7 @@ class SessionListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    final statusLabel = _statusLabel(session);
     return InkWell(
       onTap: onTap,
       onLongPress: () => _showSessionActions(context, session),
@@ -42,7 +43,7 @@ class SessionListTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      if (session.isRunning) ...[
+                      if (session.taskState?.isActive == true || session.isRunning) ...[
                         _RunningDot(),
                         const SizedBox(width: 5),
                       ],
@@ -80,6 +81,26 @@ class SessionListTile extends StatelessWidget {
                           color: colors.textMuted,
                         ),
                       ),
+                      if (statusLabel != null) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _statusColor(colors, session).withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            statusLabel,
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: _statusColor(colors, session),
+                            ),
+                          ),
+                        ),
+                      ],
                       if (!session.isSynced) ...[
                         const SizedBox(width: 6),
                         Container(
@@ -115,6 +136,40 @@ class SessionListTile extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String? _statusLabel(SessionMeta session) {
+    switch (session.taskState?.status) {
+      case 'starting':
+        return '启动';
+      case 'running':
+        return '运行';
+      case 'waiting_permission':
+      case 'waiting_user':
+        return '等待';
+      case 'stopping':
+        return '停止中';
+      case 'failed':
+        return '失败';
+      case 'cancelled':
+        return '已停止';
+      case 'interrupted':
+        return '中断';
+    }
+    return session.isRunning ? '运行' : null;
+  }
+
+  Color _statusColor(AppColors colors, SessionMeta session) {
+    switch (session.taskState?.status) {
+      case 'failed':
+        return colors.error;
+      case 'waiting_permission':
+      case 'waiting_user':
+      case 'stopping':
+        return colors.warning;
+      default:
+        return colors.accent;
+    }
   }
 
   String _formatTime(int epochMs) {

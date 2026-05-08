@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSettingsStore } from '../../stores/settings-store'
 import { DEFAULT_MODELS } from '../../../shared/constants'
 import { useT } from '../../i18n/useT'
@@ -13,6 +13,8 @@ export default function ModelsPanel(): JSX.Element {
   const [provider, setProvider] = useState(settings.provider)
   const [model, setModel] = useState(settings.model)
   const [baseURL, setBaseURL] = useState(settings.baseURL ?? '')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
 
@@ -20,13 +22,23 @@ export default function ModelsPanel(): JSX.Element {
     setProvider(settings.provider)
     setModel(settings.model)
     setBaseURL(settings.baseURL ?? '')
-  }, [settings.provider, settings.model, settings.baseURL])
+    // 输入框为空时用脱敏值占位
+    if (!apiKeyInput) {
+      setApiKeyInput(settings.maskedApiKey ?? '')
+    }
+  }, [settings.provider, settings.model, settings.baseURL, settings.maskedApiKey])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      await window.wzxclaw.updateSettings({ provider, model, baseURL })
+      const update: Record<string, unknown> = { provider, model, baseURL }
+      // 只有用户实际修改了 key（不是脱敏值）才发送
+      if (apiKeyInput && apiKeyInput !== settings.maskedApiKey && !apiKeyInput.includes('****')) {
+        update.apiKey = apiKeyInput
+      }
+      await window.wzxclaw.updateSettings(update)
       await settings.loadSettings()
+      setApiKeyInput('')
       setStatus(t('settings.general.saved'))
     } catch (err) {
       setStatus(t('settings.general.saveFailed', { error: err instanceof Error ? err.message : String(err) }))
@@ -94,17 +106,23 @@ export default function ModelsPanel(): JSX.Element {
           <div className="settings-form-group">
             <label className="settings-label">{t('settings.models.apiKey')}</label>
             <div className="settings-input-row">
-              <span className="settings-key-status">
-                {settings.hasApiKey ? t('settings.models.apiKeyConfigured') : t('settings.models.apiKeyNotConfigured')}
-              </span>
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                className="settings-input"
+                style={{ flex: 1, fontFamily: 'monospace' }}
+                value={apiKeyInput || settings.maskedApiKey || ''}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder={settings.hasApiKey ? undefined : t('settings.models.apiKeyPlaceholder')}
+              />
               <button
                 className="settings-btn-secondary"
-                onClick={() => window.wzxclaw.updateSettings({}).then(() => settings.loadSettings())}
+                onClick={() => setShowApiKey(!showApiKey)}
+                title={showApiKey ? t('settings.models.hideKey') : t('settings.models.showKey')}
               >
-                {t('settings.models.reEnter')}
+                {showApiKey ? '🙈' : '👁'}
               </button>
             </div>
-            <span className="settings-hint">{t('settings.models.apiKeyHint')}</span>
+            <span className="settings-hint">{settings.hasApiKey ? t('settings.models.apiKeyConfigured') : t('settings.models.apiKeyNotConfigured')}</span>
           </div>
 
           {status && <div className="settings-panel-status">{status}</div>}

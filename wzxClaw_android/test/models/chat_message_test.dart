@@ -319,7 +319,8 @@ void main() {
       expect(msg.toolStatus, equals(ToolCallStatus.error));
     });
 
-    test('fromDbMap parses toolStatus from legacy integer (backward compat)', () {
+    test('fromDbMap parses toolStatus from legacy integer (backward compat)',
+        () {
       // ToolCallStatus.running = 0, done = 1, error = 2
       final map = {
         'id': 11,
@@ -586,7 +587,9 @@ void main() {
         createdAt: DateTime.now(),
         toolCalls: [
           const ToolCallInfo(
-              toolCallId: 'tc-1', toolName: 'Read', status: ToolCallStatus.done),
+              toolCallId: 'tc-1',
+              toolName: 'Read',
+              status: ToolCallStatus.done),
         ],
         usage: const TokenUsage(inputTokens: 10, outputTokens: 5),
       );
@@ -597,6 +600,36 @@ void main() {
       expect(updated.toolCalls!.length, equals(1));
       expect(updated.usage, isNotNull);
       expect(updated.usage!.inputTokens, equals(10));
+    });
+
+    test('isSystemInjected detects hidden reminder wrappers', () {
+      final msg = ChatMessage(
+        role: MessageRole.user,
+        content: '<system-reminder>\nchanged files\n</system-reminder>',
+        createdAt: DateTime.now(),
+      );
+
+      expect(msg.isSystemInjected, isTrue);
+    });
+
+    test('isSystemInjected detects legacy System prefix', () {
+      final msg = ChatMessage(
+        role: MessageRole.user,
+        content: '[System] 你已连续 6 轮只读不写。',
+        createdAt: DateTime.now(),
+      );
+
+      expect(msg.isSystemInjected, isTrue);
+    });
+
+    test('isSystemInjected leaves normal messages visible', () {
+      final msg = ChatMessage(
+        role: MessageRole.user,
+        content: '正常用户消息',
+        createdAt: DateTime.now(),
+      );
+
+      expect(msg.isSystemInjected, isFalse);
     });
   });
 

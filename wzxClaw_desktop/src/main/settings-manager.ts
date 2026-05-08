@@ -40,6 +40,7 @@ export interface SettingsResponse {
   provider: string
   model: string
   hasApiKey: boolean
+  maskedApiKey?: string
   baseURL?: string
   systemPrompt?: string
   relayToken?: string
@@ -258,13 +259,23 @@ export class SettingsManager {
   }
 
   /**
-   * Get settings for the renderer (no API key exposed).
+   * 将 API Key 脱敏：保留前4位和后4位，中间用 **** 替代
+   */
+  private maskApiKey(key: string): string {
+    if (key.length <= 12) return '****'
+    return key.slice(0, 4) + '****' + key.slice(-4)
+  }
+
+  /**
+   * Get settings for the renderer (API key masked).
    */
   getSettings(): SettingsResponse {
+    const apiKey = this.getApiKey(this.settings.provider)
     return {
       provider: this.settings.provider,
       model: this.settings.model,
-      hasApiKey: !!this.getApiKey(this.settings.provider),
+      hasApiKey: !!apiKey,
+      maskedApiKey: apiKey ? this.maskApiKey(apiKey) : undefined,
       baseURL: this.settings.baseURL,
       systemPrompt: this.settings.systemPrompt,
       relayToken: this.settings.relayToken,

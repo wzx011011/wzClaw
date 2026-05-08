@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { FileTreeNode, SessionMeta, AgentStep, Workspace } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace, SessionTaskState } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -66,6 +66,7 @@ export const IPC_CHANNELS = {
   'session:context-restored': 'session:context-restored',
   'session:restore': 'session:restore',
   'session:running_changed': 'session:running_changed',
+  'session:task_status_changed': 'session:task_status_changed',
 
   // Diff channels (renderer -> main)
   'file:apply-hunk': 'file:apply-hunk',
@@ -326,6 +327,7 @@ export interface IpcResponsePayloads {
     provider: string
     model: string
     hasApiKey: boolean
+    maskedApiKey?: string
     baseURL?: string
     systemPrompt?: string
     relayToken?: string
@@ -440,6 +442,7 @@ export interface IpcStreamPayloads {
   'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
   'session:context-restored': { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }
   'session:running_changed': { sessionId: string; isRunning: boolean }
+  'session:task_status_changed': SessionTaskState
   'agent:plan-mode-entered': Record<string, never>
   'agent:plan-mode-exited': { plan: string }
   'terminal:data': { terminalId: string; data: string }

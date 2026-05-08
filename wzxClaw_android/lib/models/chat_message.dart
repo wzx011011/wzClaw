@@ -50,7 +50,8 @@ class ToolCallInfo {
         toolName: json['toolName'] as String? ?? '',
         inputSummary: json['inputSummary'] as String?,
         outputSummary: json['outputSummary'] as String?,
-        status: ToolCallStatus.values.byName(json['status'] as String? ?? ToolCallStatus.running.name),
+        status: ToolCallStatus.values
+            .byName(json['status'] as String? ?? ToolCallStatus.running.name),
         isError: json['isError'] as bool? ?? false,
       );
 }
@@ -97,6 +98,13 @@ class ChatMessage {
     this.toolResultSummary,
     this.model,
   });
+
+  /// 桌面端注入给 agent 的系统提醒会以 user-role 存进 JSONL，
+  /// 但聊天 UI 不应把它们当成用户消息展示。
+  bool get isSystemInjected {
+    final text = content.trimLeft();
+    return text.startsWith('<system-reminder>') || text.startsWith('[System]');
+  }
 
   ChatMessage copyWith({
     int? id,
@@ -168,8 +176,7 @@ class ChatMessage {
       toolStatus: map['tool_status'] != null
           ? _parseToolStatus(map['tool_status'])
           : null,
-      createdAt:
-          DateTime.fromMillisecondsSinceEpoch(map['created_at'] as int),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at'] as int),
       toolCallId: map['tool_call_id'] as String?,
       toolInput: map['tool_input'] as String?,
       toolOutput: map['tool_output'] as String?,

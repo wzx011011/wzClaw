@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/session_meta.dart';
+import '../models/session_task_state.dart';
 import '../models/ws_message.dart';
 import 'app_restore_state.dart';
 import 'chat_database.dart';
@@ -46,12 +47,14 @@ class SessionSummary {
   final String title;
   final int updatedAt;
   final int messageCount;
+  final bool isRunning;
 
   const SessionSummary({
     required this.id,
     required this.title,
     required this.updatedAt,
     required this.messageCount,
+    this.isRunning = false,
   });
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) => SessionSummary(
@@ -59,6 +62,7 @@ class SessionSummary {
         title: json['title'] as String? ?? 'Untitled',
         updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
         messageCount: (json['messageCount'] as num?)?.toInt() ?? 0,
+        isRunning: json['isRunning'] as bool? ?? false,
       );
 }
 
@@ -72,6 +76,8 @@ class WorkspaceItem {
   final int updatedAt;
   final List<SessionSummary> sessions;
   final String? activeSessionId;
+  final List<String> runningSessionIds;
+  final Map<String, SessionTaskState> taskStatuses;
 
   const WorkspaceItem({
     required this.id,
@@ -83,6 +89,8 @@ class WorkspaceItem {
     required this.updatedAt,
     this.sessions = const [],
     this.activeSessionId,
+    this.runningSessionIds = const [],
+    this.taskStatuses = const {},
   });
 
   /// Convenience: first project's path (if any), for display
@@ -110,23 +118,23 @@ class SessionSyncService {
   final WsTransport _transport;
 
   // -- Reactive state streams --
-  final _sessionsController =
-      StreamController<List<SessionMeta>>.broadcast();
+  final _sessionsController = StreamController<List<SessionMeta>>.broadcast();
   Stream<List<SessionMeta>> get sessionsStream => _sessionsController.stream;
 
   final _activeSessionController = StreamController<String?>.broadcast();
   Stream<String?> get activeSessionStream => _activeSessionController.stream;
 
-  final _workspaceInfoController =
-      StreamController<WorkspaceInfo?>.broadcast();
+  final _workspaceInfoController = StreamController<WorkspaceInfo?>.broadcast();
   Stream<WorkspaceInfo?> get workspaceInfoStream =>
       _workspaceInfoController.stream;
 
   final _loadingController = StreamController<bool>.broadcast();
   Stream<bool> get loadingStream => _loadingController.stream;
 
-  final _workspacesController = StreamController<List<WorkspaceItem>>.broadcast();
-  Stream<List<WorkspaceItem>> get workspacesStream => _workspacesController.stream;
+  final _workspacesController =
+      StreamController<List<WorkspaceItem>>.broadcast();
+  Stream<List<WorkspaceItem>> get workspacesStream =>
+      _workspacesController.stream;
   List<WorkspaceItem> _workspaces = [];
   List<WorkspaceItem> get workspaces => List.unmodifiable(_workspaces);
 
@@ -155,14 +163,11 @@ class SessionSyncService {
   String? get activeSessionId => _activeSessionId;
   WorkspaceInfo? get workspaceInfo => _workspaceInfo;
   bool get isLoading => _isLoading;
-  bool get _hasSelectedDesktopTarget =>
-      _transport.selectedDesktopId != null;
+  bool get _hasSelectedDesktopTarget => _transport.selectedDesktopId != null;
 
   void _init() {
-    _wsSubscription =
-        _transport.incoming.listen(_handleWsMessage);
-    _stateSub =
-        _transport.stateStream.listen(_handleConnectionState);
+    _wsSubscription = _transport.incoming.listen(_handleWsMessage);
+    _stateSub = _transport.stateStream.listen(_handleConnectionState);
     _desktopOnlineSub =
         _transport.selectedDesktopIdStream.listen(_handleDesktopOnline);
     _loadCachedSessions();
@@ -251,6 +256,9 @@ class SessionSyncService {
         // Per-session running state changed — update isRunning on the matching session.
         _handleAgentRunningChanged(msg.data);
         break;
+      case WsEvents.sessionTaskStatus:
+        _handleSessionTaskStatus(msg.data);
+        break;
     }
   }
 
@@ -262,6 +270,24 @@ class SessionSyncService {
     if (sessionId == null || !_hasSelectedDesktopTarget) return;
     _fetchGeneration++;
     unawaited(_applySessionSelection(sessionId, _fetchGeneration));
+  }
+
+  void _handleSessionTaskStatus(dynamic data) {
+    if (data is! Map) return;
+    final state = SessionTaskState.fromJson(Map<String, dynamic>.from(data));
+    if (state.sessionId.isEmpty) return;
+    final idx = _sessions.indexWhere((s) => s.id == state.sessionId);
+    if (idx != -1) {
+      _sessions[idx] = _sessions[idx].copyWith(
+        taskState: state,
+        isRunning: state.isActive,
+      );
+      _sessionsController.add(List.unmodifiable(_sessions));
+    }
+    if (state.isTerminal && state.sessionId == _activeSessionId && _hasSelectedDesktopTarget) {
+      final generation = ++_fetchGeneration;
+      unawaited(_applySessionSelection(state.sessionId, generation));
+    }
   }
 
   /// Per-session running state changed — update the matching SessionMeta in the list.
@@ -285,29 +311,41 @@ class SessionSyncService {
     // 桌面端当前活跃会话（新增字段，旧桌面端可能为 null）
     final desktopActiveSessionId = data['activeSessionId'] as String?;
     // 桌面端正在运行的会话 ID 列表（Phase B，旧桌面端可能为 null）
-    final runningSessionIds = (data['runningSessionIds'] as List?)
-            ?.whereType<String>()
-            .toSet() ??
-        const <String>{};
+    final runningSessionIds =
+        (data['runningSessionIds'] as List?)?.whereType<String>().toSet() ??
+            const <String>{};
+    final taskStatuses = <String, SessionTaskState>{};
+    final rawTaskStatuses = data['taskStatuses'];
+    if (rawTaskStatuses is Map) {
+      rawTaskStatuses.forEach((key, value) {
+        if (key is String && value is Map) {
+          taskStatuses[key] = SessionTaskState.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+        }
+      });
+    }
     final desktopId = _transport.selectedDesktopId;
 
     // ignore: avoid_print
-    print('[SyncDiag] sessionListResponse req=$requestId workspace=$workspacePath '
+    print(
+        '[SyncDiag] sessionListResponse req=$requestId workspace=$workspacePath '
         'sessions=${rawSessions.length} activeSession=$desktopActiveSessionId running=${runningSessionIds.length}');
 
-    final sessions = rawSessions
-        .whereType<Map>()
-        .map((s) {
-          final meta = SessionMeta.fromDesktopJson(
-            Map<String, dynamic>.from(s),
-            workspacePath,
-            workspaceName,
-          );
-          return runningSessionIds.contains(meta.id)
-              ? meta.copyWith(isRunning: true)
-              : meta;
-        })
-        .toList();
+    final sessions = rawSessions.whereType<Map>().map((s) {
+      final meta = SessionMeta.fromDesktopJson(
+        Map<String, dynamic>.from(s),
+        workspacePath,
+        workspaceName,
+      );
+      final taskState = taskStatuses[meta.id] ?? meta.taskState;
+      if (taskState != null) {
+        return meta.copyWith(taskState: taskState, isRunning: taskState.isActive);
+      }
+      return runningSessionIds.contains(meta.id)
+          ? meta.copyWith(isRunning: true)
+          : meta;
+    }).toList();
 
     if (!_hasSelectedDesktopTarget || desktopId == null) {
       _isLoading = false;
@@ -343,7 +381,8 @@ class SessionSyncService {
     // 过期（旧 requestId）的响应更新列表即可，不做视图切换。
     if (requestId != _currentListRequestId) {
       // ignore: avoid_print
-      print('[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection');
+      print(
+          '[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection');
       _completePending(requestId, sessions);
       return;
     }
@@ -381,9 +420,8 @@ class SessionSyncService {
           _clearedAt != null &&
           DateTime.now().difference(_clearedAt!).inSeconds < 5;
       if (!ChatStore.instance.isStreaming && !inCooldown) {
-        final desktopSession = sessions
-            .where((s) => s.id == currentSessionId)
-            .firstOrNull;
+        final desktopSession =
+            sessions.where((s) => s.id == currentSessionId).firstOrNull;
         if (desktopSession != null) {
           final localCount = await ChatDatabase.instance
               .getSessionMessageCount(currentSessionId);
@@ -397,7 +435,8 @@ class SessionSyncService {
             );
             // 加载期间用户可能切走了，不覆盖
             if (ChatStore.instance.currentSessionId == currentSessionId) {
-              ChatStore.instance.loadFetchedMessages(currentSessionId, refreshed);
+              ChatStore.instance
+                  .loadFetchedMessages(currentSessionId, refreshed);
             }
           }
         }
@@ -462,7 +501,10 @@ class SessionSyncService {
     final messages = <ChatMessage>[];
     for (final raw in rawMessages) {
       if (raw is Map) {
-        messages.add(_fromDesktopMessage(Map<String, dynamic>.from(raw)));
+        final message = _fromDesktopMessage(Map<String, dynamic>.from(raw));
+        if (!message.isSystemInjected) {
+          messages.add(message);
+        }
       }
     }
 
@@ -578,8 +620,10 @@ class SessionSyncService {
       final session = SessionMeta(
         id: sessionData['id'] as String? ?? '',
         title: sessionData['title'] as String? ?? 'New Session',
-        createdAt: (sessionData['createdAt'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
-        updatedAt: (sessionData['updatedAt'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+        createdAt: (sessionData['createdAt'] as num?)?.toInt() ??
+            DateTime.now().millisecondsSinceEpoch,
+        updatedAt: (sessionData['updatedAt'] as num?)?.toInt() ??
+            DateTime.now().millisecondsSinceEpoch,
         messageCount: (sessionData['messageCount'] as num?)?.toInt() ?? 0,
         workspacePath: _workspaceInfo?.workspacePath ?? '',
         workspaceName: _workspaceInfo?.workspaceName ?? '',
@@ -622,14 +666,32 @@ class SessionSyncService {
     // Support both old format ({workspaces: [{path,name}]}) and new format ({tasks: [{id,title,projects}]})
     final rawWorkspaces = (data['workspaces'] ?? data['tasks']) as List? ?? [];
     _workspaces = rawWorkspaces.whereType<Map>().map((w) {
+      final runningSessionIds =
+          (w['runningSessionIds'] as List?)?.whereType<String>().toList() ??
+              const <String>[];
+      final taskStatuses = <String, SessionTaskState>{};
+      final rawTaskStatuses = w['taskStatuses'];
+      if (rawTaskStatuses is Map) {
+        rawTaskStatuses.forEach((key, value) {
+          if (key is String && value is Map) {
+            taskStatuses[key] = SessionTaskState.fromJson(
+              Map<String, dynamic>.from(value),
+            );
+          }
+        });
+      }
+
       // New format: workspace objects from WorkspaceStore
       if (w.containsKey('id') && w.containsKey('title')) {
         final rawProjects = w['projects'] as List? ?? [];
-        final projects = rawProjects.whereType<Map>().map((p) => WorkspaceProject(
-          id: p['id'] as String? ?? '',
-          path: p['path'] as String? ?? '',
-          name: p['name'] as String? ?? '',
-        )).toList();
+        final projects = rawProjects
+            .whereType<Map>()
+            .map((p) => WorkspaceProject(
+                  id: p['id'] as String? ?? '',
+                  path: p['path'] as String? ?? '',
+                  name: p['name'] as String? ?? '',
+                ))
+            .toList();
         return WorkspaceItem(
           id: w['id'] as String? ?? '',
           title: w['title'] as String? ?? '',
@@ -640,16 +702,38 @@ class SessionSyncService {
           updatedAt: w['updatedAt'] as int? ?? 0,
           sessions: (w['sessions'] as List? ?? [])
               .whereType<Map>()
-              .map((s) => SessionSummary.fromJson(Map<String, dynamic>.from(s)))
+              .map((s) {
+                final summary =
+                    SessionSummary.fromJson(Map<String, dynamic>.from(s));
+                final taskState = taskStatuses[summary.id];
+                return SessionSummary(
+                  id: summary.id,
+                  title: summary.title,
+                  updatedAt: summary.updatedAt,
+                  messageCount: summary.messageCount,
+                  isRunning: summary.isRunning ||
+                      runningSessionIds.contains(summary.id) ||
+                      (taskState?.isActive ?? false),
+                );
+              })
               .toList(),
           activeSessionId: w['activeSessionId'] as String?,
+          runningSessionIds: runningSessionIds,
+          taskStatuses: taskStatuses,
         );
       }
       // Old format: folder paths (fallback)
       return WorkspaceItem(
         id: w['path'] as String? ?? '',
         title: w['name'] as String? ?? '',
-        projects: w['path'] != null ? [WorkspaceProject(id: '', path: w['path'] as String, name: w['name'] as String? ?? '')] : [],
+        projects: w['path'] != null
+            ? [
+                WorkspaceProject(
+                    id: '',
+                    path: w['path'] as String,
+                    name: w['name'] as String? ?? '')
+              ]
+            : [],
         updatedAt: 0,
       );
     }).toList();
@@ -681,12 +765,14 @@ class SessionSyncService {
     _currentListRequestId = requestId; // 记录最新发出的请求 ID，用于拒绝过期响应
     // Bug3修复: 先注册 Completer，再发送消息，避免极速响应到达时找不到对应 requestId
     _pendingRequests[requestId] = Completer<dynamic>();
-    _transport.send(WsMessage(
-      event: WsEvents.sessionListRequest,
-      data: {
-        'requestId': requestId,
-      },
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.sessionListRequest,
+        data: {
+          'requestId': requestId,
+        },
+      ),
+    );
     // Timeout — also clean up pending request
     Future.delayed(const Duration(seconds: 5), () {
       if (_isLoading) {
@@ -729,6 +815,7 @@ class SessionSyncService {
             'total': messages.length,
             'offset': 0,
             'hasMore': false,
+            'fromCache': true,
           };
         }
         // 缓存与桌面计数不符 → 标记未同步，落库后走在线拉取分支。
@@ -738,7 +825,7 @@ class SessionSyncService {
 
     // Request from desktop
     if (_transport.state != WsConnectionState.connected ||
-      !_hasSelectedDesktopTarget) {
+        !_hasSelectedDesktopTarget) {
       // Fallback to whatever is cached
       final messages =
           await ChatDatabase.instance.getSessionMessages(sessionId);
@@ -747,6 +834,7 @@ class SessionSyncService {
         'total': messages.length,
         'offset': 0,
         'hasMore': false,
+        'fromCache': true,
       };
     }
 
@@ -754,15 +842,17 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    _transport.send(WsMessage(
-      event: WsEvents.sessionLoadRequest,
-      data: {
-        'requestId': requestId,
-        'sessionId': sessionId,
-        'offset': offset,
-        'limit': limit,
-      },
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.sessionLoadRequest,
+        data: {
+          'requestId': requestId,
+          'sessionId': sessionId,
+          'offset': offset,
+          'limit': limit,
+        },
+      ),
+    );
 
     // Timeout
     Future.delayed(const Duration(seconds: 10), () {
@@ -776,7 +866,13 @@ class SessionSyncService {
     if (result is Map<String, dynamic>) {
       return result;
     }
-    return {'messages': <ChatMessage>[], 'total': 0, 'offset': 0, 'hasMore': false};
+    return {
+      'messages': <ChatMessage>[],
+      'total': 0,
+      'offset': 0,
+      'hasMore': false,
+      'fromCache': false,
+    };
   }
 
   /// 拉取一个会话的"全部"消息：在线分页循环，直到桌面返回 hasMore=false。
@@ -829,19 +925,22 @@ class SessionSyncService {
       final pageMessages = (result['messages'] as List).cast<ChatMessage>();
       final hasMore = result['hasMore'] as bool? ?? false;
       // ignore: avoid_print
-      print('[SyncDiag] loadAll page=$page offset=$offset got=${pageMessages.length} '
+      print(
+          '[SyncDiag] loadAll page=$page offset=$offset got=${pageMessages.length} '
           'hasMore=$hasMore total=${result['total']} session=$sessionId');
 
       // 仅当确实是从桌面拉取（offset 在响应里跟请求一致）且第一页时清空旧缓存。
       // 缓存命中分支会返回 offset=0/hasMore=false 且消息已是本地内容，跳过清空。
       final responseOffset = result['offset'] as int? ?? 0;
-      final fromDesktop = responseOffset == offset && (hasMore || offset > 0 || pageMessages.length >= pageSize);
+      final fromCache = result['fromCache'] as bool? ?? false;
+      final fromDesktop = !fromCache && responseOffset == offset;
       if (page == 0 && !didClear && fromDesktop) {
         await ChatDatabase.instance.clearSessionMessages(sessionId);
         didClear = true;
       }
       if (didClear && pageMessages.isNotEmpty) {
-        await ChatDatabase.instance.insertSessionMessages(sessionId, pageMessages);
+        await ChatDatabase.instance
+            .insertSessionMessages(sessionId, pageMessages);
       }
 
       all.addAll(pageMessages);
@@ -919,7 +1018,8 @@ class SessionSyncService {
   }
 
   Future<void> _onAppForegroundedImpl(String sessionId) async {
-    final messages = await loadAllSessionMessages(sessionId, forceRefresh: true);
+    final messages =
+        await loadAllSessionMessages(sessionId, forceRefresh: true);
     // 推到 ChatStore UI — 如果用户在加载期间切换了会话，不覆盖
     if (ChatStore.instance.currentSessionId == sessionId) {
       ChatStore.instance.loadFetchedMessages(sessionId, messages);
@@ -936,10 +1036,12 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    _transport.send(WsMessage(
-      event: WsEvents.sessionCreateRequest,
-      data: {'requestId': requestId, if (title != null) 'title': title},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.sessionCreateRequest,
+        data: {'requestId': requestId, if (title != null) 'title': title},
+      ),
+    );
 
     Future.delayed(const Duration(seconds: 5), () {
       if (!completer.isCompleted) {
@@ -967,10 +1069,12 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    _transport.send(WsMessage(
-      event: WsEvents.sessionDeleteRequest,
-      data: {'requestId': requestId, 'sessionId': sessionId},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.sessionDeleteRequest,
+        data: {'requestId': requestId, 'sessionId': sessionId},
+      ),
+    );
 
     Future.delayed(const Duration(seconds: 5), () {
       if (!completer.isCompleted) {
@@ -1008,10 +1112,12 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    _transport.send(WsMessage(
-      event: WsEvents.sessionRenameRequest,
-      data: {'requestId': requestId, 'sessionId': sessionId, 'title': title},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.sessionRenameRequest,
+        data: {'requestId': requestId, 'sessionId': sessionId, 'title': title},
+      ),
+    );
 
     Future.delayed(const Duration(seconds: 5), () {
       if (!completer.isCompleted) {
@@ -1036,10 +1142,12 @@ class SessionSyncService {
       return;
     }
     final requestId = _nextRequestId();
-    _transport.send(WsMessage(
-      event: WsEvents.workspaceListRequest,
-      data: {'requestId': requestId},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.workspaceListRequest,
+        data: {'requestId': requestId},
+      ),
+    );
   }
 
   /// Switch the desktop to a different workspace.
@@ -1052,10 +1160,12 @@ class SessionSyncService {
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
 
-    _transport.send(WsMessage(
-      event: WsEvents.workspaceSwitchRequest,
-      data: {'requestId': requestId, 'workspacePath': workspacePath},
-    ),);
+    _transport.send(
+      WsMessage(
+        event: WsEvents.workspaceSwitchRequest,
+        data: {'requestId': requestId, 'workspacePath': workspacePath},
+      ),
+    );
 
     // 持久化工作区路径，用于自动恢复
     AppRestoreState.setLastWorkspacePath(workspacePath);
@@ -1128,7 +1238,8 @@ class SessionSyncService {
     if (generation != _fetchGeneration) return;
 
     // ignore: avoid_print
-    print('[SyncDiag] applySessionSelection start session=$sessionId gen=$generation');
+    print(
+        '[SyncDiag] applySessionSelection start session=$sessionId gen=$generation');
     final allMessages = await loadAllSessionMessages(
       sessionId,
       forceRefresh: true,
@@ -1136,7 +1247,8 @@ class SessionSyncService {
     if (generation != _fetchGeneration) return;
 
     // ignore: avoid_print
-    print('[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}');
+    print(
+        '[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}');
     ChatStore.instance.loadFetchedMessages(sessionId, allMessages);
   }
 
@@ -1172,15 +1284,15 @@ class SessionSyncService {
     // Handle tool calls embedded in assistant messages
     List<ToolCallInfo>? toolCalls;
     if (json['toolCalls'] is List) {
-      toolCalls = (json['toolCalls'] as List)
-          .whereType<Map>()
-          .map((tc) {
+      toolCalls = (json['toolCalls'] as List).whereType<Map>().map((tc) {
         final tcMap = Map<String, dynamic>.from(tc);
         return ToolCallInfo(
           toolCallId: tcMap['id'] as String? ?? '',
           toolName: tcMap['name'] as String? ?? '',
           inputSummary: _summarizeToolInput(
-              tcMap['name'] as String?, tcMap['input'],),
+            tcMap['name'] as String?,
+            tcMap['input'],
+          ),
           status: ToolCallStatus.done,
         );
       }).toList();
@@ -1195,8 +1307,8 @@ class SessionSyncService {
       );
     }
 
-    final timestamp = json['timestamp'] as int? ??
-        DateTime.now().millisecondsSinceEpoch;
+    final timestamp =
+        json['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch;
 
     // 提取文本内容：优先使用 content 字段；若为空，从 contentBlocks 中拼接 text 块
     // 这是 Anthropic interleaved 格式的兼容处理

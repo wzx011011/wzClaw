@@ -128,8 +128,15 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: sessions.map((session) {
-                final isRunning =
-                    session.id == ws.activeSessionId;
+                final taskState = ws.taskStatuses[session.id];
+                final isRunning = session.isRunning ||
+                    ws.runningSessionIds.contains(session.id) ||
+                    (taskState?.isActive ?? false);
+                final statusText = taskState?.status == 'stopping'
+                    ? '停止中'
+                    : taskState?.isWaitingForUser == true
+                        ? '等待中'
+                        : '运行中';
                 return InkWell(
                   onTap: () => widget.onSessionTap(session.id),
                   borderRadius: BorderRadius.circular(6),
@@ -187,7 +194,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              '运行中',
+                              statusText,
                               style: TextStyle(
                                   color: colors.success, fontSize: 10),
                             ),

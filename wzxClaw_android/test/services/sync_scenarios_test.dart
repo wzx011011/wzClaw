@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wzxclaw_android/models/chat_message.dart';
 import 'package:wzxclaw_android/models/connection_state.dart';
 import 'package:wzxclaw_android/models/ws_message.dart';
 
@@ -121,8 +122,11 @@ void main() {
       await h.settle();
 
       // 手机视图应仍在 s1
-      expect(h.chatStore.currentSessionId, 's1',
-          reason: '用户手动浏览的会话不应被桌面 desktop:agent:started 抢占',);
+      expect(
+        h.chatStore.currentSessionId,
+        's1',
+        reason: '用户手动浏览的会话不应被桌面 desktop:agent:started 抢占',
+      );
     });
   });
 
@@ -144,8 +148,11 @@ void main() {
       });
       await h.settle();
 
-      expect(h.chatStore.currentSessionId, 's2',
-          reason: '系统自动状态下应跟随桌面切换',);
+      expect(
+        h.chatStore.currentSessionId,
+        's2',
+        reason: '系统自动状态下应跟随桌面切换',
+      );
       expect(h.sessionSync.activeSessionId, 's2');
     });
   });
@@ -170,8 +177,11 @@ void main() {
       await h.settle();
 
       final msgsAfterDone = h.chatStore.messages.length;
-      expect(msgsAfterDone, greaterThan(0),
-          reason: '流式完成后应至少有一条 assistant 消息',);
+      expect(
+        msgsAfterDone,
+        greaterThan(0),
+        reason: '流式完成后应至少有一条 assistant 消息',
+      );
 
       // 模拟一个迟到的 list:response：messageCount=0（即桌面尚未持久化新消息）
       h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
@@ -192,8 +202,11 @@ void main() {
       await h.settle();
 
       // 刚 done 的 chatStore 消息不应被冲掉
-      expect(h.chatStore.messages.length, msgsAfterDone,
-          reason: 'agent:done 后到达的过期 list:response 不应覆盖正在显示的消息',);
+      expect(
+        h.chatStore.messages.length,
+        msgsAfterDone,
+        reason: 'agent:done 后到达的过期 list:response 不应覆盖正在显示的消息',
+      );
     });
   });
 
@@ -213,8 +226,11 @@ void main() {
           .where((m) => m.message.event == WsEvents.sessionLoadRequest)
           .where((m) => m.message.data['sessionId'] == 's1')
           .toList();
-      expect(loadReqs, isNotEmpty,
-          reason: '收到 agent:running 应主动重新拉取该会话历史',);
+      expect(
+        loadReqs,
+        isNotEmpty,
+        reason: '收到 agent:running 应主动重新拉取该会话历史',
+      );
     });
   });
 
@@ -222,46 +238,54 @@ void main() {
     // Phase 4 架构：_isLoading inflight dedup 防止同一时刻有两个并发请求。
     // 过期响应场景现在通过 clearLocalCache（强制重置 _isLoading + 发出新请求）产生：
     // r1 inflight → clearLocalCache → r2 inflight（r1 失效）→ r1 响应到达 → 拒绝。
-    test('clearLocalCache 后旧 requestId 的响应不应切 chatStore', () async {
-      final h = SyncTestHarness.fresh();
-      addTearDown(h.dispose);
-      await h.settle();
+    test(
+      'clearLocalCache 后旧 requestId 的响应不应切 chatStore',
+      () async {
+        final h = SyncTestHarness.fresh();
+        addTearDown(h.dispose);
+        await h.settle();
 
-      // 第一次 fetch：发出 r1
-      h.sessionSync.fetchSessions();
-      await h.settle();
-      final firstReqId = h.transport.sentMessages
-          .firstWhere(
-              (m) => m.message.event == WsEvents.sessionListRequest,)
-          .message
-          .data['requestId'] as String;
+        // 第一次 fetch：发出 r1
+        h.sessionSync.fetchSessions();
+        await h.settle();
+        final firstReqId = h.transport.sentMessages
+            .firstWhere(
+              (m) => m.message.event == WsEvents.sessionListRequest,
+            )
+            .message
+            .data['requestId'] as String;
 
-      // clearLocalCache：强制重置 _isLoading，发出 r2，r1 变为过期
-      unawaited(h.sessionSync.clearLocalCache());
-      await h.settle();
+        // clearLocalCache：强制重置 _isLoading，发出 r2，r1 变为过期
+        unawaited(h.sessionSync.clearLocalCache());
+        await h.settle();
 
-      // 让旧 requestId r1 的响应迟到送达（r1 != _currentListRequestId=r2）
-      h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
-        'requestId': firstReqId,
-        'workspacePath': '/ws',
-        'workspaceName': 'ws',
-        'activeSessionId': 's-old',
-        'sessions': [
-          {
-            'id': 's-old',
-            'title': 'OLD',
-            'createdAt': 0,
-            'updatedAt': 0,
-            'messageCount': 0,
-          },
-        ],
-      });
-      await h.settle();
+        // 让旧 requestId r1 的响应迟到送达（r1 != _currentListRequestId=r2）
+        h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
+          'requestId': firstReqId,
+          'workspacePath': '/ws',
+          'workspaceName': 'ws',
+          'activeSessionId': 's-old',
+          'sessions': [
+            {
+              'id': 's-old',
+              'title': 'OLD',
+              'createdAt': 0,
+              'updatedAt': 0,
+              'messageCount': 0,
+            },
+          ],
+        });
+        await h.settle();
 
-      // 旧 requestId 响应应被 _currentListRequestId 校验拒绝，不切 chatStore
-      expect(h.chatStore.currentSessionId, isNull,
-          reason: '旧 requestId 的响应不应擅自把 chatStore 切到 s-old',);
-    }, timeout: const Timeout(Duration(seconds: 10)),);
+        // 旧 requestId 响应应被 _currentListRequestId 校验拒绝，不切 chatStore
+        expect(
+          h.chatStore.currentSessionId,
+          isNull,
+          reason: '旧 requestId 的响应不应擅自把 chatStore 切到 s-old',
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
   });
 
   group('S7: 桌面创建新会话推送 → 列表更新但 chatStore 视图不变', () {
@@ -281,12 +305,18 @@ void main() {
       // 手机会请求新的会话列表
       final listReqs = h.transport.sentMessages
           .where((m) => m.message.event == WsEvents.sessionListRequest);
-      expect(listReqs, isNotEmpty,
-          reason: 'session:changed 应触发 fetchSessions',);
+      expect(
+        listReqs,
+        isNotEmpty,
+        reason: 'session:changed 应触发 fetchSessions',
+      );
 
       // 但 chatStore 仍在 s1
-      expect(h.chatStore.currentSessionId, 's1',
-          reason: 'session:changed 不应擅自切走当前会话',);
+      expect(
+        h.chatStore.currentSessionId,
+        's1',
+        reason: 'session:changed 不应擅自切走当前会话',
+      );
     });
   });
 
@@ -309,8 +339,11 @@ void main() {
           .where((m) => m.message.event == WsEvents.sessionListRequest)
           .length;
 
-      expect(secondCount, firstCount,
-          reason: '第二次 fetch 应被 inflight dedup 逻辑拦截',);
+      expect(
+        secondCount,
+        firstCount,
+        reason: '第二次 fetch 应被 inflight dedup 逻辑拦截',
+      );
     });
   });
 
@@ -364,10 +397,12 @@ void main() {
       await h.settle();
 
       expect(h.sessionSync.workspaceInfo?.workspacePath, '/ws');
-      expect(h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']));
+      expect(
+          h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']));
 
       // 拉取并进入 s1
-      final s1Future = h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
+      final s1Future =
+          h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
       final s1ReqId = h.transport.sentMessages
           .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
           .message
@@ -391,10 +426,12 @@ void main() {
       h.chatStore.loadFetchedMessages('s1', s1Msgs);
       await h.settle();
       expect(h.chatStore.currentSessionId, 's1');
-      expect(h.chatStore.messages.map((m) => m.content).join('\n'), contains('from-s1'));
+      expect(h.chatStore.messages.map((m) => m.content).join('\n'),
+          contains('from-s1'));
 
       // 切到 s2，确保展示内容来自 s2，不残留 s1
-      final s2Future = h.sessionSync.loadAllSessionMessages('s2', forceRefresh: true);
+      final s2Future =
+          h.sessionSync.loadAllSessionMessages('s2', forceRefresh: true);
       final s2ReqId = h.transport.sentMessages
           .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
           .message
@@ -423,7 +460,8 @@ void main() {
       expect(s2Content, isNot(contains('from-s1')));
 
       // 再切回 s1，确认 s1 内容可恢复
-      final s1AgainFuture = h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
+      final s1AgainFuture =
+          h.sessionSync.loadAllSessionMessages('s1', forceRefresh: true);
       final s1AgainReqId = h.transport.sentMessages
           .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
           .message
@@ -450,6 +488,255 @@ void main() {
       final s1Content = h.chatStore.messages.map((m) => m.content).join('\n');
       expect(s1Content, contains('from-s1'));
       expect(s1Content, isNot(contains('from-s2')));
+    });
+  });
+
+  group('S10: 桌面历史里的系统注入消息不在手机端显示', () {
+    test('session:load:response 过滤 <system-reminder> 与旧 [System] 消息', () async {
+      final h = SyncTestHarness.fresh();
+      addTearDown(h.dispose);
+      await h.settle();
+
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      final loadFuture = h.sessionSync.loadAllSessionMessages(
+        's1',
+        forceRefresh: true,
+      );
+      final requestId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': requestId,
+        'sessionId': 's1',
+        'messages': [
+          {
+            'role': 'user',
+            'content': '<system-reminder>\nchanged files\n</system-reminder>',
+            'timestamp': 1000,
+          },
+          {
+            'role': 'user',
+            'content': '[System] 你已连续 6 轮只读不写。',
+            'timestamp': 1001,
+          },
+          {
+            'role': 'assistant',
+            'content': 'visible assistant',
+            'timestamp': 1002,
+          },
+        ],
+        'total': 3,
+        'offset': 0,
+        'hasMore': false,
+      });
+
+      final messages = await loadFuture;
+      h.chatStore.loadFetchedMessages('s1', messages);
+      await h.settle();
+
+      final content = h.chatStore.messages.map((m) => m.content).join('\n');
+      expect(content, contains('visible assistant'));
+      expect(content, isNot(contains('<system-reminder>')));
+      expect(content, isNot(contains('[System]')));
+    });
+  });
+
+  group('S11: 桌面隐藏工具详情后，手机历史刷新不显示旧工具缓存', () {
+    test('forceRefresh 会用桌面返回的可见历史替换本地旧 tool 行', () async {
+      final h = SyncTestHarness.fresh();
+      addTearDown(h.dispose);
+      await h.settle();
+
+      await h.db.insertSessionMessage(
+        's1',
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: 'old assistant',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+        ),
+      );
+      await h.db.insertSessionMessage(
+        's1',
+        ChatMessage(
+          role: MessageRole.tool,
+          content: 'old tool result',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(1001),
+        ),
+      );
+
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      await h.settle();
+
+      final loadFuture = h.sessionSync.loadAllSessionMessages(
+        's1',
+        forceRefresh: true,
+      );
+      final requestId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': requestId,
+        'sessionId': 's1',
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'visible assistant',
+            'timestamp': 2000,
+          },
+        ],
+        'total': 1,
+        'offset': 0,
+        'hasMore': false,
+      });
+
+      final messages = await loadFuture;
+      h.chatStore.loadFetchedMessages('s1', messages);
+      await h.settle();
+
+      final visibleContent =
+          h.chatStore.messages.map((m) => m.content).join('\n');
+      expect(visibleContent, contains('visible assistant'));
+      expect(visibleContent, isNot(contains('old tool result')));
+
+      final cached = await h.db.getSessionMessages('s1');
+      expect(cached.map((m) => m.role), everyElement(MessageRole.assistant));
+      expect(cached.map((m) => m.content).join('\n'),
+          isNot(contains('old tool result')));
+    });
+  });
+
+  group('S12: 从非活动会话切到正在运行的活动会话', () {
+    test('未完成 assistant 尚未持久化时，手机仍恢复流式内容', () async {
+      final h = SyncTestHarness.fresh();
+      addTearDown(h.dispose);
+      await h.settle();
+
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      await h.settle();
+
+      h.transport.pumpFromDesktop(WsEvents.desktopAgentStarted, {
+        'sessionId': 's2',
+      });
+      h.transport.pumpFromDesktop(WsEvents.agentText, {
+        'sessionId': 's2',
+        'content': 'running answer',
+      });
+      await h.settle();
+
+      expect(
+        h.chatStore.messages.map((m) => m.content).join('\n'),
+        isNot(contains('running answer')),
+        reason: '手机停留在 s1 时不应把 s2 的流式内容串到当前视图',
+      );
+
+      await h.chatStore.switchToSession('s2', userInitiated: true);
+      await h.settle();
+
+      final loadFuture = h.sessionSync.loadAllSessionMessages(
+        's2',
+        forceRefresh: true,
+      );
+      final requestId = h.transport.sentMessages
+          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
+          .message
+          .data['requestId'] as String;
+
+      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
+        'requestId': requestId,
+        'sessionId': 's2',
+        'messages': <Map<String, dynamic>>[],
+        'total': 0,
+        'offset': 0,
+        'hasMore': false,
+      });
+
+      final messages = await loadFuture;
+      h.chatStore.loadFetchedMessages('s2', messages);
+      await h.settle();
+
+      expect(h.chatStore.currentSessionId, 's2');
+      expect(h.chatStore.isStreaming, isTrue);
+      expect(
+        h.chatStore.displayMessages.map((m) => m.content).join('\n'),
+        contains('running answer'),
+        reason: '桌面未 done 前历史为空，手机也应显示已收到的 live buffer',
+      );
+    });
+  });
+
+  group('S13: 桌面权威任务状态驱动会话列表与终态刷新', () {
+    test('taskStatuses 快照标记运行态，session:task_status 终态触发当前会话 force refresh', () async {
+      final h = SyncTestHarness.fresh();
+      addTearDown(h.dispose);
+      await h.settle();
+
+      h.sessionSync.fetchSessions();
+      await h.settle();
+      final requestId = h.transport.sentMessages
+          .firstWhere((m) => m.message.event == WsEvents.sessionListRequest)
+          .message
+          .data['requestId'] as String;
+
+      h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
+        'requestId': requestId,
+        'workspacePath': '/ws',
+        'workspaceName': 'ws',
+        'activeSessionId': 's1',
+        'taskStatuses': {
+          's1': {
+            'sessionId': 's1',
+            'runId': 'r1',
+            'status': 'running',
+            'phase': 'streaming',
+            'message': 'AI 正在生成',
+            'startedAt': 1000,
+            'updatedAt': 1000,
+          },
+        },
+        'sessions': [
+          {
+            'id': 's1',
+            'title': 'S1',
+            'createdAt': 1,
+            'updatedAt': 1,
+            'messageCount': 1,
+          },
+        ],
+      });
+      await h.settle();
+
+      expect(h.sessionSync.sessions.single.isRunning, isTrue);
+      expect(h.sessionSync.sessions.single.taskState?.status, 'running');
+
+      await h.chatStore.switchToSession('s1', userInitiated: true);
+      h.transport.clearSent();
+      h.transport.pumpFromDesktop(WsEvents.sessionTaskStatus, {
+        'sessionId': 's1',
+        'runId': 'r1',
+        'status': 'completed',
+        'phase': 'completed',
+        'message': '任务已完成',
+        'startedAt': 1000,
+        'updatedAt': 2000,
+        'completedAt': 2000,
+        'persistedMessageCount': 2,
+      });
+      await h.settle();
+
+      expect(h.sessionSync.sessions.single.isRunning, isFalse);
+      expect(h.sessionSync.sessions.single.taskState?.status, 'completed');
+      expect(
+        h.transport.sentMessages.any(
+          (m) => m.message.event == WsEvents.sessionLoadRequest &&
+              m.message.data['sessionId'] == 's1',
+        ),
+        isTrue,
+        reason: '当前会话收到终态后应重新拉取桌面已持久化历史',
+      );
     });
   });
 }

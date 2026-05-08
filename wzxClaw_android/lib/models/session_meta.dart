@@ -1,3 +1,5 @@
+import 'session_task_state.dart';
+
 /// Session metadata synced from the desktop wzxClaw IDE.
 class SessionMeta {
   final String id;
@@ -9,6 +11,7 @@ class SessionMeta {
   final int messageCount;
   final bool isSynced; // true if messages have been pulled from desktop
   final bool isRunning; // true if desktop is currently processing this session
+  final SessionTaskState? taskState;
 
   const SessionMeta({
     required this.id,
@@ -20,6 +23,7 @@ class SessionMeta {
     required this.messageCount,
     this.isSynced = false,
     this.isRunning = false,
+    this.taskState,
   });
 
   factory SessionMeta.fromDesktopJson(
@@ -35,6 +39,10 @@ class SessionMeta {
       createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
       updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
       messageCount: (json['messageCount'] as num?)?.toInt() ?? 0,
+      isRunning: json['isRunning'] as bool? ?? false,
+      taskState: json['taskStatus'] is Map
+          ? SessionTaskState.fromJson(Map<String, dynamic>.from(json['taskStatus'] as Map))
+          : null,
     );
   }
 
@@ -71,6 +79,7 @@ class SessionMeta {
     int? messageCount,
     bool? isSynced,
     bool? isRunning,
+    SessionTaskState? taskState,
   }) {
     return SessionMeta(
       id: id,
@@ -82,6 +91,7 @@ class SessionMeta {
       messageCount: messageCount ?? this.messageCount,
       isSynced: isSynced ?? this.isSynced,
       isRunning: isRunning ?? this.isRunning,
+      taskState: taskState ?? this.taskState,
     );
   }
 }
