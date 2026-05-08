@@ -1,5 +1,5 @@
 // ============================================================
-// L4 E2E Scenarios S17, S18, S21, S22, S23
+// L4 E2E Scenarios S17, S18, S21, S22, S23, S24
 // ============================================================
 // S17  Relay offline queue (desktop→mobile direction):
 //      Mobile disconnects → desktop streams response (queued in relay)
@@ -9,6 +9,9 @@
 // S21  session:delete via protocol event (not direct Store call)
 // S22  session:list consistency — after N sends, list reflects all sessions
 // S23  Same-session high concurrency — 10 sequential sends, no dup/loss
+// S24  Two sessions running concurrently with mid-flight switch:
+//      A starts (slow tool, 300 ms), user switches to B (sends + gets reply),
+//      then waits for A to finish. Both JSOLNs must be clean, no cross-leakage.
 // ============================================================
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
@@ -24,7 +27,7 @@ import { SessionStore } from '../../../persistence/session-store'
 
 const TOKEN = 'e2e-test-token-final'
 
-describe('E2E final scenarios (S17-S23)', () => {
+describe('E2E final scenarios (S17-S24)', () => {
   let relay: RelayHandle
   let userDataDir: string
   let workspaceRoot: string
@@ -294,4 +297,94 @@ describe('E2E final scenarios (S17-S23)', () => {
       await desktop.close()
     }
   }, 60000)
+
+  // ----------------------------------------------------------------
+  // S24: Two sessions running concurrently with mid-flight switch
+  //
+  // Reproduces the real user flow:
+  //   1. Mobile sends to session A (slow tool, 300 ms delay — still in-flight)
+  //   2. Without waiting for A to finish, mobile sends to session B
+  //   3. Mobile waits for B to complete
+  //   4. Mobile then waits for A to complete
+  //   5. Both JSOLNs: no duplicates, no cross-contamination, correct ordering
+  //
+  // This is the gap not covered by S11 (sequential) or S15 (fire-and-forget all).
+  // ----------------------------------------------------------------
+  it('S24: two sessions run concurrently while user switches between them — both JSOLNs stay clean', async () => {
+    const desktop = new DesktopFixture({
+      url: relay.url, token: TOKEN, workspaceRoot,
+      script: ({ sessionId, userMessage }) => {
+        if (sessionId === 's24-A') {
+          // Session A: slow — one tool call with 300 ms delay, then reply text
+          return {
+            turns: [
+              { tools: [{ toolCallId: 'a-tool', toolName: 'SlowTool', output: 'a-tool-out', delayMs: 300 }] },
+              { text: `A-reply:${userMessage}` },
+            ],
+          }
+        }
+        // Session B: fast — instant text reply
+        return { turns: [{ text: `B-reply:${userMessage}` }] }
+      },
+    })
+    await desktop.connect()
+    const mobile = new MobileClient({ url: relay.url, token: TOKEN })
+    await mobile.connect()
+
+    const A = 's24-A'
+    const B = 's24-B'
+
+    try {
+      // Step 1: Send to A — it will block for 300 ms on the tool delay
+      const aTool = mobile.waitForEvent<{ sessionId?: string }>('stream:agent:tool_call', 3000)
+      await mobile.sendUserMessage({ sessionId: A, content: 'question-A', timestamp: 100 })
+      // Wait until A's tool call has started (proves A is mid-flight)
+      const aToolData = await aTool
+      expect(aToolData.sessionId).toBe(A)
+
+      // Step 2: Without waiting for A, switch to B and send a message
+      await mobile.sendUserMessage({ sessionId: B, content: 'question-B', timestamp: 200 })
+
+      // Step 3: Wait for B to complete first (it's fast)
+      await mobile.waitForDone(B, 5000)
+
+      // Step 4: Wait for A to complete (tool delay still pending or just finished)
+      await mobile.waitForDone(A, 5000)
+
+      // Settle any pending async writes
+      await new Promise((r) => setTimeout(r, 100))
+
+      // ── Assertions ──────────────────────────────────────────
+      const store = new SessionStore(workspaceRoot)
+
+      // Session A: exactly one user message, two turns (tool + text), no duplicates
+      const jsonlA = await store.loadSession(A)
+      assertNoJsonlDuplicates(jsonlA)
+      const userA = jsonlA.filter((m) => m.role === 'user').map((m) => m.content)
+      const asstA = jsonlA.filter((m) => m.role === 'assistant' && m.content).map((m) => m.content)
+      expect(userA).toEqual(['question-A'])
+      expect(asstA).toContain('A-reply:question-A')
+      // No B content leaked into A
+      expect(jsonlA.find((m) => String(m.content ?? '').includes('B'))).toBeUndefined()
+
+      // Session B: exactly one user message, one assistant reply, no duplicates
+      const jsonlB = await store.loadSession(B)
+      assertNoJsonlDuplicates(jsonlB)
+      const userB = jsonlB.filter((m) => m.role === 'user').map((m) => m.content)
+      const asstB = jsonlB.filter((m) => m.role === 'assistant' && m.content).map((m) => m.content)
+      expect(userB).toEqual(['question-B'])
+      expect(asstB).toEqual(['B-reply:question-B'])
+      // No A content leaked into B
+      expect(jsonlB.find((m) => String(m.content ?? '').includes('A-reply'))).toBeUndefined()
+
+      // Mobile chat store also stays isolated
+      const mobileA = mobile.chatStore.get(A)
+      const mobileB = mobile.chatStore.get(B)
+      expect(mobileA.find((m) => m.content.includes('B-reply'))).toBeUndefined()
+      expect(mobileB.find((m) => m.content.includes('A-reply'))).toBeUndefined()
+    } finally {
+      await mobile.close()
+      await desktop.close()
+    }
+  }, 30000)
 })
