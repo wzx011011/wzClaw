@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// 测试 ToolCard 的 accordion 动画和 shimmer 状态徽标
-// 仅覆盖本次改动引入的两处变化：
-//   1. .tool-status-text span 包裹状态标签
-//   2. .tool-card-body 始终渲染（CSS 控制展开/折叠）
+// 测试 ToolCard 的 accordion 动画和状态指示器
+// 覆盖以下变化：
+//   1. .tool-status-dot icon-only 状态点（替代旧的 .tool-status-text badge）
+//   2. .tool-card-verb 动词标签（替代旧的 .tool-card-name）
+//   3. .tool-card-body 始终渲染（CSS 控制展开/折叠）
 import { describe, it, expect, vi } from 'vitest'
 import { render, act } from '@testing-library/react'
 import '@testing-library/jest-dom'
@@ -52,35 +53,35 @@ function makeToolCall(
 }
 
 // ============================================================
-// 1. .tool-status-text span
+// 1. .tool-status-dot icon-only 状态点（新设计，对标手机端）
 // ============================================================
-describe('ToolCard — status text span', () => {
-  it('completed 状态：.tool-status-text 存在', () => {
+describe('ToolCard — status dot (icon-only)', () => {
+  it('completed 状态：.tool-status-dot 存在', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall()} />)
-    expect(container.querySelector('.tool-status-text')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot')).toBeInTheDocument()
   })
 
-  it('running 状态：.tool-status-text 存在', () => {
+  it('running 状态：.tool-status-dot 存在', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'running' })} />)
-    expect(container.querySelector('.tool-status-text')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot')).toBeInTheDocument()
   })
 
-  it('error 状态：.tool-status-text 存在', () => {
+  it('error 状态：.tool-status-dot 存在', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'error' })} />)
-    expect(container.querySelector('.tool-status-text')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot')).toBeInTheDocument()
   })
 
-  it('.tool-status-text 内含状态文字（来自翻译 key 末段）', () => {
+  it('.tool-card-verb 内含动词（completed 默认 "Read"）', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall()} />)
-    const span = container.querySelector('.tool-status-text')
-    // useT mock 返回 key 末段 → 'completed'
-    expect(span?.textContent).toBe('completed')
+    const verb = container.querySelector('.tool-card-verb')
+    // Read completed → "Read"
+    expect(verb?.textContent).toBe('Read')
   })
 
-  it('running 时 .tool-status-text 文字为 "running"', () => {
+  it('running 时 .tool-card-verb 文字为 "Reading"', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'running' })} />)
-    const span = container.querySelector('.tool-status-text')
-    expect(span?.textContent).toBe('running')
+    const verb = container.querySelector('.tool-card-verb')
+    expect(verb?.textContent).toBe('Reading')
   })
 })
 
@@ -154,21 +155,21 @@ describe('ToolCard — accordion expanded class', () => {
 })
 
 // ============================================================
-// 4. .tool-status badge class 随状态正确切换
+// 4. .tool-status-dot 随状态切换 class（icon-only 点）
 // ============================================================
-describe('ToolCard — status badge class', () => {
-  it('running 时 badge 包含 tool-status-running', () => {
+describe('ToolCard — status dot class', () => {
+  it('running 时 dot 包含 tool-status-dot-running', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'running' })} />)
-    expect(container.querySelector('.tool-status-running')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot-running')).toBeInTheDocument()
   })
 
-  it('completed 时 badge 包含 tool-status-completed', () => {
+  it('completed 时 dot 包含 tool-status-dot-completed', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'completed' })} />)
-    expect(container.querySelector('.tool-status-completed')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot-completed')).toBeInTheDocument()
   })
 
-  it('error 时 badge 包含 tool-status-error', () => {
+  it('error 时 dot 包含 tool-status-dot-error', () => {
     const { container } = render(<ToolCard toolCall={makeToolCall({ status: 'error' })} />)
-    expect(container.querySelector('.tool-status-error')).toBeInTheDocument()
+    expect(container.querySelector('.tool-status-dot-error')).toBeInTheDocument()
   })
 })

@@ -34,9 +34,9 @@ function tc(
 // 1. 竖线 (rail) 阈值
 // ============================================================
 describe('ToolCallGroup — rail threshold', () => {
-  it('1 个工具：无竖线', () => {
+  it('1 个工具：有竖线（≥1 即显示，对标手机端）', () => {
     const { container } = render(<ToolCallGroup toolCalls={[tc()]} />)
-    expect(container.querySelector('.tool-call-group-rail')).not.toBeInTheDocument()
+    expect(container.querySelector('.tool-call-group-rail')).toBeInTheDocument()
   })
 
   it('2 个工具：有竖线', () => {

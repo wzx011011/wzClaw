@@ -634,10 +634,8 @@
    ============================================================ */
 
 .tool-card {
-  margin: 8px 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-primary);
+  margin: 2px 0;
+  border-radius: 4px;
   overflow: hidden;
   contain: layout style;
 }
@@ -646,10 +644,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 4px 4px;
   cursor: pointer;
   user-select: none;
   transition: background 0.1s;
+  border-radius: 4px;
 }
 
 .tool-card-header:hover {
@@ -707,62 +706,37 @@
 .tool-card-header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
-.tool-card-name {
-  font-weight: 600;
+/* 工具图标 — 对标手机端工具图标 */
+.tool-card-icon {
   font-size: 12px;
-  color: var(--text-primary);
+  color: var(--text-muted);
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  line-height: 1;
 }
 
-.tool-card-path {
-  font-size: 11px;
+/* 动词标签 — "Read" / "Searched" 等 */
+.tool-card-verb {
+  font-size: 12px;
   color: var(--text-secondary);
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.tool-card-summary {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-left: 6px;
-}
-
-.tool-card-timer {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: 'Consolas', 'Courier New', monospace;
-  margin-right: 6px;
-}
-
-.tool-card-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Tool status badges */
-.tool-status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.tool-status-running {
-  color: var(--tool-running);
-  background: rgba(220, 182, 122, 0.1);
-}
-
-/* Running 状态文字 shimmer 动画（对标手机端 _ShimmerText） */
-.tool-status-running .tool-status-text {
+/* Running 状态动词 shimmer */
+.tool-card-verb-running {
   background: linear-gradient(
     90deg,
-    var(--tool-running) 0%,
-    #fff8ee 50%,
-    var(--tool-running) 100%
+    var(--text-secondary) 0%,
+    var(--accent) 50%,
+    var(--text-secondary) 100%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -771,40 +745,81 @@
   animation: thinking-shimmer 1.5s linear infinite;
 }
 
-.tool-status-completed {
-  color: var(--tool-completed);
-  background: rgba(137, 209, 133, 0.1);
-}
-
-.tool-status-completed::before {
-  content: '✓';
-  margin-right: 4px;
-  font-weight: bold;
-}
-
-.tool-status-error {
-  color: var(--tool-error);
-  background: rgba(244, 135, 113, 0.1);
-}
-
-.tool-status-error::before {
-  content: '✗';
-  margin-right: 4px;
-  font-weight: bold;
-}
-
-.tool-status-icon {
+/* 输入参数 badge — 彩色小胶囊，对标手机端 _buildInputBadge */
+.tool-card-input-badge {
   display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.tool-card-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.tool-card-timer {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'Consolas', 'Courier New', monospace;
+  margin-right: 4px;
+}
+
+.tool-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 状态点 — icon-only，对标手机端 _buildStatusIcon */
+.tool-status-dot {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tool-status-dot::after {
+  content: '✓';
+  font-size: 12px;
+  color: var(--tool-completed);
+  font-weight: bold;
+}
+
+.tool-status-dot-running::after {
+  content: '';
+  display: block;
   width: 12px;
   height: 12px;
-}
-
-/* Spinning animation for running status */
-.tool-status-running .tool-status-icon {
-  border: 2px solid rgba(220, 182, 122, 0.3);
+  border: 1.5px solid rgba(220, 182, 122, 0.3);
   border-top-color: var(--tool-running);
   border-radius: 50%;
   animation: tool-spin 0.8s linear infinite;
+}
+
+.tool-status-dot-completed::after {
+  content: '✓';
+  color: var(--tool-completed);
+}
+
+.tool-status-dot-error::after {
+  content: '✕';
+  color: var(--tool-error);
 }
 
 @keyframes tool-spin {
@@ -831,6 +846,15 @@
   transition:
     max-height var(--anim-tool-expand) ease-in-out,
     opacity 120ms ease 30ms;
+}
+
+/* 展开后的详情区：加左缩进+细边框（对标手机端展开容器） */
+.tool-card-body .tool-card-details {
+  margin: 0 4px 6px 28px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 /* ============================================================

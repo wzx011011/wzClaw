@@ -97,7 +97,7 @@ function WorkflowHeader({ toolCalls, collapsed, onToggle }: WorkflowHeaderProps)
 
 export default function ToolCallGroup({ toolCalls, originalContent }: ToolCallGroupProps): JSX.Element {
   const showHeader = toolCalls.length >= 3
-  const showRail = toolCalls.length >= 2
+  const showRail = toolCalls.length >= 1  // 对标手机端：始终显示左侧竖线
 
   const allDone = toolCalls.every((tc) => tc.status !== 'running')
   const prevAllDoneRef = useRef(allDone)

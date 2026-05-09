@@ -45,6 +45,14 @@ const optimizer = {
 }
 import { LLMGateway } from './llm/gateway'
 import { registerIpcHandlers } from './ipc-handlers'
+import { HostStore } from './hosts/host-store'
+import { SshCredentials } from './hosts/ssh-credentials'
+import { SshManager } from './hosts/ssh-manager'
+import { SshExecutor } from './hosts/ssh-executor'
+import { SshMonitor } from './hosts/ssh-monitor'
+import { SshSftp } from './hosts/ssh-sftp'
+import { SshDocker } from './hosts/ssh-docker'
+import { registerHostHandlers } from './hosts/host-ipc-handlers'
 import { createDefaultTools } from './tools/tool-registry'
 import { BackgroundTaskManager } from './tasks/background-task-manager'
 import { NotificationService } from './notification/notification-service'
@@ -106,6 +114,10 @@ let permissionManager: PermissionManager | null = null
 
 // Persistent settings for embedding API configuration
 const settingsManager = new SettingsManager()
+
+// Module-level SSH service references (needed in before-quit handler)
+let sshCredentials: import('./hosts/ssh-credentials').SshCredentials | null = null
+let sshManager: import('./hosts/ssh-manager').SshManager | null = null
 
 // ── Startup diagnostics ────────────────────────────────────────────────────
 const _t0 = Date.now()
@@ -1654,6 +1666,23 @@ app.whenReady().then(async () => {
   // Initialize step manager's persistence directory
   stepManager.setWorkspaceRoot(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
+  // ── Host Management (SSH) 初始化 ──
+  const hostStore = new HostStore()
+  sshCredentials = new SshCredentials()
+  await sshCredentials.load()
+  logStartup('SSH credentials loaded')
+  sshManager = new SshManager(sshCredentials)
+  const sshExecutor = new SshExecutor(sshManager)
+  const sshMonitor = new SshMonitor(sshExecutor)
+  const sshSftp = new SshSftp(sshManager)
+  const sshDocker = new SshDocker(sshExecutor)
+  registerHostHandlers({
+    hostStore, sshManager, credentials: sshCredentials, executor: sshExecutor,
+    monitor: sshMonitor, sftp: sshSftp, docker: sshDocker,
+    getMainWindow: () => mainWindow,
+    onDataChanged: (event, data) => broadcastToMobile(event, data)
+  })
+
   // Wire IPC handlers with all components including indexing engine.
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
@@ -1781,6 +1810,8 @@ app.on('before-quit', () => {
   }
   terminalManager.dispose()
   workspaceManager.dispose()
+  // 断开所有 SSH 连接
+  sshManager?.disconnectAll()
   browserManager.close().catch(() => {})
   shutdownLangfuse().catch(() => {})
 })

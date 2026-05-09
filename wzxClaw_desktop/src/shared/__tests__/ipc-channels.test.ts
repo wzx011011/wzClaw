@@ -180,6 +180,7 @@ describe('IPC wiring alignment', () => {
     path.join(ROOT, 'src/main/permission/permission-manager.ts'),
     path.join(ROOT, 'src/main/agent/agent-loop.ts'),
     path.join(ROOT, 'src/main/agent/turn-manager.ts'),
+    path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
   ])
 
   it('every preload channel exists in IPC_CHANNELS', () => {
@@ -215,6 +216,7 @@ describe('IPC wiring alignment', () => {
     const mainSrcs = [
       path.join(ROOT, 'src/main/ipc-handlers.ts'),
       path.join(ROOT, 'src/main/index.ts'),
+      path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
     ]
     const handleChannels = new Set<string>()
     for (const f of mainSrcs) {

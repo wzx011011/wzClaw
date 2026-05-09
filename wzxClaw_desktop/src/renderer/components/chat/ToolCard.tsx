@@ -185,6 +185,104 @@ function renderSymbolNavOutput(toolName: string, output: string): JSX.Element {
 }
 
 // ============================================================
+// Action verb — 对标手机端 _actionVerb()
+// ============================================================
+
+function actionVerb(toolName: string, status: 'running' | 'completed' | 'error'): string {
+  const done = status !== 'running'
+  const map: Record<string, [string, string]> = {
+    'Bash':            ['Running', 'Ran'],
+    'Terminal':        ['Running', 'Ran'],
+    'Read':            ['Reading', 'Read'],
+    'FileRead':        ['Reading', 'Read'],
+    'Write':           ['Writing', 'Wrote'],
+    'FileWrite':       ['Writing', 'Wrote'],
+    'Edit':            ['Editing', 'Edited'],
+    'FileEdit':        ['Editing', 'Edited'],
+    'Glob':            ['Finding', 'Found'],
+    'Grep':            ['Searching', 'Searched'],
+    'WebSearch':       ['Searching', 'Searched'],
+    'WebFetch':        ['Fetching', 'Fetched'],
+    'Agent':           ['Running agent', 'Ran agent'],
+    'TodoWrite':       ['Updating todos', 'Updated todos'],
+    'GoToDefinition':  ['Navigating', 'Navigated'],
+    'FindReferences':  ['Finding refs', 'Found refs'],
+    'SearchSymbols':   ['Searching', 'Searched'],
+    'BrowserNavigate': ['Opening', 'Opened'],
+    'BrowserClick':    ['Clicking', 'Clicked'],
+    'BrowserType':     ['Typing', 'Typed'],
+    'BrowserScreenshot': ['Capturing', 'Captured'],
+    'ExitPlanMode':    ['Applying plan', 'Applied plan'],
+  }
+  const pair = map[toolName]
+  if (pair) return done ? pair[1] : pair[0]
+  return done ? `Used ${toolName}` : `Using ${toolName}`
+}
+
+// ============================================================
+// Tool icon — 对标手机端 _buildIcon()
+// ============================================================
+
+function toolIcon(toolName: string): string {
+  const icons: Record<string, string> = {
+    'Bash': '⚡', 'Terminal': '⚡',
+    'Read': '≡', 'FileRead': '≡',
+    'Write': '✎', 'FileWrite': '✎',
+    'Edit': '✎', 'FileEdit': '✎',
+    'Glob': '◫', 'Grep': '⊙',
+    'WebSearch': '⊕', 'WebFetch': '↓',
+    'Agent': '◈',
+    'BrowserNavigate': '⊡', 'BrowserClick': '⊡',
+    'BrowserType': '⊡', 'BrowserScreenshot': '⊡',
+    'GoToDefinition': '⟶', 'FindReferences': '⟶', 'SearchSymbols': '⟶',
+    'TodoWrite': '☑',
+    'ExitPlanMode': '✔',
+  }
+  return icons[toolName] ?? '⚙'
+}
+
+// ============================================================
+// Input badge display — 对标手机端 _buildInputBadge()
+// ============================================================
+
+function inputBadgeLabel(toolName: string, input: Record<string, unknown> | undefined): string | null {
+  if (!input) return null
+  const pathStr = input.path ? String(input.path) : input.filePath ? String(input.filePath) : null
+  if (pathStr) {
+    // Show only filename
+    const parts = pathStr.replace(/\\/g, '/').split('/')
+    const name = parts[parts.length - 1] ?? pathStr
+    return name.length > 40 ? name.slice(0, 37) + '...' : name
+  }
+  if (toolName === 'Bash' || toolName === 'Terminal') {
+    const cmd = input.command ? String(input.command) : null
+    if (cmd) return cmd.length > 40 ? cmd.slice(0, 37) + '...' : cmd
+  }
+  if ((toolName === 'Grep' || toolName === 'WebSearch') && input.pattern) {
+    const p = String(input.pattern)
+    return p.length > 40 ? p.slice(0, 37) + '...' : p
+  }
+  if (toolName === 'WebFetch' || toolName === 'WebSearch') {
+    const url = input.url ?? input.query
+    if (url) { const s = String(url); return s.length > 40 ? s.slice(0, 37) + '...' : s }
+  }
+  return null
+}
+
+function inputBadgeColor(filename: string): string {
+  if (filename.endsWith('.ts') || filename.endsWith('.tsx')) return '#4dd0e1'
+  if (filename.endsWith('.js') || filename.endsWith('.jsx')) return '#ffd54f'
+  if (filename.endsWith('.css') || filename.endsWith('.scss')) return '#ce93d8'
+  if (filename.endsWith('.json')) return '#a5d6a7'
+  if (filename.endsWith('.md')) return '#90caf9'
+  if (filename.endsWith('.py')) return '#81c784'
+  if (filename.endsWith('.dart')) return '#64b5f6'
+  if (filename.endsWith('.rs')) return '#ffab91'
+  if (filename.endsWith('.go')) return '#80cbc4'
+  return 'var(--text-secondary)'
+}
+
+// ============================================================
 // Result Summary — extract one-line summary from tool output
 // ============================================================
 
@@ -458,8 +556,23 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((v) => !v) } }}
       >
         <div className="tool-card-header-left">
-          <span className="tool-card-name">{name}</span>
-          {filePath && <span className="tool-card-path">{filePath}</span>}
+          <span className="tool-card-icon">{toolIcon(name)}</span>
+          <span className={`tool-card-verb${status === 'running' ? ' tool-card-verb-running' : ''}`}>
+            {actionVerb(name, status)}
+          </span>
+          {(() => {
+            const badge = inputBadgeLabel(name, input)
+            if (!badge) return null
+            const color = inputBadgeColor(badge)
+            return (
+              <span
+                className="tool-card-input-badge"
+                style={{ color, background: color.startsWith('var') ? 'rgba(120,120,120,0.12)' : `${color}1a` }}
+              >
+                {badge}
+              </span>
+            )
+          })()}
           {resultSummary && status !== 'running' && !expanded && (
             <span className="tool-card-summary">— {resultSummary}</span>
           )}
@@ -471,10 +584,7 @@ function ToolCard({ toolCall, originalContent }: ToolCardProps): JSX.Element {
           {status === 'running' && elapsed >= 1000 && (
             <span className="tool-card-timer">{formatElapsed(elapsed)}</span>
           )}
-          <span className={`tool-status tool-status-${status}`}>
-            <span className="tool-status-icon" />
-            <span className="tool-status-text">{statusLabel}</span>
-          </span>
+          <span className={`tool-status-dot tool-status-dot-${status}`} />
           <span className={`tool-card-toggle ${expanded ? 'expanded' : ''}`}>
             &#9654;
           </span>

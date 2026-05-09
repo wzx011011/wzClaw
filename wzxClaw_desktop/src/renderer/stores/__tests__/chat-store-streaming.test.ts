@@ -565,3 +565,151 @@ describe('Multi-turn streaming flow', () => {
     expect(messages[1].isStreaming).toBe(false)
   })
 })
+
+// ══════════════════════════════════════════════════════════
+// 11. 反卡顿专项 — rAF burst 保护 (anti-jank E2E)
+//
+// 验证目标：
+//   A. 100 个连续 text delta → 只排队 1 个 rAF → 只触发 1 次 setState
+//   B. 100 个 thinking delta → 独立 batch，与 text batch 互不干扰
+//   C. 会话切换发生在 rAF flush 之前 → 残留文本被丢弃（不产生幽灵消息）
+//   D. flush 之后继续来的 delta → 成功排队新 rAF（帧间连续性）
+//   E. 极高频交错（text + thinking 混发）→ 最多 2 个 rAF，分别独立 flush
+// ══════════════════════════════════════════════════════════
+
+describe('反卡顿 rAF burst 保护 (anti-jank E2E)', () => {
+  it('A: 100 个 text delta 只排队 1 个 rAF，flush 后全部累积', () => {
+    setStreamingMessage({ content: '' })
+
+    // 模拟高频 LLM token 流（100 个 token）
+    for (let i = 0; i < 100; i++) {
+      cbText!({ content: `token${i} ` })
+    }
+
+    // 关键断言：不管来多少 delta，rAF 队列始终只有 1 条（守卫生效）
+    expect(rafQueue.size).toBe(1)
+
+    flushRaf()
+
+    const { messages } = useChatStore.getState()
+    const fullText = messages[0].content
+    // 所有 100 个 token 都被正确累积
+    expect(fullText).toBe(Array.from({ length: 100 }, (_, i) => `token${i} `).join(''))
+  })
+
+  it('A2: 100 个 text delta 只触发 1 次 Zustand setState（不产生冗余重渲染）', () => {
+    setStreamingMessage({ content: '' })
+
+    let stateUpdateCount = 0
+    const unsub = useChatStore.subscribe(() => { stateUpdateCount++ })
+
+    for (let i = 0; i < 100; i++) {
+      cbText!({ content: `t${i}` })
+    }
+
+    // flush 前：还未 setState，仅有 rAF 等待
+    const countBeforeFlush = stateUpdateCount
+
+    flushRaf()
+
+    unsub()
+
+    // flush 后恰好 +1 次（100 个 delta → 1 次 setState）
+    expect(stateUpdateCount - countBeforeFlush).toBe(1)
+    expect(rafQueue.size).toBe(0)
+  })
+
+  it('B: thinking 和 text 各自独立 batch，互不干扰', () => {
+    setStreamingMessage({ content: '', thinkingContent: '' })
+
+    // 50 个 thinking delta
+    for (let i = 0; i < 50; i++) {
+      cbThinking!({ content: `th${i} ` })
+    }
+    // 50 个 text delta
+    for (let i = 0; i < 50; i++) {
+      cbText!({ content: `tx${i} ` })
+    }
+
+    // 两个 batch 各自独立：thinking rAF + text rAF = 2 个
+    expect(rafQueue.size).toBe(2)
+
+    flushRaf()
+
+    const { messages } = useChatStore.getState()
+    const msg = messages[0]
+    // thinking 和 text 分别累积，无交叉污染
+    expect(msg.thinkingContent).toBe(Array.from({ length: 50 }, (_, i) => `th${i} `).join(''))
+    expect(msg.content).toBe(Array.from({ length: 50 }, (_, i) => `tx${i} `).join(''))
+  })
+
+  it('C: 会话切换发生在 rAF flush 之前 → 残留 delta 被丢弃（不产生幽灵消息）', () => {
+    setStreamingMessage({ content: 'existing content' })
+
+    // 50 个 delta 进入 buffer，尚未 flush
+    for (let i = 0; i < 50; i++) {
+      cbText!({ content: `ghost${i}` })
+    }
+    expect(rafQueue.size).toBe(1)
+
+    // 模拟会话切换：isStreaming=false + streamingMessageId=null（chat-store 切换逻辑）
+    useChatStore.setState({ isStreaming: false, streamingMessageId: null })
+
+    // 现在 flush rAF（模拟浏览器帧到来）
+    flushRaf()
+
+    const { messages } = useChatStore.getState()
+    // 没有新消息被创建，existing message 未被污染
+    expect(messages).toHaveLength(1)
+    expect(messages[0].content).toBe('existing content')
+  })
+
+  it('D: flush 之后继续到来的 delta 能成功排队新 rAF（帧间连续性）', () => {
+    setStreamingMessage({ content: '' })
+
+    // 第一帧：发送一批 delta
+    cbText!({ content: 'frame1 ' })
+    expect(rafQueue.size).toBe(1)
+    flushRaf()
+    expect(rafQueue.size).toBe(0)
+    expect(useChatStore.getState().messages[0].content).toBe('frame1 ')
+
+    // 第二帧：再来一批 delta（确保没有被锁死）
+    for (let i = 0; i < 5; i++) {
+      cbText!({ content: `f2-${i} ` })
+    }
+    expect(rafQueue.size).toBe(1)  // 新 rAF 成功排队
+    flushRaf()
+
+    const content = useChatStore.getState().messages[0].content
+    expect(content).toBe('frame1 ' + Array.from({ length: 5 }, (_, i) => `f2-${i} `).join(''))
+  })
+
+  it('E: 极高频交错（text + thinking 同帧混发）→ 最多 2 个 rAF，分别独立 flush', () => {
+    setStreamingMessage({ content: '', thinkingContent: '' })
+
+    let stateUpdateCount = 0
+    const unsub = useChatStore.subscribe(() => { stateUpdateCount++ })
+
+    // 高频交错：每次交替发 text 和 thinking
+    for (let i = 0; i < 200; i++) {
+      if (i % 2 === 0) cbText!({ content: `t` })
+      else cbThinking!({ content: `k` })
+    }
+
+    // 无论多少 delta，最多 2 个 rAF（text 1 个 + thinking 1 个）
+    expect(rafQueue.size).toBeLessThanOrEqual(2)
+
+    const countBefore = stateUpdateCount
+    flushRaf()
+    unsub()
+
+    // 2 个 batch flush → 最多 2 次 setState
+    expect(stateUpdateCount - countBefore).toBeLessThanOrEqual(2)
+
+    const msg = useChatStore.getState().messages[0]
+    // 200 个 token，各 100 个
+    expect(msg.content).toBe('t'.repeat(100))
+    expect(msg.thinkingContent).toBe('k'.repeat(100))
+  })
+})
