@@ -195,7 +195,7 @@ const api = {
     ipcRenderer.invoke('workspace:get', request),
   createWorkspace: (request: { title: string; description?: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:create', request),
-  updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }): Promise<Workspace> =>
+  updateWorkspace: (request: { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; systemPrompt?: string } }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:update', request),
   deleteWorkspace: (request: { workspaceId: string }): Promise<void> =>
     ipcRenderer.invoke('workspace:delete', request),
@@ -203,6 +203,46 @@ const api = {
     ipcRenderer.invoke('workspace:add-project', request),
   removeWorkspaceProject: (request: { workspaceId: string; projectId: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:remove-project', request),
+
+  // Host management — SSH-based server management
+  listHosts: (request?: { includeArchived?: boolean }) =>
+    ipcRenderer.invoke('host:list', request),
+  getHost: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:get', request),
+  createHost: (request: Record<string, unknown>) =>
+    ipcRenderer.invoke('host:create', request),
+  updateHost: (request: { hostId: string; updates: Record<string, unknown> }) =>
+    ipcRenderer.invoke('host:update', request),
+  deleteHost: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:delete', request),
+  testHostConnection: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:test-connection', request),
+  execHostCommand: (request: { hostId: string; command: string; timeout?: number }) =>
+    ipcRenderer.invoke('host:exec', request),
+  getHostMonitor: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:monitor', request),
+  listHostDir: (request: { hostId: string; path: string }) =>
+    ipcRenderer.invoke('host:sftp:list', request),
+  downloadHostFile: (request: { hostId: string; remotePath: string; localPath: string }) =>
+    ipcRenderer.invoke('host:sftp:download', request),
+  uploadHostFile: (request: { hostId: string; localPath: string; remotePath: string }) =>
+    ipcRenderer.invoke('host:sftp:upload', request),
+  readHostFile: (request: { hostId: string; path: string }) =>
+    ipcRenderer.invoke('host:sftp:read', request),
+  mkdirHost: (request: { hostId: string; path: string }) =>
+    ipcRenderer.invoke('host:sftp:mkdir', request),
+  deleteHostFile: (request: { hostId: string; path: string }) =>
+    ipcRenderer.invoke('host:sftp:delete', request),
+  listHostDocker: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:docker:list', request),
+  getHostDockerLogs: (request: { hostId: string; containerId: string; tail?: number }) =>
+    ipcRenderer.invoke('host:docker:logs', request),
+  hostDockerAction: (request: { hostId: string; containerId: string; action: string }) =>
+    ipcRenderer.invoke('host:docker:action', request),
+  getHostDockerStats: (request: { hostId: string; containerId: string }) =>
+    ipcRenderer.invoke('host:docker:stats', request),
+  listHostDockerImages: (request: { hostId: string }) =>
+    ipcRenderer.invoke('host:docker:images', request),
 
   // Index
   getIndexStatus: () => ipcRenderer.invoke('index:status'),

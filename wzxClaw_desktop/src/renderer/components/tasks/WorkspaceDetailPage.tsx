@@ -18,6 +18,17 @@ export default function WorkspaceDetailPage(): JSX.Element {
   const [isAddingFolder, setIsAddingFolder] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false)
+  const [systemPromptValue, setSystemPromptValue] = useState(viewingWorkspace?.systemPrompt || '')
+  const [systemPromptSaved, setSystemPromptSaved] = useState(true)
+
+  // 同步 workspace 的 systemPrompt 到本地编辑状态
+  useEffect(() => {
+    if (viewingWorkspace) {
+      setSystemPromptValue(viewingWorkspace.systemPrompt || '')
+      setSystemPromptSaved(true)
+    }
+  }, [viewingWorkspace?.systemPrompt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load sessions when viewing a workspace
   useEffect(() => {
@@ -156,6 +167,83 @@ export default function WorkspaceDetailPage(): JSX.Element {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+
+        {/* System Prompt — 工作区级系统提示词覆盖 */}
+        <div className="workspace-detail-section">
+          <div className="workspace-detail-section-header">
+            <h2 className="workspace-detail-section-title">
+              系统提示词
+              {!viewingWorkspace.systemPrompt && (
+                <span className="workspace-detail-hint">（使用全局设置）</span>
+              )}
+            </h2>
+            <button
+              className="workspace-btn-secondary"
+              onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+            >
+              {showSystemPrompt ? '收起' : '自定义'}
+            </button>
+          </div>
+
+          {showSystemPrompt && (
+            <div className="workspace-detail-system-prompt">
+              {/* 快捷模板 */}
+              <div className="workspace-detail-prompt-templates">
+                {[
+                  { label: '通用编程', value: '' },
+                  { label: '服务器管理', value: '你是一个 Linux 服务器管理助手，通过 SSH 管理远程主机。擅长系统监控、Docker 容器管理、故障排查、性能优化。回复时使用简洁的命令和建议，必要时提供完整的命令行操作步骤。' },
+                  { label: '代码审查', value: '你是一个代码审查专家。专注于代码质量、安全漏洞、性能优化和最佳实践。审查时指出具体问题、提供修复建议，并按严重程度分类（HIGH/MEDIUM/LOW）。' },
+                  { label: '前端专家', value: '你是一个前端开发专家，精通 React、TypeScript、CSS。专注于组件设计、状态管理、性能优化和用户体验。代码风格遵循函数式组件 + Hooks 模式。' },
+                ].map(tpl => (
+                  <button
+                    key={tpl.label}
+                    className={`workspace-btn-secondary workspace-detail-template-btn${systemPromptValue === tpl.value ? ' active' : ''}`}
+                    onClick={() => {
+                      setSystemPromptValue(tpl.value)
+                      setSystemPromptSaved(false)
+                    }}
+                  >
+                    {tpl.label}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                className="workspace-detail-prompt-textarea"
+                value={systemPromptValue}
+                onChange={(e) => {
+                  setSystemPromptValue(e.target.value)
+                  setSystemPromptSaved(false)
+                }}
+                placeholder="留空则使用全局系统提示词。输入自定义提示词让 AI 在此工作区中扮演特定角色..."
+                rows={5}
+              />
+              <div className="workspace-detail-prompt-actions">
+                <button
+                  className="workspace-btn-primary"
+                  disabled={systemPromptSaved}
+                  onClick={() => {
+                    updateWorkspace(viewingWorkspace.id, { systemPrompt: systemPromptValue || undefined })
+                    setSystemPromptSaved(true)
+                  }}
+                >
+                  保存
+                </button>
+                {viewingWorkspace.systemPrompt && (
+                  <button
+                    className="workspace-btn-secondary"
+                    onClick={() => {
+                      setSystemPromptValue('')
+                      updateWorkspace(viewingWorkspace.id, { systemPrompt: undefined })
+                    }}
+                  >
+                    恢复默认
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

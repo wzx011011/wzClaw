@@ -410,7 +410,90 @@ export interface Workspace {
   createdAt: number
   updatedAt: number
   lastSessionId?: string // most recent chat session
+  systemPrompt?: string  // 工作区级系统提示词覆盖（Task 12）
   archived: boolean
+}
+
+// ============================================================
+// Host Management Types — SSH-based server management
+// ============================================================
+
+/** SSH 连接的远程主机 */
+export interface Host {
+  id: string              // uuid
+  name: string            // 显示名称
+  host: string            // IP 或域名
+  port: number            // SSH 端口，默认 22
+  username: string        // SSH 用户名
+  authType: 'password' | 'key'  // 认证方式
+  description?: string
+  tags?: string[]         // 如 ['nas', 'production']
+  status: 'online' | 'offline' | 'unknown'
+  lastConnectedAt?: number
+  createdAt: number
+  updatedAt: number
+  archived: boolean
+}
+
+/** 系统监控数据 */
+export interface HostMonitorData {
+  hostname: string
+  os: string
+  kernel: string
+  uptime: number          // 秒
+  cpu: {
+    model: string
+    cores: number
+    usagePercent: number
+  }
+  memory: {
+    totalMB: number
+    usedMB: number
+    availableMB: number
+    usagePercent: number
+  }
+  disks: Array<{
+    filesystem: string
+    mount: string
+    totalGB: number
+    usedGB: number
+    availableGB: number
+    usagePercent: number
+  }>
+  network: Array<{
+    interface: string
+    rxBytes: number
+    txBytes: number
+  }>
+  timestamp: number
+}
+
+/** Docker 容器信息 */
+export interface DockerContainer {
+  id: string
+  name: string
+  image: string
+  status: string          // Up 2 hours, Exited (0) 5 minutes ago
+  state: 'running' | 'exited' | 'paused' | 'restarting' | 'dead'
+  ports: string
+  createdAt: number
+}
+
+/** SFTP 目录条目 */
+export interface SftpEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number
+  modTime: number
+  permissions: string
+}
+
+/** SSH 命令执行事件 */
+export interface SshExecEvent {
+  type: 'stdout' | 'stderr' | 'exit'
+  data: string
+  exitCode?: number
 }
 
 /** Response type for agent:context_breakdown IPC */

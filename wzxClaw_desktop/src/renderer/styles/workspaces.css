@@ -48,6 +48,37 @@
   gap: var(--sp-2);
 }
 
+/* ── Tab Bar ── */
+
+.workspace-tab-bar {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.workspace-tab {
+  padding: 4px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.workspace-tab.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.workspace-tab:hover:not(.active) {
+  color: var(--text-primary);
+}
+
 .workspace-home-empty {
   display: flex;
   align-items: center;
@@ -823,4 +854,65 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── System Prompt Editor ── */
+
+.workspace-detail-hint {
+  font-weight: normal;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.workspace-detail-system-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspace-detail-prompt-templates {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.workspace-detail-template-btn {
+  font-size: 12px !important;
+  padding: 4px 10px !important;
+  border-radius: 4px !important;
+}
+
+.workspace-detail-template-btn.active {
+  background: var(--accent) !important;
+  color: var(--bg-primary) !important;
+}
+
+.workspace-detail-prompt-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.workspace-detail-prompt-textarea:focus {
+  border-color: var(--accent);
+}
+
+.workspace-detail-prompt-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.workspace-detail-prompt-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }

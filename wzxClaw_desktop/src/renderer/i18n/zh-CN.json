@@ -17,13 +17,11 @@
   "common.open": "打开",
   "common.send": "发送",
   "common.retry": "重试",
-
   "relativeTime.justNow": "刚刚",
   "relativeTime.minutesAgo": "{{count}} 分钟前",
   "relativeTime.hoursAgo": "{{count}} 小时前",
   "relativeTime.yesterday": "昨天",
   "relativeTime.daysAgo": "{{count}} 天前",
-
   "titleBar.backToWorkspaces": "返回工作区列表",
   "titleBar.workspace": "工作区",
   "titleBar.menu": "菜单",
@@ -34,12 +32,10 @@
   "titleBar.toggleTerminal": "显示终端 (Ctrl+`)",
   "titleBar.openBrowser": "打开浏览器",
   "titleBar.toggleRightSidebar": "切换右侧边栏 (Ctrl+Shift+B)",
-
   "activityBar.explorer": "资源管理器",
   "activityBar.sessions": "会话管理",
   "activityBar.search": "搜索",
   "activityBar.settings": "设置",
-
   "statusBar.noFolder": "未打开文件夹",
   "statusBar.terminal": "终端: {{title}}",
   "statusBar.indexing": "~ 索引中... ({{count}})",
@@ -56,23 +52,19 @@
   "statusBar.relayConnectedTooltip": "Relay 已连接，等待手机",
   "statusBar.mobileConnected": "{{identity}} 已连接",
   "statusBar.relayWaiting": "Relay 等待连接",
-
   "sidebar.openFolder": "打开文件夹",
   "sidebar.loading": "加载中...",
   "sidebar.sessionList": "会话列表",
   "sidebar.newSession": "新建会话",
-
   "welcome.subtitle": "AI Coding IDE",
   "welcome.prompt": "打开一个文件夹开始使用",
   "welcome.openFolder": "打开文件夹",
   "welcome.saveFile": "保存文件",
-
   "mobileConnect.title": "连接手机",
   "mobileConnect.generating": "正在生成二维码…",
   "mobileConnect.generateFailed": "无法生成二维码",
   "mobileConnect.hint": "请先在 Settings → Relay Token 中配置连接令牌",
   "mobileConnect.scanHint": "用 wzxClaw 手机端扫码连接",
-
   "preview.closeBrowser": "关闭浏览器",
   "preview.refresh": "刷新",
   "preview.urlPlaceholder": "输入网址…",
@@ -84,15 +76,11 @@
   "preview.newTab": "新标签页",
   "preview.newTabDesc": "输入网址或让 AI 使用浏览器工具",
   "preview.urlInputPlaceholder": "输入网址，按 Enter 导航…",
-
   "tabBar.close": "关闭",
-
   "terminalTabs.closeTerminal": "关闭终端",
   "terminalTabs.newTerminal": "新建终端 (Ctrl+Shift+`)",
-
   "ideLayout.fileEditor": "文件编辑",
   "ideLayout.browser": "浏览器",
-
   "fileExplorer.open": "打开",
   "fileExplorer.rename": "重命名",
   "fileExplorer.copyPath": "复制路径",
@@ -111,7 +99,6 @@
   "fileExplorer.newFolderTooltip": "新建文件夹",
   "fileExplorer.collapseAll": "折叠全部",
   "fileExplorer.refresh": "刷新",
-
   "settings.backToWorkspace": "返回工作区",
   "settings.nav.tools": "智能体工具",
   "settings.nav.models": "模型供应商",
@@ -122,7 +109,6 @@
   "settings.nav.agents": "子智能体",
   "settings.nav.commands": "命令",
   "settings.nav.plugins": "插件",
-
   "settings.general.title": "常规",
   "settings.general.language": "语言",
   "settings.general.languageDesc": "界面显示语言",
@@ -148,7 +134,6 @@
   "settings.general.save": "保存设置",
   "settings.general.commandsDir": "命令目录: {{path}}",
   "settings.general.skillsDir": "技能目录: {{path}}",
-
   "settings.appearance.title": "外观",
   "settings.appearance.themeMode": "主题模式",
   "settings.appearance.accentColor": "强调色",
@@ -166,7 +151,6 @@
   "settings.appearance.greenAria": "绿色强调色",
   "settings.appearance.purpleAria": "紫色强调色",
   "settings.appearance.shortcut": "外观设置...",
-
   "settings.models.title": "模型供应商",
   "settings.models.provider": "供应商",
   "settings.models.providerOpenAI": "OpenAI 兼容",
@@ -183,7 +167,6 @@
   "settings.models.hideKey": "隐藏密钥",
   "settings.models.reEnter": "重新输入",
   "settings.models.apiKeyHint": "直接输入新的 API Key 覆盖保存。已保存的密钥会脱敏显示。",
-
   "settings.tools.title": "智能体工具",
   "settings.tools.subtitle": "{{count}} 个工具已注册",
   "settings.tools.searchPlaceholder": "搜索工具名称或描述...",
@@ -191,7 +174,6 @@
   "settings.tools.writeTools": "写入工具 ({{count}})",
   "settings.tools.readOnlyTools": "只读工具 ({{count}})",
   "settings.tools.requiresApproval": "需审批",
-
   "settings.mcp.title": "MCP 服务器",
   "settings.mcp.subtitle": "{{serverCount}} 个服务器 · {{toolCount}} 个工具",
   "settings.mcp.searchPlaceholder": "搜索服务器或工具...",
@@ -203,7 +185,6 @@
   "settings.mcp.disconnected": "未连接",
   "settings.mcp.availableTools": "可用工具 ({{count}})",
   "settings.mcp.noDescription": "无描述",
-
   "settings.skills.title": "技能",
   "settings.skills.subtitle": "{{count}} 个技能已加载",
   "settings.skills.searchPlaceholder": "搜索技能名称或描述...",
@@ -211,7 +192,6 @@
   "settings.skills.noMatch": "没有找到匹配的技能。",
   "settings.skills.empty": "没有加载任何技能。",
   "settings.skills.hint": "将技能放在 <code>.wzxclaw/skills/</code> 目录下，或通过插件安装。",
-
   "settings.agents.title": "子智能体",
   "settings.agents.subtitle": "{{count}} 个智能体已加载",
   "settings.agents.searchPlaceholder": "搜索智能体...",
@@ -221,7 +201,6 @@
   "settings.agents.defaultName": "Agent (默认子智能体)",
   "settings.agents.defaultDesc": "通用子智能体工具，可以在隔离的上下文中执行多步骤任务。",
   "settings.agents.hint": "通过插件的 <code>agents/</code> 目录添加子智能体。",
-
   "settings.commands.title": "命令",
   "settings.commands.subtitle": "{{count}} 个命令已注册",
   "settings.commands.searchPlaceholder": "搜索命令名称或描述...",
@@ -229,7 +208,6 @@
   "settings.commands.noMatch": "没有找到匹配的命令。",
   "settings.commands.empty": "没有加载任何命令。",
   "settings.commands.hint": "通过插件的 <code>commands/</code> 目录或 <code>.wzxclaw/commands/</code> 添加自定义命令。",
-
   "settings.plugins.title": "插件",
   "settings.plugins.installFromUrl": "从 URL 安装",
   "settings.plugins.loading": "加载中...",
@@ -257,18 +235,14 @@
   "settings.plugins.cannotSave": "无法保存: {{error}}",
   "settings.plugins.reloaded": "插件已重新加载",
   "settings.plugins.installFailed": "安装失败: {{error}}",
-
   "errorBoundary.title": "界面出现错误",
   "errorBoundary.subtitle": "{{scope}}组件渲染时抛出异常。已阻止整页崩溃，可尝试恢复或重载窗口。",
   "errorBoundary.reset": "尝试恢复",
   "errorBoundary.reload": "重载窗口",
-
   "toast.close": "关闭提示",
-
   "commandPalette.placeholder": "输入命令...",
   "commandPalette.noMatch": "没有匹配的命令",
   "commandPalette.comingSoon": "即将推出",
-
   "workspace.title": "工作区",
   "workspace.showActive": "显示活跃",
   "workspace.showArchived": "显示归档",
@@ -283,7 +257,6 @@
   "workspace.connectPhone": "连接手机",
   "workspace.disconnect": "断开",
   "workspace.noFolder": "无绑定文件夹",
-
   "workspaceCard.justNow": "刚刚",
   "workspaceCard.minutesAgo": "{{count}} 分钟前",
   "workspaceCard.hoursAgo": "{{count}} 小时前",
@@ -292,7 +265,6 @@
   "workspaceCard.unarchive": "取消归档",
   "workspaceCard.confirmDelete": "确认删除",
   "workspaceCard.cancel": "取消",
-
   "workspaceDetail.backToList": "返回工作区列表",
   "workspaceDetail.enterWorkspace": "进入工作区",
   "workspaceDetail.rename": "重命名",
@@ -303,7 +275,6 @@
   "workspaceDetail.selecting": "选择中...",
   "workspaceDetail.noFolders": "还没有绑定文件夹。",
   "workspaceDetail.removeFolder": "移除文件夹",
-
   "createTask.title": "新建工作区",
   "createTask.projectFolder": "项目文件夹",
   "createTask.select": "选择",
@@ -311,7 +282,6 @@
   "createTask.description": "描述（可选）",
   "createTask.namePlaceholder": "输入工作区名称...",
   "createTask.descPlaceholder": "简要描述工作区用途...",
-
   "chat.thinking.phrases": "思考中...,推理中...,分析中...,评估中...",
   "chat.inputPlaceholder.continue": "描述后续调整内容",
   "chat.inputPlaceholder.new": "描述你的需求...",
@@ -344,20 +314,17 @@
   "chat.permissionModeLoadFailed": "权限模式加载失败",
   "chat.permissionModeSwitchFailed": "权限模式切换失败",
   "chat.planDecisionFailed": "计划决策提交失败",
-
   "chatMessage.thinking": "思考过程",
   "chatMessage.input": "输入:",
   "chatMessage.output": "输出:",
   "chatMessage.entries": "{{count}} 个条目",
   "chatMessage.rewindToHere": "回退到此消息",
-
   "messageList.emptyState": "向 AI 助手发送消息开始对话",
   "messageList.hint": "按 Enter 发送，Shift+Enter 换行",
   "messageList.historyBanner": "已优先渲染最近 {{visible}} 条消息（共 {{total}} 条），以节省显示空间。",
   "messageList.loadMore": "再加载 {{count}} 条",
   "messageList.expandAll": "展开全部",
   "messageList.scrollToBottom": "滚动到底部",
-
   "codeBlock.copiedToClipboard": "已复制到剪贴板",
   "codeBlock.copyCode": "复制代码",
   "codeBlock.copied": "已复制",
@@ -366,7 +333,6 @@
   "codeBlock.apply": "应用",
   "codeBlock.expandMore": "展开更多 ({{count}} 行)",
   "codeBlock.collapse": "收起",
-
   "diff.done": "完成",
   "diff.pending": "待处理",
   "diff.prevFile": "上一个文件",
@@ -381,7 +347,6 @@
   "diff.lines": "行 {{start}}-{{end}}",
   "diff.acceptChange": "接受此更改",
   "diff.rejectChange": "拒绝此更改",
-
   "toolCard.running": "运行中",
   "toolCard.completed": "完成",
   "toolCard.error": "错误",
@@ -405,7 +370,6 @@
   "toolCard.symbol": "符号",
   "toolCard.expandMore": "展开更多",
   "toolCard.collapse": "收起",
-
   "sessionList.pinned": "📌 置顶",
   "sessionList.today": "今天",
   "sessionList.yesterday": "昨天",
@@ -424,7 +388,6 @@
   "sessionList.doubleClickHint": "双击重命名，右键更多操作",
   "sessionList.running": "正在运行",
   "sessionList.messageCount": "{{count}} 条消息",
-
   "permission.title": "权限请求: {{tool}}",
   "permission.rememberSession": "本次会话记住选择",
   "permission.deny": "拒绝",
@@ -437,14 +400,12 @@
   "permission.planDesc": "所有工具都需审批",
   "permission.bypass": "自动批准",
   "permission.bypassDesc": "跳过所有权限检查",
-
   "askUserQuestion.title": "智能体提问",
   "askUserQuestion.custom": "自定义",
   "askUserQuestion.customPlaceholder": "输入自定义回复...",
   "askUserQuestion.customReply": "输入自定义回复",
   "askUserQuestion.answered": "已发送回答: {{answer}}",
   "askUserQuestion.submitFailed": "回答提交失败，请重试",
-
   "stepPanel.pending": "待处理",
   "stepPanel.inProgress": "进行中",
   "stepPanel.completed": "完成",
@@ -454,7 +415,6 @@
   "stepPanel.hint": "智能体在多步骤工作中创建的步骤将显示在这里",
   "stepPanel.blockedBy": "被阻塞: {{blockers}}",
   "stepPanel.statusLabel": "状态: {{status}}",
-
   "settingsModal.title": "设置",
   "settingsModal.provider": "提供商",
   "settingsModal.apiKey": "API 密钥",
@@ -476,12 +436,9 @@
   "settingsModal.relayConnected": "中继已连接",
   "settingsModal.connectFailed": "连接失败: {{error}}",
   "settingsModal.relayTokenHint": "用于通过中继服务器配对手机应用",
-
   "mentionPicker.addFailed": "无法添加文件: {{error}}",
   "mentionPicker.fileTooLarge": "文件过大: {{size}} (最大 {{max}})",
-
   "slashCommandPicker.source": "来源:",
-
   "cmd.file.openFolder": "打开文件夹",
   "cmd.file.save": "保存文件",
   "cmd.session.new": "新建会话",
@@ -496,12 +453,10 @@
   "cmd.category.view": "视图",
   "cmd.category.settings": "设置",
   "cmd.category.index": "索引",
-
   "slashCmd.helpTitle": "## 可用命令",
   "slashCmd.helpUsage": "用法: 输入 `/命令名` 执行命令，或输入 `/` 查看自动补全列表。",
   "slashCmd.helpSkills": "提示: 技能（如 `/init`、`/commit`）由主进程动态加载，可通过设置 → 技能管理。",
   "slashCmd.helpShortcuts": "快捷键: `Ctrl+Shift+P` 打开命令面板 | `Ctrl+B` 切换侧栏 | `Ctrl+`` ` 切换终端",
-
   "context.title": "上下文使用详情",
   "context.model": "模型",
   "context.contextWindow": "上下文窗口",
@@ -536,7 +491,6 @@
   "context.builtinTools": "内置工具",
   "context.mcpTools": "MCP 工具",
   "context.conversation": "对话历史",
-
   "context.suggestion.critical": "🔴 **上下文严重不足** — 建议立即使用 `/compact` 压缩对话或 `/clear` 开始新会话",
   "context.suggestion.high": "🟡 **上下文偏高** — 建议使用 `/compact` 压缩对话以释放空间",
   "context.suggestion.mcpHigh": "💡 MCP 工具占用 {{pct}}% — 考虑断开未使用的 MCP 服务器",
@@ -547,7 +501,6 @@
   "context.suggestion.ok": "✅ 上下文空间充裕，无需优化",
   "context.compactNow": "压缩上下文",
   "context.compacting": "压缩中...",
-
   "chatStore.autoCompacted": "自动压缩上下文: {{before}}K → {{after}}K tokens（已达 80% 阈值）",
   "chatStore.compacted": "压缩上下文: {{before}}K → {{after}}K tokens",
   "chatStore.contextRestored": "会话上下文已恢复（{{count}} 条消息）",

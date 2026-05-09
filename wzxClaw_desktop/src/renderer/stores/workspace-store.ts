@@ -98,7 +98,7 @@ interface WorkspaceStoreActions {
   // 工作区 CRUD
   loadWorkspaces: () => Promise<void>
   createWorkspace: (title: string, description?: string) => Promise<Workspace>
-  updateWorkspace: (workspaceId: string, updates: { title?: string; description?: string; archived?: boolean }) => Promise<void>
+  updateWorkspace: (workspaceId: string, updates: { title?: string; description?: string; archived?: boolean; systemPrompt?: string }) => Promise<void>
   deleteWorkspace: (workspaceId: string) => Promise<void>
   openWorkspaceDetail: (workspaceId: string) => void
   closeWorkspaceDetail: () => void

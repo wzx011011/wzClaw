@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { FileTreeNode, SessionMeta, AgentStep, Workspace, SessionTaskState, ThemeMode, AccentColor } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace, SessionTaskState, ThemeMode, AccentColor, Host, HostMonitorData, DockerContainer, SftpEntry, SshExecEvent } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -200,6 +200,27 @@ export const IPC_CHANNELS = {
   'plugin:get-user-config': 'plugin:get-user-config',
   'plugin:set-user-config': 'plugin:set-user-config',
   'plugin:search_marketplace': 'plugin:search_marketplace',
+
+  // Host management channels (renderer -> main)
+  'host:list': 'host:list',
+  'host:get': 'host:get',
+  'host:create': 'host:create',
+  'host:update': 'host:update',
+  'host:delete': 'host:delete',
+  'host:test-connection': 'host:test-connection',
+  'host:exec': 'host:exec',
+  'host:monitor': 'host:monitor',
+  'host:sftp:list': 'host:sftp:list',
+  'host:sftp:download': 'host:sftp:download',
+  'host:sftp:upload': 'host:sftp:upload',
+  'host:sftp:read': 'host:sftp:read',
+  'host:sftp:mkdir': 'host:sftp:mkdir',
+  'host:sftp:delete': 'host:sftp:delete',
+  'host:docker:list': 'host:docker:list',
+  'host:docker:logs': 'host:docker:logs',
+  'host:docker:action': 'host:docker:action',
+  'host:docker:stats': 'host:docker:stats',
+  'host:docker:images': 'host:docker:images',
 } as const
 
 export type IpcChannelName = keyof typeof IPC_CHANNELS
@@ -291,7 +312,7 @@ export interface IpcRequestPayloads {
   'workspace:list': { includeArchived?: boolean }
   'workspace:get': { workspaceId: string }
   'workspace:create': { title: string; description?: string }
-  'workspace:update': { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string } }
+  'workspace:update': { workspaceId: string; updates: { title?: string; description?: string; archived?: boolean; lastSessionId?: string; systemPrompt?: string } }
   'workspace:delete': { workspaceId: string }
   'workspace:add-project': { workspaceId: string; folderPath: string }
   'workspace:remove-project': { workspaceId: string; projectId: string }
@@ -320,6 +341,27 @@ export interface IpcRequestPayloads {
   'plugin:get-user-config': { pluginName: string }
   'plugin:set-user-config': { pluginName: string; values: Record<string, unknown> }
   'plugin:search_marketplace': { query?: string }
+
+  // Host management
+  'host:list': { includeArchived?: boolean }
+  'host:get': { hostId: string }
+  'host:create': { name: string; host: string; port?: number; username: string; authType: 'password' | 'key'; password?: string; keyPath?: string; description?: string; tags?: string[] }
+  'host:update': { hostId: string; updates: Partial<Pick<Host, 'name' | 'host' | 'port' | 'username' | 'authType' | 'description' | 'tags' | 'archived'>> & { password?: string; keyPath?: string } }
+  'host:delete': { hostId: string }
+  'host:test-connection': { hostId: string }
+  'host:exec': { hostId: string; command: string; timeout?: number }
+  'host:monitor': { hostId: string }
+  'host:sftp:list': { hostId: string; path: string }
+  'host:sftp:download': { hostId: string; remotePath: string; localPath: string }
+  'host:sftp:upload': { hostId: string; localPath: string; remotePath: string }
+  'host:sftp:read': { hostId: string; path: string }
+  'host:sftp:mkdir': { hostId: string; path: string }
+  'host:sftp:delete': { hostId: string; path: string }
+  'host:docker:list': { hostId: string }
+  'host:docker:logs': { hostId: string; containerId: string; tail?: number }
+  'host:docker:action': { hostId: string; containerId: string; action: 'start' | 'stop' | 'restart' | 'remove' }
+  'host:docker:stats': { hostId: string; containerId: string }
+  'host:docker:images': { hostId: string }
 }
 export interface IpcResponsePayloads {
   'agent:send_message': void
@@ -423,6 +465,27 @@ export interface IpcResponsePayloads {
   'plugin:get-user-config': Record<string, unknown>
   'plugin:set-user-config': { success: boolean; message: string }
   'plugin:search_marketplace': import('./types-plugin').MarketplacePluginDisplay[]
+
+  // Host management
+  'host:list': Host[]
+  'host:get': Host | null
+  'host:create': Host
+  'host:update': Host
+  'host:delete': void
+  'host:test-connection': { success: boolean; error?: string; info?: { os: string; hostname: string } }
+  'host:exec': { success: boolean; exitCode: number; stdout: string; stderr: string }
+  'host:monitor': HostMonitorData
+  'host:sftp:list': SftpEntry[]
+  'host:sftp:download': { success: boolean; localPath: string }
+  'host:sftp:upload': { success: boolean; remotePath: string }
+  'host:sftp:read': { content: string; size: number; path: string } | { error: string }
+  'host:sftp:mkdir': { success: boolean }
+  'host:sftp:delete': { success: boolean }
+  'host:docker:list': DockerContainer[]
+  'host:docker:logs': { logs: string; containerId: string }
+  'host:docker:action': { success: boolean; containerId: string; action: string }
+  'host:docker:stats': { cpuPercent: number; memoryMB: number; memoryLimitMB: number; networkIO: string; blockIO: string }
+  'host:docker:images': Array<{ repository: string; tag: string; id: string; created: string; size: string }>
 }
 
 // Stream payloads (main sends to renderer via webContents.send)
@@ -462,6 +525,9 @@ export interface IpcStreamPayloads {
   'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
   'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }> }
   'insights:progress': { stage: string; current: number; total: number; message: string }
+
+  // Host SSH exec stream (main -> renderer)
+  'host:exec:stream': SshExecEvent
 }
 
 // ============================================================
@@ -589,5 +655,59 @@ export const IpcSchemas = {
       enabled: z.boolean().optional(),
       isPlaceholder: z.boolean().optional(),
     }))
+  },
+  // Host management schemas
+  'host:create': {
+    request: z.object({
+      name: z.string().min(1),
+      host: z.string().min(1),
+      port: z.number().int().min(1).max(65535).optional(),
+      username: z.string().min(1),
+      authType: z.enum(['password', 'key']),
+      password: z.string().optional(),
+      keyPath: z.string().optional(),
+      description: z.string().optional(),
+      tags: z.array(z.string()).optional()
+    }),
+    response: z.any() // Host type — complex nested, validated at runtime
+  },
+  'host:update': {
+    request: z.object({
+      hostId: z.string().min(1),
+      updates: z.record(z.unknown())
+    }),
+    response: z.any()
+  },
+  'host:exec': {
+    request: z.object({
+      hostId: z.string().min(1),
+      command: z.string().min(1),
+      timeout: z.number().int().min(1000).optional()
+    }),
+    response: z.object({
+      success: z.boolean(),
+      exitCode: z.number(),
+      stdout: z.string(),
+      stderr: z.string()
+    })
+  },
+  'host:sftp:list': {
+    request: z.object({
+      hostId: z.string().min(1),
+      path: z.string().min(1)
+    }),
+    response: z.array(z.any())
+  },
+  'host:docker:action': {
+    request: z.object({
+      hostId: z.string().min(1),
+      containerId: z.string().min(1),
+      action: z.enum(['start', 'stop', 'restart', 'remove'])
+    }),
+    response: z.object({
+      success: z.boolean(),
+      containerId: z.string(),
+      action: z.string()
+    })
   }
 } as const

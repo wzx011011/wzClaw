@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '../../stores/workspace-store'
+import { useHostStore } from '../../stores/host-store'
 import { useT } from '../../i18n/useT'
 import WorkspaceCard from './WorkspaceCard'
 import CreateWorkspaceModal from './CreateTaskModal'
 import MobileConnectModal from '../ide/MobileConnectModal'
+import HostCard from '../hosts/HostCard'
+import CreateHostModal from '../hosts/CreateHostModal'
 
 interface MobileDevice {
   deviceId: string
@@ -44,10 +47,24 @@ export default function WorkspaceHomePage(): JSX.Element {
   const [showArchived, setShowArchived] = useState(false)
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
   const [showMobileModal, setShowMobileModal] = useState(false)
+  const [activeTab, setActiveTab] = useState<'workspaces' | 'hosts'>('workspaces')
+  const [showCreateHostModal, setShowCreateHostModal] = useState(false)
+
+  // Host store
+  const hosts = useHostStore((s) => s.hosts)
+  const loadHosts = useHostStore((s) => s.loadHosts)
+  const updateHost = useHostStore((s) => s.updateHost)
+  const deleteHost = useHostStore((s) => s.deleteHost)
+  const openHostDetail = useHostStore((s) => s.openHostDetail)
+  const testConnection = useHostStore((s) => s.testConnection)
 
   useEffect(() => {
     loadWorkspaces()
   }, [loadWorkspaces])
+
+  useEffect(() => {
+    if (activeTab === 'hosts') loadHosts()
+  }, [activeTab, loadHosts])
 
   useEffect(() => {
     window.wzxclaw.getRelayStatus().then(setRelayStatus)
@@ -106,37 +123,82 @@ export default function WorkspaceHomePage(): JSX.Element {
       <div className="workspace-home-header">
         <h1 className="workspace-home-title">{t('workspace.title')}</h1>
         <div className="workspace-home-actions">
-          <button
-            className={`workspace-filter-btn${showArchived ? ' active' : ''}`}
-            onClick={() => setShowArchived(!showArchived)}
-          >
-            {showArchived ? t('workspace.showActive') : t('workspace.showArchived')}
-          </button>
-          <button className="workspace-btn-primary" onClick={() => setShowCreateModal(true)}>
-            {t('workspace.newWorkspace')}
-          </button>
+          {/* Tab 切换 */}
+          <div className="workspace-tab-bar">
+            <button
+              className={`workspace-tab${activeTab === 'workspaces' ? ' active' : ''}`}
+              onClick={() => setActiveTab('workspaces')}
+            >
+              工作区
+            </button>
+            <button
+              className={`workspace-tab${activeTab === 'hosts' ? ' active' : ''}`}
+              onClick={() => setActiveTab('hosts')}
+            >
+              主机
+            </button>
+          </div>
+          {activeTab === 'workspaces' && (
+            <>
+              <button
+                className={`workspace-filter-btn${showArchived ? ' active' : ''}`}
+                onClick={() => setShowArchived(!showArchived)}
+              >
+                {showArchived ? t('workspace.showActive') : t('workspace.showArchived')}
+              </button>
+              <button className="workspace-btn-primary" onClick={() => setShowCreateModal(true)}>
+                {t('workspace.newWorkspace')}
+              </button>
+            </>
+          )}
+          {activeTab === 'hosts' && (
+            <button className="workspace-btn-primary" onClick={() => setShowCreateHostModal(true)}>
+              + 添加主机
+            </button>
+          )}
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="workspace-home-empty">加载中...</div>
-      ) : displayWorkspaces.length === 0 ? (
-        <div className="workspace-home-empty">
-          {showArchived ? t('workspace.noArchived') : t('workspace.empty')}
-        </div>
+      {activeTab === 'workspaces' ? (
+        isLoading ? (
+          <div className="workspace-home-empty">加载中...</div>
+        ) : displayWorkspaces.length === 0 ? (
+          <div className="workspace-home-empty">
+            {showArchived ? t('workspace.noArchived') : t('workspace.empty')}
+          </div>
+        ) : (
+          <div className="workspace-grid">
+            {displayWorkspaces.map((workspace) => (
+              <WorkspaceCard
+                key={workspace.id}
+                workspace={workspace}
+                onOpen={openWorkspaceDetail}
+                onArchive={handleArchive}
+                onDelete={handleDelete}
+                onRename={handleRename}
+              />
+            ))}
+          </div>
+        )
       ) : (
-        <div className="workspace-grid">
-          {displayWorkspaces.map((workspace) => (
-            <WorkspaceCard
-              key={workspace.id}
-              workspace={workspace}
-              onOpen={openWorkspaceDetail}
-              onArchive={handleArchive}
-              onDelete={handleDelete}
-              onRename={handleRename}
-            />
-          ))}
-        </div>
+        // ── 主机列表 ──
+        hosts.length === 0 ? (
+          <div className="workspace-home-empty">
+            暂无主机，点击上方"添加主机"连接你的 NAS 或服务器
+          </div>
+        ) : (
+          <div className="workspace-grid">
+            {hosts.map((host) => (
+              <HostCard
+                key={host.id}
+                host={host}
+                onOpen={openHostDetail}
+                onTestConnection={testConnection}
+                onDelete={deleteHost}
+              />
+            ))}
+          </div>
+        )
       )}
 
       <div className="workspace-home-section">
@@ -234,6 +296,16 @@ export default function WorkspaceHomePage(): JSX.Element {
 
       {showMobileModal && (
         <MobileConnectModal onClose={() => setShowMobileModal(false)} />
+      )}
+
+      {showCreateHostModal && (
+        <CreateHostModal
+          onClose={() => setShowCreateHostModal(false)}
+          onCreated={(host) => {
+            setShowCreateHostModal(false)
+            openHostDetail(host.id)
+          }}
+        />
       )}
     </div>
   )

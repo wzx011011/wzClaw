@@ -118,7 +118,7 @@ export async function buildSystemPromptBreakdown(
     + countTokens(mergedInstructions)
     + memoryTokens + taskContextTokens
 
-  const systemPrompt = config.systemPrompt + SYSTEM_PROMPT_CACHE_BOUNDARY + dynamicParts.join('\n\n')
+  const systemPrompt = (activeWorkspace?.systemPrompt || config.systemPrompt) + SYSTEM_PROMPT_CACHE_BOUNDARY + dynamicParts.join('\n\n')
 
   return {
     systemPrompt,

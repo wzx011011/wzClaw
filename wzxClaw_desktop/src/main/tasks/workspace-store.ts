@@ -66,7 +66,7 @@ export class WorkspaceStore {
 
   async updateWorkspace(
     id: string,
-    updates: Partial<Pick<Workspace, 'title' | 'description' | 'archived' | 'lastSessionId'>>
+    updates: Partial<Pick<Workspace, 'title' | 'description' | 'archived' | 'lastSessionId' | 'systemPrompt'>>
   ): Promise<Workspace> {
     await this.load()
     const workspace = this.workspaces.get(id)
