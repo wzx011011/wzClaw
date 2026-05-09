@@ -18,7 +18,7 @@ import DiffPreview from './DiffPreview'
 import MentionPicker from './MentionPicker'
 import SlashCommandPicker from './SlashCommandPicker'
 import PermissionRequest from './PermissionRequest'
-import SettingsPage from '../settings/SettingsPage'
+import SettingsPage, { type SettingsTab } from '../settings/SettingsPage'
 import PluginManager from './PluginManager'
 import StepPanel from './StepPanel'
 import AskUserQuestion from './AskUserQuestion'
@@ -89,6 +89,7 @@ export default function ChatPanel(): JSX.Element {
   // Local UI state
   const [inputValue, setInputValue] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
   const [showPlugins, setShowPlugins] = useState(false)
   const [showMentionPicker, setShowMentionPicker] = useState(false)
   const [mentionFilter, setMentionFilter] = useState('')
@@ -245,7 +246,11 @@ export default function ChatPanel(): JSX.Element {
 
   // Listen for "Open Settings" from command palette (per CMD-01)
   useEffect(() => {
-    const handler = () => setShowSettings(true)
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ initialTab?: SettingsTab }>).detail
+      setSettingsInitialTab(detail?.initialTab)
+      setShowSettings(true)
+    }
     window.addEventListener('wzxclaw:open-settings', handler)
     return () => window.removeEventListener('wzxclaw:open-settings', handler)
   }, [])
@@ -939,7 +944,7 @@ n            style={{ display: 'none' }}
           </div>
         </div>
       </div>
-      <SettingsPage isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <SettingsPage isOpen={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsInitialTab} />
       <PluginManager isOpen={showPlugins} onClose={() => setShowPlugins(false)} />
     </div>
   )

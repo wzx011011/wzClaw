@@ -80,7 +80,7 @@
 .chat-message-user {
   align-self: flex-end;
   max-width: 85%;
-  background: var(--accent);
+  background: var(--user-bubble);
   color: #ffffff;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius-tail) var(--bubble-radius);

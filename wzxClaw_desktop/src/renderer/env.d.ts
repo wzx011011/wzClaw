@@ -1,4 +1,4 @@
-import type { FileTreeNode, SessionMeta, AgentStep, Workspace } from '../shared/types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace, ThemeMode, AccentColor } from '../shared/types'
 
 declare global {
   interface Window {
@@ -36,7 +36,7 @@ declare global {
       onPermissionRequest: (cb: (p: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => void) => () => void
       sendPermissionResponse: (response: { approved: boolean; sessionCache: boolean }) => Promise<void>
       // Settings
-      getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string; language?: string }>
+      getSettings: () => Promise<{ provider: string; model: string; hasApiKey: boolean; baseURL?: string; systemPrompt?: string; relayToken?: string; thinkingDepth?: string; language?: string; notificationSound?: boolean; notificationDesktop?: boolean; themeMode?: ThemeMode; accentColor?: AccentColor }>
       updateSettings: (request: Record<string, unknown>) => Promise<void>
       // Sessions
       listSessions: (request?: { activeWorkspaceId?: string }) => Promise<{ sessions: SessionMeta[]; runningSessionIds: string[] }>

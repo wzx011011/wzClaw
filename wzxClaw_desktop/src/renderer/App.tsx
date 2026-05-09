@@ -6,6 +6,7 @@ import Toast from './components/Toast'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useSettingsStore } from './stores/settings-store'
 import { useI18nStore } from './i18n/i18n-store'
+import { applyAppearance } from './theme/appearance'
 import './styles/ide.css'
 import './styles/chat.css'
 import './styles/workspaces.css'
@@ -23,7 +24,8 @@ function App(): JSX.Element {
   // 启动时从主进程加载已保存的设置，确保 store 不停留在默认值
   useEffect(() => {
     loadSettings().then(() => {
-      const language = useSettingsStore.getState().language
+      const { language, themeMode, accentColor } = useSettingsStore.getState()
+      applyAppearance(themeMode, accentColor)
       initLocale(language)
     })
   }, [])

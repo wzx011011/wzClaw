@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { DEFAULT_MODELS } from '../../shared/constants'
+import type { ThemeMode, AccentColor } from '../../shared/types'
 
 // ============================================================
 // Settings Store (per D-58)
@@ -18,6 +19,8 @@ interface SettingsState {
   language?: string
   notificationSound?: boolean
   notificationDesktop?: boolean
+  themeMode: ThemeMode
+  accentColor: AccentColor
   isLoading: boolean
 }
 
@@ -41,6 +44,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   language: 'zh-CN',
   notificationSound: true,
   notificationDesktop: true,
+  themeMode: 'dark',
+  accentColor: 'green',
   isLoading: false,
 
   /**
@@ -63,6 +68,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         language: settings.language ?? 'zh-CN',
         notificationSound: settings.notificationSound ?? true,
         notificationDesktop: settings.notificationDesktop ?? true,
+        themeMode: settings.themeMode ?? 'dark',
+        accentColor: settings.accentColor ?? 'green',
         isLoading: false
       })
     } catch (err) {

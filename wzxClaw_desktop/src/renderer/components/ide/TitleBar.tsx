@@ -1,14 +1,6 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
 import { useT } from '../../i18n/useT'
 
-type ThemeMode = 'midnight' | 'dark' | 'light'
-
-const THEMES: { id: ThemeMode; label: string }[] = [
-  { id: 'midnight', label: 'Midnight' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'light', label: 'Light' },
-]
-
 interface TitleBarProps {
   onOpenFolder: () => void
   onToggleTerminal: () => void
@@ -38,7 +30,6 @@ export default memo(function TitleBar({
 }: TitleBarProps): JSX.Element {
   const t = useT()
   const [menuOpen, setMenuOpen] = useState(false)
-  const [currentTheme, setCurrentTheme] = useState<ThemeMode>('midnight')
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close menu on outside click
@@ -53,22 +44,9 @@ export default memo(function TitleBar({
     return () => document.removeEventListener('mousedown', handler)
   }, [menuOpen])
 
-  const applyTheme = (theme: ThemeMode) => {
-    setCurrentTheme(theme)
+  const openAppearanceSettings = (): void => {
     setMenuOpen(false)
-    const root = document.documentElement
-    if (theme === 'midnight') {
-      root.setAttribute('data-theme', 'midnight')
-    } else if (theme === 'dark') {
-      root.setAttribute('data-theme', 'dark')
-    } else {
-      root.setAttribute('data-theme', 'light')
-    }
-    // Update native window control button colors to match theme
-    const overlayColors = theme === 'light'
-      ? { color: '#ffffff', symbolColor: '#333333' }
-      : { color: '#181818', symbolColor: '#e0e0e0' }
-    window.wzxclaw.setTitleBarOverlay?.(overlayColors)
+    window.dispatchEvent(new CustomEvent('wzxclaw:open-settings', { detail: { initialTab: 'appearance' } }))
   }
 
   return (
@@ -100,17 +78,10 @@ export default memo(function TitleBar({
               {t('titleBar.openFolder')}
             </button>
             <div className="titlebar-menu-separator" />
-            <div className="titlebar-menu-label">{t('titleBar.theme')}</div>
-            {THEMES.map((t) => (
-              <button
-                key={t.id}
-                className={`titlebar-menu-item${currentTheme === t.id ? ' selected' : ''}`}
-                onClick={() => applyTheme(t.id)}
-              >
-                {currentTheme === t.id && <span className="titlebar-menu-check">✓</span>}
-                {t.label}
-              </button>
-            ))}
+            <button className="titlebar-menu-item" onClick={openAppearanceSettings}>
+              <span className="titlebar-menu-check" aria-hidden="true"> </span>
+              {t('settings.appearance.shortcut')}
+            </button>
           </div>
         )}
       </div>

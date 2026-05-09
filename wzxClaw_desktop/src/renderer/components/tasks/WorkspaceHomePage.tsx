@@ -5,14 +5,6 @@ import WorkspaceCard from './WorkspaceCard'
 import CreateWorkspaceModal from './CreateTaskModal'
 import MobileConnectModal from '../ide/MobileConnectModal'
 
-type ThemeMode = 'midnight' | 'dark' | 'light'
-
-const THEMES: { id: ThemeMode; label: string }[] = [
-  { id: 'midnight', label: 'Midnight' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'light', label: 'Light' },
-]
-
 interface MobileDevice {
   deviceId: string
   name: string | null
@@ -52,9 +44,6 @@ export default function WorkspaceHomePage(): JSX.Element {
   const [showArchived, setShowArchived] = useState(false)
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
   const [showMobileModal, setShowMobileModal] = useState(false)
-  const [currentTheme, setCurrentTheme] = useState<ThemeMode>(
-    () => (document.documentElement.getAttribute('data-theme') as ThemeMode) || 'midnight'
-  )
 
   useEffect(() => {
     loadWorkspaces()
@@ -65,15 +54,6 @@ export default function WorkspaceHomePage(): JSX.Element {
     const unsubRelay = window.wzxclaw.onRelayStatus(setRelayStatus)
     return () => { unsubRelay() }
   }, [])
-
-  const applyTheme = (theme: ThemeMode) => {
-    setCurrentTheme(theme)
-    document.documentElement.setAttribute('data-theme', theme)
-    const overlayColors = theme === 'light'
-      ? { color: '#ffffff', symbolColor: '#333333' }
-      : { color: '#181818', symbolColor: '#e0e0e0' }
-    window.wzxclaw.setTitleBarOverlay?.(overlayColors)
-  }
 
   const activeWorkspaces = tasks.filter((t) => !t.archived)
   const archivedWorkspaces = tasks.filter((t) => t.archived)
@@ -162,17 +142,6 @@ export default function WorkspaceHomePage(): JSX.Element {
       <div className="workspace-home-section">
         <div className="workspace-home-section-header">
           <span className="workspace-home-section-title">{t('workspace.connectionStatus')}</span>
-          <div className="theme-selector">
-            {THEMES.map((t) => (
-              <button
-                key={t.id}
-                className={`theme-btn${currentTheme === t.id ? ' active' : ''}`}
-                onClick={() => applyTheme(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="connection-panel">

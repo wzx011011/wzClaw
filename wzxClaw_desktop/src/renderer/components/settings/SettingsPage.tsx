@@ -8,13 +8,14 @@ import SkillsPanel from './SkillsPanel'
 import AgentsPanel from './AgentsPanel'
 import CommandsPanel from './CommandsPanel'
 import GeneralPanel from './GeneralPanel'
+import AppearancePanel from './AppearancePanel'
 
 // ============================================================
 // SettingsPage — Full-screen settings UI with sidebar navigation
 // Modeled after Claude Desktop's settings layout
 // ============================================================
 
-export type SettingsTab = 'plugins' | 'tools' | 'models' | 'mcp' | 'general' | 'skills' | 'agents' | 'commands'
+export type SettingsTab = 'plugins' | 'tools' | 'models' | 'mcp' | 'general' | 'appearance' | 'skills' | 'agents' | 'commands'
 
 interface SettingsPageProps {
   isOpen: boolean
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'models', labelKey: 'settings.nav.models', icon: '🤖' },
   { id: 'mcp', labelKey: 'settings.nav.mcp', icon: '🔌' },
   { id: 'general', labelKey: 'settings.nav.general', icon: '⚙️' },
+  { id: 'appearance', labelKey: 'settings.nav.appearance', icon: '🎨' },
   { id: 'skills', labelKey: 'settings.nav.skills', icon: '⚡' },
   { id: 'agents', labelKey: 'settings.nav.agents', icon: '🧠' },
   { id: 'commands', labelKey: 'settings.nav.commands', icon: '💻' },
@@ -56,6 +58,7 @@ export default function SettingsPage({ isOpen, onClose, initialTab }: SettingsPa
       case 'models': return <ModelsPanel />
       case 'mcp': return <McpPanel />
       case 'general': return <GeneralPanel />
+      case 'appearance': return <AppearancePanel />
       case 'skills': return <SkillsPanel />
       case 'agents': return <AgentsPanel />
       case 'commands': return <CommandsPanel />

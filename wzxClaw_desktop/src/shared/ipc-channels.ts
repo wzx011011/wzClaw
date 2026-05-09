@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { FileTreeNode, SessionMeta, AgentStep, Workspace, SessionTaskState } from './types'
+import type { FileTreeNode, SessionMeta, AgentStep, Workspace, SessionTaskState, ThemeMode, AccentColor } from './types'
 
 // ============================================================
 // IPC Channel Name Constants (per D-08, D-10, Pattern 4)
@@ -233,6 +233,8 @@ export interface IpcRequestPayloads {
     thinkingDepth?: string
     showToolSteps?: boolean
     language?: string
+    themeMode?: ThemeMode
+    accentColor?: AccentColor
   }
   'workspace:open_folder': void
   'workspace:set_folder': { folderPath: string }
@@ -334,6 +336,8 @@ export interface IpcResponsePayloads {
     thinkingDepth?: string
     showToolSteps?: boolean
     language?: string
+    themeMode?: ThemeMode
+    accentColor?: AccentColor
   }
   'settings:update': void
   'workspace:open_folder': { rootPath: string } | null

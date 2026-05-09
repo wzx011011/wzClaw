@@ -25,6 +25,12 @@ describe('SettingsStore', () => {
       systemPrompt: undefined,
       relayToken: undefined,
       thinkingDepth: undefined,
+      showToolSteps: true,
+      language: 'zh-CN',
+      notificationSound: true,
+      notificationDesktop: true,
+      themeMode: 'dark',
+      accentColor: 'green',
       isLoading: false
     })
 
@@ -43,6 +49,8 @@ describe('SettingsStore', () => {
     expect(state.isLoading).toBe(false)
     expect(state.baseURL).toBeUndefined()
     expect(state.systemPrompt).toBeUndefined()
+    expect(state.themeMode).toBe('dark')
+    expect(state.accentColor).toBe('green')
   })
 
   it('loadSettings calls window.wzxclaw.getSettings() and updates state', async () => {
@@ -53,7 +61,9 @@ describe('SettingsStore', () => {
       baseURL: 'https://api.anthropic.com',
       systemPrompt: 'Be helpful',
       relayToken: 'token-123',
-      thinkingDepth: 'deep'
+      thinkingDepth: 'deep',
+      themeMode: 'system',
+      accentColor: 'purple'
     })
 
     const { loadSettings } = useSettingsStore.getState()
@@ -68,7 +78,24 @@ describe('SettingsStore', () => {
     expect(state.systemPrompt).toBe('Be helpful')
     expect(state.relayToken).toBe('token-123')
     expect(state.thinkingDepth).toBe('deep')
+    expect(state.themeMode).toBe('system')
+    expect(state.accentColor).toBe('purple')
     expect(state.isLoading).toBe(false)
+  })
+
+  it('loadSettings falls back to dark and green when appearance fields are absent', async () => {
+    getWzxclaw().getSettings.mockResolvedValueOnce({
+      provider: 'openai',
+      model: 'gpt-4o',
+      hasApiKey: false
+    })
+
+    const { loadSettings } = useSettingsStore.getState()
+    await loadSettings()
+
+    const state = useSettingsStore.getState()
+    expect(state.themeMode).toBe('dark')
+    expect(state.accentColor).toBe('green')
   })
 
   it('loadSettings sets isLoading=true during fetch', async () => {

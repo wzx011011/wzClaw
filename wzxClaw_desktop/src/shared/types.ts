@@ -1,6 +1,13 @@
 import { z } from 'zod'
 
 // ============================================================
+// Appearance Settings
+// ============================================================
+
+export type ThemeMode = 'system' | 'light' | 'dark'
+export type AccentColor = 'green' | 'purple'
+
+// ============================================================
 // Content Block Types (preserves interleaved text/tool ordering)
 // ============================================================
 

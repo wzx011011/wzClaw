@@ -13,6 +13,15 @@ import { safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { getSettingsPath, getKeysPath, getBackupsDir } from './paths'
+import type { ThemeMode, AccentColor } from '../shared/types'
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === 'system' || value === 'light' || value === 'dark'
+}
+
+function isAccentColor(value: unknown): value is AccentColor {
+  return value === 'green' || value === 'purple'
+}
 
 interface StoredSettings {
   provider: string
@@ -30,6 +39,8 @@ interface StoredSettings {
   language?: string
   notificationSound?: boolean
   notificationDesktop?: boolean
+  themeMode?: ThemeMode
+  accentColor?: AccentColor
 }
 
 interface EncryptedKeys {
@@ -49,6 +60,8 @@ export interface SettingsResponse {
   language?: string
   notificationSound?: boolean
   notificationDesktop?: boolean
+  themeMode: ThemeMode
+  accentColor: AccentColor
 }
 
 export interface FullConfig {
@@ -77,7 +90,9 @@ export class SettingsManager {
     this.settings = {
       provider: 'anthropic',
       model: 'glm-5.1',
-      baseURL: 'https://open.bigmodel.cn/api/anthropic'
+      baseURL: 'https://open.bigmodel.cn/api/anthropic',
+      themeMode: 'dark',
+      accentColor: 'green'
     }
     // No default API key — users must configure their own via the Settings UI
   }
@@ -101,7 +116,11 @@ export class SettingsManager {
         lastSessionId: parsed.lastSessionId,
         alwaysAllowRules: parsed.alwaysAllowRules,
         thinkingDepth: parsed.thinkingDepth,
-        language: parsed.language
+        language: parsed.language,
+        notificationSound: parsed.notificationSound,
+        notificationDesktop: parsed.notificationDesktop,
+        themeMode: isThemeMode(parsed.themeMode) ? parsed.themeMode : 'dark',
+        accentColor: isAccentColor(parsed.accentColor) ? parsed.accentColor : 'green'
       }
     } catch {
       // 文件不存在或解析失败 — 使用默认值
@@ -283,7 +302,9 @@ export class SettingsManager {
       showToolSteps: this.settings.showToolSteps,
       language: this.settings.language,
       notificationSound: this.settings.notificationSound,
-      notificationDesktop: this.settings.notificationDesktop
+      notificationDesktop: this.settings.notificationDesktop,
+      themeMode: this.settings.themeMode ?? 'dark',
+      accentColor: this.settings.accentColor ?? 'green'
     }
   }
 
@@ -309,6 +330,8 @@ export class SettingsManager {
     language?: string
     notificationSound?: boolean
     notificationDesktop?: boolean
+    themeMode?: ThemeMode
+    accentColor?: AccentColor
   }): void {
     if (request.provider !== undefined) this.settings.provider = request.provider
     if (request.model !== undefined) this.settings.model = request.model
@@ -321,6 +344,8 @@ export class SettingsManager {
     if (request.language !== undefined) this.settings.language = request.language
     if (request.notificationSound !== undefined) this.settings.notificationSound = request.notificationSound
     if (request.notificationDesktop !== undefined) this.settings.notificationDesktop = request.notificationDesktop
+    if (request.themeMode !== undefined && isThemeMode(request.themeMode)) this.settings.themeMode = request.themeMode
+    if (request.accentColor !== undefined && isAccentColor(request.accentColor)) this.settings.accentColor = request.accentColor
 
     if (request.apiKey) {
       this.decryptedKeys.set(this.settings.provider, request.apiKey)
