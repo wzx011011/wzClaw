@@ -31,6 +31,8 @@ export interface AgentRuntimeConfig {
   compactMaxOutputTokens: number
   /** Token-pressure microcompact threshold (fraction of context window). Default 0.80 */
   microcompactTokenPressureThreshold: number
+  /** Pre-compact 触发阈值（上下文窗口比例）。超过此比例时执行提前微压缩。设为 0 禁用。Default 0.60 */
+  preCompactThreshold: number
 
   // ---- Tool result budget ----
   /** Max chars per tool result. Default 30000 */
@@ -75,6 +77,7 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
   reactiveCompactKeepCount: 2,
   compactMaxOutputTokens: 20_000,
   microcompactTokenPressureThreshold: 0.80,
+  preCompactThreshold: 0.60,
 
   maxToolResultChars: 30_000,
   maxTotalToolResultChars: 200_000,

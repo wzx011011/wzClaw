@@ -73,6 +73,7 @@ function createMockPermissionManager(approved: boolean = true) {
 function createMockContextManager() {
   return {
     shouldCompact: vi.fn().mockReturnValue(false),
+    shouldPreCompact: vi.fn().mockReturnValue(false),
     compact: vi.fn().mockResolvedValue({ summary: '', keptRecentCount: 4, beforeTokens: 0, afterTokens: 0, summarizedMessages: [] }),
     trackTokenUsage: vi.fn(),
     getContextWindowForModel: vi.fn().mockReturnValue(128000),

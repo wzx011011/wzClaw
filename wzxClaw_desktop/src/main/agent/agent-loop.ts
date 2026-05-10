@@ -170,11 +170,27 @@ export class AgentLoop {
       }
 
       // ==============================================
-      // Claude Code compaction pipeline (3-layer)
+      // Claude Code compaction pipeline (3-layer + pre-compact)
       // ==============================================
+      const ctxWindow = this.contextManager.getContextWindowForModel(config.model)
+
+      // Step 0: Pre-compact — 在 60% 上下文窗口时提前清理旧工具结果（零成本，无 LLM 调用）
+      if (this.contextManager.shouldPreCompact(this.conversation.getMutableMessages(), config.model)) {
+        const preEstTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+        const preMcConfig = this.contextManager.getMicrocompactConfig()
+        const preMcResult = maybeTokenPressureMicrocompact(
+          this.conversation.getMutableMessages(),
+          ctxWindow,
+          preEstTokens,
+          { ...preMcConfig, tokenPressureThreshold: this.contextManager.getConfig().preCompactThreshold },
+        )
+        if (preMcResult.result.didCompact) {
+          this.conversation.loadFromExternal(preMcResult.messages)
+          debugLogger.log('PRE_COMPACT', `early microcompact at ${Math.round(preEstTokens / ctxWindow * 100)}%: cleared ${preMcResult.result.clearedCount} old tool results`)
+        }
+      }
 
       // Step 1: Session Memory Compact — drop oldest API rounds (no API call)
-      const ctxWindow = this.contextManager.getContextWindowForModel(config.model)
       const needsCompact = this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)
 
       if (needsCompact) {

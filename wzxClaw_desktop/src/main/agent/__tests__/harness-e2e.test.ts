@@ -86,6 +86,7 @@ function makePermissionMgr(approved = true) {
 function makeContextMgr(opts?: { shouldCompact?: boolean }) {
   return {
     shouldCompact: vi.fn().mockReturnValue(opts?.shouldCompact ?? false),
+    shouldPreCompact: vi.fn().mockReturnValue(false),
     compact: vi.fn().mockResolvedValue({ summary: 'compacted summary', keptRecentCount: 2, beforeTokens: 100000, afterTokens: 20000, summarizedMessages: [] }),
     reactiveCompact: vi.fn((msgs: unknown[]) => msgs.slice(-2)),
     reactiveCompactByTurns: vi.fn((msgs: unknown[]) => msgs.slice(-4)),

@@ -90,6 +90,18 @@ export class ContextManager {
   }
 
   /**
+   * 检查是否应该执行 pre-compact（提前微压缩）。
+   * 阈值低于 shouldCompact()，用于在触发完整压缩之前先行清理旧工具结果。
+   * 设 preCompactThreshold 为 0 时禁用此功能。
+   */
+  shouldPreCompact(messages: Message[], modelId: string): boolean {
+    if (this.config.preCompactThreshold <= 0) return false
+    const tokens = countMessagesTokens(messages, modelId)
+    const contextWindow = this.getContextWindowForModel(modelId)
+    return tokens > contextWindow * this.config.preCompactThreshold
+  }
+
+  /**
    * Main compaction: summarise older messages via LLM.
    *
    * Key differences from the old implementation:
