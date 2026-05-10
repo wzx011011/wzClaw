@@ -37,6 +37,7 @@ export class EvalCollector {
   // ---- Turn 统计 ----
   private turnCount = 0
   private totalOutputTokens = 0
+  private totalInputTokens = 0
 
   // ---- 上下文压力 ----
   private maxContextPressure = 0
@@ -71,9 +72,12 @@ export class EvalCollector {
    * 记录一个 turn 完成
    * 在 agent-loop.ts 每个 turn 结束后调用
    */
-  recordTurn(outputTokens: number): void {
+  recordTurn(outputTokens: number, inputTokens?: number): void {
     this.turnCount++
     this.totalOutputTokens += outputTokens
+    if (inputTokens !== undefined) {
+      this.totalInputTokens += inputTokens
+    }
   }
 
   /**
@@ -188,6 +192,15 @@ export class EvalCollector {
       scores.push({
         name: 'avg_output_per_turn',
         value: Math.round(this.totalOutputTokens / this.turnCount),
+        dataType: 'NUMERIC',
+      })
+    }
+
+    // 9. avg_input_per_turn — 仅在有 turn 且有 input 记录时输出
+    if (this.turnCount > 0 && this.totalInputTokens > 0) {
+      scores.push({
+        name: 'avg_input_per_turn',
+        value: Math.round(this.totalInputTokens / this.turnCount),
         dataType: 'NUMERIC',
       })
     }

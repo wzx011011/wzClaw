@@ -317,7 +317,7 @@ export class AgentLoop {
       this.contextManager.trackTokenUsage(turnResult.usage.inputTokens, turnResult.usage.outputTokens)
 
       // Eval: 记录 turn 输出 token
-      getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
+      getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens, turnResult.usage.inputTokens)
 
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
