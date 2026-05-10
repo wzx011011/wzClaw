@@ -154,10 +154,10 @@ class SkillRegistry {
   /**
    * Get a skill's prompt content by name.
    */
-  async getPrompt(name: string, args: string): Promise<string | null> {
+  async getPrompt(name: string, args: string, sessionId?: string): Promise<string | null> {
     const skill = this.find(name)
     if (!skill?.getPrompt) return null
-    return skill.getPrompt(args)
+    return skill.getPrompt(args, sessionId)
   }
 
   /**

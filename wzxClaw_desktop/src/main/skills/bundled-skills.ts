@@ -26,7 +26,7 @@ export interface BundledSkillDefinition {
   userInvocable?: boolean
   isEnabled?: () => boolean
   /** Get the prompt content for this bundled skill */
-  getPrompt: (args: string) => Promise<string>
+  getPrompt: (args: string, sessionId?: string) => Promise<string>
 }
 
 // Internal registry

@@ -139,7 +139,7 @@ export interface Skill {
    * For file-based skills, this returns the markdown body with arguments substituted.
    * For builtin/action skills, this is not applicable.
    */
-  getPrompt?: (args: string) => Promise<string>
+  getPrompt?: (args: string, sessionId?: string) => Promise<string>
 }
 
 /**
@@ -178,7 +178,7 @@ export function skillToInfo(skill: Skill): SkillInfo {
 }
 
 /** Convert SkillInfo back to Skill with a simple getPrompt that fetches from main */
-export function infoToSkill(info: SkillInfo, getPromptFn?: (args: string) => Promise<string>): Skill {
+export function infoToSkill(info: SkillInfo, getPromptFn?: (args: string, sessionId?: string) => Promise<string>): Skill {
   return {
     ...info,
     getPrompt: getPromptFn,

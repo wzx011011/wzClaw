@@ -26,6 +26,7 @@ import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
 import type { AgentConfig } from './agent/types'
 import { SessionStore } from './persistence/session-store'
+import { SessionStoreManager } from './persistence/session-store-manager'
 import type { ContextManager } from './context/context-manager'
 import type { TerminalManager } from './terminal/terminal-manager'
 import type { StepManager } from './steps/step-manager'
@@ -43,6 +44,7 @@ export function registerIpcHandlers(
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,
   getSessionStore: () => SessionStore,
+  storeManager: SessionStoreManager,
   contextManager: ContextManager,
   terminalManager: TerminalManager,
   stepManager: StepManager,
@@ -60,8 +62,25 @@ export function registerIpcHandlers(
   // Session-scoped cost tracker — resets on each new send (Phase 4.4)
   const costTracker = new CostTracker()
 
-  // Track how many messages were already persisted so we only append new ones
-  let persistedMessageCount = 0
+  // Per-session persisted message counts — prevents cross-session corruption
+  const persistedMessageCounts = new Map<string, number>()
+
+  // Helper: 解析 workspace 并返回 SessionStore（替代重复的 new SessionStore 模式）
+  const resolveStore = (activeWorkspaceId?: string) =>
+    storeManager.getForWorkspace(activeWorkspaceId, workspaceManager, workspaceStore)
+
+  // Helper: 解析当前 workspace 的 projectRoots（替代 agentLoop.activeWorkspace 读取）
+  const resolveProjectRoots = (): string[] => {
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const lastSessionId = settingsManager.getLastSessionId()
+    if (lastSessionId) {
+      const rt = runtimes.getOrCreate(lastSessionId)
+      if (rt.activeWorkspace) {
+        return rt.activeWorkspace.projects.map(p => p.path)
+      }
+    }
+    return [cwd]
+  }
 
   // Guard against concurrent agent:send_message calls (per-session)
   // 已移除全局 isAgentRunning 布尔守卫，改为按会话检查 runtimes.isRunning()
@@ -90,8 +109,8 @@ export function registerIpcHandlers(
     // Set active session for step manager (session-isolated steps)
     stepManager.setActiveSession(conversationId)
 
-    // Reset persisted message counter for new conversation turn
-    persistedMessageCount = runtime.getMessages().length
+    // Reset persisted message counter for new conversation turn (per-session)
+    persistedMessageCounts.set(conversationId, runtime.getMessages().length)
 
     // Ensure the LLM gateway has adapters for the configured provider AND the model's provider.
     // GLM models span both anthropic (glm-5*) and openai (glm-4*) APIs, so both adapters
@@ -125,13 +144,11 @@ export function registerIpcHandlers(
     // Build AgentConfig from current settings; use workspace root if available
     const workingDirectory = workspaceManager.getWorkspaceRoot() ?? process.cwd()
 
-    // Inject active workspace context into agent loop
+    // Inject active workspace context into per-session runtime
     if (result.data.activeWorkspaceId) {
       const workspace = await workspaceStore.getWorkspace(result.data.activeWorkspaceId)
-      agentLoop.activeWorkspace = workspace ?? null  // 全局镜像
       runtime.activeWorkspace = workspace ?? null
     } else {
-      agentLoop.activeWorkspace = null
       runtime.activeWorkspace = null
     }
 
@@ -260,7 +277,8 @@ export function registerIpcHandlers(
             // Auto-save only NEW messages since last persist (fixes log duplication P0)
             try {
               const allMessages = runtime.getMessages()
-              const newMessages = allMessages.slice(persistedMessageCount)
+              const prevCount = persistedMessageCounts.get(conversationId) ?? 0
+              const newMessages = allMessages.slice(prevCount)
               if (newMessages.length > 0) {
                 // Inject usage into last assistant message for /insights cost tracking.
                 // Create a copy to avoid mutating the shared message object in ConversationManager.
@@ -276,7 +294,7 @@ export function registerIpcHandlers(
                   }
                 }
                 await getSessionStore().appendMessages(agentConfig.conversationId, newMessages)
-                persistedMessageCount = allMessages.length
+                persistedMessageCounts.set(conversationId, allMessages.length)
                 // 通知手机端：会话消息有更新，触发 fetchSessions → messageCount 对比 → forceRefresh
                 onDataChanged?.('session:changed', { action: 'updated', sessionId: agentConfig.conversationId })
               }
@@ -721,19 +739,8 @@ export function registerIpcHandlers(
   // Session: list — returns all sessions for current project or task
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
-    // If activeWorkspaceId provided, look up the task's primary project root for workspace-based isolation
-    let sessions: SessionMeta[]
-    if (payload?.activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(payload.activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        sessions = await new SessionStore(primaryRoot).listSessions()
-      } else {
-        sessions = await getSessionStore().listSessions()
-      }
-    } else {
-      sessions = await getSessionStore().listSessions()
-    }
+    const store = await resolveStore(payload?.activeWorkspaceId)
+    let sessions = await store.listSessions()
 
     // Enrich each session with todo summary and running status
     const runningIds = runtimes.listRunning()
@@ -771,21 +778,19 @@ export function registerIpcHandlers(
     // 为该会话获取/创建 per-session runtime
     const loadRuntime = runtimes.getOrCreate(sessionId)
     // 优先使用请求中携带的 activeWorkspaceId（与 listSessions 保持一致），
-    // 避免 agentLoop.activeWorkspace 尚未设置时读错 store。
-    let store = getSessionStore()
-    let resolvedWorkspace = loadRuntime.activeWorkspace ?? agentLoop.activeWorkspace ?? null
+    // 避免 runtime.activeWorkspace 尚未设置时读错 store。
+    const store = await resolveStore(activeWorkspaceId)
+    let resolvedWorkspace = loadRuntime.activeWorkspace ?? null
     if (activeWorkspaceId) {
       const workspace = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
       if (workspace) {
         resolvedWorkspace = workspace
-        const primaryRoot = workspace.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        store = new SessionStore(primaryRoot)
       }
     }
     const rawMessages = await store.loadSession(sessionId)
 
-    // Reset persisted counter to match loaded message count
-    persistedMessageCount = rawMessages.length
+    // Reset persisted counter to match loaded message count (per-session)
+    persistedMessageCounts.set(sessionId, rawMessages.length)
 
     const config = settingsManager.getCurrentConfig()
     const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
@@ -828,14 +833,7 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['session:load-tail'], async (_event, request) => {
     const { sessionId, tailCount, activeWorkspaceId } = request as { sessionId: string; tailCount: number; activeWorkspaceId?: string }
     if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) throw new Error('Invalid session ID format')
-    let store = getSessionStore()
-    if (activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        store = new SessionStore(primaryRoot)
-      }
-    }
+    const store = await resolveStore(activeWorkspaceId)
     const safeCount = Math.max(1, Math.min(tailCount ?? 100, 500))
     return store.loadSessionTail(sessionId, safeCount)
   })
@@ -848,14 +846,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    let store = getSessionStore()
-    if (result.data.activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        store = new SessionStore(primaryRoot)
-      }
-    }
+    let store = await resolveStore(result.data.activeWorkspaceId)
     const success = await store.deleteSession(result.data.sessionId)
     if (success) {
       // Clean up associated steps from memory and disk
@@ -873,14 +864,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    let store = getSessionStore()
-    if (result.data.activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        store = new SessionStore(primaryRoot)
-      }
-    }
+    const store = await resolveStore(result.data.activeWorkspaceId)
     const success = await store.renameSession(result.data.sessionId, result.data.title)
     if (success) onDataChanged?.('session:changed', { action: 'renamed', sessionId: result.data.sessionId, title: result.data.title })
     return { success }
@@ -894,14 +878,7 @@ export function registerIpcHandlers(
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    let store = getSessionStore()
-    if (result.data.activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(result.data.activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        store = new SessionStore(primaryRoot)
-      }
-    }
+    const store = await resolveStore(result.data.activeWorkspaceId)
     // 加载源会话的所有消息行
     const messages = await store.loadSession(result.data.sessionId)
     if (messages.length === 0) {
@@ -1303,19 +1280,19 @@ export function registerIpcHandlers(
 
     // 1. System prompt breakdown
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const breakdownRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const breakdownRoots = resolveProjectRoots()
+    const lastSessionId = settingsManager.getLastSessionId()
+    const activeWorkspace = lastSessionId ? runtimes.getOrCreate(lastSessionId).activeWorkspace : null
     const promptBreakdown = await buildSystemPromptBreakdown({
       systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       workingDirectory: cwd,
       projectRoots: breakdownRoots,
       model,
       provider: config.provider as 'openai' | 'anthropic',
-    }, agentLoop.activeWorkspace)
+    }, activeWorkspace)
 
     // 2. Tool definitions — separate built-in vs MCP
-    const allToolDefs = agentLoop.getToolDefinitions()
+    const allToolDefs = toolRegistry.getToolDefinitions()
     const allToolTokens = countTokens(JSON.stringify(allToolDefs))
     const mcpToolNames = new Set(mcpManager.listAllTools().map(t => t.name))
     const builtinDefs = allToolDefs.filter(d => !mcpToolNames.has(d.name))
@@ -1382,9 +1359,7 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['skill:list'], async () => {
     const { skillRegistry } = await import('./skills')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await skillRegistry.load(cwd, projectRoots)
     return skillRegistry.getAllInfo()
   })
@@ -1392,32 +1367,24 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['skill:get-prompt'], async (_event, request: { name: string; args: string }) => {
     const { skillRegistry } = await import('./skills')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await skillRegistry.load(cwd, projectRoots)
-    // Set session ID for ${SESSION_ID} substitution
-    process.env.__WZXCLAW_SESSION_ID__ = settingsManager.getLastSessionId() ?? 'unknown'
-    return skillRegistry.getPrompt(request.name, request.args ?? '')
+    return skillRegistry.getPrompt(request.name, request.args ?? '', settingsManager.getLastSessionId() ?? 'unknown')
   })
 
   ipcMain.handle(IPC_CHANNELS['skill:reload'], async () => {
     const { skillRegistry } = await import('./skills')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await skillRegistry.reload(cwd, projectRoots)
   })
 
   ipcMain.handle(IPC_CHANNELS['skill:invoke'], async (_event, request: { name: string; args: string }) => {
     const { skillRegistry } = await import('./skills')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await skillRegistry.load(cwd, projectRoots)
-    const content = await skillRegistry.getPrompt(request.name, request.args ?? '')
+    const content = await skillRegistry.getPrompt(request.name, request.args ?? '', settingsManager.getLastSessionId() ?? 'unknown')
     if (content === null) {
       return { error: `Skill '${request.name}' not found` }
     }
@@ -1428,9 +1395,6 @@ export function registerIpcHandlers(
   // Tools — list registered tools
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['tools:list'], async () => {
-    // Intentionally accesses registry for approval/readonly checks — data flows
-    // out as plain objects, registry reference stays in main process
-    const toolRegistry = agentLoop.getToolRegistry()
     const approvalRequired = new Set(toolRegistry.getApprovalRequired())
     return toolRegistry.getDefinitions().map(d => ({
       name: d.name,
@@ -1447,9 +1411,7 @@ export function registerIpcHandlers(
     const { pluginRegistry } = await import('./plugins')
     pluginRegistry.setSettingsManager(settingsManager)
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await pluginRegistry.load(cwd, projectRoots)
     return pluginRegistry.getAllInfo()
   })
@@ -1457,9 +1419,7 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['plugin:get'], async (_event, request: { name: string }) => {
     const { pluginRegistry } = await import('./plugins')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await pluginRegistry.load(cwd, projectRoots)
     const plugin = pluginRegistry.find(request.name)
     if (!plugin) return null
@@ -1504,18 +1464,14 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS['plugin:reload'], async () => {
     const { pluginRegistry } = await import('./plugins')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await pluginRegistry.reload(cwd, projectRoots)
   })
 
   ipcMain.handle(IPC_CHANNELS['plugin:get-skills'], async (_event, request: { pluginName?: string }) => {
     const { pluginRegistry } = await import('./plugins')
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = agentLoop.activeWorkspace
-      ? agentLoop.activeWorkspace.projects.map(p => p.path)
-      : [cwd]
+    const projectRoots = resolveProjectRoots()
     await pluginRegistry.load(cwd, projectRoots)
     if (request.pluginName) {
       return pluginRegistry.getPluginSkills(request.pluginName).map(skillToInfo)

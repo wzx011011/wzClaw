@@ -108,7 +108,7 @@ async function loadSkillFromFile(
       skillRoot: baseDir,
       contentLength: markdownContent.length,
       isEnabled: true,
-      getPrompt: async (args: string) => {
+      getPrompt: async (args: string, sessionId?: string) => {
         // Prepend base directory prefix (matches Claude Code behavior)
         let finalContent = baseDir
           ? `Base directory for this skill: ${baseDir}\n\n${markdownContent}`
@@ -123,9 +123,8 @@ async function loadSkillFromFile(
           finalContent = finalContent.replace(/\$\{WZXCLAW_SKILL_DIR\}/g, skillDir)
         }
 
-        // Replace ${SESSION_ID} with current session ID (if available)
-        // Session ID is injected at invocation time via IPC handler
-        finalContent = finalContent.replace(/\$\{SESSION_ID\}/g, process.env.__WZXCLAW_SESSION_ID__ || 'unknown')
+        // Replace ${SESSION_ID} with current session ID (passed via argument)
+        finalContent = finalContent.replace(/\$\{SESSION_ID\}/g, sessionId || 'unknown')
 
         // Execute embedded shell commands (!`cmd` and ```! blocks)
         // Security: MCP skills should not execute shell commands, but we don't

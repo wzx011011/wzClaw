@@ -64,6 +64,7 @@ import { SessionTaskStateManager, isActiveSessionTaskStatus } from './agent/sess
 import type { AgentConfig } from './agent/types'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore, type SessionMeta } from './persistence/session-store'
+import { SessionStoreManager } from './persistence/session-store-manager'
 import { ContextManager } from './context/context-manager'
 import { TerminalManager } from './terminal/terminal-manager'
 import { StepManager } from './steps/step-manager'
@@ -467,7 +468,6 @@ app.whenReady().then(async () => {
     setMobileSessionId,
   } = registerMobileRelayHandler({
     relayClient,
-    agentLoop,
     runtimes,
     sessionTaskStates: new SessionTaskStateManager(),
     permissionManager,
@@ -496,8 +496,10 @@ app.whenReady().then(async () => {
   registerBrowserIpcHandlers({ browserManager })
   registerMobileIpcHandlers({ relayClient, settingsManager })
 
+  // Create SessionStoreManager for centralized, cached SessionStore access
+  const storeManager = new SessionStoreManager()
   // Create session store for JSONL persistence (per PERSIST-01)
-  sessionStore = new SessionStore(workspaceManager.getWorkspaceRoot() ?? process.cwd())
+  sessionStore = storeManager.getForRoot(workspaceManager.getWorkspaceRoot() ?? process.cwd())
 
   // Initialize step manager's persistence directory
   stepManager.setWorkspaceRoot(workspaceManager.getWorkspaceRoot() ?? process.cwd())
@@ -530,7 +532,7 @@ app.whenReady().then(async () => {
       // Persist last workspace path
       settingsManager.setLastWorkspacePath(rootPath)
       // Rebuild SessionStore for new workspace
-      sessionStore = new SessionStore(rootPath)
+      sessionStore = storeManager.getForRoot(rootPath)
       // Update step manager's persistence directory
       stepManager.setWorkspaceRoot(rootPath)
       // Reset mobile session and notify connected mobile
@@ -540,7 +542,8 @@ app.whenReady().then(async () => {
     // onDataChanged: broadcast desktop CRUD changes to mobile
     (event, data) => broadcastToMobile(event, data),
     // onStreamEvent: broadcast desktop agent stream events to mobile
-    (event, data) => broadcastToMobile(event, data)
+    (event, data) => broadcastToMobile(event, data),
+    storeManager
   )
 
   // Listen for file changes to trigger incremental index updates
@@ -585,7 +588,7 @@ app.whenReady().then(async () => {
     setTimeout(() => {
       if (lastWsPath && fs.existsSync(lastWsPath)) {
         handleWorkspaceOpened(lastWsPath, toolRegistry)
-        sessionStore = new SessionStore(lastWsPath)
+        sessionStore = storeManager.getForRoot(lastWsPath)
         sendWorkspaceInfoToMobile()
       }
     }, 1200)

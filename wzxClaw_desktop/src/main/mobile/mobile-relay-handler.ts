@@ -9,7 +9,6 @@ import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { DEFAULT_MODELS } from '../../shared/constants'
 import type { RelayClient } from './relay-client'
-import type { AgentLoop } from '../agent/agent-loop'
 import type { SessionRuntimeManager } from '../agent/session-runtime-manager'
 import { SessionTaskStateManager, isActiveSessionTaskStatus } from '../agent/session-task-state-manager'
 import type { PermissionManager } from '../permission/permission-manager'
@@ -17,13 +16,13 @@ import type { SettingsManager } from '../settings-manager'
 import type { WorkspaceManager } from '../workspace/workspace-manager'
 import type { WorkspaceStore } from '../tasks/workspace-store'
 import type { SessionStore, SessionMeta } from '../persistence/session-store'
+import { SessionStoreManager } from '../persistence/session-store-manager'
 import type { ToolRegistry } from '../tools/tool-registry'
 import type { ContextManager } from '../context/context-manager'
 import type { PlanModeController } from '../tools/plan-mode'
 
 export interface MobileRelayDeps {
   relayClient: RelayClient
-  agentLoop: AgentLoop
   runtimes: SessionRuntimeManager
   sessionTaskStates: SessionTaskStateManager
   permissionManager: PermissionManager
@@ -43,7 +42,7 @@ export interface MobileRelayDeps {
  */
 export function registerMobileRelayHandler(deps: MobileRelayDeps): {
   getActiveSessionStore: () => SessionStore
-  getCachedSessionStore: (primaryRoot: string) => SessionStore
+  getCachedSessionStore: (primaryRoot: string) => SessionStore  // deprecated, use storeManager
   sendWorkspaceInfoToMobile: () => Promise<void>
   broadcastToMobile: (event: string, data: unknown) => void
   sessionTaskStates: SessionTaskStateManager
@@ -52,7 +51,6 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
 } {
   const {
     relayClient,
-    agentLoop,
     runtimes,
     sessionTaskStates,
     permissionManager,
@@ -71,27 +69,21 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
   // Track how many messages have already been persisted per mobile session
   const mobilePersistedMessageCounts = new Map<string, number>()
   const mobilePersistLocks = new Map<string, Promise<void>>()
-  // Cache SessionStore instances by primaryRoot to avoid repeated mkdirSync per request
-  const sessionStoreCache = new Map<string, SessionStore>()
-
-  const getCachedSessionStore = (primaryRoot: string): SessionStore => {
-    let cached = sessionStoreCache.get(primaryRoot)
-    if (!cached) {
-      cached = new SessionStore(primaryRoot)
-      sessionStoreCache.set(primaryRoot, cached)
-    }
-    return cached
-  }
+  // Centralized SessionStore cache — eliminates repeated new SessionStore + mkdirSync
+  const storeManager = new SessionStoreManager()
 
   /**
    * Return the appropriate SessionStore for the current context.
    * Uses the workspace's primary project path (workspace-based isolation) when a workspace is active.
    */
   const getActiveSessionStore = (): SessionStore => {
-    const workspace = agentLoop.activeWorkspace
-    if (workspace) {
-      const primaryRoot = workspace.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-      return getCachedSessionStore(primaryRoot)
+    const lastId = settingsManager.getLastSessionId()
+    if (lastId) {
+      const rt = runtimes.getOrCreate(lastId)
+      if (rt.activeWorkspace) {
+        const primaryRoot = rt.activeWorkspace.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+        return storeManager.getForRoot(primaryRoot)
+      }
     }
     return sessionStore
   }
@@ -99,18 +91,12 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
   /**
    * Resolve the appropriate SessionStore for a mobile request.
    * If activeWorkspaceId is provided, look up the workspace and use its primary project root.
-   * Falls back to agentLoop.activeWorkspace, then workspace store.
+   * Falls back to sessionStore (follows desktop workspace switching).
    */
   const getStoreForMobile = async (activeWorkspaceId: string | null): Promise<SessionStore> => {
     if (activeWorkspaceId) {
-      const task = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
-      if (task) {
-        const primaryRoot = task.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
-        return getCachedSessionStore(primaryRoot)
-      }
+      return storeManager.getForWorkspace(activeWorkspaceId, workspaceManager, workspaceStore)
     }
-    // 手机未指定 workspaceId 时，使用 sessionStore（跟随桌面 workspace 切换更新），
-    // 而非 getActiveSessionStore()（可能引用过期的 agentLoop.activeWorkspace）。
     return sessionStore
   }
 
@@ -399,9 +385,7 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
         handleWorkspaceOpened(workspacePath, toolRegistry)
         // 切换工作区：取消所有运行中的会话（workspace 跨会话资源已变）
         runtimes.clear()
-        agentLoop.activeWorkspace = null
-        agentLoop.reset()
-        sessionStore = new SessionStore(workspacePath)
+        sessionStore = storeManager.getForRoot(workspacePath)
         stepManager.setWorkspaceRoot(workspacePath)
         stepManager.clearAllSteps()
         mobileSessionId = null
@@ -550,7 +534,7 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
           let sessions: SessionMeta[] = []
           if (root) {
             try {
-              const ss = getCachedSessionStore(root)
+              const ss = storeManager.getForRoot(root)
               const all = await ss.listSessions()
               sessions = all
                 .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -813,8 +797,8 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
         provider: config.provider as 'openai' | 'anthropic',
         systemPrompt: config.systemPrompt,
         workingDirectory,
-        projectRoots: agentLoop.activeWorkspace
-          ? agentLoop.activeWorkspace.projects.map(p => p.path)
+        projectRoots: runtime.activeWorkspace
+          ? runtime.activeWorkspace.projects.map(p => p.path)
           : [workingDirectory],
         conversationId: sessionId,
         thinkingDepth: config.thinkingDepth as 'none' | 'low' | 'medium' | 'high' | undefined,
@@ -900,16 +884,13 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
         } as unknown as Electron.WebContents
 
         // Inject active workspace context from mobile message
+        const runtime = runtimes.getOrCreate(sessionId)
         if (msg.data.activeWorkspaceId) {
           const workspace = await workspaceStore.getWorkspace(msg.data.activeWorkspaceId)
-          agentLoop.activeWorkspace = workspace ?? null
+          runtime.activeWorkspace = workspace ?? null
         } else {
-          agentLoop.activeWorkspace = null
+          runtime.activeWorkspace = null
         }
-
-        // 取出 per-session runtime 并同步当前 workspace。
-        const runtime = runtimes.getOrCreate(sessionId)
-        runtime.activeWorkspace = agentLoop.activeWorkspace
 
         // 并发保护：仅在同一 sessionId 上重发时取消上一次；
         // 不再跨会话 cancel 全局，让多会话可并发运行。
@@ -1116,7 +1097,7 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
         let sessions: SessionMeta[] = []
         if (root) {
           try {
-            const ss = getCachedSessionStore(root)
+            const ss = storeManager.getForRoot(root)
             const all = await ss.listSessions()
             sessions = all
               .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -1147,7 +1128,7 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
 
   return {
     getActiveSessionStore,
-    getCachedSessionStore,
+    getCachedSessionStore: (root: string) => storeManager.getForRoot(root),
     sendWorkspaceInfoToMobile,
     broadcastToMobile,
     sessionTaskStates,
