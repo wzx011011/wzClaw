@@ -526,3 +526,10 @@ export interface ContextBreakdownResponse {
   }
   model: string
 }
+
+// ============================================================
+// Compact Types
+// ============================================================
+
+/** Direction for partial compaction */
+export type PartialCompactDirection = 'from' | 'up_to'

@@ -8,68 +8,68 @@ const api = {
   stopGeneration: () => ipcRenderer.invoke('agent:stop'),
 
   // Stream listeners — return unsubscribe functions
-  onStreamText: (callback: (payload: { content: string }) => void) => {
-    const handler = (_: unknown, payload: { content: string }) => callback(payload)
+  onStreamText: (callback: (payload: { content: string; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { content: string; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:text_delta', handler)
     return () => ipcRenderer.removeListener('stream:text_delta', handler)
   },
-  onStreamThinking: (callback: (payload: { content: string }) => void) => {
-    const handler = (_: unknown, payload: { content: string }) => callback(payload)
+  onStreamThinking: (callback: (payload: { content: string; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { content: string; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:thinking_delta', handler)
     return () => ipcRenderer.removeListener('stream:thinking_delta', handler)
   },
-  onStreamToolStart: (callback: (payload: { id: string; name: string; input?: Record<string, unknown> }) => void) => {
-    const handler = (_: unknown, payload: { id: string; name: string; input?: Record<string, unknown> }) => callback(payload)
+  onStreamToolStart: (callback: (payload: { id: string; name: string; input?: Record<string, unknown>; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { id: string; name: string; input?: Record<string, unknown>; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:tool_use_start', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_start', handler)
   },
-  onStreamToolCallPreview: (callback: (payload: { id: string; name: string }) => void) => {
-    const handler = (_: unknown, payload: { id: string; name: string }) => callback(payload)
+  onStreamToolCallPreview: (callback: (payload: { id: string; name: string; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { id: string; name: string; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:tool_call_preview', handler)
     return () => ipcRenderer.removeListener('stream:tool_call_preview', handler)
   },
-  onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean; toolName: string }) => void) => {
-    const handler = (_: unknown, payload: { id: string; output: string; isError: boolean; toolName: string }) => callback(payload)
+  onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean; toolName: string; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { id: string; output: string; isError: boolean; toolName: string; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:tool_use_end', handler)
     return () => ipcRenderer.removeListener('stream:tool_use_end', handler)
   },
-  onStreamToolProgress: (callback: (payload: { toolCallId: string; toolName: string; message: string }) => void) => {
-    const handler = (_: unknown, payload: { toolCallId: string; toolName: string; message: string }) => callback(payload)
+  onStreamToolProgress: (callback: (payload: { toolCallId: string; toolName: string; message: string; sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: { toolCallId: string; toolName: string; message: string; sessionId?: string }) => callback(payload)
     ipcRenderer.on('stream:tool_progress', handler)
     return () => ipcRenderer.removeListener('stream:tool_progress', handler)
   },
-  onStreamEnd: (callback: (payload: { usage: { inputTokens: number; outputTokens: number } }) => void) => {
-    const handler = (_: unknown, payload: { usage: { inputTokens: number; outputTokens: number } }) => callback(payload)
+  onStreamEnd: (callback: (payload: { usage: { inputTokens: number; outputTokens: number }; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { usage: { inputTokens: number; outputTokens: number }; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:done', handler)
     return () => ipcRenderer.removeListener('stream:done', handler)
   },
-  onStreamTurnEnd: (callback: () => void) => {
-    const handler = () => callback()
+  onStreamTurnEnd: (callback: (payload: { sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:turn_end', handler)
     return () => ipcRenderer.removeListener('stream:turn_end', handler)
   },
-  onStreamError: (callback: (payload: { error: string }) => void) => {
-    const handler = (_: unknown, payload: { error: string }) => callback(payload)
+  onStreamError: (callback: (payload: { error: string; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { error: string; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:error', handler)
     return () => ipcRenderer.removeListener('stream:error', handler)
   },
-  onStreamRetrying: (callback: (payload: { attempt: number; maxAttempts: number; delayMs: number }) => void) => {
-    const handler = (_: unknown, payload: { attempt: number; maxAttempts: number; delayMs: number }) => callback(payload)
+  onStreamRetrying: (callback: (payload: { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }) => void) => {
+    const handler = (_: unknown, payload: { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }) => callback(payload)
     ipcRenderer.on('stream:retrying', handler)
     return () => ipcRenderer.removeListener('stream:retrying', handler)
   },
-  onSubStreamToolStart: (callback: (payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown> }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown> }) => callback(payload)
+  onSubStreamToolStart: (callback: (payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown>; sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown>; sessionId?: string }) => callback(payload)
     ipcRenderer.on('stream:sub_tool_use_start', handler)
     return () => ipcRenderer.removeListener('stream:sub_tool_use_start', handler)
   },
-  onSubStreamToolResult: (callback: (payload: { parentToolCallId: string; id: string; output: string; isError: boolean }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; output: string; isError: boolean }) => callback(payload)
+  onSubStreamToolResult: (callback: (payload: { parentToolCallId: string; id: string; output: string; isError: boolean; sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; output: string; isError: boolean; sessionId?: string }) => callback(payload)
     ipcRenderer.on('stream:sub_tool_use_end', handler)
     return () => ipcRenderer.removeListener('stream:sub_tool_use_end', handler)
   },
-  onSubStreamText: (callback: (payload: { parentToolCallId: string; content: string }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; content: string }) => callback(payload)
+  onSubStreamText: (callback: (payload: { parentToolCallId: string; content: string; sessionId?: string }) => void) => {
+    const handler = (_: unknown, payload: { parentToolCallId: string; content: string; sessionId?: string }) => callback(payload)
     ipcRenderer.on('stream:sub_text', handler)
     return () => ipcRenderer.removeListener('stream:sub_text', handler)
   },
@@ -126,7 +126,7 @@ const api = {
   },
 
   // Session compacted stream listener
-  onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => void) => {
+  onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }) => void) => {
     const handler = (_: unknown, payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => callback(payload)
     ipcRenderer.on('session:compacted', handler)
     return () => ipcRenderer.removeListener('session:compacted', handler)

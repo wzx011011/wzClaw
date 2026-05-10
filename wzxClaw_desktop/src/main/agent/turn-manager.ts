@@ -161,12 +161,14 @@ export class TurnManager {
           langfuseParentSpan: toolSpan,
           onSubAgentEvent: sender ? (event) => {
             if (sender.isDestroyed()) return
+            const sid = config.conversationId
             if (event['type'] === 'agent:tool_call') {
               sender.send(IPC_CHANNELS['stream:sub_tool_use_start'], {
                 parentToolCallId: toolCall.id,
                 id: event['toolCallId'],
                 name: event['toolName'],
                 input: event['input'],
+                sessionId: sid,
               })
             } else if (event['type'] === 'agent:tool_result') {
               sender.send(IPC_CHANNELS['stream:sub_tool_use_end'], {
@@ -174,11 +176,13 @@ export class TurnManager {
                 id: event['toolCallId'],
                 output: event['output'],
                 isError: event['isError'],
+                sessionId: sid,
               })
             } else if (event['type'] === 'agent:text') {
               sender.send(IPC_CHANNELS['stream:sub_text'], {
                 parentToolCallId: toolCall.id,
                 content: event['content'],
+                sessionId: sid,
               })
             }
           } : undefined,

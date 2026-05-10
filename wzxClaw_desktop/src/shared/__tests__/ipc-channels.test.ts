@@ -85,7 +85,8 @@ describe('IpcSchemas', () => {
 
   it('validates stream:text_delta payload', () => {
     const result = IpcSchemas['stream:text_delta'].safeParse({
-      content: 'hello token'
+      content: 'hello token',
+      sessionId: 'session-123'
     })
     expect(result.success).toBe(true)
   })
@@ -181,6 +182,10 @@ describe('IPC wiring alignment', () => {
     path.join(ROOT, 'src/main/agent/agent-loop.ts'),
     path.join(ROOT, 'src/main/agent/turn-manager.ts'),
     path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
+    path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),
+    path.join(ROOT, 'src/main/browser/browser-ipc-handlers.ts'),
+    path.join(ROOT, 'src/main/mobile/mobile-ipc-handlers.ts'),
+    path.join(ROOT, 'src/main/mobile/mobile-relay-handler.ts'),
   ])
 
   it('every preload channel exists in IPC_CHANNELS', () => {
@@ -217,6 +222,9 @@ describe('IPC wiring alignment', () => {
       path.join(ROOT, 'src/main/ipc-handlers.ts'),
       path.join(ROOT, 'src/main/index.ts'),
       path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/browser/browser-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/mobile/mobile-ipc-handlers.ts'),
     ]
     const handleChannels = new Set<string>()
     for (const f of mainSrcs) {

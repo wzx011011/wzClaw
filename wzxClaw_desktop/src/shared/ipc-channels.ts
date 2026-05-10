@@ -490,16 +490,16 @@ export interface IpcResponsePayloads {
 
 // Stream payloads (main sends to renderer via webContents.send)
 export interface IpcStreamPayloads {
-  'stream:text_delta': { content: string }
-  'stream:thinking_delta': { content: string }
-  'stream:tool_call_preview': { id: string; name: string }
-  'stream:tool_use_start': { id: string; name: string }
-  'stream:tool_use_end': { id: string; parsedInput: Record<string, unknown> }
-  'stream:error': { error: string }
-  'stream:done': { usage: { inputTokens: number; outputTokens: number } }
-  'stream:turn_end': Record<string, never>
-  'stream:mobile_user_message': { content: string; source: 'mobile' }
-  'stream:retrying': { attempt: number; maxAttempts: number; delayMs: number }
+  'stream:text_delta': { content: string; sessionId: string }
+  'stream:thinking_delta': { content: string; sessionId: string }
+  'stream:tool_call_preview': { id: string; name: string; sessionId: string }
+  'stream:tool_use_start': { id: string; name: string; sessionId: string }
+  'stream:tool_use_end': { id: string; output: string; isError: boolean; toolName: string; sessionId: string }
+  'stream:error': { error: string; sessionId: string }
+  'stream:done': { usage: { inputTokens: number; outputTokens: number }; sessionId: string }
+  'stream:turn_end': { sessionId: string }
+  'stream:mobile_user_message': { content: string; source: 'mobile'; sessionId: string }
+  'stream:retrying': { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }
   'agent:permission_request': {
     toolName: string
     toolInput: Record<string, unknown>
@@ -595,12 +595,12 @@ export const IpcSchemas = {
     }),
     response: z.object({ success: z.boolean() })
   },
-  'stream:text_delta': z.object({ content: z.string() }),
-  'stream:thinking_delta': z.object({ content: z.string() }),
-  'stream:tool_call_preview': z.object({ id: z.string(), name: z.string() }),
-  'stream:tool_use_start': z.object({ id: z.string(), name: z.string() }),
-  'stream:tool_use_end': z.object({ id: z.string(), parsedInput: z.record(z.unknown()) }),
-  'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }) }),
+  'stream:text_delta': z.object({ content: z.string(), sessionId: z.string() }),
+  'stream:thinking_delta': z.object({ content: z.string(), sessionId: z.string() }),
+  'stream:tool_call_preview': z.object({ id: z.string(), name: z.string(), sessionId: z.string() }),
+  'stream:tool_use_start': z.object({ id: z.string(), name: z.string(), sessionId: z.string() }),
+  'stream:tool_use_end': z.object({ id: z.string(), sessionId: z.string() }),
+  'stream:done': z.object({ usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }), sessionId: z.string() }),
   'session:load': {
     request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.array(z.unknown())

@@ -7,18 +7,18 @@ declare global {
       sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string }) => Promise<void>
       stopGeneration: () => Promise<void>
       // Stream listeners
-      onStreamText: (cb: (p: { content: string }) => void) => () => void
-      onStreamThinking: (cb: (p: { content: string }) => void) => () => void
-      onStreamToolStart: (cb: (p: { id: string; name: string; input?: Record<string, unknown> }) => void) => () => void
-      onStreamToolCallPreview: (cb: (p: { id: string; name: string }) => void) => () => void
-      onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean; toolName: string }) => void) => () => void
-      onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number } }) => void) => () => void
-      onStreamTurnEnd: (cb: () => void) => () => void
-      onStreamError: (cb: (p: { error: string }) => void) => () => void
-      onStreamRetrying: (cb: (p: { attempt: number; maxAttempts: number; delayMs: number }) => void) => () => void
-      onSubStreamToolStart: (cb: (p: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown> }) => void) => () => void
-      onSubStreamToolResult: (cb: (p: { parentToolCallId: string; id: string; output: string; isError: boolean }) => void) => () => void
-      onSubStreamText: (cb: (p: { parentToolCallId: string; content: string }) => void) => () => void
+      onStreamText: (cb: (p: { content: string; sessionId: string }) => void) => () => void
+      onStreamThinking: (cb: (p: { content: string; sessionId: string }) => void) => () => void
+      onStreamToolStart: (cb: (p: { id: string; name: string; input?: Record<string, unknown>; sessionId: string }) => void) => () => void
+      onStreamToolCallPreview: (cb: (p: { id: string; name: string; sessionId: string }) => void) => () => void
+      onStreamToolResult: (cb: (p: { id: string; output: string; isError: boolean; toolName: string; sessionId: string }) => void) => () => void
+      onStreamEnd: (cb: (p: { usage: { inputTokens: number; outputTokens: number }; sessionId: string }) => void) => () => void
+      onStreamTurnEnd: (cb: (p: { sessionId: string }) => void) => () => void
+      onStreamError: (cb: (p: { error: string; sessionId: string }) => void) => () => void
+      onStreamRetrying: (cb: (p: { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }) => void) => () => void
+      onSubStreamToolStart: (cb: (p: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown>; sessionId?: string }) => void) => () => void
+      onSubStreamToolResult: (cb: (p: { parentToolCallId: string; id: string; output: string; isError: boolean; sessionId?: string }) => void) => () => void
+      onSubStreamText: (cb: (p: { parentToolCallId: string; content: string; sessionId?: string }) => void) => () => void
       // Workspace
       openFolder: () => Promise<{ rootPath: string } | null>
       setFolder: (request: { folderPath: string }) => Promise<{ rootPath: string } | null>

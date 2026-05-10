@@ -1,10 +1,14 @@
 // ============================================================
-// AgentLoop — 多轮 LLM 对话编排器
-// 职责：循环控制 + 上下文压缩 + 事件分发
-// 具体工作委托给 SystemPromptBuilder / TurnManager / StreamPhase
-// 消息管理委托给 ConversationManager
+// AgentLoop — multi-turn LLM conversation orchestrator
+// Responsibilities: loop control + context compaction + event dispatch
+// Delegates work to SystemPromptBuilder / TurnManager / StreamPhase
+// Message management via ConversationManager
 //
-// v2: 事件通过 yield* 从 TurnManager 逐条穿透到消费者
+// Compaction pipeline (same order as Claude Code):
+//   1. Session Memory Compact  — drop oldest API rounds (no API call)
+//   2. Microcompact            — clear old tool results (no API call)
+//   3. LLM Summary Compact     — full summarization (API call)
+//   4. PTL Recovery            — truncate head if compact itself too long
 // ============================================================
 
 import type { LLMGateway } from '../llm/gateway'
@@ -24,9 +28,14 @@ import { ConversationManager } from './conversation-manager'
 import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
-import { maybeTimeBasedMicrocompact } from '../context/microcompact'
+import { maybeTimeBasedMicrocompact, maybeTokenPressureMicrocompact } from '../context/microcompact'
 import { ToolResultReplacementState } from '../context/tool-result-storage'
 import { restoreFiles, formatRestoredFilesMessage } from '../context/compact-file-restore'
+import { trySessionMemoryCompact } from '../context/session-memory-compact'
+import { runPostCompactCleanup } from '../context/post-compact-cleanup'
+import { suppressCompactWarning } from '../context/compact-warning-state'
+import { formatPostCompactMessage } from '../context/compact-attachments'
+import type { CompactAttachmentContext } from '../context/compact-attachments'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -158,23 +167,66 @@ export class AgentLoop {
         return
       }
 
-      // Time-based microcompact：清理旧工具结果（provider-agnostic，无 API 调用）
-      // P3: 从 ContextManager 获取 microcompact 配置，不再使用硬编码默认值
+      // ==============================================
+      // Claude Code compaction pipeline (3-layer)
+      // ==============================================
+
+      // Step 1: Session Memory Compact — drop oldest API rounds (no API call)
+      const ctxWindow = this.contextManager.getContextWindowForModel(config.model)
+      const needsCompact = this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)
+
+      if (needsCompact) {
+        const compactThreshold = ctxWindow - this.contextManager.getMaxOutputTokensForModel(config.model) - this.contextManager.getConfig().compactSafetyBuffer
+        const smResult = trySessionMemoryCompact(
+          this.conversation.getMutableMessages(),
+          ctxWindow,
+          compactThreshold,
+          config.model,
+        )
+        if (smResult) {
+          this.conversation.loadFromExternal(smResult.messages)
+          runPostCompactCleanup()
+          suppressCompactWarning()
+          debugLogger.log('SESSION_MEMORY_COMPACT', `pruned ${smResult.messagesPruned} messages, ${smResult.beforeTokens} -> ${smResult.afterTokens} tokens`)
+          if (sender && !sender.isDestroyed()) {
+            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true })
+          }
+          yield { type: 'agent:compacted' as const, beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true }
+        }
+      }
+
+      // Step 2a: Time-based microcompact — clear old tool results (no API call)
       const mcConfig = this.contextManager.getMicrocompactConfig()
-      const mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages(), mcConfig)
+      let mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages(), mcConfig)
       if (mcResult.result.didCompact) {
         this.conversation.loadFromExternal(mcResult.messages)
         debugLogger.log('MICROCOMPACT', `cleared ${mcResult.result.clearedCount} old tool results (~${mcResult.result.charsSaved} chars, gap ${Math.round(mcResult.result.gapMinutes)}min)`)
       }
 
-      // 上下文压缩检查（LLM 调用前）
+      // Step 2b: Token-pressure microcompact — more aggressive when context is tight
+      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
+        const estTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+        mcResult = maybeTokenPressureMicrocompact(
+          this.conversation.getMutableMessages(),
+          ctxWindow,
+          estTokens,
+          { ...mcConfig, tokenPressureThreshold: this.contextManager.getConfig().microcompactTokenPressureThreshold },
+        )
+        if (mcResult.result.didCompact) {
+          this.conversation.loadFromExternal(mcResult.messages)
+          debugLogger.log('MICROCOMPACT_TOKEN_PRESSURE', `cleared ${mcResult.result.clearedCount} old tool results (token pressure)`)
+        }
+      }
+
+      // Step 3: LLM Summary Compact — full summarization (API call)
       if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
         const compacted = await this.doCompaction(config)
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           yield compacted
-          // Compaction succeeded — only re-enable tools if context is now below threshold
+          runPostCompactCleanup()
+          suppressCompactWarning()
           if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
             toolsDisabled = false
           }
@@ -325,8 +377,7 @@ ${hookResult.blockingError}
       this._running = false
     }
   }
-
-  /** 执行主动压缩，返回 compacted 事件或 null */
+  /** Execute LLM summary compaction with post-compact restoration */
   private async doCompaction(config: AgentConfig): Promise<AgentEvent | null> {
     await this.hookRegistry?.emit('pre-compact', { conversationId: config.conversationId })
     const messages = this.conversation.getMutableMessages()
@@ -339,40 +390,39 @@ ${hookResult.blockingError}
       const recentMessages = messages.slice(-result.keptRecentCount)
       this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
 
-      // P0: 压缩后恢复最近引用的文件内容 + todo 注入
-      // 合并为单个 user 消息，避免 OpenAI API 拒绝连续 user-role 消息
-      const postCompactParts: string[] = []
-
-      if (result.summarizedMessages.length > 0) {
-        const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
-        const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
-        if (restoredFiles.length > 0) {
-          postCompactParts.push(formatRestoredFilesMessage(restoredFiles))
-        }
+      // Post-compact attachment restoration (Claude Code style)
+      const attachmentCtx: CompactAttachmentContext = {
+        todos: [],
+        restoredFiles: [],
+        workingDirectory: config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path,
       }
 
+      // 1. Restore recently referenced files
+      if (result.summarizedMessages.length > 0) {
+        const restored = await restoreFiles(result.summarizedMessages, attachmentCtx.workingDirectory)
+        attachmentCtx.restoredFiles = restored
+      }
+
+      // 2. Restore todo list
       const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
       if (todoTool) {
-        const currentTodos = todoTool.getCurrentTodos()
-        const unfinished = currentTodos.filter(t => t.status !== 'completed')
-        if (unfinished.length > 0) {
-          const todoLines = currentTodos.map(t => {
-            const icon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'
-            return `${icon} [${t.status}] ${t.content}`
-          })
-          postCompactParts.push(
-            `Task list at time of context compaction:\n${todoLines.join('\n')}\n\nThere are ${unfinished.length} unfinished task(s). Resume from where work stopped — do NOT ask the user to repeat the requirements.`
-          )
-        }
+        attachmentCtx.todos = todoTool.getCurrentTodos()
       }
 
-      if (postCompactParts.length > 0) {
-        const postCompactMsg: import('../../shared/types').Message = {
+      // 3. Build and inject post-compact message (todos + files + instructions)
+      const postCompactMsg = formatPostCompactMessage(attachmentCtx)
+      if (postCompactMsg) {
+        this.conversation.getMutableMessages().push(postCompactMsg)
+      }
+
+      // 4. Inject restored files as separate system-reminder if any
+      if (attachmentCtx.restoredFiles.length > 0) {
+        const filesMsg: Message = {
           role: 'user',
-          content: `<system-reminder>\n${postCompactParts.join('\n\n---\n\n')}\n</system-reminder>`,
+          content: formatRestoredFilesMessage(attachmentCtx.restoredFiles),
           timestamp: Date.now(),
         }
-        this.conversation.getMutableMessages().push(postCompactMsg)
+        this.conversation.getMutableMessages().push(filesMsg)
       }
 
       return {

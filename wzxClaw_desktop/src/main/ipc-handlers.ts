@@ -63,8 +63,8 @@ export function registerIpcHandlers(
   // Track how many messages were already persisted so we only append new ones
   let persistedMessageCount = 0
 
-  // Guard against concurrent agent:send_message calls
-  let isAgentRunning = false
+  // Guard against concurrent agent:send_message calls (per-session)
+  // 已移除全局 isAgentRunning 布尔守卫，改为按会话检查 runtimes.isRunning()
 
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
@@ -76,15 +76,15 @@ export function registerIpcHandlers(
       throw new Error(`Invalid request: ${result.error.message}`)
     }
 
-    if (isAgentRunning) {
-      throw new Error('Agent is already processing a message. Please wait for it to finish or stop it first.')
+    // 按会话检查是否已有 agent 在运行（不再使用全局布尔守卫）
+    const conversationId = result.data.conversationId
+    if (runtimes.isRunning(conversationId)) {
+      throw new Error('Agent is already processing a message in this session. Please wait for it to finish or stop it first.')
     }
-    isAgentRunning = true
 
     const sender = event.sender
 
     // 获取当前会话的 per-session runtime
-    const conversationId = result.data.conversationId
     const runtime = runtimes.getOrCreate(conversationId)
 
     // Set active session for step manager (session-isolated steps)
@@ -174,18 +174,21 @@ export function registerIpcHandlers(
     // 将桌面用户的提问广播给手机端，让其显示用户气泡
     onStreamEvent?.('stream:desktop_user_message', { content: result.data.content, sessionId: agentConfig.conversationId })
 
+    // 通知渲染器和手机端该会话 agent 已启动（用于 runningSessionIds 追踪）
+    runtimes.notifyRunningChanged(conversationId, true)
+
     try {
       for await (const agentEvent of runtime.run(result.data.content, agentConfig, sender, result.data.images as import('../shared/types').ImageContent[] | undefined)) {
         switch (agentEvent.type) {
           case 'agent:text':
-            sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content })
+            sender.send(IPC_CHANNELS['stream:text_delta'], { content: agentEvent.content, sessionId: conversationId })
             relayEvent('agent:text', { content: agentEvent.content })
             break
           case 'agent:thinking':
-            sender.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content })
+            sender.send(IPC_CHANNELS['stream:thinking_delta'], { content: agentEvent.content, sessionId: conversationId })
             break
           case 'agent:tool_call_preview':
-            sender.send(IPC_CHANNELS['stream:tool_call_preview'], { id: agentEvent.toolCallId, name: agentEvent.toolName })
+            sender.send(IPC_CHANNELS['stream:tool_call_preview'], { id: agentEvent.toolCallId, name: agentEvent.toolName, sessionId: conversationId })
             break
           case 'agent:tool_call':
             // Store tool input so we can extract file path on tool_result (per D-52)
@@ -194,6 +197,7 @@ export function registerIpcHandlers(
               id: agentEvent.toolCallId,
               name: agentEvent.toolName,
               input: agentEvent.input,
+              sessionId: conversationId,
             })
             relayEvent('agent:tool_call', { toolCallId: agentEvent.toolCallId, toolName: agentEvent.toolName, input: agentEvent.input })
             break
@@ -203,6 +207,7 @@ export function registerIpcHandlers(
               output: agentEvent.output,
               isError: agentEvent.isError,
               toolName: agentEvent.toolName,
+              sessionId: conversationId,
             })
             relayEvent('agent:tool_result', { toolCallId: agentEvent.toolCallId, toolName: agentEvent.toolName, isError: agentEvent.isError, output: agentEvent.output })
 
@@ -226,21 +231,22 @@ export function registerIpcHandlers(
             break
           }
           case 'agent:error':
-            sender.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error })
+            sender.send(IPC_CHANNELS['stream:error'], { error: agentEvent.error, sessionId: conversationId })
             relayEvent('agent:error', { error: agentEvent.error })
             break
           case 'agent:turn_end':
-            sender.send(IPC_CHANNELS['stream:turn_end'], {})
+            sender.send(IPC_CHANNELS['stream:turn_end'], { sessionId: conversationId })
             break
           case 'agent:compacted':
             sender.send(IPC_CHANNELS['session:compacted'], {
               beforeTokens: agentEvent.beforeTokens,
               afterTokens: agentEvent.afterTokens,
-              auto: agentEvent.auto
+              auto: agentEvent.auto,
+              sessionId: conversationId,
             })
             break
           case 'agent:done':
-            sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage })
+            sender.send(IPC_CHANNELS['stream:done'], { usage: agentEvent.usage, sessionId: conversationId })
             relayEvent('agent:done', { usage: agentEvent.usage, turnCount: agentEvent.turnCount })
             // Track cost and push usage:update to renderer (Phase 4.4)
             costTracker.addUsage(
@@ -283,9 +289,10 @@ export function registerIpcHandlers(
     } catch (error) {
       sender.send(IPC_CHANNELS['stream:error'], {
         error: error instanceof Error ? error.message : String(error),
+        sessionId: conversationId,
       })
     } finally {
-      isAgentRunning = false
+      runtimes.notifyRunningChanged(conversationId, false)
       sender.removeListener('destroyed', onWindowClosed)
     }
   })

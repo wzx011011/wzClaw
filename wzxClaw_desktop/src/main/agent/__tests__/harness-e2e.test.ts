@@ -96,6 +96,8 @@ function makeContextMgr(opts?: { shouldCompact?: boolean }) {
     estimateTokens: vi.fn().mockReturnValue(5000),
     estimateOverheadTokens: vi.fn().mockReturnValue(0),
     getMicrocompactConfig: vi.fn().mockReturnValue({ gapMinutes: 60, keepRecent: 5 }),
+    getMaxOutputTokensForModel: vi.fn().mockReturnValue(4096),
+    getConfig: vi.fn().mockReturnValue({ compactSafetyBuffer: 13000, microcompactTokenPressureThreshold: 0.7, reactiveCompactKeepCount: 6 }),
   }
 }
 
@@ -427,7 +429,12 @@ describe('Harness E2E', () => {
     const { AgentLoop } = await import('../agent-loop')
     const ctxMgr = makeContextMgr({ shouldCompact: true })
     // After compaction, shouldCompact returns false
-    ctxMgr.shouldCompact.mockReturnValueOnce(true).mockReturnValue(false)
+    // 3-layer pipeline: shouldCompact called at step 1, 2b, 3, then re-checks
+    ctxMgr.shouldCompact
+      .mockReturnValueOnce(true)   // Step 1: enter session memory compact
+      .mockReturnValueOnce(true)   // Step 2b: enter token pressure microcompact
+      .mockReturnValueOnce(true)   // Step 3: enter LLM summary compact (doCompaction)
+      .mockReturnValue(false)      // Post-compact re-checks: all false
 
     const gw = createGateway([
       [

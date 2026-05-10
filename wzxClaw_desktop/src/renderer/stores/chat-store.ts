@@ -405,11 +405,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   init: () => {
     const unsubText = window.wzxclaw.onStreamText((payload) => {
+      // 会话过滤：丢弃非当前活动会话的事件
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       textBatchBuffer += payload.content
       scheduleTextFlush()
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
+      // 会话过滤：丢弃非当前活动会话的事件
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Skip thinking display when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
       thinkingBatchBuffer += payload.content
@@ -417,6 +421,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubToolCallPreview = window.wzxclaw.onStreamToolCallPreview?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Show a preview tool card before the full tool input finishes streaming
       if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
@@ -455,6 +461,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubToolStart = window.wzxclaw.onStreamToolStart((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Skip tool step UI when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
       flushTextBatch()
@@ -515,6 +523,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubToolResult = window.wzxclaw.onStreamToolResult((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Skip tool step UI when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
@@ -562,6 +572,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }
     const unsubToolProgress = window.wzxclaw.onStreamToolProgress?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       progressBuffer.set(payload.toolCallId, payload.message)
       if (progressFrame === null) {
         progressFrame = requestAnimationFrame(flushProgressBatch)
@@ -569,6 +581,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
+      // 会话过滤：仅处理当前活动会话的完成事件
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       flushTextBatch()
       set((state) => {
         // Drop a trailing empty assistant bubble if the stream finishes before
@@ -620,6 +634,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     const unsubError = window.wzxclaw.onStreamError((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       flushTextBatch()
       set((state) => {
         const streamingMessageId = state.streamingMessageId
@@ -652,7 +668,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Global isStreaming stays true since the agent loop is still running.
     // The renderer shows a transient waiting indicator until the next turn
     // produces text, thinking, or tool activity.
-    const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.(() => {
+    const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       flushTextBatch()
       set((state) => {
         const { messages } = state
@@ -707,6 +725,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Session compacted events (per CTX-03, CTX-05)
     const unsubCompacted = window.wzxclaw.onSessionCompacted((payload) => {
+      // 会话过滤：仅显示当前活动会话的压缩通知
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       set((state) => {
         const compactMsg: ChatMessage = {
           id: uuidv4(),
@@ -752,6 +772,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Retry notifications from the LLM retry wrapper
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       flushTextBatch()
       set((state) => {
         const { messages } = state
@@ -786,6 +808,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Sub-agent tool calls: attach children to the parent Agent ToolCall
     const unsubSubToolStart = window.wzxclaw.onSubStreamToolStart?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
         const { messages, streamingMessageId } = state
@@ -809,6 +833,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubSubToolResult = window.wzxclaw.onSubStreamToolResult?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       if (!useSettingsStore.getState().showToolSteps) return
       set((state) => {
         const { messages, streamingMessageId } = state
@@ -863,6 +889,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
     }
     const unsubSubText = window.wzxclaw.onSubStreamText?.((payload) => {
+      // 会话过滤
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       if (!useSettingsStore.getState().showToolSteps) return
       subTextBuffer += payload.content
       subTextParentId = payload.parentToolCallId
@@ -1267,15 +1295,38 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // 恢复：如果目标会话仍在运行（后台 agent loop 未结束），恢复 isStreaming 状态
     // 以便后续流式事件能被正确接收和渲染（而不是被 isStreaming==null 守卫丢弃）
     if (get().runningSessionIds.has(sessionId)) {
-      // 找到最后一条 isStreaming 的 assistant 消息，恢复其 streamingMessageId
-      // 否则后续 text_delta 会创建新的 assistant 消息导致内容重复
       const currentMessages = get().messages
-      const lastStreamingMsg = [...currentMessages].reverse().find(m => m.role === 'assistant' && m.isStreaming)
-      set({
-        isStreaming: true,
-        isWaitingForResponse: true,
-        ...(lastStreamingMsg ? { streamingMessageId: lastStreamingMsg.id } : {})
-      })
+      // buildChatMessagesFromRaw 不设置 isStreaming=true，所以直接找最后一条 assistant 消息
+      const lastAssistantMsg = [...currentMessages].reverse().find(m => m.role === 'assistant')
+
+      if (lastAssistantMsg) {
+        // 将最后一条 assistant 消息标记为 streaming，后续事件会追加到它
+        const restoredMessages = currentMessages.map(m =>
+          m.id === lastAssistantMsg.id ? { ...m, isStreaming: true } : m
+        )
+        set({
+          isStreaming: true,
+          isWaitingForResponse: true,
+          streamingMessageId: lastAssistantMsg.id,
+          messages: restoredMessages,
+        })
+      } else {
+        // 没有 assistant 消息（agent 刚开始），创建占位消息
+        const placeholderMsg: ChatMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          toolCalls: []
+        }
+        set({
+          isStreaming: true,
+          isWaitingForResponse: true,
+          streamingMessageId: placeholderMsg.id,
+          messages: [...currentMessages, placeholderMsg],
+        })
+      }
     }
   },
 
