@@ -39,6 +39,8 @@ export interface AgentErrorEvent {
   type: 'agent:error'
   error: string
   recoverable: boolean
+  /** 错误分类码，用于 Langfuse trace 区分错误类型 */
+  errorCode?: 'SAFETY_CEILING' | 'PROMPT_TOO_LONG' | 'TOKEN_BUDGET' | 'CANCELLED' | 'TURN_ERROR' | string
 }
 
 export interface AgentDoneEvent {

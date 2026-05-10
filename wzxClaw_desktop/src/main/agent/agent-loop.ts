@@ -149,8 +149,9 @@ export class AgentLoop {
       if (turnCount > safetyCeiling) {
         debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
         debugLogger.close()
-        yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
+        yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true, errorCode: 'SAFETY_CEILING' }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
+        getActiveTrace(config.conversationId)?.recordErrorCode('SAFETY_CEILING')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -160,8 +161,9 @@ export class AgentLoop {
       if (maxTurns && turnCount > maxTurns) {
         debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
         debugLogger.close()
-        yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
+        yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true, errorCode: 'SAFETY_CEILING' }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
+        getActiveTrace(config.conversationId)?.recordErrorCode('SAFETY_CEILING')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -295,7 +297,8 @@ export class AgentLoop {
           debugLogger.log('ERROR', 'context too long, all recovery exhausted')
           debugLogger.close()
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('fatal')
-          yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
+          yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true, errorCode: 'PROMPT_TOO_LONG' }
+          getActiveTrace(config.conversationId)?.recordErrorCode('PROMPT_TOO_LONG')
           endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
           await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
           return
@@ -305,6 +308,7 @@ export class AgentLoop {
       if (turnResult.hadError) {
         debugLogger.log('ERROR', 'turn had error, stopping')
         debugLogger.close()
+        getActiveTrace(config.conversationId)?.recordErrorCode('TURN_ERROR')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -322,8 +326,9 @@ export class AgentLoop {
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
         debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
-        yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
+        yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true, errorCode: 'TOKEN_BUDGET' }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
+        getActiveTrace(config.conversationId)?.recordErrorCode('TOKEN_BUDGET')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return

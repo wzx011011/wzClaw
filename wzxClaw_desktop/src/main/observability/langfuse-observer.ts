@@ -171,9 +171,16 @@ export class AgentTraceContext {
   readonly evalCollector = new EvalCollector()
   /** 当前模型（供 judge 使用） */
   readonly model: string
+  /** 最后一次错误码（供 endTrace 写入 metadata） */
+  private lastErrorCode?: string
 
   get isNestedTrace(): boolean {
     return this.isNested
+  }
+
+  /** 记录错误码，供 endTrace 写入 Langfuse trace metadata */
+  recordErrorCode(code: string): void {
+    this.lastErrorCode = code
   }
 
   constructor(
@@ -274,6 +281,7 @@ export class AgentTraceContext {
         totalOutputTokens: usage.outputTokens,
         turnCount,
         hadError,
+        ...(this.lastErrorCode ? { errorCode: this.lastErrorCode } : {}),
       },
       level: hadError ? 'ERROR' : 'DEFAULT',
     })
