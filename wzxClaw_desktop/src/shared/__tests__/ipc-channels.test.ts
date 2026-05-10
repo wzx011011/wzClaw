@@ -220,6 +220,11 @@ describe('IPC wiring alignment', () => {
     // 提取 main 中 ipcMain.handle 用的 channel（从 IPC_CHANNELS 引用和裸字符串两种）
     const mainSrcs = [
       path.join(ROOT, 'src/main/ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/ipc-handlers/session-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/ipc-handlers/file-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/ipc-handlers/skill-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/ipc-handlers/plugin-ipc-handlers.ts'),
+      path.join(ROOT, 'src/main/ipc-handlers/insights-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/index.ts'),
       path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),

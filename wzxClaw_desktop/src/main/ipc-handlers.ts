@@ -1,23 +1,9 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import path from 'path'
-import os from 'os'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
 import { CostTracker } from './llm/cost-tracker'
-import { getCommandsDir, getSkillsDir, getAppDataDir, getInsightsCacheDir, getInsightsReportDir } from './paths'
+import { getCommandsDir, getSkillsDir } from './paths'
 import { invalidateGitCache } from './git/git-context'
-import { pluginToInfo } from '../shared/types-plugin'
-import { skillToInfo } from '../shared/types-skill'
-
-/**
- * Check whether a file path is within the workspace root boundary.
- * Uses normalized, case-insensitive comparison to prevent path traversal
- * on Windows (e.g., junction points, case variations, ".." segments).
- */
-function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
-  const normalized = path.resolve(filePath).toLowerCase()
-  const root = path.resolve(workspaceRoot).toLowerCase()
-  return normalized === root || normalized.startsWith(root + path.sep)
-}
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_MODELS } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
 import type { AgentLoop } from './agent/agent-loop'
@@ -36,6 +22,13 @@ import type { IndexingEngine } from './indexing/indexing-engine'
 import { getGitStatusShort } from './git/git-context'
 import type { MCPManager } from './mcp/mcp-manager'
 import type { WorkspaceStore } from './tasks/workspace-store'
+
+// Extracted handler groups
+import { registerSessionIpcHandlers } from './ipc-handlers/session-ipc-handlers'
+import { registerFileIpcHandlers } from './ipc-handlers/file-ipc-handlers'
+import { registerSkillIpcHandlers } from './ipc-handlers/skill-ipc-handlers'
+import { registerPluginIpcHandlers } from './ipc-handlers/plugin-ipc-handlers'
+import { registerInsightsIpcHandlers } from './ipc-handlers/insights-ipc-handlers'
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
@@ -65,10 +58,6 @@ export function registerIpcHandlers(
   // Per-session persisted message counts — prevents cross-session corruption
   const persistedMessageCounts = new Map<string, number>()
 
-  // Helper: 解析 workspace 并返回 SessionStore（替代重复的 new SessionStore 模式）
-  const resolveStore = (activeWorkspaceId?: string) =>
-    storeManager.getForWorkspace(activeWorkspaceId, workspaceManager, workspaceStore)
-
   // Helper: 解析当前 workspace 的 projectRoots（替代 agentLoop.activeWorkspace 读取）
   const resolveProjectRoots = (): string[] => {
     const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
@@ -82,8 +71,40 @@ export function registerIpcHandlers(
     return [cwd]
   }
 
-  // Guard against concurrent agent:send_message calls (per-session)
-  // 已移除全局 isAgentRunning 布尔守卫，改为按会话检查 runtimes.isRunning()
+  // ============================================================
+  // Register extracted handler groups
+  // ============================================================
+  registerSessionIpcHandlers({
+    runtimes,
+    stepManager,
+    settingsManager,
+    workspaceManager,
+    workspaceStore,
+    getSessionStore,
+    storeManager,
+    onDataChanged,
+    persistedMessageCounts,
+  })
+
+  registerFileIpcHandlers({
+    workspaceManager,
+  })
+
+  registerSkillIpcHandlers({
+    workspaceManager,
+    settingsManager,
+    resolveProjectRoots,
+  })
+
+  registerPluginIpcHandlers({
+    workspaceManager,
+    settingsManager,
+    resolveProjectRoots,
+  })
+
+  registerInsightsIpcHandlers({
+    settingsManager,
+  })
 
   // ============================================================
   // Agent: send message — triggers AgentLoop.run() and forwards
@@ -462,480 +483,12 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // File: read
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:read'], async (_event, request) => {
-    const workspaceRoot = workspaceManager.getWorkspaceRoot()
-    if (!workspaceRoot) throw new Error('No workspace open')
-    const filePath = request?.filePath
-    if (typeof filePath !== 'string' || !filePath) throw new Error('Invalid filePath')
-    const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath)
-    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-      throw new Error('Access denied: file path is outside the workspace root')
-    }
-    return workspaceManager.readFile(absolutePath)
-  })
-
-  // ============================================================
-  // File: read-content — reads file for @-mention injection with 100KB limit
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:read-content'], async (_event, request) => {
-    const result = IpcSchemas['file:read-content'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-
-    const { filePath } = result.data
-    const workspaceRoot = workspaceManager.getWorkspaceRoot()
-    if (!workspaceRoot) {
-      return { error: 'No workspace open', size: 0, limit: 102400 }
-    }
-
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.resolve(workspaceRoot, filePath)
-
-    // Verify the resolved path stays within the workspace boundary
-    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-      return { error: 'Access denied: file path is outside the workspace root', size: 0, limit: 102400 }
-    }
-
-    const { stat, readFile } = await import('fs/promises')
-    const fileStat = await stat(absolutePath)
-    const size = fileStat.size
-    const limit = 102400 // 100KB
-
-    if (size > limit) {
-      return { error: 'File too large', size, limit }
-    }
-
-    const content = await readFile(absolutePath, 'utf-8')
-    // Return relative path for display
-    const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/')
-    return { content, size, path: relativePath }
-  })
-
-  // ============================================================
-  // File: read-folder-tree — generates directory tree summary for folder @-mention
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:read-folder-tree'], async (_event, request) => {
-    const result = IpcSchemas['file:read-folder-tree'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-
-    const { dirPath } = result.data
-    const workspaceRoot = workspaceManager.getWorkspaceRoot()
-    if (!workspaceRoot) {
-      return { error: 'No workspace open' }
-    }
-
-    const absolutePath = path.isAbsolute(dirPath)
-      ? dirPath
-      : path.resolve(workspaceRoot, dirPath)
-
-    // Verify the resolved path stays within the workspace boundary
-    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-      return { error: 'Access denied: directory path is outside the workspace root' }
-    }
-
-    // Directories to skip
-    const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'out', 'coverage', '__pycache__', '.cache'])
-    const MAX_DEPTH = 3
-    const MAX_ENTRIES = 100
-
-    const { readdir, stat: fsStat } = await import('fs/promises')
-
-    interface TreeNode {
-      name: string
-      isDirectory: boolean
-      children: TreeNode[]
-    }
-
-    async function buildTree(dir: string, depth: number, entryCount: { count: number }): Promise<TreeNode[]> {
-      if (depth > MAX_DEPTH || entryCount.count >= MAX_ENTRIES) return []
-
-      let entries
-      try {
-        entries = await readdir(dir, { withFileTypes: true })
-      } catch {
-        return []
-      }
-
-      // Sort: directories first, then files, both alphabetically
-      entries.sort((a, b) => {
-        if (a.isDirectory() && !b.isDirectory()) return -1
-        if (!a.isDirectory() && b.isDirectory()) return 1
-        return a.name.localeCompare(b.name)
-      })
-
-      const nodes: TreeNode[] = []
-      for (const entry of entries) {
-        if (entryCount.count >= MAX_ENTRIES) break
-        if (SKIP_DIRS.has(entry.name)) continue
-        if (entry.name.startsWith('.') && entry.name !== '.env') continue
-
-        entryCount.count++
-        const childPath = path.join(dir, entry.name)
-        const isDir = entry.isDirectory()
-
-        const node: TreeNode = {
-          name: entry.name,
-          isDirectory: isDir,
-          children: []
-        }
-
-        if (isDir) {
-          node.children = await buildTree(childPath, depth + 1, entryCount)
-        }
-
-        nodes.push(node)
-      }
-      return nodes
-    }
-
-    try {
-      const dirStat = await fsStat(absolutePath)
-      if (!dirStat.isDirectory()) {
-        return { error: 'Path is not a directory' }
-      }
-
-      const entryCount = { count: 0 }
-      const children = await buildTree(absolutePath, 1, entryCount)
-
-      // Format as tree string
-      function formatTree(nodes: TreeNode[], prefix: string): string {
-        let result = ''
-        for (let i = 0; i < nodes.length; i++) {
-          const isLast = i === nodes.length - 1
-          const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251C\u2500\u2500 '
-          const suffix = nodes[i].isDirectory ? '/' : ''
-          result += `${prefix}${connector}${nodes[i].name}${suffix}\n`
-
-          if (nodes[i].isDirectory && nodes[i].children.length > 0) {
-            const newPrefix = prefix + (isLast ? '    ' : '\u2502   ')
-            result += formatTree(nodes[i].children, newPrefix)
-          }
-        }
-        return result
-      }
-
-      const dirName = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/') || path.basename(absolutePath)
-      const tree = `${dirName}/\n` + formatTree(children, '')
-      const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/')
-
-      return { tree, fileCount: entryCount.count, path: relativePath }
-    } catch (err) {
-      return { error: `Failed to read directory: ${err instanceof Error ? err.message : String(err)}` }
-    }
-  })
-
-  // ============================================================
-  // File: save — validates filePath and enforces workspace boundary
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:save'], async (_event, request) => {
-    const result = IpcSchemas['file:save'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-
-    const { filePath } = result.data
-    const workspaceRoot = workspaceManager.getWorkspaceRoot()
-    if (!workspaceRoot) {
-      throw new Error('No workspace open')
-    }
-
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.resolve(workspaceRoot, filePath)
-
-    // Verify the resolved path stays within the workspace boundary
-    if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-      throw new Error('Access denied: file path is outside the workspace root')
-    }
-
-    await workspaceManager.saveFile(absolutePath, result.data.content)
-  })
-
-  // ============================================================
-  // File: rename — renames/moves a file within workspace boundary
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:rename'], async (_event, request) => {
-    try {
-      const { oldPath, newPath } = request
-      const workspaceRoot = workspaceManager.getWorkspaceRoot()
-      if (!workspaceRoot) throw new Error('No workspace open')
-
-      const absOld = path.isAbsolute(oldPath) ? oldPath : path.resolve(workspaceRoot, oldPath)
-      const absNew = path.isAbsolute(newPath) ? newPath : path.resolve(workspaceRoot, newPath)
-
-      if (!isWithinWorkspace(absOld, workspaceRoot) || !isWithinWorkspace(absNew, workspaceRoot)) {
-        throw new Error('Access denied: path is outside the workspace root')
-      }
-
-      const { rename } = await import('fs/promises')
-      await rename(absOld, absNew)
-      return { success: true }
-    } catch (error) {
-      console.error('Failed to rename file:', error)
-      return { success: false }
-    }
-  })
-
-  // ============================================================
-  // File: delete — removes a file/directory within workspace boundary
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:delete'], async (_event, request) => {
-    try {
-      const { filePath } = request
-      const workspaceRoot = workspaceManager.getWorkspaceRoot()
-      if (!workspaceRoot) throw new Error('No workspace open')
-
-      const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath)
-
-      if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-        throw new Error('Access denied: path is outside the workspace root')
-      }
-
-      const { rm } = await import('fs/promises')
-      await rm(absolutePath, { recursive: true })
-      return { success: true }
-    } catch (error) {
-      console.error('Failed to delete file:', error)
-      return { success: false }
-    }
-  })
-
-  // ============================================================
-  // File: create — creates a new empty file or directory
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:create'], async (_event, request) => {
-    try {
-      const { dirPath, name, type } = request
-      const workspaceRoot = workspaceManager.getWorkspaceRoot()
-      if (!workspaceRoot) throw new Error('No workspace open')
-
-      const absoluteDir = path.isAbsolute(dirPath) ? dirPath : path.resolve(workspaceRoot, dirPath)
-      if (!isWithinWorkspace(absoluteDir, workspaceRoot)) {
-        throw new Error('Access denied: path is outside the workspace root')
-      }
-
-      const fullPath = path.join(absoluteDir, name)
-      if (type === 'directory') {
-        await fsp.mkdir(fullPath, { recursive: true })
-      } else {
-        // 确保父目录存在
-        await fsp.mkdir(absoluteDir, { recursive: true })
-        await fsp.writeFile(fullPath, '', 'utf-8')
-      }
-      return { success: true, filePath: fullPath }
-    } catch (error) {
-      console.error('Failed to create file:', error)
-      return { success: false, filePath: '' }
-    }
-  })
-
-  // ============================================================
-  // Session: list — returns all sessions for current project or task
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
-    const store = await resolveStore(payload?.activeWorkspaceId)
-    let sessions = await store.listSessions()
-
-    // Enrich each session with todo summary and running status
-    const runningIds = runtimes.listRunning()
-    const { TodoWriteTool } = await import('./tools/todo-write')
-    for (const session of sessions) {
-      session.isRunning = runningIds.includes(session.id)
-      try {
-        const todos = await TodoWriteTool.loadForSession(session.id)
-        if (todos.length > 0) {
-          const completed = todos.filter(t => t.status === 'completed').length
-          const inProgress = todos.find(t => t.status === 'in_progress')
-          let summary = `${completed}/${todos.length} 完成`
-          if (inProgress) {
-            summary += ` · 当前: ${inProgress.activeForm || inProgress.content}`
-          }
-          session.todoSummary = summary
-        }
-      } catch {
-        // ignore — session may not have todos
-      }
-    }
-
-    return { sessions, runningSessionIds: runningIds }
-  })
-
-  // ============================================================
-  // Session: load — returns messages and restores agent context (Phase 3.4)
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:load'], async (event, request) => {
-    const result = IpcSchemas['session:load'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-    const { sessionId, activeWorkspaceId } = result.data
-    // 为该会话获取/创建 per-session runtime
-    const loadRuntime = runtimes.getOrCreate(sessionId)
-    // 优先使用请求中携带的 activeWorkspaceId（与 listSessions 保持一致），
-    // 避免 runtime.activeWorkspace 尚未设置时读错 store。
-    const store = await resolveStore(activeWorkspaceId)
-    let resolvedWorkspace = loadRuntime.activeWorkspace ?? null
-    if (activeWorkspaceId) {
-      const workspace = await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
-      if (workspace) {
-        resolvedWorkspace = workspace
-      }
-    }
-    const rawMessages = await store.loadSession(sessionId)
-
-    // Reset persisted counter to match loaded message count (per-session)
-    persistedMessageCounts.set(sessionId, rawMessages.length)
-
-    const config = settingsManager.getCurrentConfig()
-    const restoreCwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const restoreRoots = resolvedWorkspace
-      ? resolvedWorkspace.projects.map(p => p.path)
-      : [restoreCwd]
-
-    // 会话上下文恢复不是首屏依赖。延迟到窗口可交互后再射入当前 runtime，
-    // 避免启动后立即拖动窗口时，主进程被历史 token 统计抢占。
-    const restoreSender = event.sender
-    setTimeout(() => {
-      loadRuntime.restoreContext(rawMessages, {
-        model: config.model,
-        provider: config.provider as 'openai' | 'anthropic',
-        systemPrompt: config.systemPrompt,
-        workingDirectory: restoreCwd,
-        projectRoots: restoreRoots,
-      }).then((info) => {
-        if (!restoreSender.isDestroyed()) {
-          restoreSender.send(IPC_CHANNELS['session:context-restored'], {
-            sessionId,
-            messageCount: info.messageCount,
-            compacted: info.compacted,
-            beforeTokens: info.beforeTokens,
-            afterTokens: info.afterTokens
-          })
-        }
-      }).catch((err) => {
-        console.error('[session:load] restoreContext failed:', err)
-      })
-    }, 1000)
-
-    return rawMessages
-  })
-
-  // ============================================================
-  // Session: load-tail — 只返回最近 N 条消息，不触发 agentLoop 上下文恢复
-  // 用于会话切换时的快速首帧渲染（先显示 tail，再后台 load 完整会话）
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:load-tail'], async (_event, request) => {
-    const { sessionId, tailCount, activeWorkspaceId } = request as { sessionId: string; tailCount: number; activeWorkspaceId?: string }
-    if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) throw new Error('Invalid session ID format')
-    const store = await resolveStore(activeWorkspaceId)
-    const safeCount = Math.max(1, Math.min(tailCount ?? 100, 500))
-    return store.loadSessionTail(sessionId, safeCount)
-  })
-
-  // ============================================================
-  // Session: delete — removes a session file
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:delete'], async (_event, request) => {
-    const result = IpcSchemas['session:delete'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-    let store = await resolveStore(result.data.activeWorkspaceId)
-    const success = await store.deleteSession(result.data.sessionId)
-    if (success) {
-      // Clean up associated steps from memory and disk
-      stepManager.clearSession(result.data.sessionId)
-      onDataChanged?.('session:changed', { action: 'deleted', sessionId: result.data.sessionId })
-    }
-    return { success }
-  })
-
-  // ============================================================
-  // Session: rename — updates session title via meta line
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:rename'], async (_event, request) => {
-    const result = IpcSchemas['session:rename'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-    const store = await resolveStore(result.data.activeWorkspaceId)
-    const success = await store.renameSession(result.data.sessionId, result.data.title)
-    if (success) onDataChanged?.('session:changed', { action: 'renamed', sessionId: result.data.sessionId, title: result.data.title })
-    return { success }
-  })
-
-  // ============================================================
-  // Session: duplicate — copies all messages to a new session
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:duplicate'], async (_event, request) => {
-    const result = IpcSchemas['session:duplicate'].request.safeParse(request)
-    if (!result.success) {
-      throw new Error(`Invalid request: ${result.error.message}`)
-    }
-    const store = await resolveStore(result.data.activeWorkspaceId)
-    // 加载源会话的所有消息行
-    const messages = await store.loadSession(result.data.sessionId)
-    if (messages.length === 0) {
-      throw new Error('Source session is empty or not found')
-    }
-    // 创建新会话（直接复制 JSONL 内容）
-    const newId = crypto.randomUUID()
-    const jsonlContent = messages.map(m => JSON.stringify(m)).join('\n') + '\n'
-    const newPath = path.join(store.sessionDir, `${newId}.jsonl`)
-    await fsp.mkdir(store.sessionsDir, { recursive: true })
-    await fsp.writeFile(newPath, jsonlContent, 'utf-8')
-    onDataChanged?.('session:changed', { action: 'created', sessionId: newId })
-    return { newSessionId: newId }
-  })
-
-  // ============================================================
   // Todo: load persisted todos for a session
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['todo:load'], async (_event, request: { sessionId: string }) => {
     const { TodoWriteTool } = await import('./tools/todo-write')
     const todos = await TodoWriteTool.loadForSession(request.sessionId)
     return todos.map(t => ({ content: t.content, status: t.status, activeForm: t.activeForm ?? '' }))
-  })
-
-  // ============================================================
-  // File: apply-hunk — validates filePath, enforces workspace boundary,
-  // writes accepted diff hunks to disk
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['file:apply-hunk'], async (_event, request) => {
-    try {
-      const result = IpcSchemas['file:apply-hunk'].request.safeParse(request)
-      if (!result.success) {
-        throw new Error(`Invalid request: ${result.error.message}`)
-      }
-
-      const { filePath, modifiedContent } = result.data
-      const workspaceRoot = workspaceManager.getWorkspaceRoot()
-      if (!workspaceRoot) {
-        throw new Error('No workspace open')
-      }
-
-      const absolutePath = path.isAbsolute(filePath)
-        ? filePath
-        : path.resolve(workspaceRoot, filePath)
-
-      // Verify the resolved path stays within the workspace boundary
-      if (!isWithinWorkspace(absolutePath, workspaceRoot)) {
-        throw new Error('Access denied: file path is outside the workspace root')
-      }
-
-      const { writeFile } = await import('fs/promises')
-      await writeFile(absolutePath, modifiedContent, 'utf-8')
-      return { success: true }
-    } catch (error) {
-      console.error('Failed to apply hunk:', error)
-      return { success: false }
-    }
   })
 
   // ============================================================
@@ -973,6 +526,93 @@ export function registerIpcHandlers(
       auto: false
     })
     return { beforeTokens: result.beforeTokens, afterTokens: result.afterTokens }
+  })
+
+  // ============================================================
+  // Context breakdown — detailed token usage per category
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['agent:context_breakdown'], async () => {
+    const { countTokens, countMessagesTokens } = await import('./context/token-counter')
+    const { buildSystemPromptBreakdown } = await import('./agent/system-prompt-builder')
+    const config = settingsManager.getCurrentConfig()
+    const model = config.model
+    const preset = DEFAULT_MODELS.find(m => m.id === model)
+    const contextWindowSize = preset?.contextWindowSize ?? 128000
+    const maxOutputTokens = preset?.maxTokens ?? 16384
+
+    // 1. System prompt breakdown
+    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    const breakdownRoots = resolveProjectRoots()
+    const lastSessionId = settingsManager.getLastSessionId()
+    const activeWorkspace = lastSessionId ? runtimes.getOrCreate(lastSessionId).activeWorkspace : null
+    const promptBreakdown = await buildSystemPromptBreakdown({
+      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      workingDirectory: cwd,
+      projectRoots: breakdownRoots,
+      model,
+      provider: config.provider as 'openai' | 'anthropic',
+    }, activeWorkspace)
+
+    // 2. Tool definitions — separate built-in vs MCP
+    const allToolDefs = toolRegistry.getToolDefinitions()
+    const allToolTokens = countTokens(JSON.stringify(allToolDefs))
+    const mcpToolNames = new Set(mcpManager.listAllTools().map(t => t.name))
+    const builtinDefs = allToolDefs.filter(d => !mcpToolNames.has(d.name))
+    const mcpDefs = allToolDefs.filter(d => mcpToolNames.has(d.name))
+    const builtinToolTokens = countTokens(JSON.stringify(builtinDefs))
+    const mcpToolTokens = countTokens(JSON.stringify(mcpDefs))
+
+    // 3. Conversation messages — 使用当前渲染器会话的 runtime
+    const breakdownSessionId = settingsManager.getLastSessionId()
+    const breakdownRuntime = breakdownSessionId ? runtimes.getOrCreate(breakdownSessionId) : agentLoop
+    const messages = breakdownRuntime.getMessages()
+    const conversationTokens = countMessagesTokens(messages, model)
+    const messagesByRole = { user: 0, assistant: 0, tool_result: 0 }
+    for (const m of messages) {
+      const role = m.role as keyof typeof messagesByRole
+      if (role in messagesByRole) messagesByRole[role]++
+    }
+
+    // 4. Totals
+    const totalEstimated = promptBreakdown.staticTokens + promptBreakdown.dynamicTokens
+      + allToolTokens + conversationTokens
+    const usagePercent = (totalEstimated / contextWindowSize) * 100
+    // 压缩缓冲：使用与 shouldCompact() 相同的公式
+    const cfg = contextManager.getConfig()
+    const threshold = cfg.compactThreshold > 0
+      ? contextWindowSize * cfg.compactThreshold
+      : contextWindowSize - contextManager.getMaxOutputTokensForModel(model) - cfg.compactSafetyBuffer
+    const autocompactBufferTokens = Math.floor(Math.max(threshold, contextWindowSize * 0.5))
+      - totalEstimated
+    const freeSpaceTokens = Math.max(0, contextWindowSize - totalEstimated)
+
+    // 5. Session usage + compaction history
+    const sessionUsage = costTracker.getSession()
+    const compactionHistory = contextManager.getCompactHistory()
+
+    return {
+      systemPromptTokens: promptBreakdown.staticTokens,
+      systemPromptDynamicTokens: promptBreakdown.dynamicTokens,
+      instructionsTokens: promptBreakdown.instructionsTokens,
+      commandsTokens: promptBreakdown.commandsTokens,
+      skillsTokens: promptBreakdown.skillsTokens,
+      memoryTokens: promptBreakdown.memoryTokens,
+      toolDefinitionsTokens: allToolTokens,
+      builtinToolTokens,
+      mcpToolTokens,
+      conversationTokens,
+      conversationMessageCount: messages.length,
+      messagesByRole,
+      totalEstimatedTokens: totalEstimated,
+      contextWindowSize,
+      maxOutputTokens,
+      usagePercent,
+      autocompactBufferTokens: Math.max(0, autocompactBufferTokens),
+      freeSpaceTokens,
+      sessionUsage,
+      compactionHistory,
+      model,
+    }
   })
 
   // ============================================================
@@ -1175,223 +815,6 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Insights: generate session analysis report
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['insights:generate'], async (event) => {
-    const sender = event.sender
-    const sendProgress = (stage: string, current: number, total: number, message: string) => {
-      sender.send(IPC_CHANNELS['insights:progress'], { stage, current, total, message })
-    }
-
-    const config = settingsManager.getCurrentConfig()
-    if (!config.apiKey) {
-      throw new Error('No API key configured. Set an API key in Settings to use /insights.')
-    }
-
-    // Insights uses OpenAI-compatible /chat/completions endpoint.
-    // If provider is anthropic with an Anthropic-specific baseURL (e.g. bigmodel.cn/api/anthropic),
-    // convert to the OpenAI-compatible endpoint so raw fetch() works.
-    let effectiveBaseUrl = config.baseURL || 'https://open.bigmodel.cn/api/paas/v4'
-    if (config.provider === 'anthropic') {
-      if (effectiveBaseUrl.includes('/anthropic')) {
-        effectiveBaseUrl = effectiveBaseUrl.replace(/\/anthropic.*/, '/paas/v4')
-      } else if (effectiveBaseUrl.includes('anthropic.com')) {
-        // Real Anthropic — cannot use OpenAI format, fall back to env var or error
-        const openaiKey = process.env.OPENAI_API_KEY
-        if (openaiKey) {
-          effectiveBaseUrl = 'https://api.openai.com/v1'
-          console.log(`[insights] Anthropic provider detected, falling back to OPENAI_API_KEY for insights`)
-        } else {
-          throw new Error('Insights requires an OpenAI-compatible API endpoint. Configure an OpenAI API key or use a provider with OpenAI-compatible endpoint.')
-        }
-      }
-    }
-    console.log(`[insights] config: provider=${config.provider} model=${config.model} baseURL=${effectiveBaseUrl} hasApiKey=${!!config.apiKey}`)
-
-    // Dynamic import to avoid loading insights modules at startup
-    const { scanAllSessions, loadSessionMessages } = await import('./insights/session-scanner')
-    const { batchExtractFacets } = await import('./insights/facet-extractor')
-    const { aggregateData, generateInsights, buildInsightReport } = await import('./insights/insight-generator')
-
-    const sessionsRoot = path.join(getAppDataDir(), 'sessions')
-    const cacheDir = getInsightsCacheDir()
-    const reportDir = getInsightsReportDir()
-
-    // Stage 1: Scan sessions
-    sendProgress('scanning', 0, 0, 'Scanning session files...')
-    const allMeta = await scanAllSessions(sessionsRoot)
-
-    if (allMeta.length === 0) {
-      throw new Error('No sessions found. Start coding first, then run /insights.')
-    }
-
-    // Stage 2: Extract facets
-    sendProgress('extracting_facets', 0, allMeta.length, `Analyzing ${allMeta.length} sessions...`)
-    const sessionsWithData = []
-    for (const meta of allMeta) {
-      const messages = await loadSessionMessages(
-        path.join(sessionsRoot, meta.projectHash, `${meta.sessionId}.jsonl`),
-      )
-      sessionsWithData.push({ meta, messages })
-    }
-
-    const facets = await batchExtractFacets(
-      sessionsWithData,
-      config.apiKey,
-      effectiveBaseUrl,
-      config.model,
-      cacheDir,
-      (current, total) => sendProgress('extracting_facets', current, total, `Analyzing session ${current}/${total}...`),
-    )
-
-    // Stage 3: Aggregate
-    sendProgress('aggregating', 0, 0, 'Aggregating statistics...')
-    const aggregated = aggregateData(allMeta, facets)
-
-    // Stage 4: Generate insights
-    sendProgress('generating_insights', 0, 6, 'Generating insights...')
-    const sections = await generateInsights(
-      aggregated,
-      config.apiKey,
-      effectiveBaseUrl,
-      config.model,
-      (sectionId) => sendProgress('generating_insights', 0, 6, `Generating: ${sectionId}...`),
-    )
-
-    // Stage 5: Build report
-    sendProgress('rendering', 0, 0, 'Rendering report...')
-    const result = await buildInsightReport(aggregated, sections, reportDir)
-
-    sendProgress('done', 0, 0, 'Done!')
-    return result
-  })
-
-  // ============================================================
-  // Context breakdown — detailed token usage per category
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['agent:context_breakdown'], async () => {
-    const { countTokens, countMessagesTokens } = await import('./context/token-counter')
-    const { buildSystemPromptBreakdown } = await import('./agent/system-prompt-builder')
-    const config = settingsManager.getCurrentConfig()
-    const model = config.model
-    const preset = DEFAULT_MODELS.find(m => m.id === model)
-    const contextWindowSize = preset?.contextWindowSize ?? 128000
-    const maxOutputTokens = preset?.maxTokens ?? 16384
-
-    // 1. System prompt breakdown
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const breakdownRoots = resolveProjectRoots()
-    const lastSessionId = settingsManager.getLastSessionId()
-    const activeWorkspace = lastSessionId ? runtimes.getOrCreate(lastSessionId).activeWorkspace : null
-    const promptBreakdown = await buildSystemPromptBreakdown({
-      systemPrompt: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      workingDirectory: cwd,
-      projectRoots: breakdownRoots,
-      model,
-      provider: config.provider as 'openai' | 'anthropic',
-    }, activeWorkspace)
-
-    // 2. Tool definitions — separate built-in vs MCP
-    const allToolDefs = toolRegistry.getToolDefinitions()
-    const allToolTokens = countTokens(JSON.stringify(allToolDefs))
-    const mcpToolNames = new Set(mcpManager.listAllTools().map(t => t.name))
-    const builtinDefs = allToolDefs.filter(d => !mcpToolNames.has(d.name))
-    const mcpDefs = allToolDefs.filter(d => mcpToolNames.has(d.name))
-    const builtinToolTokens = countTokens(JSON.stringify(builtinDefs))
-    const mcpToolTokens = countTokens(JSON.stringify(mcpDefs))
-
-    // 3. Conversation messages — 使用当前渲染器会话的 runtime
-    const breakdownSessionId = settingsManager.getLastSessionId()
-    const breakdownRuntime = breakdownSessionId ? runtimes.getOrCreate(breakdownSessionId) : agentLoop
-    const messages = breakdownRuntime.getMessages()
-    const conversationTokens = countMessagesTokens(messages, model)
-    const messagesByRole = { user: 0, assistant: 0, tool_result: 0 }
-    for (const m of messages) {
-      const role = m.role as keyof typeof messagesByRole
-      if (role in messagesByRole) messagesByRole[role]++
-    }
-
-    // 4. Totals
-    const totalEstimated = promptBreakdown.staticTokens + promptBreakdown.dynamicTokens
-      + allToolTokens + conversationTokens
-    const usagePercent = (totalEstimated / contextWindowSize) * 100
-    // 压缩缓冲：使用与 shouldCompact() 相同的公式
-    const cfg = contextManager.getConfig()
-    const threshold = cfg.compactThreshold > 0
-      ? contextWindowSize * cfg.compactThreshold
-      : contextWindowSize - contextManager.getMaxOutputTokensForModel(model) - cfg.compactSafetyBuffer
-    const autocompactBufferTokens = Math.floor(Math.max(threshold, contextWindowSize * 0.5))
-      - totalEstimated
-    const freeSpaceTokens = Math.max(0, contextWindowSize - totalEstimated)
-
-    // 5. Session usage + compaction history
-    const sessionUsage = costTracker.getSession()
-    const compactionHistory = contextManager.getCompactHistory()
-
-    return {
-      systemPromptTokens: promptBreakdown.staticTokens,
-      systemPromptDynamicTokens: promptBreakdown.dynamicTokens,
-      instructionsTokens: promptBreakdown.instructionsTokens,
-      commandsTokens: promptBreakdown.commandsTokens,
-      skillsTokens: promptBreakdown.skillsTokens,
-      memoryTokens: promptBreakdown.memoryTokens,
-      toolDefinitionsTokens: allToolTokens,
-      builtinToolTokens,
-      mcpToolTokens,
-      conversationTokens,
-      conversationMessageCount: messages.length,
-      messagesByRole,
-      totalEstimatedTokens: totalEstimated,
-      contextWindowSize,
-      maxOutputTokens,
-      usagePercent,
-      autocompactBufferTokens: Math.max(0, autocompactBufferTokens),
-      freeSpaceTokens,
-      sessionUsage,
-      compactionHistory,
-      model,
-    }
-  })
-
-  // ============================================================
-  // Skills — list, get prompt, reload, invoke
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['skill:list'], async () => {
-    const { skillRegistry } = await import('./skills')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await skillRegistry.load(cwd, projectRoots)
-    return skillRegistry.getAllInfo()
-  })
-
-  ipcMain.handle(IPC_CHANNELS['skill:get-prompt'], async (_event, request: { name: string; args: string }) => {
-    const { skillRegistry } = await import('./skills')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await skillRegistry.load(cwd, projectRoots)
-    return skillRegistry.getPrompt(request.name, request.args ?? '', settingsManager.getLastSessionId() ?? 'unknown')
-  })
-
-  ipcMain.handle(IPC_CHANNELS['skill:reload'], async () => {
-    const { skillRegistry } = await import('./skills')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await skillRegistry.reload(cwd, projectRoots)
-  })
-
-  ipcMain.handle(IPC_CHANNELS['skill:invoke'], async (_event, request: { name: string; args: string }) => {
-    const { skillRegistry } = await import('./skills')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await skillRegistry.load(cwd, projectRoots)
-    const content = await skillRegistry.getPrompt(request.name, request.args ?? '', settingsManager.getLastSessionId() ?? 'unknown')
-    if (content === null) {
-      return { error: `Skill '${request.name}' not found` }
-    }
-    return { content }
-  })
-
-  // ============================================================
   // Tools — list registered tools
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['tools:list'], async () => {
@@ -1402,252 +825,6 @@ export function registerIpcHandlers(
       isReadOnly: toolRegistry.isReadOnly(d.name),
       requiresApproval: approvalRequired.has(d.name),
     }))
-  })
-
-  // ============================================================
-  // Plugins — list, get, install, uninstall, enable, disable, reload, get-skills
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['plugin:list'], async () => {
-    const { pluginRegistry } = await import('./plugins')
-    pluginRegistry.setSettingsManager(settingsManager)
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await pluginRegistry.load(cwd, projectRoots)
-    return pluginRegistry.getAllInfo()
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:get'], async (_event, request: { name: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await pluginRegistry.load(cwd, projectRoots)
-    const plugin = pluginRegistry.find(request.name)
-    if (!plugin) return null
-    const info = pluginToInfo(plugin)
-    const skills = pluginRegistry.getPluginSkills(plugin.name)
-    info.commandCount = skills.length
-    info.skillCount = skills.filter(s => s.skillRoot).length
-    return info
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:install'], async (_event, request: { path: string; scope?: import('../shared/types-plugin').PluginScope }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const plugin = pluginRegistry.installFromDirectory(
-      request.path,
-      'local',
-      request.scope ?? 'user',
-    )
-    if (!plugin) {
-      return { success: false, message: `Failed to install plugin from ${request.path}` }
-    }
-    return { success: true, message: `Plugin '${plugin.name}' installed successfully`, pluginName: plugin.name }
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:uninstall'], async (_event, request: { name: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const removed = pluginRegistry.uninstall(request.name)
-    return { success: removed, message: removed ? `Plugin '${request.name}' uninstalled` : `Plugin '${request.name}' not found` }
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:enable'], async (_event, request: { name: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const ok = await pluginRegistry.enable(request.name)
-    return { success: ok, message: ok ? `Plugin '${request.name}' enabled` : `Plugin '${request.name}' not found` }
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:disable'], async (_event, request: { name: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const ok = pluginRegistry.disable(request.name)
-    return { success: ok, message: ok ? `Plugin '${request.name}' disabled` : `Plugin '${request.name}' not found` }
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:reload'], async () => {
-    const { pluginRegistry } = await import('./plugins')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await pluginRegistry.reload(cwd, projectRoots)
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:get-skills'], async (_event, request: { pluginName?: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const cwd = workspaceManager.getWorkspaceRoot() ?? process.cwd()
-    const projectRoots = resolveProjectRoots()
-    await pluginRegistry.load(cwd, projectRoots)
-    if (request.pluginName) {
-      return pluginRegistry.getPluginSkills(request.pluginName).map(skillToInfo)
-    }
-    return pluginRegistry.getAllPluginSkillInfo()
-  })
-
-  // ============================================================
-  // Plugins: install-from-source (marketplace: git/npm/url)
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['plugin:install-from-source'], async (_event, request) => {
-    // Validate request with Zod schema
-    const schema = IpcSchemas['plugin:install-from-source'].request
-    const parsed = schema.safeParse(request)
-    if (!parsed.success) {
-      return { success: false, message: `Invalid request: ${parsed.error.message}` }
-    }
-    const { PluginInstaller } = await import('./plugins')
-    const scope = request.scope ?? 'user'
-    const projectRoot = scope === 'project'
-      ? workspaceManager.getWorkspaceRoot() ?? undefined
-      : undefined
-    return PluginInstaller.fromMarketplaceSource(request.source, scope, projectRoot)
-  })
-
-  // ============================================================
-  // Plugins: get-output-styles — merged CSS from all enabled plugins
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['plugin:get-output-styles'], async () => {
-    const { pluginRegistry } = await import('./plugins')
-    const { getAllOutputStylesCss } = await import('./plugins/plugin-output-styles')
-    const plugins = pluginRegistry.getAll().filter(p => p.enabled)
-    return getAllOutputStylesCss(plugins)
-  })
-
-  // ============================================================
-  // Plugins: get-user-config / set-user-config
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['plugin:get-user-config'], async (_event, request: { pluginName: string }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const plugin = pluginRegistry.find(request.pluginName)
-    if (!plugin) return {}
-    return plugin.userConfigValues ?? {}
-  })
-
-  ipcMain.handle(IPC_CHANNELS['plugin:set-user-config'], async (_event, request: { pluginName: string; values: Record<string, unknown> }) => {
-    const { pluginRegistry } = await import('./plugins')
-    const plugin = pluginRegistry.find(request.pluginName)
-    if (!plugin) {
-      return { success: false, message: `Plugin '${request.pluginName}' not found` }
-    }
-    plugin.userConfigValues = { ...plugin.userConfigValues, ...request.values }
-    // 持久化到磁盘
-    pluginRegistry.persistPluginState(plugin.name, {
-      enabled: plugin.enabled,
-      scope: 'user',
-      userConfigValues: plugin.userConfigValues,
-    })
-    return { success: true, message: `User config saved for '${request.pluginName}'` }
-  })
-
-  // ============================================================
-  // Plugin: search_marketplace — discover installable plugins
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['plugin:search_marketplace'], async (_event, request?: { query?: string }) => {
-    // Validate request with Zod schema
-    const schema = IpcSchemas['plugin:search_marketplace'].request
-    const parsed = schema.safeParse(request ?? {})
-    if (!parsed.success) {
-      return []
-    }
-    const query = parsed.data?.query?.toLowerCase() ?? ''
-    try {
-      // Built-in marketplace: curated list of known plugins
-      // NOTE: These are placeholder entries for UI demonstration.
-      // installSource repos do not exist yet — isPlaceholder disables install button.
-      const builtins: import('../shared/types-plugin').MarketplacePluginDisplay[] = [
-        {
-          name: 'git-workflow',
-          description: 'Git workflow automation — commit, branch, rebase, and PR management',
-          tags: ['git', 'workflow', 'vcs'],
-          category: 'Version Control',
-          installSource: { source: 'github', repo: 'anthropics/git-workflow-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'code-quality',
-          description: 'Code quality analysis — linting, formatting, and best practices enforcement',
-          tags: ['quality', 'linting', 'formatting'],
-          category: 'Code Quality',
-          installSource: { source: 'github', repo: 'anthropics/code-quality-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'project-analysis',
-          description: 'Project structure analysis and documentation generation',
-          tags: ['analysis', 'documentation', 'structure'],
-          category: 'Analysis',
-          installSource: { source: 'github', repo: 'anthropics/project-analysis-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'context-aware-agent',
-          description: 'Context-aware code suggestions based on project structure and dependencies',
-          tags: ['agent', 'context', 'suggestions'],
-          category: 'AI Enhancement',
-          installSource: { source: 'github', repo: 'anthropics/context-aware-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'test-runner',
-          description: 'Automated test discovery, execution, and coverage reporting',
-          tags: ['testing', 'coverage', 'automation'],
-          category: 'Testing',
-          installSource: { source: 'github', repo: 'anthropics/test-runner-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'docker-helper',
-          description: 'Docker container management and Dockerfile optimization',
-          tags: ['docker', 'containers', 'devops'],
-          category: 'DevOps',
-          installSource: { source: 'github', repo: 'anthropics/docker-helper-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'database-tools',
-          description: 'Database schema analysis, migration management, and query optimization',
-          tags: ['database', 'sql', 'migrations'],
-          category: 'Data',
-          installSource: { source: 'github', repo: 'anthropics/database-tools-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-        {
-          name: 'security-scanner',
-          description: 'Security vulnerability scanning and dependency audit',
-          tags: ['security', 'audit', 'vulnerabilities'],
-          category: 'Security',
-          installSource: { source: 'github', repo: 'anthropics/security-scanner-plugin' },
-          installed: false,
-          isPlaceholder: true,
-        },
-      ]
-
-      // Mark installed plugins
-      const { pluginRegistry } = await import('./plugins')
-      const installedNames = new Set(pluginRegistry.getAll().map(p => p.name))
-      for (const entry of builtins) {
-        entry.installed = installedNames.has(entry.name)
-        if (entry.installed) {
-          const plugin = pluginRegistry.find(entry.name)
-          entry.enabled = plugin?.enabled ?? false
-        }
-      }
-
-      // Filter by query
-      if (query) {
-        return builtins.filter(p =>
-          p.name.toLowerCase().includes(query) ||
-          (p.description?.toLowerCase().includes(query) ?? false) ||
-          (p.tags?.some(t => t.toLowerCase().includes(query)) ?? false) ||
-          (p.category?.toLowerCase().includes(query) ?? false)
-        )
-      }
-      return builtins
-    } catch (err) {
-      console.error('[plugin:search_marketplace]', err)
-      return []
-    }
   })
 
   // ============================================================
@@ -1663,18 +840,5 @@ export function registerIpcHandlers(
       model: settingsManager.getSettings().model,
     })
     return Doctor.formatResults(checks)
-  })
-
-  // ============================================================
-  // Session: export — export conversation to file
-  // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json' }) => {
-    const { ConversationExporter } = await import('./export/conversation-exporter')
-    const store = getSessionStore()
-    const messages = await store.loadSession(request.sessionId)
-    const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
-    const filePath = path.join(exportDir, `conversation-${request.sessionId.slice(0, 8)}`)
-    const result = await ConversationExporter.exportToFile(messages as any, filePath, request.format)
-    return { filePath: result, messageCount: messages.length }
   })
 }
