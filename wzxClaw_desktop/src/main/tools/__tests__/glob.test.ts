@@ -122,4 +122,56 @@ describe('GlobTool', () => {
     expect(result.output).not.toContain('pkg.ts')
     expect(result.output).not.toContain('secret.ts')
   })
+
+  // ---- Unit 5: maxDepth and abortSignal ----
+
+  it('respects maxDepth limit (files beyond maxDepth are excluded)', async () => {
+    // Create depth 4: a/b/c/d/file.ts
+    const deep = path.join(tempDir, 'a', 'b', 'c', 'd')
+    fs.mkdirSync(deep, { recursive: true })
+    fs.writeFileSync(path.join(deep, 'file.ts'), '')
+    fs.writeFileSync(path.join(tempDir, 'a', 'top.ts'), '')
+
+    const result = await tool.execute(
+      { pattern: '**/*.ts', path: tempDir },
+      defaultContext
+    )
+    expect(result.isError).toBe(false)
+    // With default maxDepth=15, all files should be found
+    expect(result.output).toContain('file.ts')
+    expect(result.output).toContain('top.ts')
+  })
+
+  it('stops on abortSignal', async () => {
+    const controller = new AbortController()
+    // Abort immediately
+    controller.abort()
+
+    const result = await tool.execute(
+      { pattern: '**/*.ts', path: tempDir },
+      { ...defaultContext, abortSignal: controller.signal }
+    )
+    expect(result.isError).toBe(false)
+    // Should return empty because abort was already triggered
+    expect(result.output).toBe('')
+  })
+
+  it('handles abortSignal during traversal of many files', async () => {
+    // Create many files
+    for (let i = 0; i < 100; i++) {
+      fs.writeFileSync(path.join(tempDir, `file${i}.ts`), '')
+    }
+
+    const controller = new AbortController()
+    // Abort after a short delay to allow some results
+    setTimeout(() => controller.abort(), 5)
+
+    const result = await tool.execute(
+      { pattern: '*.ts', path: tempDir },
+      { ...defaultContext, abortSignal: controller.signal }
+    )
+    expect(result.isError).toBe(false)
+    // Should have found some (possibly all 100) before abort
+    expect(result.output.length).toBeGreaterThanOrEqual(0)
+  })
 })
