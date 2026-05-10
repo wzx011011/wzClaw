@@ -369,18 +369,6 @@ app.whenReady().then(async () => {
   // File history manager — snapshots files before each AI write for session-scoped revert
   const historyManager = new FileHistoryManager()
 
-  // Register agent-related IPC handlers (ask-user, plan-mode, file-history, session:rewind)
-  registerAgentIpcHandlers({
-    askUserTool,
-    planModeController,
-    permissionManager,
-    relayClient,
-    historyManager,
-    runtimes,
-    getActiveSessionStore,
-    getMainWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
-  })
-
   // Instantiate Hooks system and register built-in hooks
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
@@ -492,6 +480,17 @@ app.whenReady().then(async () => {
     setSessionStore: (store: SessionStore) => { sessionStore = store },
   })
 
+  // Register agent-related IPC handlers (ask-user, plan-mode, file-history, session:rewind)
+  registerAgentIpcHandlers({
+    askUserTool,
+    planModeController,
+    permissionManager,
+    relayClient,
+    historyManager,
+    runtimes,
+    getActiveSessionStore,
+    getMainWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
+  })
 
   // Register browser & mobile IPC handlers (extracted to dedicated modules)
   registerBrowserIpcHandlers({ browserManager })

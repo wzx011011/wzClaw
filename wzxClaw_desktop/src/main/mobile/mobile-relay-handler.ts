@@ -71,7 +71,6 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
   // Track how many messages have already been persisted per mobile session
   const mobilePersistedMessageCounts = new Map<string, number>()
   const mobilePersistLocks = new Map<string, Promise<void>>()
-  const sessionTaskStates = new SessionTaskStateManager()
   // Cache SessionStore instances by primaryRoot to avoid repeated mkdirSync per request
   const sessionStoreCache = new Map<string, SessionStore>()
 
@@ -200,7 +199,7 @@ export function registerMobileRelayHandler(deps: MobileRelayDeps): {
         // Enrich sessions with todo summary
         const runningIds = runtimes.listRunning()
         const taskStatuses = sessionTaskStates.snapshot()
-        const { TodoWriteTool } = await import('./tools/todo-write')
+        const { TodoWriteTool } = await import('../tools/todo-write')
         for (const session of sessions) {
           session.isRunning = runningIds.includes(session.id)
           session.taskStatus = sessionTaskStates.get(session.id) ?? undefined
