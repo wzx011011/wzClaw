@@ -113,6 +113,48 @@ export class TurnManager {
         return { toolCallId: toolCall.id, toolName: toolCall.name, output: msg, truncatedOutput: msg, isError: true, loopDetected: false }
       }
 
+      // 2.5 Bash → 专用工具重定向：cat/head/tail→FileRead, grep/rg→Grep, find→Glob
+      if (tool.name === 'Bash' && typeof toolCall.input.command === 'string') {
+        const { getRedirectableCommand } = require('../tools/bash-readonly') as typeof import('../tools/bash-readonly')
+        const redirect = getRedirectableCommand(toolCall.input.command as string)
+        if (redirect) {
+          const redirectTool = toolRegistry.get(redirect.targetTool)
+          if (redirectTool) {
+            // 记录重定向目标到 eval（非 Bash）
+            _eval?.recordToolCall(redirect.targetTool, false, false)
+            try {
+              const result = await redirectTool.execute(redirect.mappedInput, {
+                workingDirectory: config.workingDirectory,
+                workspaceId,
+                projectRoots: config.projectRoots,
+                abortSignal,
+              })
+              const rawOutput = typeof result.output === 'string' ? result.output : JSON.stringify(result.output)
+              const flatOutput = rawOutput.trim() === '' ? `(${redirect.targetTool} completed with no output)` : rawOutput
+              const truncatedOutput = truncateToolResult(redirect.targetTool, flatOutput, undefined, redirectTool.maxResultSizeChars)
+              return {
+                toolCallId: toolCall.id,
+                toolName: redirect.targetTool,
+                output: flatOutput,
+                truncatedOutput,
+                isError: result.isError,
+                loopDetected: false,
+              }
+            } catch (err) {
+              const msg = ContextManagerClass.truncateToolResult(err instanceof Error ? err.message : String(err))
+              return {
+                toolCallId: toolCall.id,
+                toolName: redirect.targetTool,
+                output: msg,
+                truncatedOutput: msg,
+                isError: true,
+                loopDetected: false,
+              }
+            }
+          }
+        }
+      }
+
       // 3. Plan mode 检查
       const planModeRejection = permissionManager.getPlanModeRejection(toolCall.name)
       if (planModeRejection) {
