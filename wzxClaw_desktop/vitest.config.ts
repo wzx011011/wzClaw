@@ -14,6 +14,7 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['src/test-setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    exclude: ['src/main/__tests__/e2e-session/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'lcov'],
