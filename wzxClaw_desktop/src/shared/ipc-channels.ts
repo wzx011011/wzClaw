@@ -279,7 +279,7 @@ export interface IpcRequestPayloads {
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
   'session:rewind': { sessionId: string; targetMessageId: string }
-  'session:export': { sessionId: string; format: 'markdown' | 'json' }
+  'session:export': { sessionId: string; format: 'markdown' | 'json'; activeWorkspaceId?: string }
   'agent:compact_context': void
   'system:doctor': void
   'agent:plan-decision': { approved: boolean }
@@ -506,7 +506,7 @@ export interface IpcStreamPayloads {
     reason: string
   }
   'file:changed': { filePath: string; changeType: 'created' | 'modified' | 'deleted' }
-  'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean }
+  'session:compacted': { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }
   'session:context-restored': { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }
   'session:running_changed': { sessionId: string; isRunning: boolean }
   'session:task_status_changed': SessionTaskState
@@ -523,7 +523,7 @@ export interface IpcStreamPayloads {
   'relay:status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'ask-user:question': { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
   'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
-  'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }> }
+  'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }>; sessionId?: string }
   'insights:progress': { stage: string; current: number; total: number; message: string }
 
   // Host SSH exec stream (main -> renderer)

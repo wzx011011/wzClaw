@@ -2,6 +2,8 @@
 .claude/
 .planning/
 REVIEW.md
+CLAUDE.md
+IMPLEMENTATION-PLAN.md
 
 node_modules/
 dist/
@@ -11,13 +13,15 @@ build/
 *.log
 *.tsbuildinfo
 
+# Junk files from template literal / path expansion bugs
+${*
+.playwright-results/
+
 .env
 .env.local
 
 Thumbs.db
 .DS_Store
-
-CUsers67376.claudestatehook_test.log
 
 wzxClaw_desktop/node_modules/
 wzxClaw_desktop/dist/
@@ -26,6 +30,10 @@ wzxClaw_desktop/.claude/
 wzxClaw_desktop/.eval-reports/
 wzxClaw_desktop/.eval-workspaces/
 wzxClaw_desktop/coverage/
+wzxClaw_desktop/CLAUDE.md
+wzxClaw_desktop/REVIEW.md
+wzxClaw_desktop/*.log
+wzxClaw_desktop/data/
 
 wzxClaw_android/.dart_tool/
 wzxClaw_android/.claude/
@@ -41,5 +49,12 @@ wzxClaw_android/*.log
 wzxClaw_android/fcm-service-account.json
 wzxClaw_android/google-services.json
 wzxClaw_android/android/app/google-services.json
+wzxClaw_android/CLAUDE.md
+wzxClaw_android/REVIEW.md
+
 relay/fcm-service-account.json
 relay/data/
+relay/*.log
+
+# Review / planning documents (private)
+*-REVIEW*.md

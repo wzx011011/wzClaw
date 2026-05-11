@@ -168,7 +168,7 @@ The todo list is displayed in the UI. The user can see it update in real-time.`
     // Notify renderer: todo panel update + session list refresh
     const wc = this.getWebContents()
     if (wc && !wc.isDestroyed()) {
-      wc.send(IPC_CHANNELS['todo:updated'], { todos })
+      wc.send(IPC_CHANNELS['todo:updated'], { todos, sessionId: context.sessionId })
       wc.send('data:changed', { source: 'desktop', entity: 'session', action: 'updated', data: { sessionId: context.sessionId } })
     }
 

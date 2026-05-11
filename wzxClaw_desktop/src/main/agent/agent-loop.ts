@@ -93,7 +93,7 @@ export class AgentLoop {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately
         if (sender && !sender.isDestroyed()) {
-          sender.send(IPC_CHANNELS['todo:updated'], { todos: saved })
+          sender.send(IPC_CHANNELS['todo:updated'], { todos: saved, sessionId: config.conversationId })
         }
       }
     }
@@ -207,9 +207,19 @@ export class AgentLoop {
           suppressCompactWarning()
           debugLogger.log('SESSION_MEMORY_COMPACT', `pruned ${smResult.messagesPruned} messages, ${smResult.beforeTokens} -> ${smResult.afterTokens} tokens`)
           if (sender && !sender.isDestroyed()) {
-            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true })
+            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true, sessionId: config.conversationId })
           }
           yield { type: 'agent:compacted' as const, beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true }
+        } else {
+          // Fallback: memory compact couldn't reduce enough → use LLM summarization
+          const compactResult = await this.doCompaction(config)
+          if (compactResult) {
+            suppressCompactWarning()
+            if (sender && !sender.isDestroyed()) {
+              sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: compactResult.beforeTokens, afterTokens: compactResult.afterTokens, auto: true, sessionId: config.conversationId })
+            }
+            yield compactResult
+          }
         }
       }
 
@@ -288,15 +298,15 @@ export class AgentLoop {
           reactiveCompactCount++
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('reactive_compact')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
-          const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
+          const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
           const compacted = this.contextManager.reactiveCompactByTurns(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
-          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
+          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
 
           debugLogger.log('REACTIVE_COMPACT', `PTL turn-based eviction: ${beforeTokens} -> ${afterTokens} tokens`)
 
           if (sender && !sender.isDestroyed()) {
-            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens, afterTokens, auto: true })
+            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens, afterTokens, auto: true, sessionId: config.conversationId })
           }
 
           // 不消耗 turn 槽位，重试

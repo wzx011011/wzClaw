@@ -823,6 +823,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     return () => {
       batcher!.reset()
       if (progressFrame !== null) cancelAnimationFrame(progressFrame)
+      if (subTextFrame !== null) cancelAnimationFrame(subTextFrame)
       unsubText()
       unsubThinking()
       unsubToolStart()

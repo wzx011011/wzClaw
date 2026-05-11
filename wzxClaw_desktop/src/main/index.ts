@@ -520,6 +520,8 @@ app.whenReady().then(async () => {
   const sshMonitor = new SshMonitor(sshExecutor)
   const sshSftp = new SshSftp(sshManager)
   const sshDocker = new SshDocker(sshExecutor)
+  let mainWindow: BrowserWindow | null = null
+
   registerHostHandlers({
     hostStore, sshManager, credentials: sshCredentials, executor: sshExecutor,
     monitor: sshMonitor, sftp: sshSftp, docker: sshDocker,
@@ -584,7 +586,7 @@ app.whenReady().then(async () => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
-  const mainWindow = createWindow()
+  mainWindow = createWindow()
   logStartup('BrowserWindow created')
 
   // Deferred side-effects after renderer loads

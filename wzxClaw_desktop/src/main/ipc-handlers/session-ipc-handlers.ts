@@ -194,9 +194,9 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   // ============================================================
   // Session: export — export conversation to file
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json' }) => {
+  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json'; activeWorkspaceId?: string }) => {
     const { ConversationExporter } = await import('../export/conversation-exporter')
-    const store = getSessionStore()
+    const store = await resolveStore(request.activeWorkspaceId)
     const messages = await store.loadSession(request.sessionId)
     const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
     const filePath = path.join(exportDir, `conversation-${request.sessionId.slice(0, 8)}`)

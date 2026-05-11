@@ -103,7 +103,7 @@ jobs:
             3. Install the APK
 
             ### Usage
-            Start wzxClaw desktop, enable the Mobile Bridge tunnel in Settings, copy the ngrok URL, and paste it on the connection screen.
+            Start wzxClaw desktop, ensure the relay server is running, and configure the connection URL in the Android app settings.
 
             ### Note
             This APK is unsigned — for personal use only.

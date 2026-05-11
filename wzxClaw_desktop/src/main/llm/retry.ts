@@ -119,8 +119,9 @@ export function classifyError(errorMsg: string): ClassifyResult {
     msg.includes('context_length_exceeded') ||
     msg.includes('context length exceeded') ||
     msg.includes('maximum context length') ||
-    msg.includes('max_tokens') ||
     msg.includes('token limit') ||
+    (msg.includes('max_tokens') && msg.includes('exceed')) ||
+    (msg.includes('maxTokens') && msg.includes('exceed')) ||
     (msg.includes('400') && (msg.includes('too long') || msg.includes('too many tokens')))
   ) {
     return { classification: 'prompt_too_long' }

@@ -25,6 +25,7 @@ import { ContextManager as ContextManagerClass } from '../context/context-manage
 import { executeStreamPhase, type StreamPhaseMeta, type ExecuteToolFn, type StreamFn } from './stream-phase'
 import { ConversationManager } from './conversation-manager'
 import { flattenToolOutput } from '../tools/tool-interface'
+import { getRedirectableCommand } from '../tools/bash-readonly'
 import path from 'path'
 import { getActiveTrace, type AgentTraceContext } from '../observability/langfuse-observer'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -115,7 +116,6 @@ export class TurnManager {
 
       // 2.5 Bash → 专用工具重定向：cat/head/tail→FileRead, grep/rg→Grep, find→Glob
       if (tool.name === 'Bash' && typeof toolCall.input.command === 'string') {
-        const { getRedirectableCommand } = require('../tools/bash-readonly') as typeof import('../tools/bash-readonly')
         const redirect = getRedirectableCommand(toolCall.input.command as string)
         if (redirect) {
           const redirectTool = toolRegistry.get(redirect.targetTool)

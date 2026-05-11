@@ -70,13 +70,11 @@ export async function handleAgentMessage(
               compactConfig.systemPrompt
             ).then((result) => {
               if (result.summary) {
-                const summaryMsg = {
-                  role: 'user' as const,
-                  content: `[Context Summary]\n${result.summary}`,
-                  timestamp: Date.now()
-                }
                 const recentMessages = messages.slice(-result.keptRecentCount)
-                compactRuntime.replaceMessages([summaryMsg, ...recentMessages])
+                compactRuntime.replaceMessages([
+                  { role: 'user' as const, content: result.summaryMessageContent, timestamp: Date.now() },
+                  ...recentMessages
+                ])
               }
               const sid = ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
               broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: sid })
@@ -408,7 +406,8 @@ export async function handleAgentMessage(
               wc.send(IPC_CHANNELS['session:compacted'], {
                 beforeTokens: agentEvent.beforeTokens,
                 afterTokens: agentEvent.afterTokens,
-                auto: agentEvent.auto
+                auto: agentEvent.auto,
+                sessionId,
               })
               break
           }

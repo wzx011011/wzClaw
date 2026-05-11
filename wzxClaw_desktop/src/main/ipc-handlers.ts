@@ -340,10 +340,12 @@ export function registerIpcHandlers(
   // Agent: stop — cancels the running agent loop
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:stop'], () => {
-    // 取消所有桌面发起的 runtime（不包含 mobile 专用 session，此处设计为: 只要不是 mobile 专用的研判面过于复杂）
-    // 最安全的语义: 取消桌面当前会话
-    const currentId = settingsManager.getLastSessionId()
-    if (currentId) runtimes.cancel(currentId)
+    // Cancel ALL currently running runtimes — avoids cancelling the wrong session
+    // if the user switched sessions while one was still running
+    const runningIds = runtimes.listRunning()
+    for (const id of runningIds) {
+      runtimes.cancel(id)
+    }
   })
 
   // Note: agent:permission_response is handled dynamically by
@@ -523,7 +525,8 @@ export function registerIpcHandlers(
     event.sender.send(IPC_CHANNELS['session:compacted'], {
       beforeTokens: result.beforeTokens,
       afterTokens: result.afterTokens,
-      auto: false
+      auto: false,
+      sessionId: compactSessionId ?? undefined,
     })
     return { beforeTokens: result.beforeTokens, afterTokens: result.afterTokens }
   })
