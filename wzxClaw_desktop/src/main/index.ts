@@ -478,6 +478,12 @@ app.whenReady().then(async () => {
     contextManager,
     planModeController,
     setSessionStore: (store: SessionStore) => { sessionStore = store },
+    gateway,
+    stepManager,
+    notificationService,
+    askUserTool,
+    handleWorkspaceOpened,
+    getWorkingDirectory: () => workspaceManager.getWorkspaceRoot() ?? process.cwd(),
   })
 
   // Register agent-related IPC handlers (ask-user, plan-mode, file-history, session:rewind)

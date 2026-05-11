@@ -94,10 +94,8 @@ const LAST_SESSION_RESTORE_DELAY_MS = 1200
 const sessionAccessOrder: string[] = []
 // 会话缓存独立于 Zustand state，切换/更新缓存不触发全局重渲染
 const _sessionsCache: Record<string, ChatMessage[]> = {}
-let textBatchBuffer = ''
-let textBatchFrame: number | null = null
-let thinkingBatchBuffer = ''
-let thinkingBatchFrame: number | null = null
+// Streaming batcher — encapsulates text/thinking rAF coalescing
+let batcher: StreamingBatcher | null = null
 
 function scheduleDeferredStartupTask(task: () => void, delayMs: number): () => void {
   const timeoutId = setTimeout(task, delayMs)
@@ -233,152 +231,25 @@ function _findMessageIndexById(messages: ChatMessage[], messageId: string): numb
   return messages.findIndex((message) => message.id === messageId)
 }
 
-function updateMessageById(
-  messages: ChatMessage[],
-  messageId: string,
-  updater: (message: ChatMessage) => ChatMessage
-): ChatMessage[] | null {
-  const lastIndex = messages.length - 1
-  // 快速路径：流式场景下目标消息几乎总是最后一个元素
-  if (lastIndex >= 0 && messages[lastIndex]?.id === messageId) {
-    const updated = updater(messages[lastIndex])
-    if (updated === messages[lastIndex]) return null // 无变化
-    // slice(0, -1) 底层是 memcpy，比 [...messages] spread 更高效
-    const next = messages.slice(0, -1)
-    next.push(updated)
-    return next
-  }
-  // 慢速路径：全量扫描（极少触发）
-  const index = messages.findIndex((message) => message.id === messageId)
-  if (index < 0) return null
-
-  const nextMessages = [...messages]
-  nextMessages[index] = updater(messages[index])
-  return nextMessages
-}
+import { updateMessageById } from './chat-store-utils'
+import { StreamingBatcher } from './streaming-batcher'
 
 export const useChatStore = create<ChatStore>((set, get) => {
   const initialId = uuidv4()
 
-  const flushTextBatch = (): void => {
-    if (textBatchFrame !== null) {
-      cancelAnimationFrame(textBatchFrame)
-      textBatchFrame = null
-    }
-
-    const batch = textBatchBuffer
-    textBatchBuffer = ''
-    if (!batch) return
-
-    // 会话切换后 isStreaming/streamingMessageId 都被清零，丢弃残留文本
-    if (!get().isStreaming && !get().streamingMessageId) return
-
-    const { messages, streamingMessageId } = get()
-    const nextMessages = streamingMessageId
-      ? updateMessageById(messages, streamingMessageId, (message) => ({
-          ...message,
-          content: message.content + batch
-        }))
-      : null
-
-    if (nextMessages) {
-      set({
-        isWaitingForResponse: false,
-        messages: nextMessages
-      })
-      return
-    }
-
-    const newMsg: ChatMessage = {
-      id: uuidv4(),
-      role: 'assistant',
-      content: batch,
-      timestamp: Date.now(),
-      isStreaming: true,
-      toolCalls: []
-    }
-
-    set({
-      isWaitingForResponse: false,
-      streamingMessageId: newMsg.id,
-      messages: [...messages, newMsg]
+  // 将流式文本/思考事件通过 rAF 合并，避免逐 token 重渲染
+  if (!batcher) {
+    batcher = new StreamingBatcher({
+      get: () => {
+        const s = get()
+        return {
+          isStreaming: s.isStreaming,
+          streamingMessageId: s.streamingMessageId,
+          messages: s.messages
+        }
+      },
+      set: (partial) => set(partial as Partial<ChatStore>)
     })
-  }
-
-  const scheduleTextFlush = (): void => {
-    if (textBatchFrame !== null) return
-    textBatchFrame = requestAnimationFrame(() => {
-      textBatchFrame = null
-      flushTextBatch()
-    })
-  }
-
-  // ---- Thinking batch (mirrors text batch to avoid per-token re-renders) ----
-  const flushThinkingBatch = (): void => {
-    if (thinkingBatchFrame !== null) {
-      cancelAnimationFrame(thinkingBatchFrame)
-      thinkingBatchFrame = null
-    }
-
-    const batch = thinkingBatchBuffer
-    thinkingBatchBuffer = ''
-    if (!batch) return
-
-    // 会话切换后丢弃残留的 thinking 事件，避免创建孤儿消息
-    if (!get().isStreaming && !get().streamingMessageId) return
-
-    const { messages, streamingMessageId } = get()
-    const nextMessages = streamingMessageId
-      ? updateMessageById(messages, streamingMessageId, (message) => ({
-          ...message,
-          thinkingContent: (message.thinkingContent ?? '') + batch
-        }))
-      : null
-
-    if (nextMessages) {
-      set({
-        isWaitingForResponse: false,
-        messages: nextMessages
-      })
-      return
-    }
-
-    const newMsg: ChatMessage = {
-      id: uuidv4(),
-      role: 'assistant',
-      content: '',
-      thinkingContent: batch,
-      timestamp: Date.now(),
-      isStreaming: true,
-      toolCalls: []
-    }
-
-    set({
-      isWaitingForResponse: false,
-      streamingMessageId: newMsg.id,
-      messages: [...messages, newMsg]
-    })
-  }
-
-  const scheduleThinkingFlush = (): void => {
-    if (thinkingBatchFrame !== null) return
-    thinkingBatchFrame = requestAnimationFrame(() => {
-      thinkingBatchFrame = null
-      flushThinkingBatch()
-    })
-  }
-
-  const resetTextBatch = (): void => {
-    if (textBatchFrame !== null) {
-      cancelAnimationFrame(textBatchFrame)
-      textBatchFrame = null
-    }
-    textBatchBuffer = ''
-    if (thinkingBatchFrame !== null) {
-      cancelAnimationFrame(thinkingBatchFrame)
-      thinkingBatchFrame = null
-    }
-    thinkingBatchBuffer = ''
   }
 
   return {
@@ -407,8 +278,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubText = window.wzxclaw.onStreamText((payload) => {
       // 会话过滤：丢弃非当前活动会话的事件
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
-      textBatchBuffer += payload.content
-      scheduleTextFlush()
+      batcher!.appendText(payload.content)
     })
 
     const unsubThinking = window.wzxclaw.onStreamThinking?.((payload) => {
@@ -416,8 +286,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Skip thinking display when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
-      thinkingBatchBuffer += payload.content
-      scheduleThinkingFlush()
+      batcher!.appendThinking(payload.content)
     }) ?? (() => {})
 
     const unsubToolCallPreview = window.wzxclaw.onStreamToolCallPreview?.((payload) => {
@@ -465,7 +334,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
       // Skip tool step UI when showToolSteps is off
       if (!useSettingsStore.getState().showToolSteps) return
-      flushTextBatch()
+      batcher!.flushNow()
       set((state) => {
         // 会话切换后丢弃残留的 tool_start 事件，避免创建孤儿消息
         if (!state.isStreaming && !state.streamingMessageId) return state
@@ -583,7 +452,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
       // 会话过滤：仅处理当前活动会话的完成事件
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
-      flushTextBatch()
+      batcher!.flushNow()
       set((state) => {
         // Drop a trailing empty assistant bubble if the stream finishes before
         // any text, thinking, or tool activity is attached to it.
@@ -636,7 +505,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubError = window.wzxclaw.onStreamError((payload) => {
       // 会话过滤
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
-      flushTextBatch()
+      batcher!.flushNow()
       set((state) => {
         const streamingMessageId = state.streamingMessageId
         const nextMessages = streamingMessageId
@@ -671,7 +540,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubTurnEnd = window.wzxclaw.onStreamTurnEnd?.((payload) => {
       // 会话过滤
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
-      flushTextBatch()
+      batcher!.flushNow()
       set((state) => {
         const { messages } = state
         const streamingMessageId = state.streamingMessageId
@@ -774,7 +643,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     const unsubRetrying = window.wzxclaw.onStreamRetrying?.((payload) => {
       // 会话过滤
       if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
-      flushTextBatch()
+      batcher!.flushNow()
       set((state) => {
         const { messages } = state
         const streamingMessageId = state.streamingMessageId
@@ -952,7 +821,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Return combined unsubscribe
     return () => {
-      resetTextBatch()
+      batcher!.reset()
       if (progressFrame !== null) cancelAnimationFrame(progressFrame)
       unsubText()
       unsubThinking()
@@ -1050,7 +919,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * Stop an in-progress agent generation.
    */
   stopGeneration: async () => {
-    flushTextBatch()
+    batcher!.flushNow()
     try {
       await window.wzxclaw.stopGeneration()
     } catch (err) {
@@ -1063,7 +932,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * Clear all messages and reset conversation ID.
    */
   clearConversation: () => {
-    resetTextBatch()
+    batcher!.reset()
     const newId = uuidv4()
     set({
       messages: [],
@@ -1098,7 +967,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   loadSession: async (sessionId: string, options?: { updateMessages?: boolean }) => {
     const updateMessages = options?.updateMessages !== false
-    flushTextBatch()
+    batcher!.flushNow()
     try {
       const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
       const rawMessages = await window.wzxclaw.loadSession({
@@ -1167,7 +1036,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * generates new UUID, clears messages, and switches to new session.
    */
   createSession: () => {
-    flushTextBatch()
+    batcher!.flushNow()
     const { messages, conversationId } = get()
     const newId = uuidv4()
 
@@ -1194,7 +1063,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   switchSession: async (sessionId: string) => {
     // 丢弃未刷新的文本缓冲，而非刷入（切换后这些文本属于旧会话）
-    resetTextBatch()
+    batcher!.reset()
     const { activeSessionId, messages, conversationId, loadingSessionId, isStreaming } = get()
 
     // No-op if switching to same session, or the same load is already in flight.
@@ -1203,7 +1072,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // 不再中断正在进行的生成！切走只清除渲染器端流式状态，
     // agent loop 在主进程继续运行。切回来时如果任务仍在进行，
     // 通过 runningSessionIds 检测并恢复 streaming 状态。
-    // 流式事件通过 isStreaming/streamingMessageId 的空值过滤（见 flushTextBatch 等处）。
+    // 流式事件通过 isStreaming/streamingMessageId 的空值过滤（见 StreamingBatcher.flushNow 等）。
 
     // 保存当前消息到模块级缓存（无 spread，无 Zustand 触发）
     if (messages.length > 0) {
