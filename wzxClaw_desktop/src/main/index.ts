@@ -531,6 +531,7 @@ app.whenReady().then(async () => {
   // Pass a callback so IPC handlers can notify when workspace opens.
   registerIpcHandlers(
     gateway, agentLoop, runtimes, permissionManager, workspaceManager, getActiveSessionStore,
+    storeManager,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
     mcpManager, workspaceStore,
     (rootPath) => {
@@ -548,8 +549,7 @@ app.whenReady().then(async () => {
     // onDataChanged: broadcast desktop CRUD changes to mobile
     (event, data) => broadcastToMobile(event, data),
     // onStreamEvent: broadcast desktop agent stream events to mobile
-    (event, data) => broadcastToMobile(event, data),
-    storeManager
+    (event, data) => broadcastToMobile(event, data)
   )
 
   // Listen for file changes to trigger incremental index updates

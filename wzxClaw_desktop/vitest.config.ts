@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // E2E session tests need relay server — only run via `npm run test:e2e:session`
-const excludeE2e = !process.env.VITEST_E2E_SESSION
+// Detect from CLI args (cross-platform, no cross-env needed)
+const excludeE2e = !process.argv.some(arg => arg.includes('e2e-session'))
 
 export default defineConfig({
   plugins: [react()],

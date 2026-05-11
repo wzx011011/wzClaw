@@ -30,7 +30,7 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run test:e2e:session && npm run build && electron-builder --win",
-    "test:e2e:session": "VITEST_E2E_SESSION=1 vitest run src/main/__tests__/e2e-session/",
+    "test:e2e:session": "vitest run src/main/__tests__/e2e-session/",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
