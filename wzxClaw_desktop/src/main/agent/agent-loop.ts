@@ -1,14 +1,10 @@
 // ============================================================
-// AgentLoop — multi-turn LLM conversation orchestrator
-// Responsibilities: loop control + context compaction + event dispatch
-// Delegates work to SystemPromptBuilder / TurnManager / StreamPhase
-// Message management via ConversationManager
+// AgentLoop — 多轮 LLM 对话编排器
+// 职责：循环控制 + 上下文压缩 + 事件分发
+// 具体工作委托给 SystemPromptBuilder / TurnManager / StreamPhase
+// 消息管理委托给 ConversationManager
 //
-// Compaction pipeline (same order as Claude Code):
-//   1. Session Memory Compact  — drop oldest API rounds (no API call)
-//   2. Microcompact            — clear old tool results (no API call)
-//   3. LLM Summary Compact     — full summarization (API call)
-//   4. PTL Recovery            — truncate head if compact itself too long
+// v2: 事件通过 yield* 从 TurnManager 逐条穿透到消费者
 // ============================================================
 
 import type { LLMGateway } from '../llm/gateway'
@@ -28,14 +24,9 @@ import { ConversationManager } from './conversation-manager'
 import { DebugLogger } from '../utils/debug-logger'
 import { TodoWriteTool } from '../tools/todo-write'
 import { startTrace, endTrace, getActiveTrace } from '../observability/langfuse-observer'
-import { maybeTimeBasedMicrocompact, maybeTokenPressureMicrocompact } from '../context/microcompact'
+import { maybeTimeBasedMicrocompact } from '../context/microcompact'
 import { ToolResultReplacementState } from '../context/tool-result-storage'
 import { restoreFiles, formatRestoredFilesMessage } from '../context/compact-file-restore'
-import { trySessionMemoryCompact } from '../context/session-memory-compact'
-import { runPostCompactCleanup } from '../context/post-compact-cleanup'
-import { suppressCompactWarning } from '../context/compact-warning-state'
-import { formatPostCompactMessage } from '../context/compact-attachments'
-import type { CompactAttachmentContext } from '../context/compact-attachments'
 
 export class AgentLoop {
   private conversation = new ConversationManager()
@@ -87,13 +78,13 @@ export class AgentLoop {
 
     // 恢复上次会话的 todos（如有持久化文件）
     const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
-    if (todoTool && config.conversationId) {
-      const saved = await TodoWriteTool.loadForSession(config.conversationId)
+    if (todoTool && this.activeWorkspace) {
+      const saved = await TodoWriteTool.loadForWorkspace(this.activeWorkspace.id)
       if (saved.length > 0) {
         todoTool.setCurrentTodos(saved)
         // Notify renderer so the todo panel shows restored state immediately
         if (sender && !sender.isDestroyed()) {
-          sender.send(IPC_CHANNELS['todo:updated'], { todos: saved, sessionId: config.conversationId })
+          sender.send(IPC_CHANNELS['todo:updated'], { todos: saved })
         }
       }
     }
@@ -149,9 +140,8 @@ export class AgentLoop {
       if (turnCount > safetyCeiling) {
         debugLogger.log('ERROR', `safety ceiling reached (${turnCount})`)
         debugLogger.close()
-        yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true, errorCode: 'SAFETY_CEILING' }
+        yield { type: 'agent:error', error: `Safety ceiling reached (${turnCount} turns). This should not happen — the conversation should end naturally.`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-        getActiveTrace(config.conversationId)?.recordErrorCode('SAFETY_CEILING')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -161,100 +151,30 @@ export class AgentLoop {
       if (maxTurns && turnCount > maxTurns) {
         debugLogger.log('ERROR', `sub-agent max turns reached (${turnCount}/${maxTurns})`)
         debugLogger.close()
-        yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true, errorCode: 'SAFETY_CEILING' }
+        yield { type: 'agent:error', error: `Sub-agent max turns exceeded (${turnCount})`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-        getActiveTrace(config.conversationId)?.recordErrorCode('SAFETY_CEILING')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
       }
 
-      // ==============================================
-      // Claude Code compaction pipeline (3-layer + pre-compact)
-      // ==============================================
-      const ctxWindow = this.contextManager.getContextWindowForModel(config.model)
-
-      // Step 0: Pre-compact — 在 60% 上下文窗口时提前清理旧工具结果（零成本，无 LLM 调用）
-      if (this.contextManager.shouldPreCompact(this.conversation.getMutableMessages(), config.model)) {
-        const preEstTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
-        const preMcConfig = this.contextManager.getMicrocompactConfig()
-        const preMcResult = maybeTokenPressureMicrocompact(
-          this.conversation.getMutableMessages(),
-          ctxWindow,
-          preEstTokens,
-          { ...preMcConfig, tokenPressureThreshold: this.contextManager.getConfig().preCompactThreshold },
-        )
-        if (preMcResult.result.didCompact) {
-          this.conversation.loadFromExternal(preMcResult.messages)
-          debugLogger.log('PRE_COMPACT', `early microcompact at ${Math.round(preEstTokens / ctxWindow * 100)}%: cleared ${preMcResult.result.clearedCount} old tool results`)
-        }
-      }
-
-      // Step 1: Session Memory Compact — drop oldest API rounds (no API call)
-      const needsCompact = this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)
-
-      if (needsCompact) {
-        const compactThreshold = ctxWindow - this.contextManager.getMaxOutputTokensForModel(config.model) - this.contextManager.getConfig().compactSafetyBuffer
-        const smResult = trySessionMemoryCompact(
-          this.conversation.getMutableMessages(),
-          ctxWindow,
-          compactThreshold,
-          config.model,
-        )
-        if (smResult) {
-          this.conversation.loadFromExternal(smResult.messages)
-          runPostCompactCleanup()
-          suppressCompactWarning()
-          debugLogger.log('SESSION_MEMORY_COMPACT', `pruned ${smResult.messagesPruned} messages, ${smResult.beforeTokens} -> ${smResult.afterTokens} tokens`)
-          if (sender && !sender.isDestroyed()) {
-            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true, sessionId: config.conversationId })
-          }
-          yield { type: 'agent:compacted' as const, beforeTokens: smResult.beforeTokens, afterTokens: smResult.afterTokens, auto: true }
-        } else {
-          // Fallback: memory compact couldn't reduce enough → use LLM summarization
-          const compactResult = await this.doCompaction(config)
-          if (compactResult) {
-            suppressCompactWarning()
-            if (sender && !sender.isDestroyed()) {
-              sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens: compactResult.beforeTokens, afterTokens: compactResult.afterTokens, auto: true, sessionId: config.conversationId })
-            }
-            yield compactResult
-          }
-        }
-      }
-
-      // Step 2a: Time-based microcompact — clear old tool results (no API call)
+      // Time-based microcompact：清理旧工具结果（provider-agnostic，无 API 调用）
+      // P3: 从 ContextManager 获取 microcompact 配置，不再使用硬编码默认值
       const mcConfig = this.contextManager.getMicrocompactConfig()
-      let mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages(), mcConfig)
+      const mcResult = maybeTimeBasedMicrocompact(this.conversation.getMutableMessages(), mcConfig)
       if (mcResult.result.didCompact) {
         this.conversation.loadFromExternal(mcResult.messages)
         debugLogger.log('MICROCOMPACT', `cleared ${mcResult.result.clearedCount} old tool results (~${mcResult.result.charsSaved} chars, gap ${Math.round(mcResult.result.gapMinutes)}min)`)
       }
 
-      // Step 2b: Token-pressure microcompact — more aggressive when context is tight
-      if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
-        const estTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
-        mcResult = maybeTokenPressureMicrocompact(
-          this.conversation.getMutableMessages(),
-          ctxWindow,
-          estTokens,
-          { ...mcConfig, tokenPressureThreshold: this.contextManager.getConfig().microcompactTokenPressureThreshold },
-        )
-        if (mcResult.result.didCompact) {
-          this.conversation.loadFromExternal(mcResult.messages)
-          debugLogger.log('MICROCOMPACT_TOKEN_PRESSURE', `cleared ${mcResult.result.clearedCount} old tool results (token pressure)`)
-        }
-      }
-
-      // Step 3: LLM Summary Compact — full summarization (API call)
+      // 上下文压缩检查（LLM 调用前）
       if (this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
         const compacted = await this.doCompaction(config)
         if (compacted) {
           debugLogger.log('COMPACT', 'auto compaction triggered')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
           yield compacted
-          runPostCompactCleanup()
-          suppressCompactWarning()
+          // Compaction succeeded — only re-enable tools if context is now below threshold
           if (toolsDisabled && !this.contextManager.shouldCompact(this.conversation.getMutableMessages(), config.model)) {
             toolsDisabled = false
           }
@@ -298,15 +218,15 @@ export class AgentLoop {
           reactiveCompactCount++
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('reactive_compact')
           getActiveTrace(config.conversationId)?.evalCollector.recordCompaction()
-          const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+          const beforeTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
           const compacted = this.contextManager.reactiveCompactByTurns(this.conversation.getMutableMessages())
           this.conversation.loadFromExternal(compacted)
-          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages(), config.model)
+          const afterTokens = this.contextManager.estimateTokens(this.conversation.getMutableMessages())
 
           debugLogger.log('REACTIVE_COMPACT', `PTL turn-based eviction: ${beforeTokens} -> ${afterTokens} tokens`)
 
           if (sender && !sender.isDestroyed()) {
-            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens, afterTokens, auto: true, sessionId: config.conversationId })
+            sender.send(IPC_CHANNELS['session:compacted'], { beforeTokens, afterTokens, auto: true })
           }
 
           // 不消耗 turn 槽位，重试
@@ -323,8 +243,7 @@ export class AgentLoop {
           debugLogger.log('ERROR', 'context too long, all recovery exhausted')
           debugLogger.close()
           getActiveTrace(config.conversationId)?.evalCollector.recordErrorRecovery('fatal')
-          yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true, errorCode: 'PROMPT_TOO_LONG' }
-          getActiveTrace(config.conversationId)?.recordErrorCode('PROMPT_TOO_LONG')
+          yield { type: 'agent:error', error: 'Context too long — use /compact to reduce context size', recoverable: true }
           endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
           await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
           return
@@ -334,7 +253,6 @@ export class AgentLoop {
       if (turnResult.hadError) {
         debugLogger.log('ERROR', 'turn had error, stopping')
         debugLogger.close()
-        getActiveTrace(config.conversationId)?.recordErrorCode('TURN_ERROR')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -347,14 +265,13 @@ export class AgentLoop {
       this.contextManager.trackTokenUsage(turnResult.usage.inputTokens, turnResult.usage.outputTokens)
 
       // Eval: 记录 turn 输出 token
-      getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens, turnResult.usage.inputTokens)
+      getActiveTrace(config.conversationId)?.evalCollector.recordTurn(turnResult.usage.outputTokens)
 
       // Token 预算检查
       if (config.maxBudgetTokens > 0 && totalUsage.inputTokens > config.maxBudgetTokens) {
         debugLogger.log('WARN', `token budget exceeded: ${totalUsage.inputTokens} > ${config.maxBudgetTokens}`)
-        yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true, errorCode: 'TOKEN_BUDGET' }
+        yield { type: 'agent:error', error: `Token budget exceeded (${totalUsage.inputTokens.toLocaleString()} / ${config.maxBudgetTokens.toLocaleString()} input tokens)`, recoverable: true }
         yield { type: 'agent:done', usage: totalUsage, turnCount, model: config.model }
-        getActiveTrace(config.conversationId)?.recordErrorCode('TOKEN_BUDGET')
         endTrace(config.conversationId, totalUsage, turnCount, true, this.conversation.getMessages())
         await this.hookRegistry?.emit('session-end', { conversationId: config.conversationId })
         return
@@ -386,9 +303,7 @@ export class AgentLoop {
 
         if (hookResult.blockingError) {
           debugLogger.log('HOOK', `blocking error injected: ${hookResult.blockingError.substring(0, 80)}`)
-          this.conversation.appendSystemReminder(`<system-reminder>
-${hookResult.blockingError}
-</system-reminder>`)
+          this.conversation.appendUserMessage(`[System] ${hookResult.blockingError}`)
           stopHookCooldown = 2  // 跳过 2 轮再重新评估，防止振荡
           continue
         }
@@ -408,7 +323,8 @@ ${hookResult.blockingError}
       this._running = false
     }
   }
-  /** Execute LLM summary compaction with post-compact restoration */
+
+  /** 执行主动压缩，返回 compacted 事件或 null */
   private async doCompaction(config: AgentConfig): Promise<AgentEvent | null> {
     await this.hookRegistry?.emit('pre-compact', { conversationId: config.conversationId })
     const messages = this.conversation.getMutableMessages()
@@ -421,39 +337,40 @@ ${hookResult.blockingError}
       const recentMessages = messages.slice(-result.keptRecentCount)
       this.conversation.replaceWithSummary(result.summaryMessageContent, recentMessages)
 
-      // Post-compact attachment restoration (Claude Code style)
-      const attachmentCtx: CompactAttachmentContext = {
-        todos: [],
-        restoredFiles: [],
-        workingDirectory: config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path,
-      }
+      // P0: 压缩后恢复最近引用的文件内容 + todo 注入
+      // 合并为单个 user 消息，避免 OpenAI API 拒绝连续 user-role 消息
+      const postCompactParts: string[] = []
 
-      // 1. Restore recently referenced files
       if (result.summarizedMessages.length > 0) {
-        const restored = await restoreFiles(result.summarizedMessages, attachmentCtx.workingDirectory)
-        attachmentCtx.restoredFiles = restored
+        const workingDir = config.workingDirectory || this.activeWorkspace?.projects?.[0]?.path
+        const restoredFiles = restoreFiles(result.summarizedMessages, workingDir)
+        if (restoredFiles.length > 0) {
+          postCompactParts.push(formatRestoredFilesMessage(restoredFiles))
+        }
       }
 
-      // 2. Restore todo list
       const todoTool = this.toolRegistry.get('TodoWrite') as TodoWriteTool | undefined
       if (todoTool) {
-        attachmentCtx.todos = todoTool.getCurrentTodos()
+        const currentTodos = todoTool.getCurrentTodos()
+        const unfinished = currentTodos.filter(t => t.status !== 'completed')
+        if (unfinished.length > 0) {
+          const todoLines = currentTodos.map(t => {
+            const icon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'
+            return `${icon} [${t.status}] ${t.content}`
+          })
+          postCompactParts.push(
+            `Task list at time of context compaction:\n${todoLines.join('\n')}\n\nThere are ${unfinished.length} unfinished task(s). Resume from where work stopped — do NOT ask the user to repeat the requirements.`
+          )
+        }
       }
 
-      // 3. Build and inject post-compact message (todos + files + instructions)
-      const postCompactMsg = formatPostCompactMessage(attachmentCtx)
-      if (postCompactMsg) {
-        this.conversation.getMutableMessages().push(postCompactMsg)
-      }
-
-      // 4. Inject restored files as separate system-reminder if any
-      if (attachmentCtx.restoredFiles.length > 0) {
-        const filesMsg: Message = {
+      if (postCompactParts.length > 0) {
+        const postCompactMsg: import('../../shared/types').Message = {
           role: 'user',
-          content: formatRestoredFilesMessage(attachmentCtx.restoredFiles),
+          content: `<system-reminder>\n${postCompactParts.join('\n\n---\n\n')}\n</system-reminder>`,
           timestamp: Date.now(),
         }
-        this.conversation.getMutableMessages().push(filesMsg)
+        this.conversation.getMutableMessages().push(postCompactMsg)
       }
 
       return {
@@ -471,7 +388,10 @@ ${hookResult.blockingError}
   cancel(): void {
     this.abortController?.abort()
     this.turnManager.reset()
-    this._running = false
+    // 注意：不在此处设置 _running = false。
+    // run() generator 自身的 finally 块负责将 _running 置回 false。
+    // 提前置 false 会导致 mobile-agent-handler 的轮询等待立刻退出，
+    // 而旧 generator 仍在异步挂起点上执行，造成新旧 run() 并发共用同一实例。
   }
 
   reset(): void {

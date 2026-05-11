@@ -461,26 +461,30 @@ export async function handleAgentMessage(
           }
         }
         // 手机端需要收到 stream:agent:done 才能关闭「思考中」状态。
-        // 任务被取消/中断/fatal error 时 agent loop 不 yield agent:done，
-        // 必须在此补发，否则手机 UI 永远卡在 streaming 状态。
-        ctx.relayClient.broadcast('stream:agent:done', {
-          usage: null,
-          turnCount: 0,
-          cancelled: true,
-          sessionId,
-        })
+        // 仅在 !sawDone 时补发：正常完成时 agent loop 已经 yield agent:done
+        // 并经由事件循环底部的 relayClient.broadcast 发出，重复发送会导致
+        // 手机端收到两条 done（第二条 cancelled: true）错误重置 streaming 状态。
+        if (!sawDone) {
+          ctx.relayClient.broadcast('stream:agent:done', {
+            usage: null,
+            turnCount: 0,
+            cancelled: true,
+            sessionId,
+          })
+        }
         ctx.runtimes.notifyRunningChanged(sessionId, false)
         ctx.mobilePersistLocks.delete(sessionId)
       }
     } catch (err: unknown) {
+      // 使用闭包捕获的 sessionId，而非 ctx.mobileSessionId.value（可被并发请求覆盖）
       ctx.relayClient.broadcast('stream:agent:done', {
         usage: null,
         turnCount: 0,
         cancelled: true,
         error: err instanceof Error ? err.message : String(err),
-        sessionId: ctx.mobileSessionId.value,
+        sessionId,
       })
-      ctx.relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err), sessionId: ctx.mobileSessionId.value })
+      ctx.relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err), sessionId })
     }
     return true
   }
