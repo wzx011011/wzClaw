@@ -1,83 +1,79 @@
 // ============================================================
-// AgentRuntimeConfig — centralized configuration parameters
-// Eliminates magic numbers scattered across the codebase
+// AgentRuntimeConfig — 集中管理所有可配置参数
+// 消除散落在代码中的魔法数字
 // ============================================================
 
 /**
- * Agent runtime configuration.
- * All thresholds, limits, and strategy parameters live here.
+ * Agent 运行时配置。
+ * 所有阈值、限制、策略参数集中在此，便于调优和测试。
+ * 未指定时使用默认值。
  */
 export interface AgentRuntimeConfig {
-  // ---- Context management ----
-  /** Compact trigger threshold (fraction of context window). 0 = auto formula. Default 0 */
+  // ---- 上下文管理 ----
+  /** 压缩触发阈值（占上下文窗口的比例）。设为 0 则使用自动公式。默认 0（自动） */
   compactThreshold: number
-  /** Auto-compact safety buffer (tokens). threshold = contextWindow - maxOutputTokens - safetyBuffer. Default 13000 */
+  /** 自动压缩安全缓冲（tokens）。阈值 = contextWindow - maxOutputTokens - safetyBuffer。默认 13000 */
   compactSafetyBuffer: number
-  /** Stop retrying after this many consecutive compact failures. Default 3 */
+  /** 连续压缩失败后停止重试的次数。默认 3 */
   maxConsecutiveCompactFailures: number
-  /** Target ratio of recent messages to keep (fraction of context window). Default 0.25 */
+  /** 主动压缩保留近期消息的目标比例（占上下文窗口）。默认 0.25 */
   compactKeepRatio: number
-  /** Max recent messages to keep during compaction. Default 10 */
+  /** 主动压缩最大保留条数。默认 10 */
   compactKeepMax: number
-  /** Min recent messages to keep during compaction. Default 2 */
+  /** 主动压缩最小保留条数。默认 2 */
   compactKeepMin: number
-  /** DEPRECATED — kept for backward compat. No longer used by context-manager.ts */
+  /** 摘要时每条消息截取的最大字符数。默认 500 */
   compactSummaryMaxChars: number
-  /** Max reactive compactions per run. Default 2 */
+  /** 每次 run 允许的反应式压缩最大次数。默认 2 */
   maxReactiveCompacts: number
-  /** Number of recent messages to keep during reactive compact. Default 2 */
+  /** 反应式压缩保留最近的消息条数。默认 2 */
   reactiveCompactKeepCount: number
-  /** Max output tokens for the compact summary itself. Default 20000 */
-  compactMaxOutputTokens: number
-  /** Token-pressure microcompact threshold (fraction of context window). Default 0.80 */
-  microcompactTokenPressureThreshold: number
-  /** Pre-compact 触发阈值（上下文窗口比例）。超过此比例时执行提前微压缩。设为 0 禁用。Default 0.60 */
-  preCompactThreshold: number
 
-  // ---- Tool result budget ----
-  /** Max chars per tool result. Default 30000 */
+  // ---- 工具结果预算 ----
+  /** 单条工具结果最大字符数。默认 30000 */
   maxToolResultChars: number
-  /** Max total chars across all tool results. Default 200000 */
+  /** 所有工具结果总字符数上限。默认 200000 */
   maxTotalToolResultChars: number
-  /** Persist tool results to disk above this size. Default 50000 */
+  /**
+   * 工具结果持久化阈値（字符数）。超过此大小的结果将写入磁盘，
+   * 对话中保留路径引用 + 2KB 预览，信息不丢失。默认 50000（= Infinity 禁用）
+   */
   toolResultPersistThresholdChars: number
 
-  // ---- Loop detection ----
-  /** Loop detection window. Default 3 */
+  // ---- 循环检测 ----
+  /** 循环检测窗口大小（连续相同调用的判定次数）。默认 3 */
   loopDetectionWindow: number
 
   // ---- Agent loop ----
-  /** Max turns per run. Default 25 */
+  /** 单次 run 最大轮次。默认 25 */
   maxAgentTurns: number
-  /** Max sub-agent nesting depth. Default 2 */
+  /** 子代理最大嵌套深度。默认 2 */
   maxSubAgentDepth: number
-  /** Max input tokens per run (0 = unlimited). Default 0 */
+  /** 单次 run 最大输入 token 数（0 = 不限制）。默认 0 */
   maxBudgetTokens: number
 
-  // ---- Message management ----
-  /** Max chars per message. Default 100000 */
+  // ---- 消息管理 ----
+  /** 单条消息最大字符数（防止异常工具输出撑爆内存）。默认 100000 */
   maxMessageChars: number
 
-  // ---- Microcompact ----
-  /** Minutes since last assistant message to trigger microcompact. Default 60 */
+  // ---- Microcompact（旧工具结果清理） ----
+  /** 距上次 assistant 消息超过此分钟数触发 microcompact。默认 60 */
   microcompactGapMinutes: number
-  /** Keep the N most recent compactable tool results. Default 5 */
+  /** Microcompact 保留最近 N 个 compactable 工具结果。默认 5 */
   microcompactKeepRecent: number
 }
 
+/** 默认配置 */
 export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
-  compactThreshold: 0,
-  compactSafetyBuffer: 13_000,
+  compactThreshold: 0,           // 0 = 使用自动公式
+  compactSafetyBuffer: 13_000,    // 参考 Claude Code 的 AUTOCOMPACT_BUFFER_TOKENS
   maxConsecutiveCompactFailures: 3,
   compactKeepRatio: 0.25,
   compactKeepMax: 10,
   compactKeepMin: 2,
-  compactSummaryMaxChars: 0, // Deprecated — no longer truncating messages
+  compactSummaryMaxChars: 500,
   maxReactiveCompacts: 2,
   reactiveCompactKeepCount: 2,
-  compactMaxOutputTokens: 20_000,
-  microcompactTokenPressureThreshold: 0.80,
-  preCompactThreshold: 0.60,
 
   maxToolResultChars: 30_000,
   maxTotalToolResultChars: 200_000,
@@ -87,7 +83,7 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
 
   maxAgentTurns: 25,
   maxSubAgentDepth: 2,
-  maxBudgetTokens: 0,
+  maxBudgetTokens: 0,  // 0 = 不限制
 
   maxMessageChars: 100_000,
 
@@ -95,8 +91,11 @@ export const DEFAULT_RUNTIME_CONFIG: AgentRuntimeConfig = {
   microcompactKeepRecent: 5,
 }
 
+/**
+ * 创建运行时配置，未指定的字段使用默认值。
+ */
 export function createRuntimeConfig(
-  overrides?: Partial<AgentRuntimeConfig>,
+  overrides?: Partial<AgentRuntimeConfig>
 ): AgentRuntimeConfig {
   return { ...DEFAULT_RUNTIME_CONFIG, ...overrides }
 }

@@ -126,53 +126,11 @@ describe('FileReadTool', () => {
   it('rejects invalid input (missing path)', async () => {
     const result = await tool.execute({}, defaultContext)
     expect(result.isError).toBe(true)
-    expect(result.output).toContain('[INVALID_INPUT]')
     expect(result.output).toContain('path')
   })
 
   it('rejects invalid input (wrong type for path)', async () => {
     const result = await tool.execute({ path: 123 }, defaultContext)
     expect(result.isError).toBe(true)
-    expect(result.output).toContain('[INVALID_INPUT]')
-  })
-
-  // ---- Unit 1: Structured error codes ----
-
-  it('returns [NOT_FOUND] with guidance for missing file', async () => {
-    const result = await tool.execute(
-      { path: path.join(tempDir, 'nonexistent.ts') },
-      { workingDirectory: tempDir }
-    )
-    expect(result.isError).toBe(true)
-    expect(result.output).toContain('[NOT_FOUND]')
-    expect(result.output).toContain('nonexistent.ts')
-    expect(result.output).toContain('Glob')
-  })
-
-  it('returns [OUTSIDE_WORKSPACE] for files outside workspace', async () => {
-    const result = await tool.execute(
-      { path: '/etc/passwd' },
-      { workingDirectory: tempDir }
-    )
-    expect(result.isError).toBe(true)
-    expect(result.output).toContain('[OUTSIDE_WORKSPACE]')
-    expect(result.output).toContain('Glob')
-  })
-
-  it('returns [TOO_LARGE] with guidance for oversized files', async () => {
-    const filePath = path.join(tempDir, 'huge.bin')
-    const chunk = Buffer.alloc(MAX_FILE_READ_BYTES + 1024, 'a')
-    fs.writeFileSync(filePath, chunk)
-
-    const result = await tool.execute({ path: filePath }, { workingDirectory: tempDir })
-    expect(result.output).toContain('[TOO_LARGE]')
-    expect(result.output).toContain('offset')
-    expect(result.output).toContain('limit')
-  })
-
-  it('returns [INVALID_INPUT] for empty path', async () => {
-    const result = await tool.execute({ path: '' }, defaultContext)
-    expect(result.isError).toBe(true)
-    expect(result.output).toContain('[INVALID_INPUT]')
   })
 })

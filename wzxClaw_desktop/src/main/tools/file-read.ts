@@ -56,7 +56,7 @@ Usage:
     const parsed = FileReadInputSchema.safeParse(input)
     if (!parsed.success) {
       return {
-        output: `[INVALID_INPUT] Invalid input: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'input'} ${i.message}`).join(', ')}`,
+        output: `Invalid input: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'input'} ${i.message}`).join(', ')}`,
         isError: true
       }
     }
@@ -73,13 +73,13 @@ Usage:
     const normalizedPath = absolutePath.toLowerCase()
     const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
     if (!isWithinWorkspace) {
-      return { output: `[OUTSIDE_WORKSPACE] File is outside the workspace: ${absolutePath}. Use Glob to find files within the workspace, or check the path is correct.`, isError: true }
+      return { output: `Blocked: FileRead target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
     // Check file exists
     if (!fs.existsSync(absolutePath)) {
       return {
-        output: `[NOT_FOUND] File not found: ${filePath}. The file may have been moved, renamed, or deleted. Use Glob to search for similar files.`,
+        output: `File not found: ${filePath}`,
         isError: true
       }
     }
@@ -91,7 +91,7 @@ Usage:
       if (stat.size > MAX_FILE_READ_BYTES) {
         const kb = Math.round(stat.size / 1024)
         return {
-          output: `[TOO_LARGE] File too large to read in full (${kb}KB > ${MAX_FILE_READ_BYTES / 1024}KB limit). Use offset and limit parameters to read specific sections, e.g. offset=0 limit=200 for the first 200 lines.`,
+          output: `File too large to read in full (${kb}KB > ${MAX_FILE_READ_BYTES / 1024}KB limit). Use offset and limit parameters to read specific sections, e.g. offset=0 limit=200 for the first 200 lines.`,
           isError: false
         }
       }
@@ -123,12 +123,8 @@ Usage:
 
       return { output, isError: false }
     } catch (err: any) {
-      // 区分权限错误与其他 I/O 错误，提供针对性引导
-      const isPermissionError = err?.code === 'EACCES' || err?.code === 'EPERM'
-      const code = isPermissionError ? 'PERMISSION_DENIED' : 'IO_ERROR'
-      const message = err.message || String(err)
       return {
-        output: `[${code}] ${message}`,
+        output: err.message || String(err),
         isError: true
       }
     }
