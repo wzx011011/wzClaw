@@ -354,8 +354,21 @@ class RoomManager {
         }
       } else {
         // No target -- broadcast to all desktops.
-        this._broadcastToDesktops(room, raw);
-        log(`Room [${token}]: mobile -> desktops (broadcast) event=${event}`);
+        // Check if any desktop is actually reachable before routing.
+        const activeDesktops = [...room.desktops.values()].filter(d => d.ws && d.ws.readyState === 1);
+        if (activeDesktops.length === 0) {
+          // No desktop online: notify mobile so it can show an error instead of hanging.
+          try {
+            ws.send(JSON.stringify({
+              event: 'system:no_desktop',
+              data: { error: 'Desktop is offline. Please open wzxClaw on your computer.' }
+            }));
+          } catch (_) {}
+          log(`Room [${token}]: mobile -> no desktop online, dropped event=${event}`);
+        } else {
+          this._broadcastToDesktops(room, raw);
+          log(`Room [${token}]: mobile -> desktops (broadcast) event=${event}`);
+        }
       }
     }
   }

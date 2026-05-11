@@ -55,6 +55,7 @@ class WsEvents {
   static const String systemDesktopDisconnected = 'system:desktop_disconnected';
   static const String systemMobileConnected = 'system:mobile_connected';
   static const String systemMobileDisconnected = 'system:mobile_disconnected';
+  static const String systemNoDesktop = 'system:no_desktop';
 
   // -- Incoming: new stream:agent:* format (desktop broadcasts these) --
   static const String agentText = 'stream:agent:text';

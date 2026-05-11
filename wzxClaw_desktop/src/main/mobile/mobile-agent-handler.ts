@@ -289,7 +289,11 @@ export async function handleAgentMessage(
       // 不再跨会话 cancel 全局，让多会话可并发运行。
       if (runtime.isRunning) {
         runtime.cancel()
-        await new Promise(r => setTimeout(r, 0))
+        // 等待上一次 run() generator 真正退出（最多 500ms），防止 abortController 被覆盖
+        const deadline = Date.now() + 500
+        while (runtime.isRunning && Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 10))
+        }
       }
 
       ctx.runtimes.notifyRunningChanged(sessionId, true)
@@ -456,10 +460,26 @@ export async function handleAgentMessage(
             ctx.sessionTaskStates.finish(sessionId, 'interrupted', { message: '任务异常中断' })
           }
         }
+        // 手机端需要收到 stream:agent:done 才能关闭「思考中」状态。
+        // 任务被取消/中断/fatal error 时 agent loop 不 yield agent:done，
+        // 必须在此补发，否则手机 UI 永远卡在 streaming 状态。
+        ctx.relayClient.broadcast('stream:agent:done', {
+          usage: null,
+          turnCount: 0,
+          cancelled: true,
+          sessionId,
+        })
         ctx.runtimes.notifyRunningChanged(sessionId, false)
         ctx.mobilePersistLocks.delete(sessionId)
       }
     } catch (err: unknown) {
+      ctx.relayClient.broadcast('stream:agent:done', {
+        usage: null,
+        turnCount: 0,
+        cancelled: true,
+        error: err instanceof Error ? err.message : String(err),
+        sessionId: ctx.mobileSessionId.value,
+      })
       ctx.relayClient.broadcast('stream:error', { error: err instanceof Error ? err.message : String(err), sessionId: ctx.mobileSessionId.value })
     }
     return true

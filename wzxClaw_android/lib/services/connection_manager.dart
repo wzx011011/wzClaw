@@ -554,6 +554,13 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
             _selectedDesktopId = confirmedId;
             _selectedDesktopIdController.add(confirmedId);
           }
+        } else if (event == WsEvents.systemNoDesktop) {
+          // 手机发出命令时桌面端不在线，relay 回传此事件。
+          // 注入合成事件：先 done 重置 streaming 状态，再 error 展示错误气泡。
+          final errMsg = (json['data'] as Map<String, dynamic>?)?['error'] as String? ??
+              'Desktop is offline. Please open wzxClaw on your computer.';
+          _messageController.add(WsMessage(event: WsEvents.agentDone, data: {'cancelled': true}));
+          _messageController.add(WsMessage(event: WsEvents.agentError, data: {'error': errMsg, 'recoverable': false}));
         }
         return;
       }
