@@ -398,8 +398,17 @@ class ChatStore {
     if (!_userManuallySwitched) {
       _currentSessionId = sessionId;
     }
-    _isStreaming = true;
-    _streamingController.add(true);
+    // 仅在事件属于当前会话时才更新 _isStreaming。
+    // 若来自后台会话 B（用户正在看 A），_isStreaming 不应被污染，
+    // 否则会话 A 的界面会错误地显示 loading spinner。
+    if (sessionId == _currentSessionId) {
+      _isStreaming = true;
+      _streamingController.add(true);
+    } else {
+      // 后台会话：仅更新 liveState，不影响当前页面
+      _liveStateFor(sessionId).isStreaming = true;
+      _liveStateFor(sessionId).isWaiting = false;
+    }
   }
 
   // ── session:task_status ───────────────────────────────────────────

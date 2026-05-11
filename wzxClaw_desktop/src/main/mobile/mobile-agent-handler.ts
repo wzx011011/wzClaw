@@ -56,8 +56,11 @@ export async function handleAgentMessage(
 
       switch (cmdName) {
         case 'compact': {
-          // Trigger manual context compaction — 仅针对当前手机会话生效
-          const compactSid = ctx.mobileSessionId.value
+          // Trigger manual context compaction — 优先使用消息携带的 sessionId，
+          // ctx.mobileSessionId.value 在多会话并发时可能指向另一个会话。
+          const compactSid = (typeof msg.data.sessionId === 'string' && msg.data.sessionId.length > 0)
+            ? msg.data.sessionId
+            : ctx.mobileSessionId.value
           const compactRuntime = compactSid ? ctx.runtimes.getOrCreate(compactSid) : null
           const messages = compactRuntime ? compactRuntime.getMessages() : []
           const compactConfig = ctx.settingsManager.getCurrentConfig()
@@ -76,26 +79,30 @@ export async function handleAgentMessage(
                   ...recentMessages
                 ])
               }
-              const sid = ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
-              broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: sid })
+              broadcastToMobile('stream:agent:done', { usage: null, compacted: true, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, sessionId: compactSid })
             }).catch((err: unknown) => {
               broadcastToMobile('stream:error', { error: err instanceof Error ? err.message : String(err) })
             })
           } else {
-            const sid = ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
-            broadcastToMobile('stream:agent:done', { usage: null, sessionId: sid })
+            broadcastToMobile('stream:agent:done', { usage: null, sessionId: compactSid })
           }
           return true
         }
         case 'clear': {
           // Discard the mobile-current session runtime and start fresh on next send
-          if (ctx.mobileSessionId.value) {
-            ctx.stepManager.clearSession(ctx.mobileSessionId.value)
-            ctx.runtimes.delete(ctx.mobileSessionId.value)
+          // 优先使用消息携带的 sessionId（多会话时 mobileSessionId.value 可能指向其他会话）
+          const clearSid = (typeof msg.data.sessionId === 'string' && msg.data.sessionId.length > 0)
+            ? msg.data.sessionId
+            : ctx.mobileSessionId.value
+          if (clearSid) {
+            ctx.stepManager.clearSession(clearSid)
+            ctx.runtimes.delete(clearSid)
             // runtime 已销毁，必须同步清除持久化计数，避免下次 send 时 counter 与新 runtime 不一致
-            ctx.mobilePersistedMessageCounts.delete(ctx.mobileSessionId.value)
+            ctx.mobilePersistedMessageCounts.delete(clearSid)
           }
-          ctx.mobileSessionId.value = null
+          if (ctx.mobileSessionId.value === clearSid) {
+            ctx.mobileSessionId.value = null
+          }
           broadcastToMobile('session:create:response', { success: true })
           return true
         }
@@ -113,13 +120,17 @@ export async function handleAgentMessage(
           break
         }
         case 'help': {
-          const sid0 = ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
+          const sid0 = (typeof msg.data.sessionId === 'string' && msg.data.sessionId.length > 0)
+            ? msg.data.sessionId
+            : ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
           broadcastToMobile('stream:agent:text', { content: `**可用命令：**\n\n- /help — 显示此帮助\n- /init — 分析代码库并创建 WZXCLAW.md\n- /compact — 压缩上下文\n- /context — 查看上下文使用情况\n- /clear — 新建会话\n- /commit — 分析 git 变更并提交\n- /review — 代码审查\n- /insights — 生成代码洞察`, sessionId: sid0 })
           broadcastToMobile('stream:agent:done', { usage: { inputTokens: 0, outputTokens: 0 }, turnCount: 0, sessionId: sid0 })
           return true
         }
         case 'context': {
-          const sid1 = ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
+          const sid1 = (typeof msg.data.sessionId === 'string' && msg.data.sessionId.length > 0)
+            ? msg.data.sessionId
+            : ctx.settingsManager.getLastSessionId() ?? ctx.mobileSessionId.value
           const totalUsage = ctx.contextManager.getTotalUsage()
           const history = ctx.contextManager.getCompactHistory()
           broadcastToMobile('stream:agent:text', { content: `**上下文使用情况：**\n\n- 输入 tokens: ${totalUsage.inputTokens}\n- 输出 tokens: ${totalUsage.outputTokens}\n- 历史压缩次数: ${history.count}${history.lastBefore != null ? `\n- 上次压缩: ${history.lastBefore} → ${history.lastAfter} tokens` : ''}`, sessionId: sid1 })
