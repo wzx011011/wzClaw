@@ -1092,12 +1092,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     // 立即在主进程创建空会话文件，使侧边栏立刻显示新会话
-    window.wzxclaw.ensureSession({
+    window.wzxclaw.ensureSession?.({
       sessionId: newId,
       activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined
-    }).then(() => {
+    })?.then(() => {
       get().loadSessionList()
-    }).catch(() => {})
+    })?.catch(() => {})
   },
 
   /**
