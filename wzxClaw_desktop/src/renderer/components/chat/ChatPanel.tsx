@@ -77,6 +77,8 @@ export default function ChatPanel(): JSX.Element {
   // Chat store — 仅订阅 ChatPanel 自身需要的字段；
   // messages / streaming 高频更新字段已移至 MessageList，不再引起 ChatPanel 重渲。
   const isStreaming = useChatStore((s) => s.isStreaming)
+  const queuedMessage = useChatStore((s) => s.queuedMessage)
+  const cancelQueuedMessage = useChatStore((s) => s.cancelQueuedMessage)
   const error = useChatStore((s) => s.error)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
@@ -465,7 +467,8 @@ export default function ChatPanel(): JSX.Element {
 
   const handleSend = async (): Promise<void> => {
     const trimmed = inputValue.trim()
-    if ((!trimmed && pendingMentions.length === 0 && pendingImages.length === 0) || isStreaming) return
+    if ((!trimmed && pendingMentions.length === 0 && pendingImages.length === 0)) return
+    // 若正在流式输出，sendMessage 内部会自动排队
 
     // Handle /help inline — inject a local assistant message listing all commands
     if (trimmed === '/help') {
@@ -752,6 +755,17 @@ export default function ChatPanel(): JSX.Element {
             ))}
           </div>
         )}
+        {/* P2: 排队消息横幅 — 当前正在生成且用户已提交一条等待发送的消息 */}
+        {queuedMessage && (
+          <div className="queued-message-banner">
+            <span className="queued-message-banner-icon">⏳</span>
+            <span className="queued-message-banner-text">
+              {t('chat.queuedMessage')}{': '}
+              <em>{queuedMessage.displayContent.length > 60 ? queuedMessage.displayContent.slice(0, 57) + '…' : queuedMessage.displayContent}</em>
+            </span>
+            <button className="queued-message-banner-cancel" onClick={cancelQueuedMessage} title={t('common.cancel')}>✕</button>
+          </div>
+        )}
         <div
           className="chat-input-area"
           style={{ position: 'relative' }}
@@ -767,7 +781,6 @@ export default function ChatPanel(): JSX.Element {
             onKeyDown={handleKeyDown}
             placeholder={pendingImages.length > 0 ? t('chat.imageDescPlaceholder') : t('chat.inputPlaceholder.continue')}
             rows={1}
-            disabled={isStreaming}
           />
           {/* Hidden file input for image upload */}
           <input

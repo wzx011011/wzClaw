@@ -192,6 +192,18 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   })
 
   // ============================================================
+  // Session: ensure — creates an empty JSONL file for a new session
+  // so it immediately appears in the sidebar before any messages
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:ensure'], async (_event, request: { sessionId: string; activeWorkspaceId?: string }) => {
+    const store = await resolveStore(request.activeWorkspaceId)
+    // appendMessages skips empty arrays, so use appendMessage with a meta line
+    await store.appendMessage(request.sessionId, { type: 'meta', role: 'meta', content: '', timestamp: Date.now() })
+    onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
+    return { success: true }
+  })
+
+  // ============================================================
   // Session: export — export conversation to file
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json'; activeWorkspaceId?: string }) => {

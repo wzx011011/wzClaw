@@ -37,6 +37,7 @@ export default function SessionList(): JSX.Element | null {
     earlier: t('sessionList.earlier'),
   }
   const runningSessionIds = useChatStore((s) => s.runningSessionIds)
+  const completedSessionIds = useChatStore((s) => s.completedSessionIds)
   const conversationId = useChatStore((s) => s.conversationId)
   const switchSession = useChatStore((s) => s.switchSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
@@ -173,6 +174,7 @@ export default function SessionList(): JSX.Element | null {
 
   const renderSessionItem = (session: SessionMeta): JSX.Element => {
     const isRunning = runningSessionIds.has(session.id)
+    const isDone = !isRunning && completedSessionIds.has(session.id)
     return (
     <div
       key={session.id}
@@ -213,6 +215,7 @@ export default function SessionList(): JSX.Element | null {
                 title={t('sessionList.doubleClickHint')}
               >
                 {isRunning && <span className="session-item-running-dot" title={t('sessionList.running')} />}
+                {isDone && <span className="session-item-done-dot" title={t('sessionList.done')} />}
                 {session.title}
               </div>
             )}

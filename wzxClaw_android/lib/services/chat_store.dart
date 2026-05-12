@@ -122,6 +122,20 @@ class ChatStore {
   Timer? _textFlushTimer;
   static const _textFlushInterval = Duration(milliseconds: 60); // ~16 FPS
 
+  // -- Session loading state (切换会话时的加载占位) --
+  bool _isSessionLoading = false;
+  bool get isSessionLoading => _isSessionLoading;
+  final _sessionLoadingController = StreamController<bool>.broadcast();
+  Stream<bool> get sessionLoadingStream => _sessionLoadingController.stream;
+
+  void _setSessionLoading(bool loading) {
+    if (_isSessionLoading == loading) return;
+    _isSessionLoading = loading;
+    if (!_sessionLoadingController.isClosed) {
+      _sessionLoadingController.add(loading);
+    }
+  }
+
   // -- Thinking state --
   static const _maxThinkingChars = 50000; // 约 50KB 上限，防止无限累积
   String _thinkingContent = '';
@@ -837,6 +851,7 @@ class ChatStore {
     // 用户主动切换时，不从本地缓存加载——调用方会通过 loadFetchedMessages
     // 注入从桌面拉取的最新数据，避免先显示旧缓存再闪烁刷新。
     if (userInitiated && sessionId != null) {
+      _setSessionLoading(true); // 显示加载占位，直到 loadFetchedMessages 回填
       _isBrowsingHistory = true;
       _restoreLiveSessionState(sessionId);
       _notifyListeners();
@@ -873,6 +888,7 @@ class ChatStore {
     if (messages.isEmpty) {
       _clearGeneration++;
       _messages.clear();
+      _setSessionLoading(false); // 空会话也要关闭 loading
       _notifyListeners();
       return;
     }
@@ -883,6 +899,7 @@ class ChatStore {
     _messages.clear();
     _messages.addAll(visibleMessages);
     _restoreLiveSessionState(sessionId);
+    _setSessionLoading(false); // 数据已到，关闭加载状态
     _notifyListeners();
   }
 
@@ -1339,6 +1356,7 @@ class ChatStore {
     _waitingController.close();
     _planModeController.close();
     _askUserController.close();
+    _sessionLoadingController.close();
   }
 }
 

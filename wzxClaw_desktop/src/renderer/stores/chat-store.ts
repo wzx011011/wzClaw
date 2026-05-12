@@ -60,6 +60,10 @@ interface ChatState {
   todoCollapsed: boolean
   isLoadingSession: boolean
   loadingSessionId: string | null
+  /** P1: 后台完成的 session（用户不在该会话时完成） — 用于侧边栏角标 */
+  completedSessionIds: Set<string>
+  /** P2: 排队等待当前 session 完成后发送的消息 */
+  queuedMessage: { displayContent: string; agentContent?: string; images?: Array<{ data: string; mimeType: string; name?: string }> } | null
 }
 
 interface ChatActions {
@@ -79,6 +83,10 @@ interface ChatActions {
   addMention: (mention: MentionItem) => void
   removeMention: (path: string) => void
   clearMentions: () => void
+  /** P2: 取消排队中的消息 */
+  cancelQueuedMessage: () => void
+  /** P1: 手动清除某会话的完成角标（切换到该会话时自动调用） */
+  markSessionRead: (sessionId: string) => void
 }
 
 type ChatStore = ChatState & ChatActions
@@ -269,6 +277,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
   todoCollapsed: false,
   isLoadingSession: false,
   loadingSessionId: null,
+  completedSessionIds: new Set<string>(),
+  queuedMessage: null,
 
   /**
    * Subscribe to all 5 stream IPC events. Returns unsubscribe function.
@@ -450,8 +460,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }) ?? (() => {})
 
     const unsubEnd = window.wzxclaw.onStreamEnd((payload) => {
-      // 会话过滤：仅处理当前活动会话的完成事件
-      if (payload.sessionId && payload.sessionId !== get().activeSessionId) return
+      // P1: 后台 session 完成 — 添加角标并刷新列表，不更新当前视图
+      if (payload.sessionId && payload.sessionId !== get().activeSessionId) {
+        set((state) => ({
+          completedSessionIds: new Set([...state.completedSessionIds, payload.sessionId!])
+        }))
+        get().loadSessionList()
+        return
+      }
       batcher!.flushNow()
       set((state) => {
         // Drop a trailing empty assistant bubble if the stream finishes before
@@ -500,6 +516,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })
       // Refresh session list after agent completes (session is now persisted)
       get().loadSessionList()
+      // P2: 自动发送排队的消息
+      const queued = get().queuedMessage
+      if (queued) {
+        set({ queuedMessage: null })
+        setTimeout(() => get().sendMessage(queued.displayContent, queued.agentContent, queued.images), 50)
+      }
     })
 
     const unsubError = window.wzxclaw.onStreamError((payload) => {
@@ -855,6 +877,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * If pendingMentions exist, formats file content into the message.
    */
   sendMessage: async (displayContent: string, agentContent?: string, images?: Array<{ data: string; mimeType: string; name?: string }>) => {
+    // P2: 若当前 session 正在流式输出，排队等待（后续由 unsubEnd 自动触发）
+    if (get().isStreaming) {
+      set({ queuedMessage: { displayContent, agentContent, images } })
+      return
+    }
     const { conversationId, messages, pendingMentions } = get()
 
     // Format mentions into message content for LLM context
@@ -921,8 +948,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   stopGeneration: async () => {
     batcher!.flushNow()
+    const { conversationId } = get()
     try {
-      await window.wzxclaw.stopGeneration()
+      await window.wzxclaw.stopGeneration(conversationId)
     } catch (err) {
       console.error('Failed to stop generation:', err)
     }
@@ -1037,7 +1065,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * generates new UUID, clears messages, and switches to new session.
    */
   createSession: () => {
-    batcher!.flushNow()
+    // 丢弃旧会话的待冲刷缓冲（切走时这些文本属于旧会话，无需写入）
+    batcher!.reset()
     const { messages, conversationId } = get()
     const newId = uuidv4()
 
@@ -1047,14 +1076,28 @@ export const useChatStore = create<ChatStore>((set, get) => {
       touchSession(conversationId)
     }
 
+    // 必须完整重置流式状态，否则旧会话的 isStreaming/isWaitingForResponse 会泄漏到
+    // 新会话中，导致 ThinkingIndicator 永久显示（旧会话的 stream:done 因 sessionId
+    // 不匹配被过滤掉，isStreaming 永远无法被清除）。
     set({
       messages: [],
       conversationId: newId,
       activeSessionId: newId,
-      error: null,
+      isStreaming: false,
+      isWaitingForResponse: false,
+      streamJustEnded: false,
       streamingMessageId: null,
+      error: null,
       currentTodos: []
     })
+
+    // 立即在主进程创建空会话文件，使侧边栏立刻显示新会话
+    window.wzxclaw.ensureSession({
+      sessionId: newId,
+      activeWorkspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined
+    }).then(() => {
+      get().loadSessionList()
+    }).catch(() => {})
   },
 
   /**
@@ -1091,7 +1134,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       pendingMentions: [] as MentionItem[],
       currentTodos: [] as Array<{ content: string; status: string; activeForm: string }>,
       currentTokenUsage: null as { inputTokens: number; outputTokens: number } | null,
-      error: null as string | null
+      error: null as string | null,
+      queuedMessage: null as { displayContent: string; agentContent?: string; images?: Array<{ data: string; mimeType: string; name?: string }> } | null
     }
 
     // 命中缓存 — 立即渲染，无 IPC 开销
@@ -1151,6 +1195,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     // Persist last session so it can be restored on next app launch
     window.wzxclaw.saveLastSession?.({ sessionId }).catch(() => {})
+
+    // P1: 切换到该 session 时清除完成角标
+    set((state) => {
+      if (!state.completedSessionIds.has(sessionId)) return state
+      const next = new Set(state.completedSessionIds)
+      next.delete(sessionId)
+      return { completedSessionIds: next }
+    })
 
     // Restore todos for the target session (now session-scoped, not workspace-scoped)
     window.wzxclaw.loadTodos?.(sessionId).then((todos) => {
@@ -1290,6 +1342,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
    */
   clearMentions: () => {
     set({ pendingMentions: [] })
+  },
+
+  /**
+   * P2: 取消排队等待的消息。
+   */
+  cancelQueuedMessage: () => {
+    set({ queuedMessage: null })
+  },
+
+  /**
+   * P1: 手动清除指定 session 的完成角标。
+   */
+  markSessionRead: (sessionId: string) => {
+    set((state) => {
+      if (!state.completedSessionIds.has(sessionId)) return state
+      const next = new Set(state.completedSessionIds)
+      next.delete(sessionId)
+      return { completedSessionIds: next }
+    })
   }
 }})
 

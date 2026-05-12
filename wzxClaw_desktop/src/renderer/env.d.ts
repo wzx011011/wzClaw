@@ -5,7 +5,7 @@ declare global {
     wzxclaw: {
       // Agent
       sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string }) => Promise<void>
-      stopGeneration: () => Promise<void>
+      stopGeneration: (sessionId: string) => Promise<void>
       // Stream listeners
       onStreamText: (cb: (p: { content: string; sessionId: string }) => void) => () => void
       onStreamThinking: (cb: (p: { content: string; sessionId: string }) => void) => () => void
@@ -44,6 +44,7 @@ declare global {
       deleteSession: (request: { sessionId: string }) => Promise<{ success: boolean }>
       renameSession: (request: { sessionId: string; title: string }) => Promise<{ success: boolean }>
       duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => Promise<{ newSessionId: string }>
+      ensureSession: (request: { sessionId: string; activeWorkspaceId?: string }) => Promise<{ success: boolean }>
       saveLastSession: (request: { sessionId: string }) => Promise<void>
       getLastSession: () => Promise<{ sessionId: string | null }>
       onSessionRestore: (cb: (p: { sessionId: string }) => void) => () => void

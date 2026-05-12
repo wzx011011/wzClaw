@@ -337,14 +337,13 @@ export function registerIpcHandlers(
   })
 
   // ============================================================
-  // Agent: stop — cancels the running agent loop
+  // Agent: stop — cancels the running agent loop for a specific session
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['agent:stop'], () => {
-    // Cancel ALL currently running runtimes — avoids cancelling the wrong session
-    // if the user switched sessions while one was still running
-    const runningIds = runtimes.listRunning()
-    for (const id of runningIds) {
-      runtimes.cancel(id)
+  ipcMain.handle(IPC_CHANNELS['agent:stop'], (_event, request: { sessionId: string }) => {
+    // 只 cancel 指定会话，不影响其他并发会话
+    if (request?.sessionId) {
+      runtimes.cancel(request.sessionId)
+      permissionManager.clearSession(request.sessionId)
     }
   })
 

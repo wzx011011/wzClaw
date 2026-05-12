@@ -43,6 +43,7 @@ class _ChatPageState extends State<ChatPage> {
   List<ChatMessage> _displayMessages = [];
   bool _isStreaming = false;
   bool _isWaiting = false;
+  bool _isSessionLoading = false; // 切换会话时等待桌面端返回数据
   bool _showScrollFab = false;
   bool _scrollPending = false;
   int _previousGroupCount = 0;
@@ -56,6 +57,7 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription? _streamingSub;
   StreamSubscription? _voiceErrorSub;
   StreamSubscription<bool>? _waitingSub;
+  StreamSubscription<bool>? _sessionLoadingSub;
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
@@ -120,6 +122,11 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
 
+    _sessionLoadingSub = ChatStore.instance.sessionLoadingStream.listen((loading) {
+      if (mounted) setState(() => _isSessionLoading = loading);
+    });
+    _isSessionLoading = ChatStore.instance.isSessionLoading;
+
     _permissionSub = ChatStore.instance.permissionStream.listen((req) {
       if (mounted) setState(() => _permissionRequest = req);
     });
@@ -180,6 +187,7 @@ class _ChatPageState extends State<ChatPage> {
     _desktopIdentitySub?.cancel();
     _workspaceInfoSub?.cancel();
     _permissionSub?.cancel();
+    _sessionLoadingSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
     _inputController.dispose();
@@ -322,7 +330,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return Scaffold(
-      resizeToAvoidBottomInset: false,
+      resizeToAvoidBottomInset: true,
       backgroundColor: colors.bgPrimary,
       onDrawerChanged: (opened) {
         if (opened) _inputFocusNode.unfocus();
@@ -487,16 +495,49 @@ class _ChatPageState extends State<ChatPage> {
 
   // ── Message list ───────────────────────────────────────────────────
 
+  /// 切换会话时的骨架屏占位，模拟即将出现的消息气泡形状。
+  Widget _buildSessionLoadingSkeleton(AppColors colors) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    // 固定宽度比例，模拟长短不一的消息气泡
+    final rows = [
+      (align: Alignment.centerRight, w: screenWidth * 0.55),
+      (align: Alignment.centerLeft,  w: screenWidth * 0.75),
+      (align: Alignment.centerLeft,  w: screenWidth * 0.60),
+      (align: Alignment.centerLeft,  w: screenWidth * 0.45),
+      (align: Alignment.centerRight, w: screenWidth * 0.50),
+      (align: Alignment.centerLeft,  w: screenWidth * 0.70),
+    ];
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      physics: const NeverScrollableScrollPhysics(),
+      children: rows.map((r) => Align(
+        alignment: r.align,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: _SkeletonBox(
+            width: r.w,
+            height: 36,
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      )).toList(),
+    );
+  }
+
   Widget _buildMessageList() {
     final colors = AppColors.of(context);
     if (_displayMessages.isEmpty && !_isWaiting) {
+      // 正在切换会话、等待桌面端回传数据时显示骨架屏
+      if (_isSessionLoading) {
+        return _buildSessionLoadingSkeleton(colors);
+      }
       return Center(
         child: Text('暂无消息',
             style: TextStyle(color: colors.textMuted, fontSize: 14),),
       );
     }
 
-    final showThinking = _isWaiting && !_isStreaming;
+    final showThinking = _isWaiting; // agent:running 이 _isStreaming=true 로 설정해도 여전히 표시
     // Group consecutive tool messages together
     final grouped = _groupMessages(_displayMessages);
     final itemCount = grouped.length + (showThinking ? 1 : 0);
@@ -949,8 +990,13 @@ class _ChatPageState extends State<ChatPage> {
         final state = snapshot.data ?? WsConnectionState.disconnected;
         final isConnected = state == WsConnectionState.connected;
 
+        // 键盘弹出时 Scaffold 已把 body 底部贴到键盘顶端（含导航栏区），
+        // 不能再叠加 padding.bottom，否则输入框会悬浮过高并在导航栏折叠后回弹。
+        // View.of(context).viewInsets 是原始物理像素，不受 Scaffold MediaQuery 覆盖影响。
+        final keyboardShowing = View.of(context).viewInsets.bottom > 0;
+        final safeBottom = keyboardShowing ? 0.0 : MediaQuery.of(context).padding.bottom;
         return Container(
-          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + MediaQuery.of(context).viewInsets.bottom),
+          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + safeBottom),
           decoration: BoxDecoration(
             color: colors.bgSecondary,
             border: Border(top: BorderSide(color: colors.border, width: 0.5)),
@@ -1291,6 +1337,57 @@ class _CodeBlockWidgetState extends State<_CodeBlockWidget> {
       }
     }
     return spans;
+  }
+}
+
+// ── Session loading skeleton ──────────────────────────────────────────
+
+class _SkeletonBox extends StatefulWidget {
+  final double width;
+  final double height;
+  final BorderRadius? borderRadius;
+  const _SkeletonBox({required this.width, required this.height, this.borderRadius});
+
+  @override
+  State<_SkeletonBox> createState() => _SkeletonBoxState();
+}
+
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.25, end: 0.55).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: Colors.grey.withValues(alpha: _anim.value),
+          borderRadius: widget.borderRadius ?? BorderRadius.circular(6),
+        ),
+      ),
+    );
   }
 }
 

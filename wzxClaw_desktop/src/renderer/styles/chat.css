@@ -205,8 +205,22 @@
   line-height: 1.6;
 }
 
+/* 仅包含工具调用（无文字/思考内容）时去除泡泡背景 —— 对标手机端工具块浮现在页面背景上的效果 */
+.chat-message-assistant:has(.chat-message-tools):not(:has(.chat-message-content)):not(:has(.chat-message-thinking)) {
+  background: transparent;
+  padding: 0;
+}
+
 .chat-message-assistant .chat-message-content {
   min-height: 16px;
+}
+
+/* 文字+工具混合时，工具区域加分隔线 */
+.chat-message-content + .chat-message-tools,
+.chat-message-thinking + .chat-message-tools {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Streaming text — 纯文本渲染（跳过 ReactMarkdown 解析），保留换行和基本排版 */
@@ -1813,6 +1827,53 @@
 @keyframes session-running-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.75); }
+}
+
+/* P1: 后台 session 完成小点（accent 色，静止无动画） */
+.session-item-done-dot {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent, #4a9eff);
+}
+
+/* P2: 排队消息横幅 */
+.queued-message-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.queued-message-banner-icon {
+  flex-shrink: 0;
+}
+.queued-message-banner-text {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.queued-message-banner-cancel {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 3px;
+}
+.queued-message-banner-cancel:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .session-item-title-input {

@@ -5,7 +5,7 @@ const api = {
   // Agent
   sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string; images?: Array<{ data: string; mimeType: string; name?: string }> }) =>
     ipcRenderer.invoke('agent:send_message', request),
-  stopGeneration: () => ipcRenderer.invoke('agent:stop'),
+  stopGeneration: (sessionId: string) => ipcRenderer.invoke('agent:stop', { sessionId }),
 
   // Stream listeners — return unsubscribe functions
   onStreamText: (callback: (payload: { content: string; sessionId: string }) => void) => {
@@ -117,6 +117,7 @@ const api = {
   deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
   duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:duplicate', request),
+  ensureSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:ensure', request),
   saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
   getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
   onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {

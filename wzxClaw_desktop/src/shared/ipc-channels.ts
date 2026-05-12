@@ -60,6 +60,7 @@ export const IPC_CHANNELS = {
   'session:save-last': 'session:save-last',
   'session:get-last': 'session:get-last',
   'session:duplicate': 'session:duplicate',
+  'session:ensure': 'session:ensure',
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
@@ -237,7 +238,7 @@ export interface IpcRequestPayloads {
     activeWorkspaceId?: string
     images?: Array<{ data: string; mimeType: string; name?: string }>
   }
-  'agent:stop': void
+  'agent:stop': { sessionId: string }
   'todo:load': { sessionId: string }
   'agent:permission_response': {
     approved: boolean
@@ -275,6 +276,7 @@ export interface IpcRequestPayloads {
   'session:delete': { sessionId: string; activeWorkspaceId?: string }
   'session:rename': { sessionId: string; title: string; activeWorkspaceId?: string }
   'session:duplicate': { sessionId: string; activeWorkspaceId?: string }
+  'session:ensure': { sessionId: string; activeWorkspaceId?: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
@@ -400,6 +402,7 @@ export interface IpcResponsePayloads {
   'session:delete': { success: boolean }
   'session:rename': { success: boolean }
   'session:duplicate': { newSessionId: string }
+  'session:ensure': { success: boolean }
   'file:apply-hunk': { success: boolean }
   'file:get-history': Array<{ toolCallId: string; timestamp: number; filePath: string }>
   'file:revert': { success: boolean; error?: string }
@@ -616,6 +619,10 @@ export const IpcSchemas = {
   'session:duplicate': {
     request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ newSessionId: z.string() })
+  },
+  'session:ensure': {
+    request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
+    response: z.object({ success: z.boolean() })
   },
   'plugin:install-from-source': {
     request: z.object({
