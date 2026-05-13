@@ -1,7 +1,7 @@
 name: wzxclaw_android
 description: wzxClaw Android client - remote control for wzxClaw IDE via WebSocket
 publish_to: "none"
-version: 1.2.1
+version: 1.2.3
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
