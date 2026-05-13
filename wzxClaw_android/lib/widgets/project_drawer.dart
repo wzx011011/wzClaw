@@ -106,7 +106,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: connected ? Colors.green : Colors.red,
+                                color: connected ? colors.success : colors.error,
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -196,10 +196,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 child: Row(
                   children: [
                     Text('选择桌面端',
-                        style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,),),
                     const Spacer(),
                     IconButton(
                       icon: Icon(Icons.close, color: colors.textMuted),
@@ -236,19 +236,19 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                       subtitle: d.platform != null
                           ? Text(d.platform!,
                               style: TextStyle(
-                                  color: colors.textMuted, fontSize: 11))
+                            color: colors.textMuted, fontSize: 12,),)
                           : null,
                       trailing: isSelected
                           ? Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
+                                  horizontal: 8, vertical: 2,),
                               decoration: BoxDecoration(
                                 color: colors.accent.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text('当前',
                                   style: TextStyle(
-                                      color: colors.accent, fontSize: 11)),
+                                      color: colors.accent, fontSize: 12,),),
                             )
                           : null,
                       onTap: () {
@@ -284,16 +284,16 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Row(
                 children: [
-                  Text('切换工作区',
+                    Text('切换工作区',
                       style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold)),
+                        color: colors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,),),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => Navigator.pop(ctx),
                     child: Text('关闭',
-                        style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                    style: TextStyle(color: colors.textMuted, fontSize: 13,),),
                   ),
                 ],
               ),
@@ -308,7 +308,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text('暂无工作区',
-                        style: TextStyle(color: colors.textMuted, fontSize: 14)),
+                    style: TextStyle(color: colors.textMuted, fontSize: 14,),),
                   );
                 }
                 return ConstrainedBox(

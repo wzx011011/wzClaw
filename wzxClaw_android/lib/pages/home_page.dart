@@ -227,8 +227,10 @@ class _ChatPageState extends State<ChatPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgElevated,
         title: Text('清空会话', style: TextStyle(color: colors.textPrimary)),
-        content:
-            Text('确定要清空当前会话所有消息吗？', style: TextStyle(color: colors.textSecondary)),
+        content: Text(
+          '确定要清空当前会话所有消息吗？',
+          style: TextStyle(color: colors.textSecondary),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -243,7 +245,7 @@ class _ChatPageState extends State<ChatPage> {
               ConnectionManager.instance.send(WsMessage(
                 event: WsEvents.sessionClearRequest,
                 data: {'sessionId': sessionId},
-              ));
+              ),);
             },
             child: Text('清空', style: TextStyle(color: colors.error)),
           ),
@@ -330,7 +332,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return Scaffold(
-      resizeToAvoidBottomInset: true,
+      resizeToAvoidBottomInset: false,
       backgroundColor: colors.bgPrimary,
       onDrawerChanged: (opened) {
         if (opened) _inputFocusNode.unfocus();
@@ -520,7 +522,7 @@ class _ChatPageState extends State<ChatPage> {
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-      )).toList(),
+      ),).toList(),
     );
   }
 
@@ -679,7 +681,7 @@ class _ChatPageState extends State<ChatPage> {
                         style: TextStyle(
                             color: colors.textMuted,
                             fontSize: 10,
-                            fontFamily: 'monospace'),
+                            fontFamily: 'monospace',),
                       ),
                   ],
                 ),
@@ -906,12 +908,18 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Text(cmd.description, style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+                      child: Text(
+                        cmd.description,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
-            )),
+            ),),
             const SizedBox(height: 8),
           ],
         ),
@@ -990,13 +998,17 @@ class _ChatPageState extends State<ChatPage> {
         final state = snapshot.data ?? WsConnectionState.disconnected;
         final isConnected = state == WsConnectionState.connected;
 
-        // 键盘弹出时 Scaffold 已把 body 底部贴到键盘顶端（含导航栏区），
-        // 不能再叠加 padding.bottom，否则输入框会悬浮过高并在导航栏折叠后回弹。
-        // View.of(context).viewInsets 是原始物理像素，不受 Scaffold MediaQuery 覆盖影响。
-        final keyboardShowing = View.of(context).viewInsets.bottom > 0;
-        final safeBottom = keyboardShowing ? 0.0 : MediaQuery.of(context).padding.bottom;
-        return Container(
-          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + safeBottom),
+        // 由输入栏自己跟随 viewInsets 连续过渡，避免焦点触发时聊天框与系统键盘
+        // 各自动画导致的错拍和回弹。
+        final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+        final bottomInset = keyboardInset > 0
+            ? keyboardInset
+            : MediaQuery.paddingOf(context).bottom;
+
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + bottomInset),
           decoration: BoxDecoration(
             color: colors.bgSecondary,
             border: Border(top: BorderSide(color: colors.border, width: 0.5)),
@@ -1042,7 +1054,7 @@ class _ChatPageState extends State<ChatPage> {
                                       style: TextStyle(
                                         color: selected ? colors.accent : colors.textPrimary,
                                         fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                      )),
+                                      ),),
                                 ],
                               ),
                             );

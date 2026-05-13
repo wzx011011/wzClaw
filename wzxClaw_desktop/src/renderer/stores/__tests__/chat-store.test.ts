@@ -20,6 +20,7 @@ const mockWzxclaw = {
   listSessions: vi.fn().mockResolvedValue({ sessions: [], runningSessionIds: [] }),
   loadSession: vi.fn().mockResolvedValue([]),
   loadSessionTail: vi.fn().mockResolvedValue({ messages: [], totalCount: 0, hasMore: false }),
+  ensureSession: vi.fn().mockResolvedValue({ success: true }),
   deleteSession: vi.fn().mockResolvedValue({ success: true }),
   renameSession: vi.fn().mockResolvedValue({ success: true }),
   compactContext: vi.fn().mockResolvedValue(null)
@@ -65,6 +66,17 @@ describe('ChatStore multi-session', () => {
       expect(state.activeSessionId).toBe('mock-uuid-new')
       expect(state.conversationId).toBe('mock-uuid-new')
       expect(state.messages).toEqual([])
+    })
+
+    it('should ensure the new session is persisted immediately', () => {
+      const { createSession } = useChatStore.getState()
+
+      createSession()
+
+      expect(getWzxclaw().ensureSession).toHaveBeenCalledWith({
+        activeWorkspaceId: undefined,
+        sessionId: 'mock-uuid-new'
+      })
     })
 
     it('should preserve current session messages before switching', () => {

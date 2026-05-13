@@ -542,6 +542,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
             isStreaming: false,
             isWaitingForResponse: false,
             streamingMessageId: null,
+            queuedMessage: null,
             error: payload.error,
             messages: nextMessages
           }
@@ -550,6 +551,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           isStreaming: false,
           isWaitingForResponse: false,
           streamingMessageId: null,
+          queuedMessage: null,
           error: payload.error
         }
       })
@@ -925,9 +927,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
     })
 
     const SEND_TIMEOUT = 10 * 60 * 1000 // 10 minutes
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Agent response timed out after 10 minutes')), SEND_TIMEOUT)
-    )
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error('Agent response timed out after 10 minutes')),
+        SEND_TIMEOUT
+      )
+    })
 
     try {
       await Promise.race([
@@ -940,6 +946,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         streamingMessageId: null,
         error: err instanceof Error ? err.message : String(err)
       })
+    } finally {
+      clearTimeout(timeoutHandle)
     }
   },
 
@@ -1038,6 +1046,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
     try {
       const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
       await window.wzxclaw.deleteSession({ sessionId, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
+      // 清除已完成角标（P1）
+      set((state) => {
+        if (!state.completedSessionIds.has(sessionId)) return state
+        const next = new Set(state.completedSessionIds)
+        next.delete(sessionId)
+        return { completedSessionIds: next }
+      })
       const { conversationId } = get()
       if (conversationId === sessionId) {
         get().clearConversation()
@@ -1278,6 +1293,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
     try {
       const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
       await window.wzxclaw.deleteSession({ sessionId, ...(activeWorkspaceId ? { activeWorkspaceId } : {}) })
+      // 清除已完成角标（P1）
+      set((state) => {
+        if (!state.completedSessionIds.has(sessionId)) return state
+        const next = new Set(state.completedSessionIds)
+        next.delete(sessionId)
+        return { completedSessionIds: next }
+      })
       const { activeSessionId } = get()
 
       // 从模块级缓存和 LRU 中移除
