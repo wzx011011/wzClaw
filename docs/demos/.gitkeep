@@ -1,0 +1,10 @@
+# Drop GIF recordings here
+# Recommended files:
+#   refactor.gif        — agent refactors a function (scenario 1)
+#   mobile-remote.gif   — phone triggers a coding task (scenario 2)
+#   debug.gif           — multi-turn debug session (scenario 3)
+#
+# Suggested recording tools:
+#   Windows: ScreenToGif (https://www.screentogif.com/)
+#             LICEcap    (https://www.cockos.com/licecap/)
+#   macOS:   Kap        (https://getkap.co/)
