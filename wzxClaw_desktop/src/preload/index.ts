@@ -128,7 +128,7 @@ const api = {
 
   // Session compacted stream listener
   onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { beforeTokens: number; afterTokens: number; auto: boolean }) => callback(payload)
+    const handler = (_: unknown, payload: { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }) => callback(payload)
     ipcRenderer.on('session:compacted', handler)
     return () => ipcRenderer.removeListener('session:compacted', handler)
   },

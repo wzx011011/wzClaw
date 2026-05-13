@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import path from 'path'
 import os from 'os'
+import { z } from 'zod'
 import { IPC_CHANNELS, IpcSchemas } from '../../shared/ipc-channels'
 import type { SessionRuntimeManager } from '../agent/session-runtime-manager'
 import type { StepManager } from '../steps/step-manager'
@@ -130,7 +131,8 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     const { sessionId, tailCount, activeWorkspaceId } = request as { sessionId: string; tailCount: number; activeWorkspaceId?: string }
     if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) throw new Error('Invalid session ID format')
     const store = await resolveStore(activeWorkspaceId)
-    const safeCount = Math.max(1, Math.min(tailCount ?? 100, 500))
+    const rawCount = typeof tailCount === 'number' && Number.isFinite(tailCount) ? tailCount : 100
+    const safeCount = Math.max(1, Math.min(rawCount, 500))
     return store.loadSessionTail(sessionId, safeCount)
   })
 
@@ -196,9 +198,12 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   // so it immediately appears in the sidebar before any messages
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:ensure'], async (_event, request: { sessionId: string; activeWorkspaceId?: string }) => {
+    if (!/^[a-zA-Z0-9-]+$/.test(request.sessionId)) throw new Error('Invalid session ID format')
     const store = await resolveStore(request.activeWorkspaceId)
-    // appendMessages skips empty arrays, so use appendMessage with a meta line
-    await store.appendMessage(request.sessionId, { type: 'meta', role: 'meta', content: '', timestamp: Date.now() })
+    // appendMessages skips empty arrays, so use a canonical meta line.
+    // Keep the shape aligned with rename/mobile creation so listSessions()
+    // treats it as session metadata instead of counting it as a real message.
+    await store.appendMessage(request.sessionId, { type: 'meta', title: 'Untitled' })
     onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
     return { success: true }
   })
@@ -206,13 +211,22 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   // ============================================================
   // Session: export — export conversation to file
   // ============================================================
-  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request: { sessionId: string; format: 'markdown' | 'json'; activeWorkspaceId?: string }) => {
+  const exportSchema = z.object({
+    sessionId: z.string().regex(/^[a-zA-Z0-9-]+$/, 'Invalid session ID format'),
+    format: z.enum(['markdown', 'json']),
+    activeWorkspaceId: z.string().optional(),
+  })
+
+  ipcMain.handle(IPC_CHANNELS['session:export'], async (_event, request) => {
+    const parsed = exportSchema.safeParse(request)
+    if (!parsed.success) throw new Error(`Invalid request: ${parsed.error.message}`)
+    const { sessionId, format, activeWorkspaceId } = parsed.data
     const { ConversationExporter } = await import('../export/conversation-exporter')
-    const store = await resolveStore(request.activeWorkspaceId)
-    const messages = await store.loadSession(request.sessionId)
+    const store = await resolveStore(activeWorkspaceId)
+    const messages = await store.loadSession(sessionId)
     const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
-    const filePath = path.join(exportDir, `conversation-${request.sessionId.slice(0, 8)}`)
-    const result = await ConversationExporter.exportToFile(messages as any, filePath, request.format)
+    const filePath = path.join(exportDir, `conversation-${sessionId.slice(0, 8)}`)
+    const result = await ConversationExporter.exportToFile(messages as any, filePath, format)
     return { filePath: result, messageCount: messages.length }
   })
 }

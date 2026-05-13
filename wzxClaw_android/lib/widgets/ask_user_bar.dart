@@ -16,9 +16,6 @@ class _AskUserBarState extends State<AskUserBar> {
   bool _showOther = false;
   final _otherController = TextEditingController();
 
-  static const _accentColor = Color(0xFF6366F1); // indigo-500
-  static const _accentLight = Color(0xFF818CF8); // indigo-400
-
   @override
   void dispose() {
     _otherController.dispose();
@@ -58,7 +55,7 @@ class _AskUserBarState extends State<AskUserBar> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: colors.bgPrimary,
-        border: Border.all(color: _accentColor),
+        border: Border.all(color: colors.accent),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -67,13 +64,13 @@ class _AskUserBarState extends State<AskUserBar> {
         children: [
           Row(
             children: [
-              const Icon(Icons.help_outline, size: 16, color: _accentColor),
+              Icon(Icons.help_outline, size: 16, color: colors.accent),
               const SizedBox(width: 6),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Question',
+                  '需要你的确认',
                   style: TextStyle(
-                    color: _accentColor,
+                    color: colors.accent,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
@@ -81,8 +78,8 @@ class _AskUserBarState extends State<AskUserBar> {
               ),
               if (q.multiSelect)
                 Text(
-                  'Select multiple',
-                  style: TextStyle(color: colors.textMuted, fontSize: 11),
+                  '可多选',
+                  style: TextStyle(color: colors.textMuted, fontSize: 12),
                 ),
             ],
           ),
@@ -121,7 +118,7 @@ class _AskUserBarState extends State<AskUserBar> {
                     Icon(Icons.edit, size: 14, color: colors.textMuted),
                     const SizedBox(width: 8),
                     Text(
-                      'Other...',
+                      '补充回答...',
                       style: TextStyle(color: colors.textSecondary, fontSize: 12),
                     ),
                   ],
@@ -137,7 +134,7 @@ class _AskUserBarState extends State<AskUserBar> {
                     autofocus: true,
                     style: TextStyle(color: colors.textPrimary, fontSize: 13),
                     decoration: InputDecoration(
-                      hintText: 'Type your answer...',
+                      hintText: '输入补充回答...',
                       hintStyle: TextStyle(color: colors.textMuted),
                       filled: true,
                       fillColor: colors.bgInput,
@@ -154,13 +151,13 @@ class _AskUserBarState extends State<AskUserBar> {
                 const SizedBox(width: 8),
                 IconButton(
                   onPressed: _submitOther,
-                  icon: const Icon(Icons.send, color: _accentColor, size: 20),
-                  tooltip: 'Submit',
+                  icon: Icon(Icons.send, color: colors.accent, size: 20),
+                  tooltip: '提交回答',
                 ),
                 IconButton(
                   onPressed: () => setState(() => _showOther = false),
                   icon: Icon(Icons.close, color: colors.textMuted, size: 20),
-                  tooltip: 'Cancel',
+                  tooltip: '取消',
                 ),
               ],
             ),
@@ -173,7 +170,7 @@ class _AskUserBarState extends State<AskUserBar> {
                 onPressed: _submitSelection,
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.white,
-                  backgroundColor: _accentColor,
+                  backgroundColor: colors.accent,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   shape: RoundedRectangleBorder(
@@ -181,7 +178,7 @@ class _AskUserBarState extends State<AskUserBar> {
                   ),
                 ),
                 child: Text(
-                  'Submit (${_selected.length})',
+                  '提交 (${_selected.length})',
                   style: const TextStyle(fontSize: 12),
                 ),
               ),
@@ -210,8 +207,8 @@ class _AskUserBarState extends State<AskUserBar> {
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: _accentLight,
+                style: TextStyle(
+                  color: colors.accent,
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
@@ -220,7 +217,7 @@ class _AskUserBarState extends State<AskUserBar> {
                 const SizedBox(height: 2),
                 Text(
                   description,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
                 ),
               ],
             ],
@@ -248,16 +245,16 @@ class _AskUserBarState extends State<AskUserBar> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? _accentColor.withValues(alpha: 0.15) : colors.bgSecondary,
+            color: isSelected ? colors.accent.withValues(alpha: 0.15) : colors.bgSecondary,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: isSelected ? _accentColor : colors.border),
+            border: Border.all(color: isSelected ? colors.accent : colors.border),
           ),
           child: Row(
             children: [
               Icon(
                 isSelected ? Icons.check_box : Icons.check_box_outline_blank,
                 size: 18,
-                color: isSelected ? _accentColor : colors.textMuted,
+                color: isSelected ? colors.accent : colors.textMuted,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -267,7 +264,7 @@ class _AskUserBarState extends State<AskUserBar> {
                     Text(
                       label,
                       style: TextStyle(
-                        color: isSelected ? _accentLight : colors.textPrimary,
+                        color: isSelected ? colors.accent : colors.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -276,7 +273,7 @@ class _AskUserBarState extends State<AskUserBar> {
                       const SizedBox(height: 2),
                       Text(
                         description,
-                        style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                        style: TextStyle(color: colors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ],

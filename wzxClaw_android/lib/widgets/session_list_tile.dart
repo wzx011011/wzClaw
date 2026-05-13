@@ -44,7 +44,7 @@ class SessionListTile extends StatelessWidget {
                   Row(
                     children: [
                       if (session.taskState?.isActive == true || session.isRunning) ...[
-                        _RunningDot(),
+                        _RunningDot(color: colors.success),
                         const SizedBox(width: 5),
                       ],
                       Expanded(
@@ -69,15 +69,15 @@ class SessionListTile extends StatelessWidget {
                       Text(
                         _formatTime(session.updatedAt),
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: colors.textMuted,
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${session.messageCount} msgs',
+                        '${session.messageCount} 条消息',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: colors.textMuted,
                         ),
                       ),
@@ -95,7 +95,7 @@ class SessionListTile extends StatelessWidget {
                           child: Text(
                             statusLabel,
                             style: TextStyle(
-                              fontSize: 9,
+                              fontSize: 10,
                               color: _statusColor(colors, session),
                             ),
                           ),
@@ -115,7 +115,7 @@ class SessionListTile extends StatelessWidget {
                           child: Text(
                             '缓存',
                             style: TextStyle(
-                              fontSize: 9,
+                              fontSize: 10,
                               color: colors.textMuted,
                             ),
                           ),
@@ -291,7 +291,9 @@ class SessionListTile extends StatelessWidget {
 
 /// 绿色脉冲圆点，表示会话正在运行。
 class _RunningDot extends StatefulWidget {
-  const _RunningDot();
+  const _RunningDot({required this.color});
+
+  final Color color;
 
   @override
   State<_RunningDot> createState() => _RunningDotState();
@@ -329,8 +331,8 @@ class _RunningDotState extends State<_RunningDot>
         child: Container(
           width: 7,
           height: 7,
-          decoration: const BoxDecoration(
-            color: Color(0xFF4CAF50),
+          decoration: BoxDecoration(
+            color: widget.color,
             shape: BoxShape.circle,
           ),
         ),

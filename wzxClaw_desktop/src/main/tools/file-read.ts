@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import { realpath } from 'fs/promises'
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
 import { MAX_FILE_READ_LINES, MAX_FILE_READ_BYTES } from '../../shared/constants'
@@ -68,16 +69,24 @@ Usage:
       ? filePath
       : path.resolve(context.workingDirectory, filePath)
 
+    // Resolve symlinks before boundary check to prevent symlink traversal out of workspace
+    let resolvedPath: string
+    try {
+      resolvedPath = await realpath(absolutePath)
+    } catch {
+      return { output: `File not found: ${filePath}`, isError: true }
+    }
+
     // Workspace boundary check — block out-of-workspace reads (case-insensitive on Windows)
     const normalizedWorkspace = path.resolve(context.workingDirectory).toLowerCase()
-    const normalizedPath = absolutePath.toLowerCase()
+    const normalizedPath = resolvedPath.toLowerCase()
     const isWithinWorkspace = normalizedPath.startsWith(normalizedWorkspace + path.sep) || normalizedPath === normalizedWorkspace
     if (!isWithinWorkspace) {
       return { output: `Blocked: FileRead target is outside workspace boundary: ${absolutePath}`, isError: true }
     }
 
-    // Check file exists
-    if (!fs.existsSync(absolutePath)) {
+    // Check file exists (already confirmed via realpath above)
+    if (!fs.existsSync(resolvedPath)) {
       return {
         output: `File not found: ${filePath}`,
         isError: true
@@ -87,7 +96,7 @@ Usage:
     // 预读大小检查：超过 1MB 的文件直接提示使用 offset/limit 分段读取。
     // 仅在未指定 offset/limit 时执行：指定了分段参数就认为用户已知文件较大并主动进行分段。
     if (offset === 0 && limit === undefined) {
-      const stat = await fs.promises.stat(absolutePath)
+      const stat = await fs.promises.stat(resolvedPath)
       if (stat.size > MAX_FILE_READ_BYTES) {
         const kb = Math.round(stat.size / 1024)
         return {
@@ -100,7 +109,7 @@ Usage:
     try {
       // Read file content — normalize CRLF to LF so LLM always sees LF,
       // preventing FileEdit mismatch on Windows where files use CRLF.
-      const raw = await fs.promises.readFile(absolutePath, 'utf-8')
+      const raw = await fs.promises.readFile(resolvedPath, 'utf-8')
       const content = raw.replace(/\r\n/g, '\n')
       const lines = content.split('\n')
 

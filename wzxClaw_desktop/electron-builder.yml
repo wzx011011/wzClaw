@@ -27,7 +27,6 @@ extraResources:
     filter:
       - "**/*"
 win:
-  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -37,6 +36,5 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
-  include: build/uninstaller.nsh
   shortcutName: wzxClaw
 npmRebuild: false
