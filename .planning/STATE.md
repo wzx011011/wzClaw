@@ -1,29 +1,37 @@
 ---
-project: "wzxClaw"
-milestone: "Brain-Hands-Session 全架构迁移"
-status: "executing"
-created: "2026-05-14"
-last_activity: "2026-05-14"
-branch: "feat/agent-server-migration"
+gsd_state_version: 1.0
+milestone: Brain-Hands-Session 全架构迁移
+milestone_name: milestone
+status: executing
+last_updated: "2026-05-14T12:18:50.816Z"
+progress:
+  total_phases: 7
+  completed_phases: 2
+  total_plans: 15
+  completed_plans: 14
+  percent: 93
 ---
 
 # Project State
 
 ## Current Phase
+
 Phase 4: 共享 Web UI — React SPA (in-progress)
 
 ## Phase History
+
 | Phase | Status | Date |
 |-------|--------|------|
 | 1 | complete (4/4 plans, human verification deferred) | 2026-05-14 |
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
-| 4 | in-progress (3/5 plans, 19 tests) | 2026-05-14 |
+| 4 | in-progress (4/5 plans, 19 tests) | 2026-05-14 |
 | 5 | planned | - |
 | 6 | planned | - |
 | 7 | planned | - |
 
 ## Key Decisions
+
 - React + TypeScript 全栈，废弃 Flutter
 - Capacitor 套壳替代 Flutter 手机端
 - NAS 运行 Brain（Docker 部署）
