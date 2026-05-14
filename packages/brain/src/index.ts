@@ -27,7 +27,6 @@ export type {
   StreamDoneEvent,
   TokenUsage,
   LLMProvider,
-  CompactResult,
   Project,
   Workspace,
 } from './types.js'
@@ -127,3 +126,59 @@ export type { SessionUsage } from './llm/cost-tracker.js'
 
 export { getPricing } from './llm/model-cost.js'
 export type { ModelPricing } from './llm/model-cost.js'
+
+// Context 模块
+export type { CompactResult } from './context/types.js'
+
+export { ContextManager } from './context/context-manager.js'
+
+export {
+  countTokens,
+  countMessagesTokens,
+} from './context/token-counter.js'
+
+export {
+  TOOL_RESULT_CLEARED_MESSAGE,
+  maybeTimeBasedMicrocompact,
+  maybeTokenPressureMicrocompact,
+  resetMicrocompactState,
+} from './context/microcompact.js'
+
+export type {
+  MicrocompactConfig,
+  MicrocompactResult,
+} from './context/microcompact.js'
+
+export {
+  truncateToolResult,
+  enforceContextBudget,
+} from './context/tool-result-budget.js'
+
+export type { ToolResultEntry } from './context/tool-result-budget.js'
+
+export {
+  maybePersistLargeToolResult,
+  cleanupToolResults,
+  cleanupExpiredToolResults,
+  ToolResultReplacementState,
+} from './context/tool-result-storage.js'
+
+export type { ToolResultStorageConfig } from './context/tool-result-storage.js'
+
+export {
+  wrapSystemReminder,
+  buildTurnAttachments,
+  FileChangeTracker,
+} from './context/turn-attachments.js'
+
+export type { TurnAttachmentContext } from './context/turn-attachments.js'
+
+export {
+  extractFilePathsFromToolCalls,
+  extractRecentFilePaths,
+  readFileContent,
+  restoreFiles,
+  formatRestoredFilesMessage,
+} from './context/compact-file-restore.js'
+
+export type { RestoredFile } from './context/compact-file-restore.js'
