@@ -15,6 +15,11 @@ import MessageList from './MessageList'
 import type { StoreApi } from 'zustand'
 import type { ChatStore } from '../../stores/chat-store'
 
+/** 检测移动端视口（<=768px） */
+function isMobileViewport(): boolean {
+  return window.innerWidth <= 768
+}
+
 /**
  * ChatPanel Props
  *
@@ -40,6 +45,9 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
   // 通过订阅获取最新状态
   const [state, setState] = useState(store.getState())
 
+  // 移动端状态（用于 placeholder 文本切换）
+  const [isMobile, setIsMobile] = useState(() => isMobileViewport())
+
   useEffect(() => {
     setState(store.getState())
     return store.subscribe(() => {
@@ -47,11 +55,25 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
     })
   }, [store])
 
+  // 监听视口变化，更新移动端状态
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(isMobileViewport())
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
   const { isStreaming, error } = state
   const inputValue = state._inputValue ?? ''
   const setInputValue = (val: string) => {
     store.setState({ _inputValue: val } as unknown as Partial<ChatStore>)
   }
+
+  // 根据视口宽度选择 placeholder 文本
+  const placeholder = isMobile
+    ? '输入消息...'
+    : '输入消息... (Enter 发送, Shift+Enter 换行)'
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -110,8 +132,9 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+            placeholder={placeholder}
             rows={1}
+            style={{ touchAction: 'manipulation' }}
           />
         </div>
         {/* 底部工具栏 */}
@@ -152,6 +175,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
                 className="chat-stop-btn"
                 onClick={() => store.getState().stopGeneration()}
                 title="停止生成"
+                style={{ touchAction: 'manipulation' }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                   <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -163,6 +187,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
                 onClick={handleSend}
                 disabled={!inputValue.trim()}
                 title="发送消息"
+                style={{ touchAction: 'manipulation' }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="19" x2="12" y2="5" />

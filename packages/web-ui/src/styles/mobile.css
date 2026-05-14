@@ -57,6 +57,35 @@
   .session-search input {
     font-size: 14px;
   }
+
+  /* 防止长按弹出上下文菜单干扰（工具卡片区域） */
+  .tool-card-header {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* 防止文字选择干扰滑动 */
+  .chat-messages {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* 代码块触摸优化：横向滚动流畅 */
+  .code-block-pre {
+    -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+  }
+
+  /* 设置页面移动端适配 */
+  .settings-page {
+    padding: 0;
+  }
+
+  .settings-input,
+  .settings-select {
+    font-size: 16px; /* 防止 iOS 自动缩放 */
+  }
 }
 
 /* ---- 移动端侧边栏覆盖层 ---- */
