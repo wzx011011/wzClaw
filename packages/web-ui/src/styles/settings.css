@@ -1,0 +1,251 @@
+/* ============================================================
+   Settings Page Styles — 暗色主题
+   Card 布局 + 表单样式 + 按钮样式
+   ============================================================ */
+
+.settings-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ---- 顶部导航 ---- */
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.settings-back-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.settings-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+/* ---- 主体滚动区域 ---- */
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---- 分组标题 ---- */
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---- Card 容器 ---- */
+
+.settings-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---- 表单字段 ---- */
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.settings-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-input::placeholder {
+  color: var(--text-disabled);
+}
+
+.settings-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23808080' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.settings-select:focus {
+  border-color: var(--accent);
+}
+
+.settings-field-hint {
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+.settings-field-error {
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* ---- 单选按钮组 ---- */
+
+.settings-radio-group {
+  display: flex;
+  gap: 16px;
+}
+
+.settings-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.settings-radio input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* ---- 测试连接按钮 ---- */
+
+.settings-test-btn {
+  padding: 6px 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-family: inherit;
+}
+
+.settings-test-btn:hover:not(:disabled) {
+  background: var(--hover-bg);
+}
+
+.settings-test-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-test-result {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.settings-test-result.success {
+  color: var(--tool-completed);
+}
+
+.settings-test-result.error {
+  color: var(--error);
+}
+
+/* ---- 底部保存按钮 ---- */
+
+.settings-footer {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-save-btn {
+  padding: 8px 24px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-family: inherit;
+}
+
+.settings-save-btn:hover {
+  background: var(--accent-hover);
+}
+
+/* ---- 亮色主题覆盖 ---- */
+
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #e8e8e8;
+  --bg-elevated: #f0f0f0;
+  --bg-input: #ffffff;
+  --text-primary: #1a1a1a;
+  --text-secondary: #555555;
+  --text-muted: #888888;
+  --text-disabled: #aaaaaa;
+  --border: #d0d0d0;
+  --border-subtle: #e0e0e0;
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --active-bg: rgba(74, 158, 255, 0.08);
+}
