@@ -79,12 +79,12 @@ Plans:
 - **Goal**: Electron 壳 web-ui，内置 Hand Bridge，连接 NAS Brain
 - **Depends on**: Phase 3, Phase 4
 - **Deliverable**: `desktop/` 重构完成，NAS Agent + 本地回退双模式
-- **Plans:** 2/4 complete
+- **Plans:** 3/4 complete
 
 Plans:
 - [x] 05-01-PLAN.md — Electron 壳重构（renderer 替换为 web-ui + preload 补充 + IPC 验证）
 - [x] 05-02-PLAN.md — Hand Bridge 实现（Tool 适配 + 连接管理 + 工具路由 + 测试）
-- [ ] 05-03-PLAN.md — 双模式集成（主进程 HandBridge 集成 + 状态转发 + 本地回退保留）
+- [x] 05-03-PLAN.md — 双模式集成（主进程 HandBridge 集成 + 状态转发 + 本地回退保留）
 - [ ] 05-04-PLAN.md — 构建验证（dev/build:win 链路 + 人工验收）
 
 ## Phase 6: 手机端重建 — Capacitor 壳
