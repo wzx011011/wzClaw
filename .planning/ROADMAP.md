@@ -63,18 +63,26 @@ Plans:
 - **Goal**: 从桌面端 Renderer 提取共享 UI 层，支持 Electron 和 WebSocket 双数据源
 - **Depends on**: Phase 2
 - **Deliverable**: `packages/web-ui/` 可独立 dev server 运行，连接 NAS Brain 聊天正常
+- **Plans:** 5 plans
+
+Plans:
+- [ ] 04a-PLAN.md — 包脚手架 + DataSource 抽象接口 + WebSocket 客户端 + IPC 桥接
+- [ ] 04b-PLAN.md — Chat store 提取重构 + 核心聊天 UI（MessageList/ChatMessage/ChatPanel）
+- [ ] 04c-PLAN.md — 会话管理 UI（SessionList CRUD）+ 设置面板 + 连接配置
+- [ ] 04d-PLAN.md — 工具调用可视化（ToolCard/ToolCallGroup）+ 代码块渲染（CodeBlock）
+- [ ] 04e-PLAN.md — DataSourceProvider + i18n + 全局样式 + App 组装 + 集成测试
 
 ## Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge
 
 - **Status**: planned
-- **Goal**: Electron 套 web-ui，内置 Hand Bridge，连接 NAS Brain
+- **Goal**: Electron 壳 web-ui，内置 Hand Bridge，连接 NAS Brain
 - **Depends on**: Phase 3, Phase 4
 - **Deliverable**: `desktop/` 重构完成，NAS Agent + 本地回退双模式
 
 ## Phase 6: 手机端重建 — Capacitor 壳
 
 - **Status**: planned
-- **Goal**: Capacitor 套 web-ui 替代 Flutter，直连 NAS Brain
+- **Goal**: Capacitor 壳 web-ui 替代 Flutter，直连 NAS Brain
 - **Depends on**: Phase 4
 - **Deliverable**: `mobile/` Capacitor 项目，APK 体验接近原生
 
