@@ -66,8 +66,7 @@ void main() {
       expect(find.text('Feature 2'), findsOneWidget);
       // Multi-select uses Icons.check_box_outline_blank (unchecked)
       expect(find.byIcon(Icons.check_box_outline_blank), findsNWidgets(2));
-      // Should show "Select multiple" hint
-      expect(find.text('Select multiple'), findsOneWidget);
+      expect(find.text('可多选'), findsOneWidget);
     });
 
     testWidgets('renders Other option', (tester) async {
@@ -83,7 +82,7 @@ void main() {
         ),
       ));
 
-      expect(find.text('Other...'), findsOneWidget);
+      expect(find.text('补充回答...'), findsOneWidget);
     });
 
     testWidgets('renders with empty options list', (tester) async {
@@ -98,7 +97,7 @@ void main() {
       ));
 
       expect(find.text('Enter your answer:'), findsOneWidget);
-      expect(find.text('Other...'), findsOneWidget);
+      expect(find.text('补充回答...'), findsOneWidget);
     });
 
     testWidgets('renders Question header', (tester) async {
@@ -112,7 +111,7 @@ void main() {
         ),
       ));
 
-      expect(find.text('Question'), findsOneWidget);
+      expect(find.text('需要你的确认'), findsOneWidget);
     });
   });
 }
