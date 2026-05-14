@@ -3,20 +3,20 @@ gsd_state_version: 1.0
 milestone: Brain-Hands-Session 全架构迁移
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-14T13:28:00.000Z"
+last_updated: "2026-05-14T15:06:00.000Z"
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 16
-  completed_plans: 18
-  percent: 100
+  completed_phases: 3
+  total_plans: 22
+  completed_plans: 20
+  percent: 91
 ---
 
 # Project State
 
 ## Current Phase
 
-Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 3/4 plans)
+Phase 6: 手机端重建 — Capacitor 壳 (plan 2/4 complete)
 
 ## Phase History
 
@@ -26,8 +26,8 @@ Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 3/4 plans)
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
 | 4 | complete (5/5 plans, 25 tests) | 2026-05-14 |
-| 5 | in-progress (3/4 plans) | 2026-05-14 |
-| 6 | planned | - |
+| 5 | complete (4/4 plans, 765 tests, human verification deferred) | 2026-05-14 |
+| 6 | executing (2/4 plans) | 2026-05-14 |
 | 7 | planned | - |
 
 ## Key Decisions
@@ -44,8 +44,11 @@ Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 3/4 plans)
 - D-02: 新增 session:create IPC channel（不重用 session:ensure）
 - D-03: 未修改 web-ui IpcDataSource（chat-store fallback 处理 createSession throw）
 - D-04: HandBridge 自管 WebSocket 生命周期（不使用 HandConnection，因其 handleOpen 发送空注册）
+- D-05: 从 Flutter 项目直接复制图标资源（复用已有品牌资产）
+- D-06: Gradle wrapper 从 8.11.1 切换到 8.14（网络超时，8.14 已缓存）
+- D-07: Capacitor 7 Java 21 降级到 Java 17（开发环境限制）
 
 ## Last Session
 
-- **Stopped at**: Completed 05-03-PLAN.md
+- **Stopped at**: Completed 06-02-PLAN.md
 - **Resume file**: None
