@@ -20,6 +20,27 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // 输出目录
+    outDir: 'dist',
+    // 可部署到任意路径
+    base: './',
+    // chunk 分割策略
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React 核心
+          'vendor-react': ['react', 'react-dom'],
+          // 状态管理
+          'vendor-zustand': ['zustand'],
+          // Markdown 渲染
+          'vendor-markdown': ['react-markdown', 'remark-gfm', 'rehype-raw'],
+          // 代码高亮
+          'vendor-highlight': ['highlight.js'],
+        },
+      },
+    },
+  },
   define: {
     // 默认 WebSocket 连接地址，可在 .env.local 中覆盖
     __VITE_AGENT_URL__: JSON.stringify(
