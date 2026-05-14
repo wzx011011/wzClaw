@@ -1,0 +1,65 @@
+# ============================================================
+# Docker Hand 部署配置
+# NAS 上运行 Docker Hand 容器，与 agent-server 通过 Docker 网络通信
+#
+# 使用方式:
+#   1. 确保 agent-server 容器正在运行
+#   2. 创建 Docker 网络: docker network create wzxclaw
+#   3. 启动: docker-compose -f docker-compose.hand.yml up -d
+#   4. 查看日志: docker logs -f wzxclaw-docker-hand
+#
+# 网络配置方式（二选一）:
+#
+# 方式 A（推荐）: Docker 网络模式
+#   - 下方 agent-server service 和 wzxclaw external network
+#   - SERVER_URL=ws://agent-server:8082/（使用 service name）
+#   - 需要: docker network create wzxclaw
+#
+# 方式 B: host 网络模式
+#   - 取消下方 network_mode: host 注释
+#   - 注释掉 networks 配置
+#   - SERVER_URL=ws://localhost:8082/
+#   - 适用于 agent-server 已经用 --network host 运行的情况
+#
+# 注意: agent-server service 定义是参考用的。如果 agent-server
+# 已经在单独的 docker-compose 中运行，可以删除此处的
+# agent-server service 定义，但需要确保两个容器在同一 Docker 网络中。
+# ============================================================
+
+version: "3.8"
+
+services:
+  docker-hand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wzxclaw-docker-hand
+    restart: unless-stopped
+    environment:
+      # agent-server 地址（Docker 网络内使用 service name）
+      - SERVER_URL=ws://agent-server:8082/
+      # 认证 token — 通过 .env 文件或环境变量注入，不硬编码
+      - AUTH_TOKEN=${AUTH_TOKEN}
+    volumes:
+      # NAS 数据卷挂载 — 按实际 NAS 路径调整
+      # 例如: /volume1/wzxclaw/data:/data
+      - /nas-data:/data
+    # 备选: host 网络模式（取消注释下面一行，注释掉 networks 段）
+    # network_mode: host
+    depends_on:
+      - agent-server
+    networks:
+      - wzxclaw
+
+  # 参考用的 agent-server 定义
+  # 如果 agent-server 已在其他 docker-compose 中运行，可删除此 service
+  # 但需要确保 wzxclaw 网络已创建，且 agent-server 也加入了该网络
+  agent-server:
+    image: wzxclaw-agent-server
+    container_name: wzxclaw-agent-server
+    networks:
+      - wzxclaw
+
+networks:
+  wzxclaw:
+    external: true

@@ -1,0 +1,17 @@
+# 构建产物和依赖
+node_modules
+dist
+
+# 测试文件
+*.test.ts
+vitest.config.ts
+
+# 版本控制
+.git
+.gitignore
+
+# 文档
+*.md
+
+# 其他不需要的文件
+.gitignore
