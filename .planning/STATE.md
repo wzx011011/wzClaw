@@ -18,7 +18,7 @@ Phase 4: 共享 Web UI — React SPA (in-progress)
 | 1 | complete (4/4 plans, human verification deferred) | 2026-05-14 |
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
-| 4 | in-progress (1/5 plans, 9 tests) | 2026-05-14 |
+| 4 | in-progress (3/5 plans, 19 tests) | 2026-05-14 |
 | 5 | planned | - |
 | 6 | planned | - |
 | 7 | planned | - |
