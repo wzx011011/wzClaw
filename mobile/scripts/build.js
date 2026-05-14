@@ -1,13 +1,14 @@
 // ============================================================
-// 一键构建 APK 脚本
+// wzxClaw 移动端一键构建 APK 脚本
 //
 // 流程：
-// 1. 构建 web-ui 前端产物
-// 2. Capacitor sync 同步到 Android 项目
-// 3. Gradle assembleRelease 构建 release APK
+// 1. 检查 JDK 17 环境变量
+// 2. 构建 web-ui 前端产物
+// 3. Capacitor sync 同步到 Android 项目
+// 4. Gradle assembleRelease 构建 release APK
 //
 // 使用：node scripts/build.js
-// 环境要求：JDK 17, Android SDK
+// 环境要求：JDK 17 + Android SDK
 // ============================================================
 
 import { execSync } from 'node:child_process';
@@ -20,22 +21,32 @@ const MOBILE_ROOT = resolve(__dirname, '..');
 const WEB_UI_ROOT = resolve(MOBILE_ROOT, '..', 'packages', 'web-ui');
 const ANDROID_ROOT = resolve(MOBILE_ROOT, 'android');
 
+// 用户已知的 JDK 17 路径（自动检测回退）
+const JDK_FALLBACK_PATHS = [
+  'C:/Users/67376/jdk17/jdk-17.0.18+8',
+  '/c/Users/67376/jdk17/jdk-17.0.18+8',
+];
+
 /**
  * 执行 shell 命令，失败时打印完整错误并退出
  * @param {string} cmd - 要执行的命令
  * @param {string} cwd - 工作目录
  * @param {string} label - 步骤标签（用于日志）
+ * @returns {number} 耗时（毫秒）
  */
 function run(cmd, cwd, label) {
   console.log(`\n[${label}] ${cmd}`);
   console.log(`  工作目录: ${cwd}`);
+  const start = Date.now();
   try {
     execSync(cmd, {
       cwd,
       stdio: 'inherit',
       env: { ...process.env },
     });
-    console.log(`[${label}] 完成`);
+    const elapsed = Date.now() - start;
+    console.log(`[${label}] 完成 (${(elapsed / 1000).toFixed(1)}s)`);
+    return elapsed;
   } catch (err) {
     console.error(`\n[${label}] 失败！`);
     console.error(err.message || err);
@@ -45,24 +56,41 @@ function run(cmd, cwd, label) {
 
 /**
  * 检测 JDK 17 — 读取 JAVA_HOME 环境变量
- * 不存在时打印警告，让 Gradle 自行检测
+ * 不存在时尝试已知的 JDK 安装路径
  */
 function checkJdk() {
-  const javaHome = process.env.JAVA_HOME;
-  if (javaHome) {
-    console.log(`JAVA_HOME: ${javaHome}`);
-  } else {
-    console.warn('警告: JAVA_HOME 未设置。Gradle 将尝试自动检测 JDK。');
-    console.warn('  如果构建失败，请设置 JAVA_HOME 指向 JDK 17 安装目录。');
+  if (process.env.JAVA_HOME) {
+    console.log(`JAVA_HOME: ${process.env.JAVA_HOME}`);
+    return;
   }
+
+  // 尝试已知路径
+  for (const candidate of JDK_FALLBACK_PATHS) {
+    if (existsSync(candidate)) {
+      process.env.JAVA_HOME = candidate;
+      console.log(`JAVA_HOME 自动检测: ${candidate}`);
+      return;
+    }
+  }
+
+  // 未找到 JDK
+  console.error('错误: JAVA_HOME 未设置，且未在已知路径找到 JDK 17。');
+  console.error('  请设置环境变量:');
+  console.error('    set JAVA_HOME=C:\\path\\to\\jdk17');
+  console.error('  或将 JDK 17 安装到已知路径。');
+  process.exit(1);
 }
 
 // ---- 主流程 ----
+
+const totalStart = Date.now();
 
 console.log('========================================');
 console.log('  wzxClaw 移动端 APK 构建');
 console.log('========================================');
 
+// 步骤 0: 检查 JDK
+console.log('\n--- 步骤 0/3: 检查 JDK 环境 ---');
 checkJdk();
 
 // 步骤 1: 构建 web-ui 前端
@@ -92,17 +120,29 @@ if (!existsSync(resolve(ANDROID_ROOT, gradlew))) {
 }
 run(`${gradlew} assembleRelease`, ANDROID_ROOT, 'Gradle');
 
-// 输出 APK 路径
-const apkPath = resolve(
-  ANDROID_ROOT,
-  'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'
-);
+// 输出结果
+const totalElapsed = Date.now() - totalStart;
+const apkDir = resolve(ANDROID_ROOT, 'app', 'build', 'outputs', 'apk', 'release');
+// 未配置签名时输出 app-release-unsigned.apk，配置签名后输出 app-release.apk
+const apkSigned = resolve(apkDir, 'app-release.apk');
+const apkUnsigned = resolve(apkDir, 'app-release-unsigned.apk');
+const apkPath = existsSync(apkSigned) ? apkSigned : apkUnsigned;
+
 if (existsSync(apkPath)) {
+  const { statSync } = await import('node:fs');
+  const stat = statSync(apkPath);
+  const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
+  const isUnsigned = apkPath === apkUnsigned;
   console.log('\n========================================');
   console.log('  构建成功！');
   console.log(`  APK: ${apkPath}`);
+  console.log(`  大小: ${sizeMB} MB`);
+  if (isUnsigned) {
+    console.log('  注意: APK 未签名（debug 签名，可用于测试安装）');
+  }
+  console.log(`  总耗时: ${(totalElapsed / 1000).toFixed(1)}s`);
   console.log('========================================');
 } else {
-  console.warn(`\n警告: APK 文件未在预期位置找到 (${apkPath})`);
+  console.warn(`\n警告: APK 文件未在预期位置找到 (${apkDir})`);
   console.warn('  请检查 Gradle 输出中的实际路径。');
 }
