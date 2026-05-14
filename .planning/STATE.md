@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: Brain-Hands-Session 全架构迁移
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-14T12:37:24.000Z"
+last_updated: "2026-05-14T12:57:20.000Z"
 progress:
   total_phases: 7
-  completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
+  completed_phases: 4
+  total_plans: 16
+  completed_plans: 16
   percent: 100
 ---
 
@@ -16,7 +16,7 @@ progress:
 
 ## Current Phase
 
-Phase 4: 共享 Web UI — React SPA (complete)
+Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 1/4 plans)
 
 ## Phase History
 
@@ -26,7 +26,7 @@ Phase 4: 共享 Web UI — React SPA (complete)
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
 | 4 | complete (5/5 plans, 25 tests) | 2026-05-14 |
-| 5 | planned | - |
+| 5 | in-progress (1/4 plans) | 2026-05-14 |
 | 6 | planned | - |
 | 7 | planned | - |
 
@@ -40,3 +40,11 @@ Phase 4: 共享 Web UI — React SPA (complete)
 - CLI 入口 parseArgs 支持环境变量回退
 - Session 用 SQLite（多客户端共享）
 - 桌面保留本地回退模式
+- D-01: electron-vite renderer.root 指向 packages/web-ui（无 symlink）
+- D-02: 新增 session:create IPC channel（不重用 session:ensure）
+- D-03: 未修改 web-ui IpcDataSource（chat-store fallback 处理 createSession throw）
+
+## Last Session
+
+- **Stopped at**: Completed 05-01-PLAN.md
+- **Resume file**: None
