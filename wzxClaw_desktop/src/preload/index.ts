@@ -118,6 +118,8 @@ const api = {
   renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
   duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:duplicate', request),
   ensureSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:ensure', request),
+  // 创建新会话 — 生成 UUID 并在主进程创建 JSONL 文件，返回 sessionId
+  createSession: (request?: { activeWorkspaceId?: string }) => ipcRenderer.invoke('session:create', request),
   saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
   getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
   onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {

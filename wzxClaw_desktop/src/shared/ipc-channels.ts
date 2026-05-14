@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   'session:get-last': 'session:get-last',
   'session:duplicate': 'session:duplicate',
   'session:ensure': 'session:ensure',
+  'session:create': 'session:create',
 
   // Session stream channels (main -> renderer)
   'session:compacted': 'session:compacted',
@@ -277,6 +278,7 @@ export interface IpcRequestPayloads {
   'session:rename': { sessionId: string; title: string; activeWorkspaceId?: string }
   'session:duplicate': { sessionId: string; activeWorkspaceId?: string }
   'session:ensure': { sessionId: string; activeWorkspaceId?: string }
+  'session:create': { activeWorkspaceId?: string }
   'file:apply-hunk': { filePath: string; hunksToApply: string[]; modifiedContent: string }
   'file:get-history': { filePath: string }
   'file:revert': { toolCallId: string }
@@ -403,6 +405,7 @@ export interface IpcResponsePayloads {
   'session:rename': { success: boolean }
   'session:duplicate': { newSessionId: string }
   'session:ensure': { success: boolean }
+  'session:create': { sessionId: string }
   'file:apply-hunk': { success: boolean }
   'file:get-history': Array<{ toolCallId: string; timestamp: number; filePath: string }>
   'file:revert': { success: boolean; error?: string }
@@ -623,6 +626,10 @@ export const IpcSchemas = {
   'session:ensure': {
     request: z.object({ sessionId: z.string().min(1), activeWorkspaceId: z.string().optional() }),
     response: z.object({ success: z.boolean() })
+  },
+  'session:create': {
+    request: z.object({ activeWorkspaceId: z.string().optional() }),
+    response: z.object({ sessionId: z.string() })
   },
   'plugin:install-from-source': {
     request: z.object({

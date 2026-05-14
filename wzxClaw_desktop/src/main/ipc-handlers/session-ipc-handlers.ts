@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import path from 'path'
 import os from 'os'
+import crypto from 'crypto'
 import { z } from 'zod'
 import { IPC_CHANNELS, IpcSchemas } from '../../shared/ipc-channels'
 import type { SessionRuntimeManager } from '../agent/session-runtime-manager'
@@ -206,6 +207,19 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     await store.appendMessage(request.sessionId, { type: 'meta', title: 'Untitled' })
     onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
     return { success: true }
+  })
+
+  // ============================================================
+  // Session: create — 创建新会话，生成 UUID 并写入空 JSONL 文件
+  // IpcDataSource.createSession() 调用此方法
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:create'], async (_event, request?: { activeWorkspaceId?: string }) => {
+    const sessionId = crypto.randomUUID()
+    const store = await resolveStore(request?.activeWorkspaceId)
+    // 写入空 meta 行，使 listSessions() 能立即看到新会话
+    await store.appendMessage(sessionId, { type: 'meta', title: 'Untitled' })
+    onDataChanged?.('session:changed', { action: 'created', sessionId })
+    return { sessionId }
   })
 
   // ============================================================
