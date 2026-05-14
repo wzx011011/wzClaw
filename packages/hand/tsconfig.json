@@ -9,9 +9,9 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "sourceMap": true
   },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "node_modules"]
+  "include": ["src/**/*.ts", "tools/**/*.ts", "docker-entry.ts"],
+  "exclude": ["**/*.test.ts", "node_modules", "dist"]
 }
