@@ -861,3 +861,242 @@
 .code-block-wrapper pre code .hljs-symbol { color: #56b6c2; }
 .code-block-wrapper pre code .hljs-bullet { color: #56b6c2; }
 .code-block-wrapper pre code .hljs-link { color: #61afef; text-decoration: underline; }
+
+/* ============================================================
+   Session List — 会话列表样式
+   ============================================================ */
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border);
+  min-width: 240px;
+  max-width: 300px;
+}
+
+/* 搜索框 */
+.session-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.session-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.session-search input::placeholder {
+  color: var(--text-disabled);
+}
+
+.session-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.session-search-clear:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+/* 会话列表主体 */
+.session-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.session-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  gap: 4px;
+}
+
+.session-list-empty p:last-child {
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+/* 分组标题 */
+.session-group-header {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+/* 单个会话项 */
+.session-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 1px 4px;
+  transition: background var(--transition-fast);
+}
+
+.session-item:hover {
+  background: var(--hover-bg);
+}
+
+.session-item.active {
+  background: var(--active-bg);
+}
+
+.session-item-info {
+  min-width: 0;
+}
+
+.session-item-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.session-item-title-input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 2px 6px;
+  outline: none;
+  font-family: inherit;
+}
+
+.session-item-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.session-item-time {
+  font-size: 10px;
+  color: var(--text-disabled);
+  margin-top: 3px;
+}
+
+/* 删除确认条 */
+.session-item-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.session-confirm-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.session-confirm-btn:hover {
+  background: var(--hover-bg);
+}
+
+.session-confirm-btn.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.session-confirm-btn.danger:hover {
+  background: rgba(244, 135, 113, 0.15);
+}
+
+/* ============================================================
+   Context Menu — 右键菜单样式
+   ============================================================ */
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background var(--transition-fast);
+}
+
+.context-menu-item:hover:not(.disabled) {
+  background: var(--hover-bg);
+}
+
+.context-menu-item.disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.context-menu-item.danger {
+  color: var(--error);
+}
+
+.context-menu-item.danger:hover:not(.disabled) {
+  background: rgba(244, 135, 113, 0.15);
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-subtle);
+}
+
+.context-menu-shortcut {
+  font-size: 10px;
+  color: var(--text-disabled);
+  margin-left: 12px;
+}

@@ -11,7 +11,7 @@
 import { create } from 'zustand'
 import type { StoreApi } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import type { DataSource } from '../data-source/types'
+import type { DataSource, SessionMeta, RawMessage } from '../data-source/types'
 import { StreamingBatcher, updateMessageById } from './streaming-batcher'
 import type { ChatMessage, ToolCallInfo } from './streaming-batcher'
 
@@ -35,6 +35,10 @@ interface ChatState {
   streamJustEnded: boolean
   /** 输入框内容（供 ChatPanel 使用） */
   _inputValue?: string
+  /** 会话列表 */
+  sessions: SessionMeta[]
+  /** 当前激活的会话 ID（用于 SessionList 高亮） */
+  activeSessionId: string | null
 }
 
 /** Chat store 操作 */
@@ -49,12 +53,45 @@ interface ChatActions {
   createSession: () => Promise<void>
   /** 清空当前会话（重置状态） */
   clearConversation: () => void
+  /** 加载会话列表 */
+  loadSessionList: () => Promise<void>
+  /** 加载指定会话的历史消息 */
+  loadSession: (sessionId: string) => Promise<void>
+  /** 切换到指定会话（缓存当前会话，加载目标会话） */
+  switchSession: (sessionId: string) => Promise<void>
+  /** 删除指定会话 */
+  deleteSession: (sessionId: string) => Promise<void>
+  /** 重命名指定会话 */
+  renameSession: (sessionId: string, title: string) => Promise<void>
 }
 
 /** Chat store 完整类型 */
 export type ChatStore = ChatState & ChatActions
 
 // ---- 工厂函数 ----
+
+// 模块级会话消息缓存 — switchSession 时缓存当前会话消息
+const sessionCache = new Map<string, { messages: ChatMessage[]; conversationId: string }>()
+
+/**
+ * 将 RawMessage[] 转换为 ChatMessage[]
+ * DataSource 返回的原始消息格式转换为 store 内部使用的 ChatMessage 格式
+ */
+function buildChatMessagesFromRaw(rawMessages: RawMessage[]): ChatMessage[] {
+  return rawMessages.map((raw, index) => ({
+    id: raw.id ?? `loaded-${index}`,
+    role: raw.role,
+    content: raw.content,
+    timestamp: raw.timestamp ?? Date.now(),
+    isStreaming: false,
+    toolCalls: raw.toolCalls?.map(tc => ({
+      id: tc.id,
+      name: tc.name,
+      status: 'completed' as const,
+      input: tc.input,
+    })),
+  }))
+}
 
 /**
  * 创建 chat store 实例
@@ -89,6 +126,8 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
       error: null,
       streamingMessageId: null,
       streamJustEnded: false,
+      sessions: [],
+      activeSessionId: null,
 
       // ---- 操作 ----
 
@@ -403,6 +442,132 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
           streamJustEnded: false,
           error: null
         })
+      },
+
+      /**
+       * 加载会话列表
+       *
+       * 调用 dataSource.listSessions()，更新 sessions 状态
+       */
+      loadSessionList: async () => {
+        try {
+          const sessions = await dataSource.listSessions()
+          set({ sessions })
+        } catch (err) {
+          console.error('加载会话列表失败:', err)
+        }
+      },
+
+      /**
+       * 加载指定会话的历史消息
+       *
+       * 调用 dataSource.loadSession(sessionId)，将原始消息转换为 ChatMessage 格式
+       */
+      loadSession: async (sessionId: string) => {
+        try {
+          const rawMessages = await dataSource.loadSession(sessionId)
+          const messages = buildChatMessagesFromRaw(rawMessages)
+          set({
+            messages,
+            conversationId: sessionId,
+            activeSessionId: sessionId,
+            isStreaming: false,
+            isWaitingForResponse: false,
+            streamingMessageId: null,
+            streamJustEnded: false,
+            error: null
+          })
+        } catch (err) {
+          console.error('加载会话失败:', err)
+          set({ error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+
+      /**
+       * 切换到指定会话
+       *
+       * 1. 缓存当前会话消息到 sessionCache
+       * 2. 如果目标会话在缓存中，直接恢复
+       * 3. 否则通过 dataSource.loadSession 加载
+       */
+      switchSession: async (sessionId: string) => {
+        const { conversationId, messages } = get()
+
+        // 如果切换到当前会话，不操作
+        if (conversationId === sessionId) return
+
+        // 缓存当前会话
+        if (messages.length > 0) {
+          sessionCache.set(conversationId, { messages, conversationId })
+        }
+
+        batcher.reset()
+
+        // 先查缓存
+        const cached = sessionCache.get(sessionId)
+        if (cached) {
+          set({
+            messages: cached.messages,
+            conversationId: sessionId,
+            activeSessionId: sessionId,
+            isStreaming: false,
+            isWaitingForResponse: false,
+            streamingMessageId: null,
+            streamJustEnded: false,
+            error: null
+          })
+          return
+        }
+
+        // 缓存未命中 — 通过 DataSource 加载
+        await get().loadSession(sessionId)
+      },
+
+      /**
+       * 删除指定会话
+       *
+       * 调用 dataSource.deleteSession()，从 sessions 列表中移除。
+       * 如果删除的是当前会话，则 clearConversation()。
+       */
+      deleteSession: async (sessionId: string) => {
+        try {
+          await dataSource.deleteSession(sessionId)
+
+          // 从缓存中移除
+          sessionCache.delete(sessionId)
+
+          const { conversationId } = get()
+          set((state) => ({
+            sessions: state.sessions.filter(s => s.id !== sessionId)
+          }))
+
+          // 如果删除的是当前会话，重置状态
+          if (conversationId === sessionId) {
+            get().clearConversation()
+          }
+        } catch (err) {
+          console.error('删除会话失败:', err)
+          set({ error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+
+      /**
+       * 重命名指定会话
+       *
+       * 调用 dataSource.renameSession()，更新 sessions 数组中对应会话的 title
+       */
+      renameSession: async (sessionId: string, title: string) => {
+        try {
+          await dataSource.renameSession(sessionId, title)
+          set((state) => ({
+            sessions: state.sessions.map(s =>
+              s.id === sessionId ? { ...s, title } : s
+            )
+          }))
+        } catch (err) {
+          console.error('重命名会话失败:', err)
+          set({ error: err instanceof Error ? err.message : String(err) })
+        }
       }
     }
   })
