@@ -1,0 +1,65 @@
+# ============================================================
+# wzxClaw NAS 部署 — agent-server + docker-hand
+#
+# 部署方式:
+#   1. 将 deploy/ 目录上传到 NAS: /volume1/wzxclaw/
+#   2. 创建 .env 文件: echo "AUTH_TOKEN=你的token" > .env
+#   3. 构建并启动: docker-compose up -d --build
+#   4. 检查状态: docker-compose ps && docker-compose logs -f
+#
+# 前置要求:
+#   - nginx 已配置 /agent/ 反向代理（见 nginx/agent.conf）
+#   - AUTH_TOKEN 已设置（与 relay 共用同一个 token）
+#
+# 数据持久化:
+#   - sessions.db: /volume1/wzxclaw/data/sessions.db
+#   - Hand 工具可访问: /volume1/wzxclaw/data/ (/data)
+# ============================================================
+
+version: "3.8"
+
+services:
+  # Agent Server — WebSocket 服务器（Brain）
+  agent-server:
+    build:
+      context: ../
+      dockerfile: packages/agent-server/Dockerfile
+    container_name: wzxclaw-agent-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8082"
+    environment:
+      - AUTH_TOKEN=${AUTH_TOKEN}
+      - PORT=8082
+      - DB_PATH=/data/sessions.db
+    volumes:
+      - /volume1/wzxclaw/data:/data
+    networks:
+      - wzxclaw
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Docker Hand — NAS 本地工具执行器
+  docker-hand:
+    build:
+      context: ../
+      dockerfile: packages/hand/Dockerfile
+    container_name: wzxclaw-docker-hand
+    restart: unless-stopped
+    depends_on:
+      agent-server:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=ws://agent-server:8082/
+      - AUTH_TOKEN=${AUTH_TOKEN}
+    volumes:
+      - /volume1/wzxclaw/data:/data
+    networks:
+      - wzxclaw
+
+networks:
+  wzxclaw:
+    driver: bridge
