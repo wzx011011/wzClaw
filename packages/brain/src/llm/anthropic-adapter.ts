@@ -1,0 +1,245 @@
+import Anthropic from '@anthropic-ai/sdk'
+import type { StreamEvent } from '../types.js'
+import type { LLMAdapter, ProviderConfig, StreamOptions } from './types.js'
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../constants.js'
+
+export class AnthropicAdapter implements LLMAdapter {
+  readonly provider = 'anthropic' as const
+  private client: Anthropic
+
+  constructor(config: ProviderConfig) {
+    const isRealAnthropic = !config.baseURL || config.baseURL.includes('anthropic.com')
+    const clientOptions: Record<string, unknown> = {}
+    if (isRealAnthropic) {
+      // Real Anthropic: use x-api-key header
+      clientOptions.apiKey = config.apiKey
+    } else {
+      // Third-party Anthropic-compatible (e.g. bigmodel.cn): use Authorization: Bearer
+      clientOptions.apiKey = 'dummy'  // SDK requires non-empty apiKey but we override auth
+      clientOptions.authToken = config.apiKey
+    }
+    if (config.baseURL) clientOptions.baseURL = config.baseURL
+    this.client = new Anthropic(clientOptions as ConstructorParameters<typeof Anthropic>[0])
+  }
+
+  async *stream(options: StreamOptions): AsyncGenerator<StreamEvent> {
+    try {
+      // Build system prompt as array with cache_control on the static block.
+      // If the prompt contains SYSTEM_PROMPT_CACHE_BOUNDARY, split into two blocks:
+      //   Block 1 (static): tool defs + base prompt — cached across turns
+      //   Block 2 (dynamic): env info, git, instructions, memory — not cached
+      let systemContent: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> | undefined
+      if (options.systemPrompt) {
+        const boundaryIdx = options.systemPrompt.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY)
+        if (boundaryIdx !== -1) {
+          const staticPart = options.systemPrompt.slice(0, boundaryIdx)
+          const dynamicPart = options.systemPrompt.slice(boundaryIdx + SYSTEM_PROMPT_CACHE_BOUNDARY.length)
+          systemContent = [
+            { type: 'text', text: staticPart, cache_control: { type: 'ephemeral' } },
+          ]
+          if (dynamicPart.trim()) {
+            systemContent.push({ type: 'text', text: dynamicPart })
+          }
+        } else {
+          systemContent = [{ type: 'text', text: options.systemPrompt, cache_control: { type: 'ephemeral' } }]
+        }
+      }
+
+      // Clone messages (excluding system) and mark the second-to-last user
+      // message with cache_control so multi-turn history is cached.
+      const rawMessages = options.messages.filter((m) => m.role !== 'system') as Anthropic.MessageParam[]
+      const messages = rawMessages.map((m) => ({ ...m }))
+
+      const userIndices: number[] = []
+      messages.forEach((m, i) => { if (m.role === 'user') userIndices.push(i) })
+
+      // Mark second-to-last user message (the oldest one still worth caching)
+      if (userIndices.length >= 2) {
+        const targetIdx = userIndices[userIndices.length - 2]
+        const msg = messages[targetIdx]
+        if (typeof msg.content === 'string') {
+          messages[targetIdx] = {
+            ...msg,
+            content: [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }] as Anthropic.TextBlockParam[]
+          }
+        } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+          const blocks = [...msg.content]
+          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } } as Anthropic.TextBlockParam
+          messages[targetIdx] = { ...msg, content: blocks }
+        }
+      }
+
+      // Normalize tool schemas: ensure every tool has a valid input_schema
+      // with type:"object" and properties:{} — Anthropic API rejects bare {} schemas.
+      // Mark the last tool with cache_control for a 3rd cache breakpoint:
+      //   BP1: static system prompt, BP2: tool definitions, BP3: conversation history
+      const normalizedTools = options.tools?.map((t, i, arr) => ({
+        ...t,
+        input_schema: {
+          type: 'object' as const,
+          ...t.input_schema,
+          properties: (t.input_schema?.properties as Record<string, unknown>) ?? {},
+        },
+        ...(i === arr.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
+      }))
+
+      const params: Record<string, unknown> = {
+        model: options.model,
+        max_tokens: options.maxTokens ?? 8192,
+        messages,
+        ...(systemContent && { system: systemContent }),
+        ...(options.temperature !== undefined && { temperature: options.temperature }),
+        ...(normalizedTools && normalizedTools.length > 0 && {
+          tools: normalizedTools as Anthropic.Tool[],
+        }),
+      }
+
+      // Inject thinking + effort params based on thinkingDepth setting
+      // Only apply to real Anthropic API — third-party endpoints may not support these
+      const isRealAnthropic = !options.model.startsWith('deepseek') &&
+        (!this.client.baseURL || this.client.baseURL.includes('anthropic.com'))
+      const depth = options.thinkingDepth
+      if (depth && depth !== 'none' && isRealAnthropic) {
+        params.output_config = { effort: depth }
+        if (depth === 'medium' || depth === 'high') {
+          // Use reasonable fixed budget — not max_tokens-1 which leaves zero room for output
+          const budgetMap = { medium: 8192, high: 16384 }
+          params.thinking = { type: 'enabled', budget_tokens: budgetMap[depth] }
+          // Ensure max_tokens is large enough to hold output after thinking
+          if (!options.maxTokens || options.maxTokens < 8192) {
+            params.max_tokens = 16384
+          }
+        }
+      }
+
+      // Enable prompt caching beta — only for real Anthropic, third-party endpoints reject this header
+      const betas: string[] = []
+      if (isRealAnthropic) {
+        betas.push('prompt-caching-2024-07-31')
+        if (depth && depth !== 'none') {
+          betas.push('interleaved-thinking-2025-05-14')
+          betas.push('effort-2025-11-24')
+        }
+      }
+      // 合并用户 abortSignal 和 timeout 超时信号
+      const timeoutMs = options.timeoutMs ?? 600_000
+      const signals: AbortSignal[] = []
+      if (options.abortSignal) signals.push(options.abortSignal)
+      signals.push(AbortSignal.timeout(timeoutMs))
+      const combinedSignal = signals.length === 1
+        ? signals[0]
+        : AbortSignal.any(signals)
+
+      const streamOptions: Record<string, unknown> = { signal: combinedSignal }
+      if (betas.length > 0) {
+        streamOptions.headers = { 'anthropic-beta': betas.join(',') }
+      }
+      const stream = this.client.messages.stream(params as Parameters<typeof this.client.messages.stream>[0], streamOptions as Parameters<typeof this.client.messages.stream>[1])
+
+      // Track tool call accumulators: contentBlockIndex -> accumulated JSON
+      const toolAccumulators = new Map<number, { id: string; name: string; json: string }>()
+      // 累积 Anthropic thinking block 内容（含 signature），以便回传
+      const thinkingAccumulators = new Map<number, { thinking: string; signature?: string }>()
+
+      for await (const event of stream) {
+        switch (event.type) {
+          case 'content_block_start': {
+            if (event.content_block.type === 'tool_use') {
+              toolAccumulators.set(event.index, {
+                id: event.content_block.id,
+                name: event.content_block.name,
+                json: '',
+              })
+              yield {
+                type: 'tool_use_start',
+                id: event.content_block.id,
+                name: event.content_block.name,
+              }
+            }
+            // Thinking block — 初始化累积器，并发 empty delta 让 UI 进入 thinking 状态
+            if ((event.content_block as unknown as Record<string, unknown>).type === 'thinking') {
+              thinkingAccumulators.set(event.index, { thinking: '' })
+              yield { type: 'thinking_delta', content: '' }
+            }
+            break
+          }
+
+          case 'content_block_delta': {
+            if (event.delta.type === 'text_delta') {
+              yield { type: 'text_delta', content: event.delta.text }
+            }
+            // Thinking delta — 流式转发给 UI，同时累积完整内容
+            if ((event.delta as unknown as Record<string, unknown>).type === 'thinking_delta') {
+              const text: string = (event.delta as unknown as Record<string, unknown>).thinking as string
+              const acc = thinkingAccumulators.get(event.index)
+              if (acc) acc.thinking += text
+              yield { type: 'thinking_delta', content: text }
+            }
+            // Anthropic 返回的 signature delta（不透明字符串，必须回传）
+            if ((event.delta as unknown as Record<string, unknown>).type === 'signature_delta') {
+              const acc = thinkingAccumulators.get(event.index)
+              if (acc) acc.signature = (acc.signature ?? '') + ((event.delta as unknown as Record<string, unknown>).signature as string)
+            }
+            if (event.delta.type === 'input_json_delta') {
+              const acc = toolAccumulators.get(event.index)
+              if (acc) {
+                acc.json += event.delta.partial_json
+              }
+            }
+            break
+          }
+
+          case 'content_block_stop': {
+            const acc = toolAccumulators.get(event.index)
+            if (acc && acc.json != null) {
+              try {
+                const parsedInput = JSON.parse(acc.json || '{}')
+                yield { type: 'tool_use_end', id: acc.id, parsedInput }
+              } catch {
+                yield { type: 'error', error: `Failed to parse tool input JSON: ${acc.json.slice(0, 100)}` }
+              }
+            }
+            // Thinking block 结束 — 发出完整 thinking block（含 signature）供 stream-phase 存入 contentBlocks
+            const thinkAcc = thinkingAccumulators.get(event.index)
+            if (thinkAcc) {
+              yield {
+                type: 'thinking_block_done',
+                thinking: thinkAcc.thinking,
+                signature: thinkAcc.signature,
+              }
+              thinkingAccumulators.delete(event.index)
+            }
+            break
+          }
+        }
+      }
+
+      // Get usage from final message, including cache tokens if available
+      const finalMessage = await stream.finalMessage()
+      const usage = finalMessage.usage as unknown as Record<string, number | undefined>
+      yield {
+        type: 'done',
+        usage: {
+          inputTokens: finalMessage.usage.input_tokens,
+          outputTokens: finalMessage.usage.output_tokens,
+          cacheReadTokens: (usage.cache_read_input_tokens as number | undefined) ?? 0,
+          cacheWriteTokens: (usage.cache_creation_input_tokens as number | undefined) ?? 0,
+        },
+      }
+    } catch (error) {
+      // AbortError is a clean stop — don't emit an error event
+      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
+        return
+      }
+      let errorMsg = error instanceof Error ? error.message : String(error)
+      // 尝试解析结构化 JSON 错误（如 GLM-5 返回的 JSON 错误体），提取可读 message
+      try {
+        const parsed = JSON.parse(errorMsg)
+        if (parsed?.error?.message) {
+          errorMsg = parsed.error.message
+        }
+      } catch { /* 非 JSON，保留原始消息 */ }
+      yield { type: 'error', error: errorMsg }
+    }
+  }
+}

@@ -86,6 +86,17 @@ export { LoopDetector } from './agent/loop-detector.js'
 export { StreamingToolExecutor } from './agent/streaming-tool-executor.js'
 export type { ToolExecResult } from './agent/streaming-tool-executor.js'
 
+// 常量
+export {
+  DEFAULT_MODELS,
+  DEFAULT_MAX_TOKENS,
+  MAX_AGENT_TURNS,
+  SYSTEM_PROMPT_CACHE_BOUNDARY,
+  TOOL_DEFS_CACHE_BOUNDARY,
+} from './constants.js'
+
+export type { ModelPreset } from './constants.js'
+
 // LLM 模块
 export type {
   StreamOptions,
@@ -104,3 +115,15 @@ export type {
   RetryInfo,
   WithRetryOptions,
 } from './llm/retry.js'
+
+export { LLMGateway } from './llm/gateway.js'
+
+export { OpenAIAdapter } from './llm/openai-adapter.js'
+
+export { AnthropicAdapter } from './llm/anthropic-adapter.js'
+
+export { CostTracker } from './llm/cost-tracker.js'
+export type { SessionUsage } from './llm/cost-tracker.js'
+
+export { getPricing } from './llm/model-cost.js'
+export type { ModelPricing } from './llm/model-cost.js'
