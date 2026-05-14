@@ -4,7 +4,20 @@
 // ============================================================
 
 import path from 'path'
+import { realpath } from 'fs/promises'
 import type { MobileRelayContext, MobileRelayMessage } from './mobile-relay-context'
+
+const clampTreeDepth = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 2
+  return Math.max(0, Math.min(Math.floor(value), 5))
+}
+
+const resolveWorkspacePath = async (workspaceRoot: string, candidate: unknown): Promise<string> => {
+  const resolvedWorkspaceRoot = await realpath(path.resolve(workspaceRoot))
+  const input = typeof candidate === 'string' && candidate.trim() ? candidate : resolvedWorkspaceRoot
+  const absolutePath = path.isAbsolute(input) ? path.resolve(input) : path.resolve(resolvedWorkspaceRoot, input)
+  return realpath(absolutePath)
+}
 
 /**
  * 处理文件浏览相关的移动端消息。
@@ -25,9 +38,14 @@ export async function handleFileMessage(
       return true
     }
     try {
-      const dirPath = msg.data?.dirPath || workspaceRoot
-      const depth = msg.data?.depth || 2
-      const nodes = await ctx.workspaceManager.getDirectoryTree(dirPath as string, depth as number)
+      const resolvedWorkspaceRoot = await realpath(path.resolve(workspaceRoot))
+      const dirPath = await resolveWorkspacePath(resolvedWorkspaceRoot, msg.data?.dirPath)
+      if (!ctx.isPathWithinWorkspace(resolvedWorkspaceRoot, dirPath)) {
+        broadcastToMobile('session:error', { requestId, error: 'Access denied: path outside workspace', code: 'ACCESS_DENIED' })
+        return true
+      }
+      const depth = clampTreeDepth(msg.data?.depth)
+      const nodes = await ctx.workspaceManager.getDirectoryTree(dirPath, depth)
       broadcastToMobile('file:tree:response', { requestId, nodes })
     } catch (err: unknown) {
       broadcastToMobile('session:error', { requestId, error: err instanceof Error ? err.message : String(err), code: 'INTERNAL_ERROR' })
@@ -45,8 +63,8 @@ export async function handleFileMessage(
       return true
     }
     try {
-      const resolvedWorkspaceRoot = path.resolve(workspaceRoot)
-      const absolutePath = path.isAbsolute(filePath as string) ? path.resolve(filePath as string) : path.resolve(resolvedWorkspaceRoot, filePath as string)
+      const resolvedWorkspaceRoot = await realpath(path.resolve(workspaceRoot))
+      const absolutePath = await resolveWorkspacePath(resolvedWorkspaceRoot, filePath)
 
       // Security: verify path is within workspace
       if (!ctx.isPathWithinWorkspace(resolvedWorkspaceRoot, absolutePath)) {

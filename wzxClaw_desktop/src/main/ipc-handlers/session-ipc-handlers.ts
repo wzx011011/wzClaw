@@ -26,7 +26,7 @@ export interface SessionIpcDeps {
 
 export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   const { runtimes, stepManager, settingsManager, workspaceManager, workspaceStore,
-    getSessionStore, storeManager, onDataChanged, persistedMessageCounts } = deps
+    storeManager, onDataChanged, persistedMessageCounts } = deps
 
   // Helper: resolve SessionStore for a given activeWorkspaceId
   const resolveStore = (activeWorkspaceId?: string) =>
@@ -37,7 +37,7 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
     const store = await resolveStore(payload?.activeWorkspaceId)
-    let sessions = await store.listSessions()
+    const sessions = await store.listSessions()
 
     // Enrich each session with todo summary and running status
     const runningIds = runtimes.listRunning()
@@ -144,7 +144,7 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    let store = await resolveStore(result.data.activeWorkspaceId)
+    const store = await resolveStore(result.data.activeWorkspaceId)
     const success = await store.deleteSession(result.data.sessionId)
     if (success) {
       // Clean up associated steps from memory and disk
@@ -203,7 +203,7 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     // appendMessages skips empty arrays, so use a canonical meta line.
     // Keep the shape aligned with rename/mobile creation so listSessions()
     // treats it as session metadata instead of counting it as a real message.
-    await store.appendMessage(request.sessionId, { type: 'meta', title: 'Untitled' })
+    await store.appendMessage(request.sessionId, { type: 'meta', role: '', content: '', timestamp: Date.now(), title: 'Untitled' })
     onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
     return { success: true }
   })
@@ -226,7 +226,7 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     const messages = await store.loadSession(sessionId)
     const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
     const filePath = path.join(exportDir, `conversation-${sessionId.slice(0, 8)}`)
-    const result = await ConversationExporter.exportToFile(messages as any, filePath, format)
+    const result = await ConversationExporter.exportToFile(messages, filePath, format)
     return { filePath: result, messageCount: messages.length }
   })
 }

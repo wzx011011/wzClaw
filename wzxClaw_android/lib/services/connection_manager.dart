@@ -13,6 +13,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import 'android_foreground_keepalive.dart';
+import 'secure_settings.dart';
 import 'session_sync_service.dart';
 import 'ws_transport.dart';
 
@@ -95,6 +96,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   WebSocketChannel? _channel;
   String? _url;
+  String? _authToken;
   int _reconnectAttempt = 0;
 
   // Timers
@@ -138,25 +140,30 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       disconnect();
     }
 
-    _url = url;
-    final seq = ++_connSeq;
-
-    _setState(WsConnectionState.connecting);
-    print('[ConnectionManager] connecting to: $url');
-
+    late final int seq;
     try {
-      // Extract token from URL for Sec-WebSocket-Protocol header.
       final uri = Uri.parse(url);
-      final token = uri.queryParameters['token'] ?? '';
+      final token = uri.queryParameters['token'] ?? _authToken ?? '';
+      final params = Map<String, String>.from(uri.queryParameters)
+        ..remove('token');
+      final connectUri = uri.replace(queryParameters: params);
+
+      _url = connectUri.toString();
+      _authToken = token;
+      seq = ++_connSeq;
+
+      _setState(WsConnectionState.connecting);
+      debugPrint('[ConnectionManager] connecting to ${connectUri.scheme}://${connectUri.host}${connectUri.hasPort ? ':${connectUri.port}' : ''}${connectUri.path}');
+
       final protocols = token.isNotEmpty ? ['wzxclaw-$token'] : <String>[];
 
       _channel = IOWebSocketChannel.connect(
-        uri,
+        connectUri,
         protocols: protocols,
       );
     } catch (e) {
       // Invalid URL or connection failure -- schedule reconnect.
-      print('[ConnectionManager] connect error: $e');
+      debugPrint('[ConnectionManager] connect error: $e');
       _setError('连接失败: $e');
       _scheduleReconnect();
       return;
@@ -310,7 +317,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         return;
       }
 
-      final token = prefs.getString('auth_token') ?? '';
+      final token = await SecureSettings.getAuthToken();
       final uri = Uri.parse(serverUrl);
       final params = Map<String, String>.from(uri.queryParameters);
       params['role'] = 'mobile';
@@ -698,7 +705,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   }
 
   void _onChannelError(Object error) {
-    print('[ConnectionManager] channel error: $error');
+    debugPrint('[ConnectionManager] channel error: $error');
     _stopHeartbeat();
     _stopIdleMonitor();
     _setError('$error');

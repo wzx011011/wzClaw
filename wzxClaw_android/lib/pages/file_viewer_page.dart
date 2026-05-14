@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:highlight/highlight.dart' show highlight;
 
@@ -46,9 +45,7 @@ class _FileViewerPageState extends State<FileViewerPage> {
       _error = null;
     });
     try {
-      print('[FileViewer] loading: ${widget.filePath}');
       final content = await FileSyncService.instance.readFile(widget.filePath);
-      print('[FileViewer] result: ${content != null ? "got content (${content.size} bytes)" : "null"}');
       if (mounted) {
         setState(() {
           _content = content;
@@ -57,7 +54,6 @@ class _FileViewerPageState extends State<FileViewerPage> {
         });
       }
     } catch (e) {
-      print('[FileViewer] error: $e');
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -166,13 +162,7 @@ class _FileViewerPageState extends State<FileViewerPage> {
   }
 
   Widget _buildHtmlView(AppColors colors) {
-    return InAppWebView(
-      initialData: InAppWebViewInitialData(data: _content!.content),
-      initialSettings: InAppWebViewSettings(
-        useHybridComposition: true,
-        transparentBackground: true,
-      ),
-    );
+    return _buildCodeView(colors);
   }
 
   Widget _buildMarkdownView(AppColors colors) {

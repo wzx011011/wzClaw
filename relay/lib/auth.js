@@ -11,10 +11,14 @@ let _devMode = false;
  * Should be called once at server startup.
  */
 function init() {
-  if (!process.env.AUTH_TOKEN) {
+  if (!process.env.AUTH_TOKEN || process.env.AUTH_TOKEN.trim() === '') {
+    if (process.env.RELAY_ALLOW_DEV_AUTH !== '1') {
+      _devMode = false;
+      throw new Error('AUTH_TOKEN is required. Set RELAY_ALLOW_DEV_AUTH=1 only for local development.');
+    }
     _devMode = true;
     if (!_devModeWarned) {
-      warn('AUTH_TOKEN not set - accepting any token (dev mode)');
+      warn('AUTH_TOKEN not set - accepting any token because RELAY_ALLOW_DEV_AUTH=1');
       _devModeWarned = true;
     }
   } else {

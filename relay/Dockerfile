@@ -9,8 +9,10 @@ FROM node:20-alpine
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY . .
+RUN mkdir -p /app/data && chown -R node:node /app/data
 
 ENV NODE_ENV=production
+ENV RELAY_DATA_DIR=/app/data
 
 EXPOSE 8080
 

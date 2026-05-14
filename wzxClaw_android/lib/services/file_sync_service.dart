@@ -111,7 +111,6 @@ class FileSyncService {
   void _handleReadResponse(dynamic data) {
     if (data is! Map) return;
     final requestId = data['requestId'] as String? ?? '';
-    print('[FileSync] read response: requestId=$requestId, error=${data['error']}, hasContent=${data['content'] != null}');
     if (data['error'] != null) {
       _completePending(requestId, null, error: data['error'] as String);
       return;
@@ -163,8 +162,6 @@ class FileSyncService {
     final requestId = _nextRequestId();
     final completer = Completer<dynamic>();
     _pendingRequests[requestId] = completer;
-
-    print('[FileSync] sending file:read:request for $filePath');
 
     ConnectionManager.instance.send(WsMessage(
       event: WsEvents.fileReadRequest,

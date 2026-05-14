@@ -1,6 +1,6 @@
 {
   "name": "wzxclaw",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "AI Coding IDE - Personal tool inspired by Cursor",
   "main": "./out/main/index.js",
   "author": "wzx011011",

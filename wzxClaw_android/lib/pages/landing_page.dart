@@ -8,6 +8,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
+import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
 import '../widgets/workspace_picker_card.dart';
 
@@ -73,7 +74,7 @@ class _LandingPageState extends State<LandingPage>
     final serverUrl = prefs.getString('server_url');
     _savedWorkspacePath = await AppRestoreState.getLastWorkspacePath();
     if (serverUrl != null && serverUrl.isNotEmpty) {
-      final token = prefs.getString('auth_token') ?? '';
+      final token = await SecureSettings.getAuthToken();
       try {
         final uri = Uri.parse(serverUrl);
         setState(() {

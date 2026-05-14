@@ -8,13 +8,10 @@ import ToolCallGroup from './ToolCallGroup'
 // Lazy-load react-markdown — 仅在非流式渲染时需要
 const ReactMarkdown = lazy(() => import('react-markdown'))
 // 插件在 ReactMarkdown 加载时一起加载（同一 chunk）
-const rehypeRawPromise = import('rehype-raw').then(m => m.default)
 const remarkGfmPromise = import('remark-gfm').then(m => m.default)
 
 // 预加载完成的插件引用（resolve 后不变）
-let _rehypeRaw: unknown = null
 let _remarkGfm: unknown = null
-rehypeRawPromise.then(v => { _rehypeRaw = v })
 remarkGfmPromise.then(v => { _remarkGfm = v })
 
 // ============================================================
@@ -24,9 +21,17 @@ remarkGfmPromise.then(v => { _remarkGfm = v })
 // 在渲染路径上被 100% 丢弃——保留它只会产生 O(content) 的无用开销。
 // ============================================================
 
-/** 动态获取 rehype 插件集（首次渲染时可能为空，此时 ReactMarkdown 降级为纯文本） */
-const getRehypePlugins = () => _rehypeRaw ? [_rehypeRaw] as const : [] as const
 const getRemarkPlugins = () => _remarkGfm ? [_remarkGfm] as const : [] as const
+const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+const isSafeHref = (href: string): boolean => {
+  try {
+    const parsed = new URL(href, 'https://wzxclaw.local')
+    return SAFE_LINK_PROTOCOLS.has(parsed.protocol)
+  } catch {
+    return false
+  }
+}
 const extractText = (nodes: React.ReactNode): string => {
   if (typeof nodes === 'string') return nodes
   if (typeof nodes === 'number') return String(nodes)
@@ -64,6 +69,12 @@ const MD_COMPONENTS = {
       </code>
     )
   },
+  a({ href, children }: { href?: string; children?: React.ReactNode }) {
+    if (!href || !isSafeHref(href)) {
+      return <span>{children}</span>
+    }
+    return <a href={href} target="_blank" rel="noreferrer">{children}</a>
+  },
 }
 
 // ============================================================
@@ -76,7 +87,6 @@ const MarkdownContent = React.memo(function MarkdownContent({ content }: { conte
   return (
     <Suspense fallback={<div className="streaming-text">{content}</div>}>
       <ReactMarkdown
-        rehypePlugins={getRehypePlugins()}
         remarkPlugins={getRemarkPlugins()}
         components={MD_COMPONENTS}
       >

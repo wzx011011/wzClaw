@@ -5,12 +5,13 @@ const assert = require('node:assert/strict');
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const TEST_PORT = 18766;
 const TEST_TOKEN = 'e2e-test-token';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const QUEUE_FILE = path.join(DATA_DIR, 'offline-queues.json');
+let TEST_DATA_DIR;
+let QUEUE_FILE;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -114,9 +115,11 @@ describe('E2E: Network Layer Optimizations', () => {
 
   beforeEach(() => {
     // 清理上次运行遗留的离线队列文件，避免测试间污染
-    try { fs.unlinkSync(QUEUE_FILE); } catch (_) {}
+    TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'wzxclaw-relay-e2e-'));
+    QUEUE_FILE = path.join(TEST_DATA_DIR, 'offline-queues.json');
     process.env.AUTH_TOKEN = TEST_TOKEN;
     process.env.PORT = String(TEST_PORT);
+    process.env.RELAY_DATA_DIR = TEST_DATA_DIR;
     delete require.cache[require.resolve('../server')];
     delete require.cache[require.resolve('../lib/auth')];
     delete require.cache[require.resolve('../lib/room')];
@@ -135,6 +138,8 @@ describe('E2E: Network Layer Optimizations', () => {
     }
     delete process.env.AUTH_TOKEN;
     delete process.env.PORT;
+    delete process.env.RELAY_DATA_DIR;
+    try { fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch (_) {}
   });
 
   // ── Test 1: Token auth via Sec-WebSocket-Protocol header ────────
@@ -320,9 +325,10 @@ describe('E2E: Network Layer Optimizations', () => {
     assert.ok(fs.existsSync(QUEUE_FILE), 'Queue file should exist');
     const raw = fs.readFileSync(QUEUE_FILE, 'utf8');
     const queues = JSON.parse(raw);
-    assert.ok(queues[TEST_TOKEN], 'Queue should have entry for test token');
+    const roomId = serverModule.roomManager.roomIdForToken(TEST_TOKEN);
+    assert.ok(queues[roomId], 'Queue should have entry for hashed room ID');
     // New format: { _format: 3, desktopQueues: { desktopId: [...] } }
-    const tokenEntry = queues[TEST_TOKEN];
+    const tokenEntry = queues[roomId];
     assert.equal(tokenEntry._format, 3);
     const allQueues = Object.values(tokenEntry.desktopQueues);
     const totalMessages = allQueues.reduce((sum, q) => sum + q.length, 0);

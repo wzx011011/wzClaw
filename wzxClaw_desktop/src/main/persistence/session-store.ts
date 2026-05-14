@@ -20,6 +20,7 @@ export interface ChatMessageLike {
   content: string
   timestamp: number
   id?: string
+  title?: string          // meta 行专用：会话标题
   // AssistantMessage 字段
   toolCalls?: unknown[]
   contentBlocks?: unknown[]
@@ -182,6 +183,17 @@ export class SessionStore {
       }
       throw err
     }
+  }
+
+  async clearSession(sessionId: string): Promise<void> {
+    this.validateSessionId(sessionId)
+    const filePath = path.join(this.sessionsDir, `${sessionId}.jsonl`)
+    const content = await fsp.readFile(filePath, 'utf-8').catch(() => '')
+    const metaLine = content.split('\n').find(line => {
+      try { return JSON.parse(line).type === 'meta' } catch { return false }
+    })
+    await fsp.writeFile(filePath, metaLine ? `${metaLine}\n` : '', 'utf-8')
+    this.invalidateCacheEntry(sessionId)
   }
 
   /**

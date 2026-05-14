@@ -7,6 +7,7 @@ import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
 import '../services/push_wake_service.dart';
+import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
@@ -26,7 +27,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _backgroundKeepAliveEnabled = false;
 
   static const _serverUrlKey = 'server_url';
-  static const _authTokenKey = 'auth_token';
   static const _pushEnabledKey = 'push_notifications_enabled';
   static const _backgroundKeepAliveEnabledKey = 'background_keepalive_enabled';
 
@@ -46,7 +46,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _loadSavedValues() async {
     final prefs = await SharedPreferences.getInstance();
     _serverUrlController.text = prefs.getString(_serverUrlKey) ?? '';
-    _tokenController.text = prefs.getString(_authTokenKey) ?? '';
     _pushEnabled = prefs.getBool(_pushEnabledKey) ?? true;
     _backgroundKeepAliveEnabled =
       prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
@@ -56,17 +55,28 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveValues() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_serverUrlKey, _serverUrlController.text.trim());
-    await prefs.setString(_authTokenKey, _tokenController.text.trim());
+    if (_tokenController.text.trim().isNotEmpty) {
+      await SecureSettings.setAuthToken(_tokenController.text.trim());
+    }
   }
 
   void _connect() {
+    _connectSafely();
+  }
+
+  Future<void> _connectSafely() async {
     final serverUrl = _serverUrlController.text.trim();
-    final token = _tokenController.text.trim();
     if (serverUrl.isEmpty) return;
 
-    _saveValues();
+    final uri = _parseAndValidateServerUrl(serverUrl);
+    if (uri == null) return;
 
-    final uri = Uri.parse(serverUrl);
+    final token = _tokenController.text.trim().isNotEmpty
+        ? _tokenController.text.trim()
+        : await SecureSettings.getAuthToken();
+
+    await _saveValues();
+
     final params = Map<String, String>.from(uri.queryParameters);
     params['role'] = 'mobile';
     if (token.isNotEmpty) {
@@ -79,6 +89,28 @@ class _SettingsPageState extends State<SettingsPage> {
     if (mounted) {
       Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
     }
+  }
+
+  Uri? _parseAndValidateServerUrl(String raw) {
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      _showConnectionError('服务器地址格式不正确');
+      return null;
+    }
+    if (uri.scheme == 'wss') return uri;
+    if (uri.scheme == 'ws' && _isLocalHost(uri.host)) return uri;
+    _showConnectionError('请使用 wss:// 连接；本机调试可使用 ws://localhost');
+    return null;
+  }
+
+  bool _isLocalHost(String host) =>
+      host == 'localhost' || host == '127.0.0.1' || host == '::1';
+
+  void _showConnectionError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
   }
 
   void _disconnect() {
@@ -146,9 +178,8 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(builder: (context) => const _QrScannerPage()),
     );
     if (result != null && result.isNotEmpty && mounted) {
-      // Accept wss://, ws:// (direct WebSocket) and https://, http:// (relay URLs)
       final isWebSocket = result.startsWith('wss://') || result.startsWith('ws://');
-      final isHttp     = result.startsWith('https://') || result.startsWith('http://');
+      final isHttp = result.startsWith('https://') || result.startsWith('http://');
       if (!isWebSocket && !isHttp) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -172,6 +203,8 @@ class _SettingsPageState extends State<SettingsPage> {
         final serverUrl = uri
             .replace(scheme: wsScheme, queryParameters: {})
             .toString();
+        final validated = _parseAndValidateServerUrl(serverUrl);
+        if (validated == null) return;
         _serverUrlController.text = serverUrl;
         _tokenController.text = token;
         setState(() {});

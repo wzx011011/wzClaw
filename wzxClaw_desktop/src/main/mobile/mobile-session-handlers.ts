@@ -199,14 +199,7 @@ export async function handleSessionMessage(
       return true
     }
     try {
-      // 重写 session JSONL 为只含 meta 行
-      const sessionPath = path.join(store.sessionDir, `${sessionId}.jsonl`)
-      const fsp = await import('fs/promises')
-      const content = await fsp.readFile(sessionPath, 'utf-8').catch(() => '')
-      const metaLine = content.split('\n').find(l => {
-        try { return JSON.parse(l).type === 'meta' } catch { return false }
-      })
-      await fsp.writeFile(sessionPath, metaLine ? metaLine + '\n' : '', 'utf-8')
+      await store.clearSession(sessionId as string)
       ctx.mobilePersistedMessageCounts.delete(sessionId as string)
       ctx.stepManager.clearSession(sessionId as string)
       broadcastToMobile('session:clear:response', { success: true })

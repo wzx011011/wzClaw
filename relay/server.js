@@ -9,6 +9,17 @@ const { log, warn, error } = require('./lib/logger');
 
 // -- Configuration --
 const PORT = parseInt(process.env.PORT, 10) || 8080;
+const MAX_CONNECTIONS = parseInt(process.env.RELAY_MAX_CONNECTIONS, 10) || 500;
+
+function redactUrl(value) {
+  try {
+    const parsed = new URL(value, 'http://localhost');
+    if (parsed.searchParams.has('token')) parsed.searchParams.set('token', '[redacted]');
+    return `${parsed.pathname}${parsed.search}`;
+  } catch (_) {
+    return '[invalid-url]';
+  }
+}
 
 // -- Initialize auth module --
 auth.init();
@@ -41,6 +52,12 @@ const wss = new WebSocketServer({
 });
 
 wss.on('connection', (ws, req) => {
+  if (wss.clients.size > MAX_CONNECTIONS) {
+    warn(`Connection rejected: relay connection limit exceeded (${MAX_CONNECTIONS})`);
+    ws.close(1013, 'server busy');
+    return;
+  }
+
   // Extract token from Sec-WebSocket-Protocol header, fall back to query string.
   const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   let token = '';
@@ -68,12 +85,12 @@ wss.on('connection', (ws, req) => {
   // Authenticate.
   const result = auth.authenticate(token);
   if (!result.ok) {
-    log(`Connection rejected: ${result.reason} (url=${req.url})`);
+    log(`Connection rejected: ${result.reason} (url=${redactUrl(req.url)})`);
     ws.close(4001, result.reason);
     return;
   }
 
-  log(`Client connected: role=${role}, token=${token.substring(0, 4)}***`);
+  log(`Client connected: role=${role}, room=${roomManager.roomIdForToken(token)}`);
 
   // Join the room.
   roomManager.join(token, role, ws);
@@ -103,8 +120,10 @@ function shutdown(signal) {
   }, 5000);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+if (require.main === module) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
 
 // -- Start server --
 server.listen(PORT, () => {

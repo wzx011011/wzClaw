@@ -5,7 +5,7 @@
 
 import { execFile } from 'child_process'
 import { existsSync, mkdirSync, renameSync, rmSync } from 'fs'
-import { join, basename } from 'path'
+import { join, basename, resolve, sep } from 'path'
 import { getUserPluginsDir } from './plugin-loader'
 import type { PluginInstallResult, MarketplacePluginSource } from '../../shared/types-plugin'
 
@@ -88,7 +88,7 @@ export class PluginInstaller {
 
       // Determine plugin name from plugin.json or directory name
       const pluginName = await PluginInstaller.resolvePluginName(sourceDir, repoName)
-      const targetDir = join(pluginsDir, pluginName)
+      const targetDir = PluginInstaller.resolveTargetDir(pluginsDir, pluginName)
 
       // Check if plugin already exists
       if (existsSync(targetDir)) {
@@ -156,7 +156,7 @@ export class PluginInstaller {
       }
 
       const pluginName = await PluginInstaller.resolvePluginName(extractedDir, packageName.replace(/^@[^/]+\//, ''))
-      const targetDir = join(pluginsDir, pluginName)
+      const targetDir = PluginInstaller.resolveTargetDir(pluginsDir, pluginName)
 
       if (existsSync(targetDir)) {
         rmSync(targetDir, { recursive: true, force: true })
@@ -233,7 +233,7 @@ export class PluginInstaller {
         : tempDir
 
       const pluginName = await PluginInstaller.resolvePluginName(sourceDir, basename(url).replace(/\.(zip|tar\.gz|tgz)$/, ''))
-      const targetDir = join(pluginsDir, pluginName)
+      const targetDir = PluginInstaller.resolveTargetDir(pluginsDir, pluginName)
 
       if (existsSync(targetDir)) {
         rmSync(targetDir, { recursive: true, force: true })
@@ -272,6 +272,24 @@ export class PluginInstaller {
     return match?.[1] ?? 'plugin'
   }
 
+  private static validatePluginName(name: string): string {
+    const trimmed = name.trim()
+    if (!/^[a-zA-Z0-9._-]+$/.test(trimmed) || trimmed === '.' || trimmed === '..') {
+      throw new Error(`Invalid plugin name: ${name}`)
+    }
+    return trimmed
+  }
+
+  private static resolveTargetDir(pluginsDir: string, pluginName: string): string {
+    const safeName = PluginInstaller.validatePluginName(pluginName)
+    const root = resolve(pluginsDir)
+    const target = resolve(root, safeName)
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error('Plugin install target escapes plugin directory')
+    }
+    return target
+  }
+
   private static async resolvePluginName(dir: string, fallback: string): Promise<string> {
     const manifestPath = join(dir, 'plugin.json')
     if (existsSync(manifestPath)) {
@@ -280,11 +298,11 @@ export class PluginInstaller {
         const raw = readFileSync(manifestPath, 'utf-8')
         const manifest = JSON.parse(raw)
         if (manifest.name && typeof manifest.name === 'string') {
-          return manifest.name
+          return PluginInstaller.validatePluginName(manifest.name)
         }
       } catch { /* use fallback */ }
     }
-    return fallback
+    return PluginInstaller.validatePluginName(fallback)
   }
 
   private static exec(command: string, args: string[]): Promise<void> {

@@ -62,8 +62,14 @@ describe('authenticate()', () => {
   });
 
   it('returns ok:true for any non-empty token in dev mode (AUTH_TOKEN not set)', () => {
+    process.env.RELAY_ALLOW_DEV_AUTH = '1';
     auth.init();
     const result = auth.authenticate('any-token');
     assert.equal(result.ok, true);
+    delete process.env.RELAY_ALLOW_DEV_AUTH;
+  });
+
+  it('throws when AUTH_TOKEN is missing without explicit dev auth', () => {
+    assert.throws(() => auth.init(), /AUTH_TOKEN is required/);
   });
 });

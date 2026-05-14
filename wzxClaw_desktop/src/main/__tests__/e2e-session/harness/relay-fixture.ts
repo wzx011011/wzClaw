@@ -55,8 +55,8 @@ async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
 /**
  * Start a real relay server in a forked child process.
  *
- * The child inherits a clean env: no AUTH_TOKEN means dev-mode auth
- * (any non-empty token accepted). PORT is set to the chosen free port.
+ * The child enables explicit dev-mode auth for hermetic local testing.
+ * PORT is set to the chosen free port.
  */
 export async function startRelay(): Promise<RelayHandle> {
   const port = await pickFreePort()
@@ -74,6 +74,7 @@ export async function startRelay(): Promise<RelayHandle> {
       PORT: String(port),
       // Force dev-mode auth: any non-empty token accepted
       AUTH_TOKEN: '',
+      RELAY_ALLOW_DEV_AUTH: '1',
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
