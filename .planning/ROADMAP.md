@@ -16,18 +16,19 @@ created: "2026-05-14"
 
 ---
 
-## Phase 1: 提取 Brain 核心
+## Phase 1: 提取 Brain 核心 ✓
 
-- **Status**: planned
+- **Status**: complete
 - **Goal**: AgentLoop + LLM Gateway + Context 成为独立 Node.js 包，脱离 Electron 依赖
 - **Deliverable**: `packages/brain/` 可在 Node.js 环境独立运行，桌面端通过适配器桥接保持功能正常
-- **Plans:** 4 plans
+- **Completed**: 2026-05-14
+- **Plans:** 4/4 complete
 
 Plans:
-- [ ] 01a-PLAN.md — 包脚手架 + 核心接口定义 + 纯逻辑模块
-- [ ] 01b-PLAN.md — LLM 层 + Context 管理层复制
-- [ ] 01c-PLAN.md — AgentLoop/TurnManager/StreamPhase 核心解耦（移除 Electron 依赖）
-- [ ] 01d-PLAN.md — 桌面端适配器桥接 + 功能验证
+- [x] 01a-PLAN.md — 包脚手架 + 核心接口定义 + 纯逻辑模块
+- [x] 01b-PLAN.md — LLM 层 + Context 管理层复制
+- [x] 01c-PLAN.md — AgentLoop/TurnManager/StreamPhase 核心解耦（移除 Electron 依赖）
+- [x] 01d-PLAN.md — 桌面端适配器桥接 + 功能验证（人工验证推迟）
 
 ## Phase 2: Agent 服务器 — NAS 部署
 
@@ -35,6 +36,12 @@ Plans:
 - **Goal**: Brain 包作为 WebSocket 服务器部署到 NAS Docker，支持客户端和 Hand 双通道连接
 - **Depends on**: Phase 1
 - **Deliverable**: `packages/agent-server/` Docker 部署，`wss://5945.top/agent/` 可用
+- **Plans:** 3 plans
+
+Plans:
+- [ ] 02a-PLAN.md — 包脚手架 + Token 认证 + SQLite SessionStore
+- [ ] 02b-PLAN.md — HandsRouter + HandAwareToolExecutor（Hand 路由 + 工具执行）
+- [ ] 02c-PLAN.md — ClientHandler + 服务器入口 + Docker + nginx
 
 ## Phase 3: Hand 服务 — 独立 npm 包
 
