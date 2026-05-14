@@ -44,17 +44,18 @@ Plans:
 - [x] 02b-PLAN.md — HandsRouter + HandAwareToolExecutor（Hand 路由 + 工具执行）
 - [x] 02c-PLAN.md — ClientHandler + 服务器入口 + Docker + nginx
 
-## Phase 3: Hand 服务 — 独立 npm 包
+## Phase 3: Hand 服务 — 独立 npm 包 ✓
 
-- **Status**: planned
+- **Status**: complete
 - **Goal**: `wzxclaw-hand` 独立包，任何机器一行命令注册为 Brain 的 Hand
 - **Depends on**: Phase 2
 - **Deliverable**: `packages/hand/`，`npx wzxclaw-hand` 可连接 Brain 并执行工具
-- **Plans:** 2 plans
+- **Completed**: 2026-05-14
+- **Plans:** 2/2 complete
 
 Plans:
-- [ ] 03a-PLAN.md — 包脚手架 + 协议层 + WebSocket 连接管理（注册/心跳/重连）
-- [ ] 03b-PLAN.md — 工具执行框架 + CLI 入口 + npx 支持
+- [x] 03a-PLAN.md — 包脚手架 + 协议层 + WebSocket 连接管理（注册/心跳/重连）
+- [x] 03b-PLAN.md — 工具执行框架 + CLI 入口 + npx 支持
 
 ## Phase 4: 共享 Web UI — React SPA
 
