@@ -27,3 +27,6 @@ export type { AgentLoopFactory } from './client-handler.js'
 
 // Session 存储
 export { SessionStoreSqlite } from './session-sqlite.js'
+
+// 服务器入口
+export { AgentServer, main } from './server.js'
