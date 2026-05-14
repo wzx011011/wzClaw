@@ -110,9 +110,17 @@ export interface ILoopDetector {
 
 // ---- Hook 注册表 ----
 
+/** Hook 结果（hook 处理器可通过返回值影响 agent 行为） */
+export interface IHookResult {
+  /** 是否阻止 agent 继续执行（stop hook 语义） */
+  preventContinuation?: boolean
+  /** 阻塞性错误消息（注入到对话中） */
+  blockingError?: string
+}
+
 /** 钩子注册表抽象 */
 export interface IHookRegistry {
-  emit(event: string, context: Record<string, unknown>): Promise<void>
+  emit(event: string, context: Record<string, unknown>): Promise<IHookResult | void>
 }
 
 // ---- 可观测性 ----
@@ -147,4 +155,12 @@ export interface IObservability {
   startTrace(conversationId: string, model: string, userMessage: string, workingDir: string, parentSpan?: unknown): void
   endTrace(conversationId: string, usage: TokenUsage, turnCount: number, error: boolean, messages?: Message[]): void
   getActiveTrace(conversationId: string): ITraceContext | undefined
+}
+
+// ---- 日志 ----
+
+/** 日志抽象（替代直接引用 Electron DebugLogger） */
+export interface ILogger {
+  log(level: string, message: string, data?: Record<string, unknown>): void
+  close(): void
 }

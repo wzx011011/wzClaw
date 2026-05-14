@@ -44,11 +44,17 @@ export type {
   IContextManager,
   ILoopDetector,
   IHookRegistry,
+  IHookResult,
   IObservability,
   ITraceContext,
   IGenerationSpan,
   IToolSpan,
+  ILogger,
 } from './interfaces.js'
+
+// Channel 常量
+export { BRAIN_CHANNELS } from './channels.js'
+export type { BrainChannelName } from './channels.js'
 
 // Agent 类型
 export type {
@@ -84,6 +90,19 @@ export { LoopDetector } from './agent/loop-detector.js'
 
 export { StreamingToolExecutor } from './agent/streaming-tool-executor.js'
 export type { ToolExecResult } from './agent/streaming-tool-executor.js'
+
+export { AgentLoop } from './agent/agent-loop.js'
+
+export { createAgentLoop } from './agent/agent-factory.js'
+export type { AgentLoopDeps } from './agent/agent-factory.js'
+
+export { TurnManager } from './agent/turn-manager.js'
+export type { TurnInput, TurnResult } from './agent/turn-manager.js'
+
+export { executeStreamPhase } from './agent/stream-phase.js'
+export type { StreamPhaseMeta, ExecuteToolFn, StreamFn } from './agent/stream-phase.js'
+
+export { buildBrainSystemPrompt } from './agent/system-prompt-builder.js'
 
 // 常量
 export {
