@@ -6,7 +6,7 @@ import { getCommandsDir, getSkillsDir } from './paths'
 import { invalidateGitCache } from './git/git-context'
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_MODELS } from '../shared/constants'
 import type { LLMGateway } from './llm/gateway'
-import type { AgentLoop } from './agent/agent-loop'
+import type { DesktopAgentLoop } from './brain-bridge'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import type { PermissionManager } from './permission/permission-manager'
 import type { WorkspaceManager } from './workspace/workspace-manager'
@@ -32,7 +32,7 @@ import { registerInsightsIpcHandlers } from './ipc-handlers/insights-ipc-handler
 
 export function registerIpcHandlers(
   gateway: LLMGateway,
-  agentLoop: AgentLoop,
+  agentLoop: DesktopAgentLoop,
   runtimes: SessionRuntimeManager,
   permissionManager: PermissionManager,
   workspaceManager: WorkspaceManager,

@@ -16,17 +16,17 @@
 //   finally { runtimes.notifyRunningChanged(sessionId, false) }
 // ============================================================
 
-import type { AgentLoop } from './agent-loop'
+import type { DesktopAgentLoop } from '../brain-bridge'
 
 export type RunningChangedListener = (sessionId: string, isRunning: boolean) => void
 
 export class SessionRuntimeManager {
-  private runtimes = new Map<string, AgentLoop>()
+  private runtimes = new Map<string, DesktopAgentLoop>()
   private lastActivity = new Map<string, number>()
   private listeners = new Set<RunningChangedListener>()
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
 
-  constructor(private factory: () => AgentLoop) {}
+  constructor(private factory: () => DesktopAgentLoop) {}
 
   /** 启动定期清理空闲 runtime（默认 5 分钟检查，30 分钟无活动则清理） */
   startIdleCleanup(intervalMs = 5 * 60 * 1000, maxAgeMs = 30 * 60 * 1000): void {
@@ -59,8 +59,8 @@ export class SessionRuntimeManager {
     return removed
   }
 
-  /** 获取或创建指定会话的 AgentLoop 实例 */
-  getOrCreate(sessionId: string): AgentLoop {
+  /** 获取或创建指定会话的 DesktopAgentLoop 实例 */
+  getOrCreate(sessionId: string): DesktopAgentLoop {
     let rt = this.runtimes.get(sessionId)
     if (!rt) {
       rt = this.factory()
@@ -71,7 +71,7 @@ export class SessionRuntimeManager {
   }
 
   /** 获取已存在的实例（不创建） */
-  get(sessionId: string): AgentLoop | undefined {
+  get(sessionId: string): DesktopAgentLoop | undefined {
     return this.runtimes.get(sessionId)
   }
 

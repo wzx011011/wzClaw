@@ -58,7 +58,7 @@ import { BackgroundTaskManager } from './tasks/background-task-manager'
 import { NotificationService } from './notification/notification-service'
 import { AgentTool } from './tools/agent-tool'
 import { PermissionManager } from './permission/permission-manager'
-import { AgentLoop } from './agent/agent-loop'
+import { createDesktopAgentLoop } from './brain-bridge'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import { SessionTaskStateManager, isActiveSessionTaskStatus } from './agent/session-task-state-manager'
 import type { AgentConfig } from './agent/types'
@@ -374,7 +374,14 @@ app.whenReady().then(async () => {
   const hookRegistry = new HookRegistry()
   registerBuiltInHooks(hookRegistry)
 
-  const agentLoopFactory = () => new AgentLoop(gateway, toolRegistry, permissionManager, contextManager, hookRegistry, historyManager)
+  const agentLoopFactory = () => createDesktopAgentLoop({
+    gateway,
+    toolRegistry,
+    permissionManager,
+    contextManager,
+    hookRegistry,
+    historyManager,
+  })
   // Per-session AgentLoop 运行时管理器。
   const runtimes = new SessionRuntimeManager(agentLoopFactory)
   // 启动定期清理：每 5 分钟检查，超过 30 分钟无活动的 runtime 被回收
