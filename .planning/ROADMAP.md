@@ -39,7 +39,7 @@ Plans:
 - **Plans:** 3 plans
 
 Plans:
-- [ ] 02a-PLAN.md — 包脚手架 + Token 认证 + SQLite SessionStore
+- [x] 02a-PLAN.md — 包脚手架 + Token 认证 + SQLite SessionStore
 - [ ] 02b-PLAN.md — HandsRouter + HandAwareToolExecutor（Hand 路由 + 工具执行）
 - [ ] 02c-PLAN.md — ClientHandler + 服务器入口 + Docker + nginx
 

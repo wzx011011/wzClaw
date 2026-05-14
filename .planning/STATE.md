@@ -1,7 +1,7 @@
 ---
 project: "wzxClaw"
 milestone: "Brain-Hands-Session 全架构迁移"
-status: "planning"
+status: "executing"
 created: "2026-05-14"
 last_activity: "2026-05-14"
 branch: "feat/agent-server-migration"
@@ -10,12 +10,12 @@ branch: "feat/agent-server-migration"
 # Project State
 
 ## Current Phase
-Phase 1: 提取 Brain 核心 (planned)
+Phase 2: Agent 服务器 — NAS 部署 (02a complete, next: 02b)
 
 ## Phase History
 | Phase | Status | Date |
 |-------|--------|------|
-| 1 | planned | 2026-05-14 |
+| 1 | complete (4/4 plans, human verification deferred) | 2026-05-14 |
 | 2 | planned | - |
 | 3 | planned | - |
 | 4 | planned | - |
