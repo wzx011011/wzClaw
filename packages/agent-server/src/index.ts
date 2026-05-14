@@ -21,5 +21,9 @@ export type { HandEntry, ToolDefinition } from './hands-router.js'
 // Hand 感知工具执行器
 export { HandAwareToolExecutor } from './hand-aware-tool-executor.js'
 
+// 客户端连接处理
+export { ClientHandler } from './client-handler.js'
+export type { AgentLoopFactory } from './client-handler.js'
+
 // Session 存储
 export { SessionStoreSqlite } from './session-sqlite.js'
