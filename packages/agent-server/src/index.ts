@@ -14,4 +14,5 @@ export type {
   ServerConfig,
 } from './types.js'
 
-// Session 存储（后续 Task 2 添加）
+// Session 存储
+export { SessionStoreSqlite } from './session-sqlite.js'
