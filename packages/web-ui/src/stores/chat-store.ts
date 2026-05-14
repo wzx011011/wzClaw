@@ -33,6 +33,8 @@ interface ChatState {
   streamingMessageId: string | null
   /** 流式刚结束标记（用于触发滚动到底部） */
   streamJustEnded: boolean
+  /** 输入框内容（供 ChatPanel 使用） */
+  _inputValue?: string
 }
 
 /** Chat store 操作 */
@@ -50,7 +52,7 @@ interface ChatActions {
 }
 
 /** Chat store 完整类型 */
-type ChatStore = ChatState & ChatActions
+export type ChatStore = ChatState & ChatActions
 
 // ---- 工厂函数 ----
 
