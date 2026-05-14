@@ -74,3 +74,33 @@ export {
 } from './agent/runtime-config.js'
 
 export type { AgentRuntimeConfig } from './agent/runtime-config.js'
+
+// Agent 模块
+export { ConversationManager } from './agent/conversation-manager.js'
+export type { MessagePriority } from './agent/conversation-manager.js'
+
+export { MessageBuilder } from './agent/message-builder.js'
+
+export { LoopDetector } from './agent/loop-detector.js'
+
+export { StreamingToolExecutor } from './agent/streaming-tool-executor.js'
+export type { ToolExecResult } from './agent/streaming-tool-executor.js'
+
+// LLM 模块
+export type {
+  StreamOptions,
+  LLMAdapter,
+  ProviderConfig,
+} from './llm/types.js'
+
+export {
+  PromptTooLongError,
+  AuthError,
+  classifyError,
+  withRetry,
+} from './llm/retry.js'
+
+export type {
+  RetryInfo,
+  WithRetryOptions,
+} from './llm/retry.js'
