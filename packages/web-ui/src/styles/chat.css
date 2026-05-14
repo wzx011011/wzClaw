@@ -483,26 +483,56 @@
   color: #56d364;
 }
 
-.code-block-wrapper pre {
+/* 代码块 body（行号 + 代码并排布局） */
+.code-block-body {
+  display: flex;
+  overflow: hidden;
+}
+
+.code-block-body pre {
   margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.code-block-linenumbers {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 8px 12px 12px;
+  text-align: right;
+  color: var(--text-disabled);
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: 'Consolas', 'Courier New', monospace;
+  user-select: none;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-subtle);
+  margin-right: 0;
+}
+
+.code-block-pre {
   padding: 12px;
   overflow-x: auto;
   font-size: 12px;
   line-height: 1.5;
+  flex: 1;
+  min-width: 0;
 }
 
-.code-block-wrapper pre code {
+.code-block-pre code {
   font-family: 'Consolas', 'Courier New', monospace;
+  display: block;
 }
 
 /* Code block collapse/expand */
-.code-block-wrapper pre.code-block-collapsed {
+.code-block-body.code-block-collapsed {
   max-height: 200px;
   overflow: hidden;
   transition: max-height 0.2s ease;
 }
 
-.code-block-wrapper pre.code-block-expanded {
+.code-block-body.code-block-expanded {
   max-height: none;
   transition: max-height 0.2s ease;
 }
@@ -587,6 +617,327 @@
   background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: thinking-shimmer 1.5s linear infinite;
+}
+
+/* 输入徽章 */
+.tool-card-input-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+/* 结果摘要（折叠时在 header 中显示） */
+.tool-card-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* header 右侧 */
+.tool-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 计时器 */
+.tool-card-timer {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态圆点 */
+.tool-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tool-status-dot-running {
+  background: var(--tool-running);
+  animation: tool-status-pulse 1.5s ease-in-out infinite;
+}
+
+.tool-status-dot-completed {
+  background: var(--tool-completed);
+}
+
+.tool-status-dot-error {
+  background: var(--tool-error);
+}
+
+@keyframes tool-status-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* 展开/折叠箭头 */
+.tool-card-toggle {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.tool-card-toggle.expanded {
+  transform: rotate(90deg);
+}
+
+/* 进度提示 */
+.tool-card-progress {
+  padding: 2px 4px 2px 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* 工具卡片展开/折叠 body — CSS max-height 动画 */
+.tool-card-body {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+
+.tool-card-body.expanded {
+  max-height: 600px;
+  opacity: 1;
+}
+
+/* 工具卡片详情 */
+.tool-card-details {
+  padding: 2px 4px 6px 24px;
+}
+
+.tool-card-section {
+  margin-top: 4px;
+}
+
+.tool-card-section-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+
+.tool-card-section-content {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Consolas', 'Courier New', monospace;
+  line-height: 1.5;
+}
+
+.tool-card-section-content.truncated {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 展开更多按钮 */
+.tool-card-show-more {
+  display: block;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  margin-top: 2px;
+}
+
+.tool-card-show-more:hover {
+  text-decoration: underline;
+}
+
+/* WebSearch 结果样式 */
+.tool-card-web-result {
+  padding: 2px 0;
+}
+
+.tool-card-web-url {
+  display: block;
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.tool-card-web-url:hover {
+  text-decoration: underline;
+}
+
+.tool-card-web-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+/* WebFetch 样式 */
+.tool-card-web-source {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.tool-card-web-source a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.tool-card-web-source a:hover {
+  text-decoration: underline;
+}
+
+.tool-card-web-content {
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-height: 80px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-card-web-content.expanded {
+  max-height: none;
+}
+
+/* ============================================================
+   Tool Call Group — 工具调用分组
+   ============================================================ */
+
+.tool-call-group {
+  margin-top: 2px;
+}
+
+/* 分组左侧竖线轨道 */
+.tool-call-group-rail {
+  display: flex;
+  position: relative;
+}
+
+.tool-call-group-line {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.2s;
+}
+
+.tool-call-group-line.done {
+  background: var(--tool-completed);
+  opacity: 0.5;
+}
+
+.tool-call-group-tools {
+  flex: 1;
+  margin-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 工具列表入场动画 */
+.tool-call-group-tools-enter .tool-card {
+  animation: tool-card-slide-in 150ms ease-out;
+}
+
+@keyframes tool-card-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Workflow Header — 工具数 >= 3 时的摘要行 */
+.tool-workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+  margin-bottom: 2px;
+}
+
+.tool-workflow-header:hover {
+  background: var(--hover-bg);
+}
+
+.tool-workflow-toggle {
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.tool-workflow-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-workflow-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--text-secondary) 0%,
+    var(--accent) 50%,
+    var(--text-secondary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-shimmer 1.5s linear infinite;
+}
+
+.tool-workflow-status {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+/* Workflow spinner — 旋转动画 */
+.tool-workflow-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tool-workflow-spin 0.8s linear infinite;
+}
+
+@keyframes tool-workflow-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ============================================================
@@ -842,25 +1193,25 @@
    Highlight.js 主题覆盖（暗色主题）
    ============================================================ */
 
-.code-block-wrapper pre code .hljs-keyword { color: #c678dd; }
-.code-block-wrapper pre code .hljs-string { color: #98c379; }
-.code-block-wrapper pre code .hljs-number { color: #d19a66; }
-.code-block-wrapper pre code .hljs-comment { color: #5c6370; font-style: italic; }
-.code-block-wrapper pre code .hljs-function { color: #61afef; }
-.code-block-wrapper pre code .hljs-title { color: #61afef; }
-.code-block-wrapper pre code .hljs-built_in { color: #e6c07b; }
-.code-block-wrapper pre code .hljs-type { color: #e6c07b; }
-.code-block-wrapper pre code .hljs-attr { color: #d19a66; }
-.code-block-wrapper pre code .hljs-variable { color: #e06c75; }
-.code-block-wrapper pre code .hljs-literal { color: #56b6c2; }
-.code-block-wrapper pre code .hljs-meta { color: #61afef; }
-.code-block-wrapper pre code .hljs-selector-class { color: #e06c75; }
-.code-block-wrapper pre code .hljs-selector-tag { color: #e06c75; }
-.code-block-wrapper pre code .hljs-selector-id { color: #61afef; }
-.code-block-wrapper pre code .hljs-params { color: #abb2bf; }
-.code-block-wrapper pre code .hljs-symbol { color: #56b6c2; }
-.code-block-wrapper pre code .hljs-bullet { color: #56b6c2; }
-.code-block-wrapper pre code .hljs-link { color: #61afef; text-decoration: underline; }
+.code-block-pre code .hljs-keyword { color: #c678dd; }
+.code-block-pre code .hljs-string { color: #98c379; }
+.code-block-pre code .hljs-number { color: #d19a66; }
+.code-block-pre code .hljs-comment { color: #5c6370; font-style: italic; }
+.code-block-pre code .hljs-function { color: #61afef; }
+.code-block-pre code .hljs-title { color: #61afef; }
+.code-block-pre code .hljs-built_in { color: #e6c07b; }
+.code-block-pre code .hljs-type { color: #e6c07b; }
+.code-block-pre code .hljs-attr { color: #d19a66; }
+.code-block-pre code .hljs-variable { color: #e06c75; }
+.code-block-pre code .hljs-literal { color: #56b6c2; }
+.code-block-pre code .hljs-meta { color: #61afef; }
+.code-block-pre code .hljs-selector-class { color: #e06c75; }
+.code-block-pre code .hljs-selector-tag { color: #e06c75; }
+.code-block-pre code .hljs-selector-id { color: #61afef; }
+.code-block-pre code .hljs-params { color: #abb2bf; }
+.code-block-pre code .hljs-symbol { color: #56b6c2; }
+.code-block-pre code .hljs-bullet { color: #56b6c2; }
+.code-block-pre code .hljs-link { color: #61afef; text-decoration: underline; }
 
 /* ============================================================
    Session List — 会话列表样式

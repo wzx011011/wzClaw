@@ -1,10 +1,10 @@
 // ============================================================
-// CodeBlock — 语法高亮代码块 + 复制按钮
+// CodeBlock — 语法高亮代码块 + 复制按钮 + 行号
 // 从桌面端提取，移除 Apply 按钮（web-ui 无 Monaco 编辑器）
 // 使用 highlight.js 做轻量级语法高亮
 // ============================================================
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import hljs from 'highlight.js/lib/core'
 
 // 按需注册常用语言（减小包体积）
@@ -63,6 +63,7 @@ interface CodeBlockProps {
 /**
  * CodeBlock — 带语法高亮的代码块
  * - 高亮使用 highlight.js（按需注册语言）
+ * - 行号显示（左侧）
  * - 折叠长代码（> 15 行）
  * - 复制按钮
  */
@@ -73,6 +74,11 @@ export default function CodeBlock({ code, language }: CodeBlockProps): React.Rea
 
   const lineCount = (code.match(/\n/g) || []).length + 1
   const isLong = lineCount > 15
+
+  // 计算行号数组
+  const lineNumbers = useMemo(() => {
+    return Array.from({ length: lineCount }, (_, i) => i + 1)
+  }, [lineCount])
 
   // 使用 highlight.js 进行语法高亮
   useEffect(() => {
@@ -112,11 +118,20 @@ export default function CodeBlock({ code, language }: CodeBlockProps): React.Rea
           </button>
         </div>
       </div>
-      <pre className={isLong ? (collapsed ? 'code-block-collapsed' : 'code-block-expanded') : ''}>
-        <code ref={codeRef} className={language ? `language-${language}` : ''}>
-          {code}
-        </code>
-      </pre>
+      <div className={`code-block-body${isLong ? (collapsed ? ' code-block-collapsed' : ' code-block-expanded') : ''}`}>
+        {/* 行号列 */}
+        <div className="code-block-linenumbers" aria-hidden="true">
+          {lineNumbers.map((n) => (
+            <span key={n}>{n}</span>
+          ))}
+        </div>
+        {/* 代码内容 */}
+        <pre className="code-block-pre">
+          <code ref={codeRef} className={language ? `language-${language}` : ''}>
+            {code}
+          </code>
+        </pre>
+      </div>
       {isLong && (
         <button className="code-block-toggle" onClick={() => setCollapsed(!collapsed)}>
           {collapsed ? `展开全部 (${lineCount} 行)` : '收起'}

@@ -8,6 +8,7 @@ import React, { lazy, Suspense } from 'react'
 import type { ChatMessage as ChatMessageType } from '../../stores/streaming-batcher'
 import CodeBlock from './CodeBlock'
 import ThinkingIndicator from './ThinkingIndicator'
+import ToolCallGroup from './ToolCallGroup'
 
 // 懒加载 react-markdown — 仅在非流式渲染时需要
 const ReactMarkdown = lazy(() => import('react-markdown'))
@@ -160,23 +161,10 @@ function ChatMessage({ message }: ChatMessageProps): React.ReactElement {
         </div>
       )}
 
-      {/* 工具调用 — 占位显示工具名（完整 ToolCallGroup 留给 Plan 04d） */}
+      {/* 工具调用 — 使用 ToolCallGroup 分组渲染 */}
       {toolCalls && toolCalls.length > 0 && (
         <div className="chat-message-tools">
-          {toolCalls.map((tc) => (
-            <div key={tc.id} className="tool-card">
-              <div className="tool-card-header">
-                <div className="tool-card-header-left">
-                  <span className="tool-card-icon">
-                    {tc.status === 'running' ? '⟳' : tc.status === 'error' ? '✕' : '✓'}
-                  </span>
-                  <span className={`tool-card-verb${tc.status === 'running' ? ' tool-card-verb-running' : ''}`}>
-                    {tc.name}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+          <ToolCallGroup toolCalls={toolCalls} />
         </div>
       )}
 
