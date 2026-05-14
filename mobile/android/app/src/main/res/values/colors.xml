@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- wzxClaw 暗色主题色值 -->
+<resources>
+    <color name="colorPrimary">#1e1e1e</color>
+    <color name="colorPrimaryDark">#1e1e1e</color>
+    <color name="colorAccent">#4a9eff</color>
+</resources>

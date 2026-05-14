@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">wzxClaw</string>
+    <string name="title_activity_main">wzxClaw</string>
+    <string name="package_name">com.wzxclaw.mobile</string>
+    <string name="custom_url_scheme">com.wzxclaw.mobile</string>
+</resources>

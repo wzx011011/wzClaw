@@ -1,0 +1,25 @@
+{
+  "name": "@wzxclaw/mobile",
+  "version": "0.1.0",
+  "description": "wzxClaw 移动端 Capacitor 壳 — 包装 web-ui SPA 为原生 Android 应用",
+  "type": "module",
+  "scripts": {
+    "build:web": "cd ../packages/web-ui && npm run build",
+    "sync": "npx cap sync android",
+    "build:apk": "node scripts/build.js",
+    "open:android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/keyboard": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0",
+    "typescript": "^6.0.3"
+  },
+  "license": "UNLICENSED"
+}
