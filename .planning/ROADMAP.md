@@ -93,12 +93,12 @@ Plans:
 - **Goal**: Capacitor 壳 web-ui 替代 Flutter，直连 NAS Brain
 - **Depends on**: Phase 4
 - **Deliverable**: `mobile/` Capacitor 项目，APK 体验接近原生
-- **Plans:** 2/3 complete
+- **Plans:** 3/4 complete (awaiting human verification)
 
 Plans:
 - [x] 06-01-PLAN.md — Capacitor 项目脚手架 + web-ui 移动端响应式 CSS + Android 项目初始化
 - [x] 06-02-PLAN.md — 原生资源（图标/启动画面/状态栏）+ APK 构建链路验证
-- [ ] 06-03-PLAN.md — 移动端触摸优化 + 人工真机验收
+- [x] 06-03-PLAN.md — 移动端触摸优化 + 人工真机验收 (1/2 tasks automated, awaiting human verify)
 
 ## Phase 7: Docker Hand — NAS 本地沙箱
 
