@@ -59,14 +59,14 @@ Plans:
 
 ## Phase 4: 共享 Web UI — React SPA
 
-- **Status**: planned
+- **Status**: in-progress
 - **Goal**: 从桌面端 Renderer 提取共享 UI 层，支持 Electron 和 WebSocket 双数据源
 - **Depends on**: Phase 2
 - **Deliverable**: `packages/web-ui/` 可独立 dev server 运行，连接 NAS Brain 聊天正常
-- **Plans:** 5 plans
+- **Plans:** 1/5 complete
 
 Plans:
-- [ ] 04a-PLAN.md — 包脚手架 + DataSource 抽象接口 + WebSocket 客户端 + IPC 桥接
+- [x] 04a-PLAN.md — 包脚手架 + DataSource 抽象接口 + WebSocket 客户端 + IPC 桥接
 - [ ] 04b-PLAN.md — Chat store 提取重构 + 核心聊天 UI（MessageList/ChatMessage/ChatPanel）
 - [ ] 04c-PLAN.md — 会话管理 UI（SessionList CRUD）+ 设置面板 + 连接配置
 - [ ] 04d-PLAN.md — 工具调用可视化（ToolCard/ToolCallGroup）+ 代码块渲染（CodeBlock）
