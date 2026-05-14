@@ -1,0 +1,126 @@
+/* ============================================================
+   移动端响应式样式
+   断点: 768px（标准 tablet/mobile 分界）
+   用于 Capacitor WebView 和手机浏览器
+   ============================================================ */
+
+/* ---- 移动端基础布局调整 ---- */
+@media (max-width: 768px) {
+  /* 侧边栏在移动端默认隐藏，由 JS 控制覆盖层显示 */
+  .session-list {
+    display: none;
+  }
+
+  /* 用户气泡在窄屏下更宽 */
+  .chat-message-user {
+    max-width: 90%;
+  }
+
+  /* 输入框字体 16px 防止 iOS 自动缩放 */
+  .chat-input {
+    font-size: 16px;
+  }
+
+  /* 代码块字体略小 */
+  .code-block-pre {
+    font-size: 11px;
+  }
+
+  /* 工具输入徽章更窄 */
+  .tool-card-input-badge {
+    max-width: 120px;
+  }
+
+  /* 导航栏更紧凑 */
+  nav {
+    padding: 0 var(--sp-2);
+  }
+
+  /* 按钮触摸区域更大 */
+  nav button {
+    padding: 8px;
+  }
+
+  /* 发送和停止按钮更大，方便触摸 */
+  .chat-send-btn,
+  .chat-stop-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* 底部工具栏更紧凑 */
+  .chat-input-toolbar {
+    padding: 8px 8px;
+  }
+
+  /* 会话搜索框更大触摸区域 */
+  .session-search input {
+    font-size: 14px;
+  }
+}
+
+/* ---- 移动端侧边栏覆盖层 ---- */
+@media (max-width: 768px) {
+  /* 背景遮罩 */
+  .mobile-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    animation: mobile-overlay-fade-in 150ms ease-out;
+  }
+
+  /* 侧边栏面板 — 从左侧滑出 */
+  .mobile-sidebar-panel {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 101;
+    background: var(--bg-primary);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    animation: mobile-sidebar-slide-in 200ms ease-out;
+    overflow-y: auto;
+  }
+
+  /* 面板内的 session-list 不再隐藏 */
+  .mobile-sidebar-panel .session-list {
+    display: flex;
+    max-width: 100%;
+    min-width: unset;
+    border-right: none;
+  }
+}
+
+@keyframes mobile-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes mobile-sidebar-slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* ---- 安全区域适配（Capacitor 全屏 / iPhone X+ 刘海） ---- */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .chat-input-area-wrapper {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  nav {
+    padding-top: env(safe-area-inset-top);
+  }
+}

@@ -4,6 +4,8 @@
 
 /* CSS 变量必须在最前面加载 */
 @import './variables.css';
+/* 移动端响应式样式 */
+@import './mobile.css';
 
 /* ---- 全局重置 ---- */
 *,

@@ -10,7 +10,7 @@
 //
 // 响应式布局：
 // - 桌面端：侧边栏 + 聊天面板
-// - 移动端：全屏聊天 + 底部导航（通过 CSS media query）
+// - 移动端（<=768px）：全屏聊天 + 侧边栏覆盖层（JS 控制）
 // ============================================================
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -31,6 +31,11 @@ import './styles/settings.css'
 /** App 视图状态 */
 type AppView = 'chat' | 'settings'
 
+/** 检测移动端视口（<=768px） */
+function isMobileViewport(): boolean {
+  return window.innerWidth <= 768
+}
+
 /**
  * AppInner — 应用内部组件
  *
@@ -44,9 +49,21 @@ function AppInner(): React.ReactElement {
   const { config } = useConnectionConfig()
 
   const [view, setView] = useState<AppView>('chat')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // 移动端默认折叠侧边栏
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isMobileViewport())
   const [store, setStore] = useState<StoreApi<ChatStore> | null>(null)
   const unsubRef = useRef<(() => void) | null>(null)
+
+  // 监听视口变化，移动端自动折叠侧边栏
+  useEffect(() => {
+    const handleResize = () => {
+      if (isMobileViewport()) {
+        setSidebarCollapsed(true)
+      }
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   // 当 DataSource 变化时，创建新的 chat store
   useEffect(() => {
@@ -102,6 +119,9 @@ function AppInner(): React.ReactElement {
       </div>
     )
   }
+
+  // 是否处于移动端视口
+  const isMobile = isMobileViewport()
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -205,8 +225,45 @@ function AppInner(): React.ReactElement {
 
           {/* 主体区域 */}
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-            {/* 左侧：会话列表（可折叠） */}
-            {!sidebarCollapsed && (
+            {/* 移动端侧边栏 — 覆盖层模式 */}
+            {isMobile && !sidebarCollapsed && (
+              <>
+                {/* 背景遮罩 — 点击关闭 */}
+                <div
+                  className="mobile-sidebar-overlay"
+                  onClick={() => setSidebarCollapsed(true)}
+                />
+                {/* 侧边栏面板 */}
+                <div className="mobile-sidebar-panel">
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                    <SessionList store={store} />
+                  </div>
+                  {/* 底部：新建会话按钮 */}
+                  <div style={{
+                    display: 'flex',
+                    gap: 'var(--sp-2)',
+                    padding: 'var(--sp-2) var(--sp-3)',
+                    borderTop: '1px solid var(--border-subtle)',
+                    flexShrink: 0,
+                  }}>
+                    <button
+                      className="session-confirm-btn"
+                      style={{ flex: 1, fontSize: 'var(--font-size-xs)', padding: '6px' }}
+                      onClick={() => {
+                        store.getState().createSession()
+                        setSidebarCollapsed(true)
+                      }}
+                      title={t('chat.newSession')}
+                    >
+                      {t('session.newSession')}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* 桌面端侧边栏 — 内嵌模式 */}
+            {!isMobile && !sidebarCollapsed && (
               <div style={{
                 width: 'var(--sidebar-width)',
                 flexShrink: 0,
