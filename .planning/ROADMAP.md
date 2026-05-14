@@ -30,18 +30,19 @@ Plans:
 - [x] 01c-PLAN.md — AgentLoop/TurnManager/StreamPhase 核心解耦（移除 Electron 依赖）
 - [x] 01d-PLAN.md — 桌面端适配器桥接 + 功能验证（人工验证推迟）
 
-## Phase 2: Agent 服务器 — NAS 部署
+## Phase 2: Agent 服务器 — NAS 部署 ✓
 
-- **Status**: planned
+- **Status**: complete
 - **Goal**: Brain 包作为 WebSocket 服务器部署到 NAS Docker，支持客户端和 Hand 双通道连接
 - **Depends on**: Phase 1
 - **Deliverable**: `packages/agent-server/` Docker 部署，`wss://5945.top/agent/` 可用
-- **Plans:** 3 plans
+- **Completed**: 2026-05-14
+- **Plans:** 3/3 complete
 
 Plans:
 - [x] 02a-PLAN.md — 包脚手架 + Token 认证 + SQLite SessionStore
-- [ ] 02b-PLAN.md — HandsRouter + HandAwareToolExecutor（Hand 路由 + 工具执行）
-- [ ] 02c-PLAN.md — ClientHandler + 服务器入口 + Docker + nginx
+- [x] 02b-PLAN.md — HandsRouter + HandAwareToolExecutor（Hand 路由 + 工具执行）
+- [x] 02c-PLAN.md — ClientHandler + 服务器入口 + Docker + nginx
 
 ## Phase 3: Hand 服务 — 独立 npm 包
 
@@ -49,6 +50,11 @@ Plans:
 - **Goal**: `wzxclaw-hand` 独立包，任何机器一行命令注册为 Brain 的 Hand
 - **Depends on**: Phase 2
 - **Deliverable**: `packages/hand/`，`npx wzxclaw-hand` 可连接 Brain 并执行工具
+- **Plans:** 2 plans
+
+Plans:
+- [ ] 03a-PLAN.md — 包脚手架 + 协议层 + WebSocket 连接管理（注册/心跳/重连）
+- [ ] 03b-PLAN.md — 工具执行框架 + CLI 入口 + npx 支持
 
 ## Phase 4: 共享 Web UI — React SPA
 
