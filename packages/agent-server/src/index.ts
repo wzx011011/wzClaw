@@ -14,5 +14,9 @@ export type {
   ServerConfig,
 } from './types.js'
 
+// Hand 路由
+export { HandsRouter } from './hands-router.js'
+export type { HandEntry, ToolDefinition } from './hands-router.js'
+
 // Session 存储
 export { SessionStoreSqlite } from './session-sqlite.js'
