@@ -59,6 +59,7 @@ import { NotificationService } from './notification/notification-service'
 import { AgentTool } from './tools/agent-tool'
 import { PermissionManager } from './permission/permission-manager'
 import { createDesktopAgentLoop } from './brain-bridge'
+import { HandBridge } from './hand-bridge'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import { SessionTaskStateManager, isActiveSessionTaskStatus } from './agent/session-task-state-manager'
 import type { AgentConfig } from './agent/types'
@@ -116,6 +117,9 @@ let indexingEngine: IndexingEngine | null = null
 
 // Module-level PermissionManager (needed in before-quit handler)
 let permissionManager: PermissionManager | null = null
+
+// Module-level HandBridge reference (needed in before-quit handler)
+let handBridge: HandBridge | null = null
 
 // Persistent settings for embedding API configuration
 const settingsManager = new SettingsManager()
@@ -340,6 +344,11 @@ app.whenReady().then(async () => {
   permissionManager.loadAlwaysAllowRules(settingsManager.getAlwaysAllowRules())
   const contextManager = new ContextManager()
 
+  // HandBridge — 桌面端注册为 NAS Agent Server 的 Hand（远程模式）
+  // 始终创建实例，NAS 不可用时静默重连；DesktopAgentLoop 作为本地回退
+  handBridge = new HandBridge({ toolRegistry, settingsManager, workingDirectory })
+  logStartup('HandBridge instantiated')
+
   // Plan mode controller — shared between tools and IPC handler
   const planModeController = new PlanModeController()
 
@@ -459,6 +468,16 @@ app.whenReady().then(async () => {
     settingsManager.setRelayToken('')
   })
 
+  // Forward HandBridge status changes to renderer
+  handBridge.onStatusChange((status) => {
+    for (const bw of BrowserWindow.getAllWindows()) {
+      bw.webContents.send(IPC_CHANNELS['hand:status'], {
+        status: String(status),
+        handId: handBridge!.getHandId(),
+      })
+    }
+  })
+
   // Session store reference — assigned after creation below, but captured by closure
   let sessionStore: SessionStore
 
@@ -542,7 +561,7 @@ app.whenReady().then(async () => {
     gateway, agentLoop, runtimes, permissionManager, workspaceManager, getActiveSessionStore,
     storeManager,
     contextManager, terminalManager, stepManager, indexingEngine, settingsManager,
-    mcpManager, workspaceStore,
+    mcpManager, workspaceStore, handBridge,
     (rootPath) => {
       handleWorkspaceOpened(rootPath, toolRegistry)
       // Persist last workspace path
@@ -637,6 +656,13 @@ app.whenReady().then(async () => {
       )
       logStartup('MCP loadAndConnect dispatched (deferred)')
     }, 300)
+
+    // HandBridge 连接延迟到 renderer 加载后 — 尝试连接 NAS Agent Server
+    // 与 MCP 同样延迟 300ms，NAS 不可用时静默失败（不影响本地模式）
+    setTimeout(() => {
+      handBridge.connect()
+      logStartup('HandBridge connect dispatched (deferred)')
+    }, 300)
   })
 
   app.on('activate', function () {
@@ -662,6 +688,8 @@ app.on('before-quit', () => {
     indexingEngine.dispose()
     indexingEngine = null
   }
+  // 断开 HandBridge 连接（NAS Hand 注册清理）
+  handBridge?.disconnect()
   terminalManager.dispose()
   workspaceManager.dispose()
   // 断开所有 SSH 连接

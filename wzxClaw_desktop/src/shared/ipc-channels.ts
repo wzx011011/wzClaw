@@ -139,6 +139,12 @@ export const IPC_CHANNELS = {
   'relay:get_status': 'relay:get_status',
   'relay:qrcode': 'relay:qrcode',
 
+  // Hand channels (main -> renderer push for status, renderer -> main for control)
+  'hand:status': 'hand:status',
+  'hand:get_status': 'hand:get_status',
+  'hand:reconnect': 'hand:reconnect',
+  'hand:disconnect': 'hand:disconnect',
+
   // AskUserQuestion channels (main -> renderer push, renderer -> main invoke)
   'ask-user:question': 'ask-user:question',
   'ask-user:answer': 'ask-user:answer',
@@ -312,6 +318,10 @@ export interface IpcRequestPayloads {
   'relay:disconnect': void
   'relay:get_status': void
   'relay:qrcode': { token?: string }
+  // Hand channels
+  'hand:get_status': void
+  'hand:reconnect': void
+  'hand:disconnect': void
   'ask-user:answer': { questionId: string; selectedLabels: string[]; customText?: string }
   'workspace:list': { includeArchived?: boolean }
   'workspace:get': { workspaceId: string }
@@ -440,6 +450,10 @@ export interface IpcResponsePayloads {
   'relay:disconnect': void
   'relay:get_status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
   'relay:qrcode': { qrCode: string }
+  // Hand channel responses
+  'hand:get_status': { status: string; handId: string }
+  'hand:reconnect': void
+  'hand:disconnect': void
   'ask-user:answer': void
   'workspace:list': Workspace[]
   'workspace:get': Workspace | null
@@ -527,6 +541,8 @@ export interface IpcStreamPayloads {
   'browser:screenshot': { url: string; base64: string; timestamp: number }
   'browser:status': { running: boolean; url: string | null }
   'relay:status': { connected: boolean; connecting: boolean; reconnectAttempt: number; mobileConnected: boolean; mobileIdentity: string | null }
+  // Hand status stream (main -> renderer push)
+  'hand:status': { status: string; handId: string }
   'ask-user:question': { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
   'usage:update': { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }
   'todo:updated': { todos: Array<{ content: string; status: string; activeForm: string }>; sessionId?: string }

@@ -215,6 +215,13 @@ export class HandBridge {
   }
 
   /**
+   * 获取 Hand 唯一标识符
+   */
+  getHandId(): string {
+    return this.handId
+  }
+
+  /**
    * 注册状态变化监听器
    */
   onStatusChange(listener: (status: HandStatus) => void): void {

@@ -286,6 +286,17 @@ const api = {
   getRelayStatus: () =>
     ipcRenderer.invoke('relay:get_status'),
 
+  // Hand — NAS Hand Bridge status and control
+  onHandStatus: (callback: (payload: { status: string; handId: string }) => void) => {
+    const handler = (_: unknown, payload: { status: string; handId: string }) => callback(payload)
+    ipcRenderer.on('hand:status', handler)
+    return () => ipcRenderer.removeListener('hand:status', handler)
+  },
+  getHandStatus: (): Promise<{ status: string; handId: string }> =>
+    ipcRenderer.invoke('hand:get_status'),
+  reconnectHand: () => ipcRenderer.invoke('hand:reconnect'),
+  disconnectHand: () => ipcRenderer.invoke('hand:disconnect'),
+
   // Mobile user message (relay/mobile -> renderer)
   onMobileUserMessage: (callback: (payload: { content: string; source: 'mobile' }) => void) => {
     const handler = (_: unknown, payload: { content: string; source: 'mobile' }) => callback(payload)

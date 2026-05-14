@@ -22,6 +22,7 @@ import type { IndexingEngine } from './indexing/indexing-engine'
 import { getGitStatusShort } from './git/git-context'
 import type { MCPManager } from './mcp/mcp-manager'
 import type { WorkspaceStore } from './tasks/workspace-store'
+import type { HandBridge } from './hand-bridge'
 
 // Extracted handler groups
 import { registerSessionIpcHandlers } from './ipc-handlers/session-ipc-handlers'
@@ -45,6 +46,7 @@ export function registerIpcHandlers(
   settingsManager: SettingsManager,
   mcpManager: MCPManager,
   workspaceStore: WorkspaceStore,
+  handBridge: HandBridge,
   onWorkspaceOpened?: (rootPath: string) => void,
   onDataChanged?: (event: string, data: unknown) => void,
   onStreamEvent?: (event: string, data: unknown) => void
@@ -842,5 +844,29 @@ export function registerIpcHandlers(
       model: settingsManager.getSettings().model,
     })
     return Doctor.formatResults(checks)
+  })
+
+  // ============================================================
+  // Hand: get_status — 返回 HandBridge 当前连接状态
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['hand:get_status'], () => {
+    return {
+      status: String(handBridge.getStatus()),
+      handId: handBridge.getHandId(),
+    }
+  })
+
+  // ============================================================
+  // Hand: reconnect — 手动触发 HandBridge 重连（设置保存后调用）
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['hand:reconnect'], () => {
+    handBridge.reconnect()
+  })
+
+  // ============================================================
+  // Hand: disconnect — 手动断开 Hand 连接
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['hand:disconnect'], () => {
+    handBridge.disconnect()
   })
 }

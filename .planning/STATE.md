@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: Brain-Hands-Session 全架构迁移
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-14T12:57:20.000Z"
+last_updated: "2026-05-14T13:28:00.000Z"
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 16
-  completed_plans: 16
+  completed_plans: 17
   percent: 100
 ---
 
@@ -16,7 +16,7 @@ progress:
 
 ## Current Phase
 
-Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 1/4 plans)
+Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 2/4 plans)
 
 ## Phase History
 
@@ -26,7 +26,7 @@ Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 1/4 plans)
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
 | 4 | complete (5/5 plans, 25 tests) | 2026-05-14 |
-| 5 | in-progress (1/4 plans) | 2026-05-14 |
+| 5 | in-progress (2/4 plans) | 2026-05-14 |
 | 6 | planned | - |
 | 7 | planned | - |
 
@@ -43,8 +43,9 @@ Phase 5: 桌面端改造 — Electron 壳 + Hand Bridge (in-progress, 1/4 plans)
 - D-01: electron-vite renderer.root 指向 packages/web-ui（无 symlink）
 - D-02: 新增 session:create IPC channel（不重用 session:ensure）
 - D-03: 未修改 web-ui IpcDataSource（chat-store fallback 处理 createSession throw）
+- D-04: HandBridge 自管 WebSocket 生命周期（不使用 HandConnection，因其 handleOpen 发送空注册）
 
 ## Last Session
 
-- **Stopped at**: Completed 05-01-PLAN.md
+- **Stopped at**: Completed 05-02-PLAN.md
 - **Resume file**: None
