@@ -21,6 +21,13 @@ created: "2026-05-14"
 - **Status**: planned
 - **Goal**: AgentLoop + LLM Gateway + Context 成为独立 Node.js 包，脱离 Electron 依赖
 - **Deliverable**: `packages/brain/` 可在 Node.js 环境独立运行，桌面端通过适配器桥接保持功能正常
+- **Plans:** 4 plans
+
+Plans:
+- [ ] 01a-PLAN.md — 包脚手架 + 核心接口定义 + 纯逻辑模块
+- [ ] 01b-PLAN.md — LLM 层 + Context 管理层复制
+- [ ] 01c-PLAN.md — AgentLoop/TurnManager/StreamPhase 核心解耦（移除 Electron 依赖）
+- [ ] 01d-PLAN.md — 桌面端适配器桥接 + 功能验证
 
 ## Phase 2: Agent 服务器 — NAS 部署
 
