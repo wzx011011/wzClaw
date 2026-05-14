@@ -232,20 +232,4 @@
   background: var(--accent-hover);
 }
 
-/* ---- 亮色主题覆盖 ---- */
-
-[data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f5;
-  --bg-tertiary: #e8e8e8;
-  --bg-elevated: #f0f0f0;
-  --bg-input: #ffffff;
-  --text-primary: #1a1a1a;
-  --text-secondary: #555555;
-  --text-muted: #888888;
-  --text-disabled: #aaaaaa;
-  --border: #d0d0d0;
-  --border-subtle: #e0e0e0;
-  --hover-bg: rgba(0, 0, 0, 0.04);
-  --active-bg: rgba(74, 158, 255, 0.08);
-}
+/* 亮色主题覆盖已移到 variables.css（通过 global.css 导入） */

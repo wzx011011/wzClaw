@@ -2,67 +2,8 @@
    Chat Panel Styles — Dark Theme
    从桌面端 chat.css 提取聊天相关样式
    使用 CSS 变量支持主题切换
+   CSS 变量定义在 variables.css（通过 global.css 导入）
    ============================================================ */
-
-/* ---- CSS 变量定义（暗色主题默认值） ---- */
-:root {
-  /* 背景色 */
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #2d2d2d;
-  --bg-elevated: #323232;
-  --bg-input: #1e1e1e;
-
-  /* 文字色 */
-  --text-primary: #e0e0e0;
-  --text-secondary: #b0b0b0;
-  --text-muted: #808080;
-  --text-disabled: #666666;
-
-  /* 边框色 */
-  --border: #404040;
-  --border-subtle: #333333;
-
-  /* 交互色 */
-  --accent: #4a9eff;
-  --accent-hover: #5fb0ff;
-  --hover-bg: rgba(255, 255, 255, 0.06);
-  --active-bg: rgba(74, 158, 255, 0.1);
-
-  /* 气泡色 */
-  --user-bubble: #4a9eff;
-  --bubble-radius: 12px;
-  --bubble-radius-tail: 4px;
-
-  /* 工具状态色 */
-  --tool-completed: #89d185;
-  --tool-running: #dcb67a;
-  --tool-error: #f48771;
-
-  /* 错误色 */
-  --error: #f48771;
-
-  /* 间距 */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 24px;
-
-  /* 圆角 */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-
-  /* 字体 */
-  --font-size-xs: 11px;
-
-  /* 过渡 */
-  --transition-fast: 120ms ease;
-
-  /* 表格边框 */
-  --table-border: #404040;
-}
 
 /* ============================================================
    Chat Panel Container

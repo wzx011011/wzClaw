@@ -1,69 +1,92 @@
 // ============================================================
-// App 壳组件 — 组合 DataSource + SessionList + ChatPanel + SettingsPage
+// App 壳组件 — 应用主入口
+//
+// 组合：
+// - DataSourceProvider（包裹整个应用，提供 DataSource 实例）
+// - 顶部导航栏（logo + 连接状态 + 设置按钮）
+// - 左侧 SessionList（可折叠）
+// - 右侧 ChatPanel
+// - SettingsPage 作为覆盖层
+//
+// 响应式布局：
+// - 桌面端：侧边栏 + 聊天面板
+// - 移动端：全屏聊天 + 底部导航（通过 CSS media query）
 // ============================================================
 
-import { useState, useEffect, useRef } from 'react'
-import { createDataSource } from './data-source'
-import type { DataSource } from './data-source/types'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import type { StoreApi } from 'zustand'
 import { createChatStore } from './stores/chat-store'
+import type { ChatStore } from './stores/chat-store'
+import { DataSourceProvider, useDataSource, useConnectionState, useReconnect } from './providers/DataSourceProvider'
 import ChatPanel from './components/chat/ChatPanel'
 import SessionList from './components/chat/SessionList'
 import SettingsPage from './components/settings/SettingsPage'
+import { useI18nStore } from './i18n/i18n-store'
+import { useT } from './i18n/useT'
+import { useConnectionConfig } from './hooks/useConnectionConfig'
+import './styles/global.css'
 import './styles/chat.css'
 import './styles/settings.css'
 
 /** App 视图状态 */
 type AppView = 'chat' | 'settings'
 
-function App() {
-  const [connected, setConnected] = useState(false)
-  const [modelName, setModelName] = useState<string>('')
+/**
+ * AppInner — 应用内部组件
+ *
+ * 在 DataSourceProvider 内部渲染，可以使用 useDataSource 等 hook
+ */
+function AppInner(): React.ReactElement {
+  const t = useT()
+  const connected = useConnectionState()
+  const dataSource = useDataSource()
+  const reconnect = useReconnect()
+  const { config } = useConnectionConfig()
+
   const [view, setView] = useState<AppView>('chat')
-  const dataSourceRef = useRef<DataSource | null>(null)
-  const storeRef = useRef<ReturnType<typeof createChatStore> | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [store, setStore] = useState<StoreApi<ChatStore> | null>(null)
   const unsubRef = useRef<(() => void) | null>(null)
 
+  // 当 DataSource 变化时，创建新的 chat store
   useEffect(() => {
-    // 创建 DataSource 实例
-    const ds = createDataSource()
-    dataSourceRef.current = ds
+    if (!dataSource) return
 
-    // 创建 Chat store
-    const store = createChatStore(ds)
-    storeRef.current = store
+    // 清理旧 store
+    if (unsubRef.current) {
+      unsubRef.current()
+      unsubRef.current = null
+    }
 
-    // 订阅连接状态
-    const unsubConn = ds.onConnectionChange((isConnected) => {
-      setConnected(isConnected)
-    })
+    // 创建新 store
+    const newStore = createChatStore(dataSource)
+    setStore(newStore)
 
     // 初始化 store（订阅 stream 事件）
-    const unsubInit = store.getState().init()
-    unsubRef.current = () => {
-      unsubInit()
-      unsubConn()
-    }
+    const unsub = newStore.getState().init()
+    unsubRef.current = unsub
 
-    // 尝试连接（WebSocket 模式会自动连接，IPC 模式直接 resolve）
-    ds.connect().then(() => {
-      setConnected(true)
-      // 获取设置中的模型名称
-      ds.getSettings().then((settings) => {
-        if (settings.model) {
-          setModelName(settings.model)
-        }
-      }).catch(() => {})
-    }).catch(() => {
-      // 连接失败，状态已通过 onConnectionChange 更新
-    })
+    // 加载会话列表
+    newStore.getState().loadSessionList()
 
     return () => {
-      unsubRef.current?.()
-      ds.disconnect()
+      unsub()
     }
-  }, [])
+  }, [dataSource])
 
-  if (!storeRef.current) {
+  // 连接状态指示器样式
+  const statusColor = connected ? '#4caf50' : '#f44336'
+  const statusText = connected ? t('chat.connected') : t('chat.disconnected')
+
+  // 处理设置保存后重连
+  const handleSettingsSaved = useCallback(() => {
+    setView('chat')
+    // 如果 URL 或 token 变了，触发重连
+    reconnect(config.agentUrl, config.token || undefined)
+  }, [reconnect, config.agentUrl, config.token])
+
+  // 加载中状态
+  if (!store || !dataSource) {
     return (
       <div style={{
         display: 'flex',
@@ -72,47 +95,105 @@ function App() {
         height: '100vh',
         background: 'var(--bg-primary)',
         color: 'var(--text-secondary)',
+        gap: '8px',
       }}>
-        加载中...
+        <span className="thinking-dot" />
+        <span>{t('common.loading')}</span>
       </div>
     )
   }
-
-  const store = storeRef.current
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {view === 'settings' ? (
         <SettingsPage
-          onClose={() => setView('chat')}
-          onConnectionChange={(c) => setConnected(c)}
+          onClose={handleSettingsSaved}
+          onConnectionChange={() => {}}
         />
       ) : (
-        <div style={{ display: 'flex', height: '100%' }}>
-          {/* 左侧：会话列表 */}
-          <div style={{ width: '260px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <SessionList store={store} />
-            {/* 底部：新建会话 + 设置按钮 */}
-            <div style={{
-              display: 'flex',
-              gap: '8px',
-              padding: '8px 12px',
-              borderTop: '1px solid var(--border-subtle)',
-              flexShrink: 0,
-            }}>
+        <>
+          {/* 顶部导航栏 */}
+          <nav style={{
+            height: 'var(--navbar-height)',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 var(--sp-3)',
+            background: 'var(--bg-primary)',
+            borderBottom: '1px solid var(--border)',
+          }}>
+            {/* 左侧：logo + 侧边栏切换 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <button
-                className="session-confirm-btn"
-                style={{ flex: 1, fontSize: '12px', padding: '6px' }}
-                onClick={() => store.getState().createSession()}
-                title="新建会话"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                title={t('nav.toggleSidebar')}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  transition: 'color var(--transition-fast)',
+                }}
               >
-                + 新建会话
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
               </button>
+              <span style={{
+                fontSize: 'var(--font-size-md)',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                letterSpacing: '0.02em',
+              }}>
+                {t('chat.title')}
+              </span>
+            </div>
+
+            {/* 右侧：连接状态 + 设置按钮 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* 连接状态指示灯 */}
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: 'var(--font-size-xs)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <span style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  backgroundColor: statusColor,
+                  display: 'inline-block',
+                  transition: 'background-color var(--transition-fast)',
+                }} />
+                {statusText}
+              </span>
+
+              {/* 设置齿轮按钮 */}
               <button
-                className="session-confirm-btn"
-                style={{ padding: '6px 10px' }}
                 onClick={() => setView('settings')}
-                title="设置"
+                title={t('nav.settings')}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  transition: 'color var(--transition-fast)',
+                }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="3" />
@@ -120,19 +201,80 @@ function App() {
                 </svg>
               </button>
             </div>
-          </div>
+          </nav>
 
-          {/* 右侧：聊天面板 */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <ChatPanel
-              store={store}
-              connected={connected}
-              modelName={modelName}
-            />
+          {/* 主体区域 */}
+          <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+            {/* 左侧：会话列表（可折叠） */}
+            {!sidebarCollapsed && (
+              <div style={{
+                width: 'var(--sidebar-width)',
+                flexShrink: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                borderRight: '1px solid var(--border)',
+              }}>
+                <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  <SessionList store={store} />
+                </div>
+                {/* 底部：新建会话按钮 */}
+                <div style={{
+                  display: 'flex',
+                  gap: 'var(--sp-2)',
+                  padding: 'var(--sp-2) var(--sp-3)',
+                  borderTop: '1px solid var(--border-subtle)',
+                  flexShrink: 0,
+                }}>
+                  <button
+                    className="session-confirm-btn"
+                    style={{ flex: 1, fontSize: 'var(--font-size-xs)', padding: '6px' }}
+                    onClick={() => store.getState().createSession()}
+                    title={t('chat.newSession')}
+                  >
+                    {t('session.newSession')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 右侧：聊天面板 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ChatPanel
+                store={store}
+                connected={connected}
+              />
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
+  )
+}
+
+/**
+ * App — 根组件
+ *
+ * 职责：
+ * 1. 初始化 i18n
+ * 2. DataSourceProvider 包裹整个应用
+ * 3. 渲染 AppInner
+ */
+function App(): React.ReactElement {
+  // 初始化 i18n（从 localStorage 恢复语言设置）
+  const initLocale = useI18nStore((s) => s.initLocale)
+  const { config } = useConnectionConfig()
+
+  useEffect(() => {
+    initLocale(config.language)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <DataSourceProvider
+      initialUrl={config.agentUrl}
+      initialToken={config.token || undefined}
+    >
+      <AppInner />
+    </DataSourceProvider>
   )
 }
 
