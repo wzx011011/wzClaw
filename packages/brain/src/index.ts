@@ -201,3 +201,29 @@ export {
 } from './context/compact-file-restore.js'
 
 export type { RestoredFile } from './context/compact-file-restore.js'
+
+export {
+  loadInstructions,
+} from './context/instruction-loader.js'
+
+export type { InstructionSections } from './context/instruction-loader.js'
+
+// Hook 模块
+export { HookRegistry } from './hooks/hook-registry.js'
+
+export type {
+  HookEvent,
+  HookContext,
+  HookResult as HookHandlerResult,
+  Hook,
+} from './hooks/hook-registry.js'
+
+export { registerBuiltInHooks } from './hooks/built-in-hooks.js'
+
+// 可观测性模块
+export { LangfuseObserver } from './observability/langfuse-observer.js'
+
+// 权限模块
+export { PermissionManager } from './permission/permission-manager.js'
+
+export type { PermissionMode } from './permission/permission-manager.js'
