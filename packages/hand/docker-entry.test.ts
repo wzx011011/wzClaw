@@ -8,10 +8,12 @@ import { createDockerHand } from './docker-entry.js'
 import { LocalToolExecutor } from './src/tool-executor.js'
 import type { HandConfig } from './src/types.js'
 import { HandStatus } from './src/types.js'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
 
-// ---- MockWebSocket（复用 connection.test.ts 模式）----
+// ---- MockWebSocket ----
 
-/** 模拟 WebSocket 的行为 */
 class MockWebSocket {
   static CONNECTING = 0
   static OPEN = 1
@@ -62,31 +64,43 @@ class MockWebSocket {
 
 describe('docker-entry', () => {
   let mockWs: MockWebSocket
+  let tmpConfigDir: string
+  let origConfigDir: string | undefined
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockWs = new MockWebSocket()
+    // 创建临时配置目录，启用所有工具
+    tmpConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-hand-test-'))
+    fs.writeFileSync(path.join(tmpConfigDir, 'hand.config.json'), JSON.stringify({
+      builtinTools: {
+        FileRead: { enabled: true },
+        FileWrite: { enabled: true },
+        FileList: { enabled: true },
+        ShellExecute: { enabled: true, timeout: 30 },
+        Echo: { enabled: true },
+      },
+    }))
+    origConfigDir = process.env.WZXCLAW_CONFIG_DIR
+    process.env.WZXCLAW_CONFIG_DIR = tmpConfigDir
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    fs.rmSync(tmpConfigDir, { recursive: true, force: true })
+    if (origConfigDir === undefined) {
+      delete process.env.WZXCLAW_CONFIG_DIR
+    } else {
+      process.env.WZXCLAW_CONFIG_DIR = origConfigDir
+    }
   })
 
-  // ---- createDockerHand 工具注册 ----
+  const wsFactory = () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>
 
-  it('createDockerHand 注册 5 个工具（4 NAS + 1 Echo）', () => {
-    const { executor } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'test-docker-hand',
-        heartbeatIntervalMs: 100,
-        reconnectBaseMs: 50,
-        maxReconnectAttempts: 2,
-      },
-      {
-        wsFactory: () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>,
-      },
+  it('createDockerHand 注册 5 个工具（4 NAS + 1 Echo）', async () => {
+    const { executor } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand', heartbeatIntervalMs: 100, reconnectBaseMs: 50, maxReconnectAttempts: 2 },
+      { wsFactory },
     )
 
     const caps = executor.getCapabilities()
@@ -98,24 +112,16 @@ describe('docker-entry', () => {
     expect(caps).toContain('Echo')
   })
 
-  it('createDockerHand 返回的 executor 包含所有 NAS 工具定义', () => {
-    const { executor } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'test-docker-hand',
-        heartbeatIntervalMs: 100,
-      },
-      {
-        wsFactory: () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>,
-      },
+  it('createDockerHand 返回的 executor 包含所有 NAS 工具定义', async () => {
+    const { executor } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand', heartbeatIntervalMs: 100 },
+      { wsFactory },
     )
 
     const defs = executor.getDefinitions()
     const nasTools = defs.filter(d => ['FileRead', 'FileWrite', 'FileList', 'ShellExecute'].includes(d.name))
     expect(nasTools).toHaveLength(4)
 
-    // 验证只读属性
     const fileRead = nasTools.find(d => d.name === 'FileRead')
     expect(fileRead?.isReadOnly).toBe(true)
     const fileWrite = nasTools.find(d => d.name === 'FileWrite')
@@ -126,97 +132,50 @@ describe('docker-entry', () => {
     expect(shellExec?.isReadOnly).toBe(false)
   })
 
-  it('createDockerHand 创建的 connection 可连接和断开', () => {
-    const { connection } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'test-docker-hand',
-        heartbeatIntervalMs: 100,
-      },
-      {
-        wsFactory: () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>,
-      },
+  it('createDockerHand 创建的 connection 可连接和断开', async () => {
+    const { connection } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand', heartbeatIntervalMs: 100 },
+      { wsFactory },
     )
 
     expect(connection.getStatus()).toBe(HandStatus.Disconnected)
-
     connection.connect()
     expect(connection.getStatus()).toBe(HandStatus.Connecting)
-
     mockWs.simulateOpen()
     expect(connection.getStatus()).toBe(HandStatus.Connected)
-
     connection.disconnect()
     expect(connection.getStatus()).toBe(HandStatus.Disconnected)
   })
 
-  // ---- 环境变量默认值 ----
-
-  it('SERVER_URL 默认值为 ws://localhost:8082/', () => {
-    // 验证 createDockerHand 接受默认 URL
-    const { executor } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'test-docker-hand',
-      },
-      {
-        wsFactory: () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>,
-      },
+  it('SERVER_URL 默认值为 ws://localhost:8082/', async () => {
+    const { executor } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand' },
+      { wsFactory },
     )
-
-    // 验证正常创建（不抛异常）
     expect(executor).toBeDefined()
     expect(executor.getCapabilities().length).toBeGreaterThan(0)
   })
 
-  // ---- Hand ID 格式 ----
-
-  it('Hand ID 格式为 hand-docker-nas-{timestamp}', () => {
-    const { connection } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'hand-docker-nas-1700000000000',
-      },
-      {
-        wsFactory: () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>,
-      },
+  it('Hand ID 格式为 hand-docker-nas-{timestamp}', async () => {
+    const { connection } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'hand-docker-nas-1700000000000' },
+      { wsFactory },
     )
 
     connection.connect()
     mockWs.simulateOpen()
 
-    // 验证 register 消息中的 ID
     const registerMsg = JSON.parse(mockWs.sentMessages[0])
     expect(registerMsg.data.id).toBe('hand-docker-nas-1700000000000')
     expect(registerMsg.data.id).toMatch(/^hand-docker-nas-\d+$/)
   })
 
-  // ---- 工具执行回调 ----
-
   it('收到 hand:execute 时调用 executor 并回传结果', async () => {
-    const onExecuteCallbacks: Array<(data: unknown) => void> = []
-
-    // 拦截 wsFactory 来捕获 onExecute 回调
-    const { connection, executor } = createDockerHand(
-      {
-        serverUrl: 'ws://localhost:8082/',
-        authToken: 'test-token',
-        handId: 'test-docker-hand',
-        heartbeatIntervalMs: 60000, // 长间隔避免干扰测试
-      },
-      {
-        wsFactory: (url: string, protocols?: string | string[]) => {
-          // 创建一个新的 mockWs，监听 on('message') 来触发回调
-          const ws = new MockWebSocket()
-          return ws as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>
-        },
-      },
+    const { executor } = await createDockerHand(
+      { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand', heartbeatIntervalMs: 60000 },
+      { wsFactory: () => new MockWebSocket() as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect> },
     )
 
-    // 验证 Echo 工具可执行
     const result = await executor.execute('Echo', { message: 'docker-test' }, {
       workingDirectory: '/data',
       projectRoots: [],

@@ -3,20 +3,20 @@ gsd_state_version: 1.0
 milestone: Brain-Hands-Session 全架构迁移
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-14T15:40:00.000Z"
+last_updated: "2026-05-16T12:00:00.000Z"
 progress:
-  total_phases: 7
-  completed_phases: 3
-  total_plans: 22
-  completed_plans: 22
-  percent: 96
+  total_phases: 15
+  completed_phases: 7
+  total_plans: 44
+  completed_plans: 24
+  percent: 55
 ---
 
 # Project State
 
 ## Current Phase
 
-Phase 7: Docker Hand — NAS 本地沙箱 (1/2 plans complete)
+Phase 8: Hand 可插拔配置 + MCP/Skill 全链打通 (discuss → plan → execute)
 
 ## Phase History
 
@@ -26,9 +26,17 @@ Phase 7: Docker Hand — NAS 本地沙箱 (1/2 plans complete)
 | 2 | complete (3/3 plans, 88 tests) | 2026-05-14 |
 | 3 | complete (2/2 plans, 55 tests) | 2026-05-14 |
 | 4 | complete (5/5 plans, 25 tests) | 2026-05-14 |
-| 5 | complete (4/5 plans, human verification deferred) | 2026-05-14 |
-| 6 | complete (3/3 plans, human verification deferred) | 2026-05-14 |
-| 7 | in-progress (1/2 plans) | 2026-05-14 |
+| 5 | complete (4/4 plans, human verification deferred) | 2026-05-16 |
+| 6 | complete (3/3 plans, human verification deferred) | 2026-05-16 |
+| 7 | complete (2/2 plans, NAS deployment deferred) | 2026-05-16 |
+| 8 | planned (0/5 plans) | — |
+| 9 | planned (0/5 plans) | — |
+| 10 | planned (0/5 plans) | — |
+| 11 | planned (0/4 plans) | — |
+| 12 | planned (0/4 plans) | — |
+| 13 | planned (0/4 plans) | — |
+| 14 | planned (0/3 plans) | — |
+| 15 | planned (0/3 plans) | — |
 
 ## Key Decisions
 
@@ -52,5 +60,6 @@ Phase 7: Docker Hand — NAS 本地沙箱 (1/2 plans complete)
 
 ## Last Session
 
-- **Stopped at**: Completed 07-01-PLAN.md (NAS tools + Docker entry)
+- **Stopped at**: Phases 5-7 marked complete (human verification deferred)
 - **Resume file**: None
+- **Next**: Phase 8 discuss → plan → execute

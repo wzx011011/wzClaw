@@ -12,6 +12,6 @@
     "rootDir": ".",
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "tools/**/*.ts", "docker-entry.ts"],
+  "include": ["src/**/*.ts", "tools/**/*.ts", "docker-entry.ts", "src/config/**/*.ts", "src/mcp/**/*.ts"],
   "exclude": ["**/*.test.ts", "node_modules", "dist"]
 }

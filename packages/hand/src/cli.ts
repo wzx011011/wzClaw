@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ============================================================
 // wzxclaw-hand CLI 入口点
-// 解析命令行参数，创建 HandConnection + LocalToolExecutor
+// 解析命令行参数，创建 HandConnection + ToolLoader
 // 启动 Hand 服务并连接到 agent-server
 // ============================================================
 
@@ -9,6 +9,7 @@ import { HandConnection } from './connection.js'
 import { LocalToolExecutor } from './tool-executor.js'
 import type { HandConfig } from './types.js'
 import { HandStatus } from './types.js'
+import { ToolLoader } from './tool-loader.js'
 
 // ---- 参数解析 ----
 
@@ -22,6 +23,8 @@ export interface ParsedArgs {
   id?: string
   /** 心跳间隔（毫秒） */
   heartbeat?: number
+  /** 配置目录 */
+  configDir?: string
   /** 是否显示帮助 */
   help?: boolean
 }
@@ -29,16 +32,12 @@ export interface ParsedArgs {
 /**
  * 解析命令行参数
  *
- * 支持: --server, --token, --id, --heartbeat, --help/-h
+ * 支持: --server, --token, --id, --heartbeat, --config, --help/-h
  * 优先级: CLI 参数 > 环境变量
- *
- * @param argv - process.argv（前两个元素被跳过）
- * @returns 解析后的参数
  */
 export function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {}
 
-  // 跳过 node 和脚本路径
   const args = argv.slice(2)
 
   for (let i = 0; i < args.length; i++) {
@@ -60,6 +59,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         }
         break
       }
+      case '--config':
+        result.configDir = args[++i]
+        break
       case '--help':
       case '-h':
         result.help = true
@@ -77,35 +79,35 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (!result.id) {
     result.id = process.env.HAND_ID
   }
+  if (!result.configDir) {
+    result.configDir = process.env.WZXCLAW_CONFIG_DIR
+  }
 
   return result
 }
 
 // ---- usage 帮助信息 ----
 
-/** usage 帮助文本 */
 const USAGE_TEXT = `
-Usage: wzxclaw-hand --server <url> --token <token> [--id <hand-id>] [--heartbeat <ms>]
+Usage: wzxclaw-hand --server <url> --token <token> [--id <hand-id>] [--heartbeat <ms>] [--config <dir>]
 
 Options:
   --server    Agent server WebSocket URL (env: SERVER_URL)
   --token     Authentication token (env: AUTH_TOKEN)
   --id        Hand unique ID (auto-generated if not set, env: HAND_ID)
   --heartbeat Heartbeat interval in ms (default: 15000)
+  --config    Config directory (default: ~/.wzxclaw, env: WZXCLAW_CONFIG_DIR)
   --help, -h  Show this help message
 
 Environment variables:
-  SERVER_URL   Agent server WebSocket URL
-  AUTH_TOKEN   Authentication token
-  HAND_ID      Hand unique ID
+  SERVER_URL          Agent server WebSocket URL
+  AUTH_TOKEN          Authentication token
+  HAND_ID             Hand unique ID
+  WZXCLAW_CONFIG_DIR  Config directory path
 `.trim()
 
 // ---- URL 验证 ----
 
-/**
- * 验证 server URL 格式
- * 必须以 ws:// 或 wss:// 开头
- */
 function isValidServerUrl(url: string): boolean {
   return url.startsWith('ws://') || url.startsWith('wss://')
 }
@@ -118,7 +120,7 @@ function isValidServerUrl(url: string): boolean {
  * 流程:
  * 1. 解析参数（CLI args > 环境变量）
  * 2. 验证必需参数（server, token）
- * 3. 创建 LocalToolExecutor，注册内置工具
+ * 3. 创建 LocalToolExecutor，使用 ToolLoader 加载工具
  * 4. 创建 HandConnection，绑定回调
  * 5. 注册 SIGINT/SIGTERM 信号处理
  * 6. 调用 connection.connect()
@@ -167,30 +169,32 @@ export async function runCli(): Promise<void> {
     heartbeatIntervalMs: args.heartbeat,
   }
 
-  // 创建工具执行器，注册内置工具
+  // 创建工具执行器，使用 ToolLoader 加载工具
   const executor = new LocalToolExecutor()
-  executor.addBuiltinTools()
+  const toolLoader = new ToolLoader({ configDir: args.configDir, executor })
+  const loadResult = await toolLoader.loadTools()
 
   console.log(`[wzxclaw-hand] 启动中...`)
   console.log(`[wzxclaw-hand] 服务器: ${config.serverUrl}`)
   console.log(`[wzxclaw-hand] 工具: ${executor.getCapabilities().join(', ')}`)
 
+  if (loadResult.mcpErrors.length > 0) {
+    console.warn(`[wzxclaw-hand] MCP 警告: ${loadResult.mcpErrors.join('; ')}`)
+  }
+
   // 创建连接，绑定回调
   const connection = new HandConnection(config, {
-    // 收到工具执行请求：执行工具并回传结果
+    capabilities: executor.getCapabilities(),
+    definitions: executor.getDefinitions(),
     async onExecute(data) {
       console.log(`[wzxclaw-hand] 执行工具: ${data.name} (callId: ${data.callId})`)
       const result = await executor.execute(data.name, data.input, data.context)
       connection.sendResult(data.callId, result.output, result.isError)
       console.log(`[wzxclaw-hand] 工具完成: ${data.name} (isError: ${result.isError})`)
     },
-
-    // 连接断开
     onDisconnect() {
       console.log('[wzxclaw-hand] 连接断开，正在重连...')
     },
-
-    // 状态变更
     onStatusChange(status) {
       const statusNames: Record<HandStatus, string> = {
         [HandStatus.Disconnected]: '未连接',
@@ -203,7 +207,7 @@ export async function runCli(): Promise<void> {
     },
   })
 
-  // 优雅退出：SIGINT/SIGTERM 信号处理
+  // 优雅退出
   const cleanup = () => {
     console.log('\n[wzxclaw-hand] 正在关闭...')
     connection.disconnect()
@@ -213,7 +217,6 @@ export async function runCli(): Promise<void> {
   process.on('SIGINT', cleanup)
   process.on('SIGTERM', cleanup)
 
-  // 建立连接
   connection.connect()
   console.log('[wzxclaw-hand] 已启动，按 Ctrl+C 退出')
 }

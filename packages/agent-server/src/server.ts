@@ -5,6 +5,9 @@
 // ============================================================
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { URL } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { initAuth, authenticate } from './auth.js'
@@ -12,7 +15,18 @@ import { SessionStoreSqlite } from './session-sqlite.js'
 import { HandsRouter } from './hands-router.js'
 import { HandAwareToolExecutor } from './hand-aware-tool-executor.js'
 import { ClientHandler } from './client-handler.js'
+import { buildSystemPrompt } from './instructions/system-prompt-builder.js'
+import { handleReload } from './admin/reload-handler.js'
+import { handleConfig } from './admin/config-handler.js'
 import type { ServerConfig } from './types.js'
+import {
+  ContextManager,
+  DEFAULT_MODELS,
+  LLMGateway,
+  createAgentLoop,
+  type AgentConfig,
+  type LLMProvider,
+} from '@wzxclaw/brain'
 
 /** 服务器启动时间戳 */
 let startTime = 0
@@ -48,14 +62,12 @@ export class AgentServer {
     this.sessionStore = new SessionStoreSqlite(config.dbPath)
     this.handsRouter = new HandsRouter()
     this.toolExecutor = new HandAwareToolExecutor(this.handsRouter)
+    const { createLoop, agentConfig } = createProductionAgentRuntime(config)
     this.clientHandler = new ClientHandler(
       this.sessionStore,
       this.toolExecutor,
-      // AgentLoop 工厂函数 — 由 ClientHandler 内部调用
-      // 实际运行时需要注入 gateway/contextManager 等依赖
-      () => {
-        throw new Error('AgentLoop factory not configured — provide gateway and contextManager')
-      },
+      createLoop,
+      agentConfig,
     )
   }
 
@@ -79,13 +91,37 @@ export class AgentServer {
    */
   createHttpServer(): ReturnType<typeof createServer> {
     return createServer((req: IncomingMessage, res: ServerResponse) => {
-      if (req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
+      const url = req.url || '/'
+      if (url === '/health') {
+        res.writeHead(200, { 'Content': 'application/json' })
         res.end(JSON.stringify({
           status: 'ok',
           hands: this.handsRouter.getHandCount(),
           uptime: Math.floor((Date.now() - startTime) / 1000),
         }))
+        return
+      }
+
+      // Admin API 路由
+      if (url === '/admin/reload' && req.method === 'POST') {
+        handleReload(req, res, this.handsRouter)
+        return
+      }
+      if (url.startsWith('/admin/config/')) {
+        handleConfig(req, res)
+        return
+      }
+      // Serve test.html at /
+      if (url === '/' || url === '/index.html') {
+        try {
+          const __dirname = dirname(fileURLToPath(import.meta.url))
+          const html = readFileSync(resolve(__dirname, '..', 'test.html'), 'utf-8')
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(html)
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          res.end('<h1>Agent Server</h1><p>Hand count: ' + this.handsRouter.getHandCount() + '</p>')
+        }
         return
       }
       res.writeHead(404)
@@ -264,6 +300,62 @@ export class AgentServer {
         process.exit(1)
       }, 5000)
     })
+  }
+}
+
+function resolveProvider(model: string, explicitProvider?: string): LLMProvider {
+  if (explicitProvider === 'anthropic' || explicitProvider === 'openai') return explicitProvider
+  const preset = DEFAULT_MODELS.find((item) => item.id === model)
+  return (preset?.provider as LLMProvider | undefined) ?? (model.startsWith('claude') || model.startsWith('glm-5') ? 'anthropic' : 'openai')
+}
+
+function createProductionAgentRuntime(config: ServerConfig): {
+  createLoop: () => ReturnType<typeof createAgentLoop>
+  agentConfig: Partial<Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory' | 'projectRoots'>>
+} {
+  const model = process.env.AGENT_MODEL || process.env.MODEL || 'deepseek-chat'
+  const provider = resolveProvider(model, process.env.AGENT_PROVIDER || process.env.PROVIDER)
+  const workingDirectory = process.env.AGENT_WORKDIR || '/tmp'
+  const projectRoots = (process.env.AGENT_PROJECT_ROOTS || workingDirectory)
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  const gateway = new LLMGateway()
+
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (openaiKey) {
+    gateway.addProvider({
+      provider: 'openai',
+      apiKey: openaiKey,
+      baseURL: process.env.OPENAI_BASE_URL,
+    })
+  }
+
+  const anthropicKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
+  if (anthropicKey) {
+    gateway.addProvider({
+      provider: 'anthropic',
+      apiKey: anthropicKey,
+      baseURL: process.env.ANTHROPIC_BASE_URL,
+    })
+  }
+
+  const contextManager = new ContextManager()
+
+  // 构建含指令的 system prompt
+  const basePrompt = config.systemPrompt || process.env.AGENT_SYSTEM_PROMPT || ''
+  const systemPrompt = buildSystemPrompt({ basePrompt })
+
+  return {
+    createLoop: () => createAgentLoop({ gateway, contextManager }),
+    agentConfig: {
+      model,
+      provider,
+      systemPrompt,
+      workingDirectory,
+      projectRoots,
+    },
   }
 }
 

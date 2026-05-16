@@ -4,7 +4,7 @@
 // ============================================================
 
 import { createRequire } from 'node:module'
-import type { HandConfig, ExecuteCallbackData, IncomingExecuteMessage } from './types.js'
+import type { HandConfig, ExecuteCallbackData, IncomingExecuteMessage, HandToolDefinition } from './types.js'
 import { HandStatus } from './types.js'
 import {
   createRegisterMessage,
@@ -30,12 +30,18 @@ export type WebSocketFactory = (url: string, protocols?: string | string[]) => I
 export interface HandConnectionCallbacks {
   /** 收到工具执行请求 */
   onExecute?: (data: ExecuteCallbackData) => void
+  /** 收到 reload 控制帧 */
+  onReload?: () => void
   /** 连接断开（非主动关闭） */
   onDisconnect?: () => void
   /** 状态变更通知 */
   onStatusChange?: (status: HandStatus) => void
   /** WebSocket 工厂（用于测试注入） */
   wsFactory?: WebSocketFactory
+  /** 注册时上报的工具名列表 */
+  capabilities?: string[]
+  /** 注册时上报的工具定义列表 */
+  definitions?: HandToolDefinition[]
 }
 
 /** 默认心跳间隔（15s） */
@@ -168,8 +174,9 @@ export class HandConnection {
    * 连接建立处理：发送注册消息，启动心跳
    */
   private handleOpen(): void {
-    // 发送注册消息（capabilities 和 definitions 暂时为空，后续由 Hand 服务填充）
-    const registerMsg = createRegisterMessage(this.handId, [], [])
+    const caps = this.callbacks.capabilities ?? []
+    const defs = this.callbacks.definitions ?? []
+    const registerMsg = createRegisterMessage(this.handId, caps, defs)
     this.ws!.send(registerMsg)
 
     this.setStatus(HandStatus.Connected)
@@ -197,6 +204,9 @@ export class HandConnection {
       })
     } else if (message.event === 'hand:heartbeat_ack') {
       // 收到心跳确认，连接正常
+    } else if (message.event === 'hand:reload') {
+      // 收到 reload 控制帧，触发回调
+      this.callbacks.onReload?.()
     }
   }
 
@@ -299,8 +309,9 @@ export class HandConnection {
    * 延迟加载 ws 模块以避免测试环境依赖
    */
   private defaultWebSocketFactory: WebSocketFactory = (url: string, protocols?: string | string[]) => {
-    const WS = require('ws') as typeof import('ws')
-    const ws = new WS.default(url, protocols) as unknown as IWebSocket
+    const WS = require('ws')
+    const WsClass = (WS.default && typeof WS.default === 'function' ? WS.default : WS) as new (url: string, protocols?: string | string[]) => IWebSocket
+    const ws = new WsClass(url, protocols)
     return ws
   }
 }

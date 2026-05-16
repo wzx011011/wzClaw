@@ -125,6 +125,13 @@ export class HandsRouter {
   }
 
   /**
+   * 获取所有已注册的 Hand 条目
+   */
+  getAllHands(): HandEntry[] {
+    return Array.from(this.hands.values())
+  }
+
+  /**
    * 更新指定 Hand 的心跳时间
    */
   updateHeartbeat(handId: string): void {

@@ -77,6 +77,13 @@ export class LocalToolExecutor {
   }
 
   /**
+   * 从 registry 注销一个工具
+   */
+  unregister(name: string): boolean {
+    return this.registry.delete(name)
+  }
+
+  /**
    * 返回所有已注册工具的定义列表
    * 用于 hand:register 消息中的 definitions 字段
    */
