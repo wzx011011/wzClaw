@@ -142,9 +142,17 @@ export class HandBridge {
       return // 避免重复连接
     }
 
-    // 读取配置
-    const serverUrl = this.configOverrides.serverUrl ?? this.settingsManager._agentUrl ?? 'ws://localhost:8082'
-    const authToken = this.configOverrides.authToken ?? this.settingsManager.getRelayToken() ?? ''
+    // 读取配置（支持 E2E 测试 env var 注入）
+    const serverUrl =
+      this.configOverrides.serverUrl ??
+      this.settingsManager._agentUrl ??
+      process.env.WZXCLAW_AGENT_URL ??
+      'ws://localhost:8082'
+    const authToken =
+      this.configOverrides.authToken ??
+      this.settingsManager.getRelayToken() ??
+      process.env.WZXCLAW_AGENT_TOKEN ??
+      ''
 
     if (!authToken) {
       console.warn('[HandBridge] 未配置 token，跳过连接')
@@ -394,7 +402,7 @@ export class HandBridge {
     url: string,
     protocols?: string | string[],
   ) => {
-    const WS = require('ws') as typeof import('ws')
-    return new WS.default(url, protocols) as unknown as IWebSocket
+    const WS = require('ws')
+    return new WS(url, protocols) as unknown as IWebSocket
   }
 }

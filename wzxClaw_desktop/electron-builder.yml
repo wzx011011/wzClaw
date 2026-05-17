@@ -21,6 +21,8 @@ files:
   - "!vitest.config.*"
   - "!*.tsbuildinfo"
   - "!**/*.log"
+  - "!node_modules/@wzxclaw/brain"
+  - "!node_modules/@wzxclaw/hand"
 extraResources:
   - from: src/mobile-client
     to: mobile-client

@@ -14,6 +14,12 @@ import type {
   RawMessage,
   Settings,
   SendMessageOptions,
+  FsChannel,
+  FileTreeNode,
+  FileWatchEvent,
+  TerminalChannel,
+  TerminalSpawnOptions,
+  PreviewChannel,
 } from './types'
 
 /** 客户端 → 服务器消息信封格式 */
@@ -82,6 +88,12 @@ export class WebSocketDataSource implements DataSource {
   /** 认证 token（可选） */
   private readonly _token?: string
 
+  /** 终端数据流监听器 */
+  private readonly _terminalDataListeners = new Map<string, Set<(data: string) => void>>()
+
+  /** 终端退出监听器 */
+  private readonly _terminalExitListeners = new Map<string, Set<(exitCode: number) => void>>()
+
   constructor(url: string, token?: string) {
     // 安全校验：只允许 ws:// 和 wss:// 协议（T-04-01）
     const parsed = new URL(url)
@@ -90,7 +102,18 @@ export class WebSocketDataSource implements DataSource {
     }
     this._url = url
     this._token = token
+
+    // 初始化 IDE 子通道
+    this.fs = this._createFsChannel()
+    this.terminal = this._createTerminalChannel()
+    this.preview = this._createPreviewChannel()
   }
+
+  // ---- IDE 子通道 ----
+
+  readonly fs?: FsChannel
+  readonly terminal?: TerminalChannel
+  readonly preview?: PreviewChannel
 
   // ---- 连接生命周期 ----
 
@@ -184,9 +207,8 @@ export class WebSocketDataSource implements DataSource {
   }
 
   async stopGeneration(_sessionId: string): Promise<void> {
-    // agent-server Client 协议暂不支持 stop 消息
-    // 预留接口，后续扩展
-    throw new Error('stopGeneration 尚未在 WebSocket 协议中实现')
+    this._ensureConnected()
+    this._send({ event: 'chat:stop' })
   }
 
   // ---- Stream 事件 ----
@@ -242,10 +264,12 @@ export class WebSocketDataSource implements DataSource {
     )
   }
 
-  async renameSession(_sessionId: string, _title: string): Promise<void> {
-    // agent-server Client 协议暂不支持 rename
-    // 预留接口，后续扩展
-    throw new Error('renameSession 尚未在 WebSocket 协议中实现')
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    await this._sendRequest(
+      'session:rename',
+      { sessionId, title },
+      'session:renamed',
+    )
   }
 
   // ---- 设置 ----
@@ -348,7 +372,11 @@ export class WebSocketDataSource implements DataSource {
           }
         }
       }
+      return
     }
+
+    // 3. 转发到 IDE 通道事件（terminal data/exit 等）
+    this._dispatchChannelEvent(msgEvent, data)
   }
 
   /**
@@ -372,6 +400,8 @@ export class WebSocketDataSource implements DataSource {
       'stream:error': 'error',
       'stream:done': 'done',
       'stream:compacted': 'compacted',
+      'stream:turn_end': 'turn_end',
+      'stream:tool_progress': 'tool_progress',
     }
     return mapping[serverEvent] ?? null
   }
@@ -435,5 +465,132 @@ export class WebSocketDataSource implements DataSource {
       pending.reject(error)
     }
     this._pendingRequests.clear()
+  }
+
+  // ---- IDE 子通道工厂 ----
+
+  /** 创建 FsChannel — 通过 agent-server 转发到 NAS Hand FileRead/FileWrite */
+  private _createFsChannel(): FsChannel {
+    return {
+      readFile: async (path: string) => {
+        const data = await this._sendRequest('fs:readFile', { path }, 'fs:readFile:result', 15_000)
+        return data as { content: string }
+      },
+      writeFile: async (path: string, content: string) => {
+        await this._sendRequest('fs:writeFile', { path, content }, 'fs:writeFile:result', 15_000)
+      },
+      tree: async (dirPath: string, depth?: number) => {
+        const data = await this._sendRequest('fs:tree', { dirPath, depth }, 'fs:tree:result', 15_000)
+        return (data as { nodes: FileTreeNode[] }).nodes
+      },
+      watch: (_path: string, _callback: (events: FileWatchEvent[]) => void) => {
+        // WebSocket 模式暂不支持实时文件 watch
+        // 后续可通过 agent-server 长连接推送实现
+        return () => {}
+      },
+    }
+  }
+
+  /** 创建 TerminalChannel — 通过 agent-server 转发到 NAS Hand ShellExecute */
+  private _createTerminalChannel(): TerminalChannel {
+    return {
+      spawn: async (options: TerminalSpawnOptions) => {
+        const data = await this._sendRequest(
+          'terminal:spawn',
+          options,
+          'terminal:spawned',
+          10_000,
+        )
+        return (data as { terminalId: string }).terminalId
+      },
+      write: async (terminalId: string, data: string) => {
+        this._ensureConnected()
+        this._send({ event: 'terminal:write', data: { terminalId, data } })
+      },
+      resize: async (terminalId: string, cols: number, rows: number) => {
+        this._ensureConnected()
+        this._send({ event: 'terminal:resize', data: { terminalId, cols, rows } })
+      },
+      kill: async (terminalId: string) => {
+        await this._sendRequest(
+          'terminal:kill',
+          { terminalId },
+          'terminal:killed',
+          5_000,
+        )
+      },
+      onData: (terminalId: string, callback: (data: string) => void) => {
+        let listeners = this._terminalDataListeners.get(terminalId)
+        if (!listeners) {
+          listeners = new Set()
+          this._terminalDataListeners.set(terminalId, listeners)
+        }
+        listeners.add(callback)
+        return () => {
+          listeners!.delete(callback)
+          if (listeners!.size === 0) {
+            this._terminalDataListeners.delete(terminalId)
+          }
+        }
+      },
+      onExit: (terminalId: string, callback: (exitCode: number) => void) => {
+        let listeners = this._terminalExitListeners.get(terminalId)
+        if (!listeners) {
+          listeners = new Set()
+          this._terminalExitListeners.set(terminalId, listeners)
+        }
+        listeners.add(callback)
+        return () => {
+          listeners!.delete(callback)
+          if (listeners!.size === 0) {
+            this._terminalExitListeners.delete(terminalId)
+          }
+        }
+      },
+    }
+  }
+
+  /** 创建 PreviewChannel — 基于 agent-server URL 代理 */
+  private _createPreviewChannel(): PreviewChannel {
+    let currentUrl: string | null = null
+    const urlListeners = new Set<(url: string | null) => void>()
+
+    return {
+      open: async (url: string) => {
+        currentUrl = url
+        for (const cb of urlListeners) {
+          try { cb(url) } catch { /* ignore */ }
+        }
+      },
+      reload: async () => {
+        // 远程模式：reload 由 iframe 自身处理
+      },
+      getUrl: () => currentUrl,
+      onUrlChange: (callback: (url: string | null) => void) => {
+        urlListeners.add(callback)
+        return () => { urlListeners.delete(callback) }
+      },
+    }
+  }
+
+  /** 分发 IDE 通道事件（terminal data/exit） */
+  private _dispatchChannelEvent(msgEvent: string, data: unknown): void {
+    if (msgEvent === 'terminal:data') {
+      const payload = data as { terminalId: string; data: string }
+      const listeners = this._terminalDataListeners.get(payload.terminalId)
+      if (listeners) {
+        for (const cb of listeners) {
+          try { cb(payload.data) } catch { /* ignore */ }
+        }
+      }
+    } else if (msgEvent === 'terminal:exit') {
+      const payload = data as { terminalId: string; exitCode: number }
+      const listeners = this._terminalExitListeners.get(payload.terminalId)
+      if (listeners) {
+        for (const cb of listeners) {
+          try { cb(payload.exitCode) } catch { /* ignore */ }
+        }
+      }
+    }
   }
 }

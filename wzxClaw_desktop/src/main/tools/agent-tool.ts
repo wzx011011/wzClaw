@@ -4,13 +4,13 @@
 
 import { z } from 'zod'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import type { LLMGateway } from '../llm/gateway'
+import type { LLMGateway } from '@wzxclaw/brain'
 import { ToolRegistry } from './tool-registry'
-import type { PermissionManager } from '../permission/permission-manager'
-import { ContextManager } from '../context/context-manager'
-import type { HookRegistry } from '../hooks/hook-registry'
-import { AgentLoop } from '../agent/agent-loop'
-import type { AgentConfig } from '../agent/types'
+import type { PermissionManager } from '@wzxclaw/brain'
+import { ContextManager } from '@wzxclaw/brain'
+import type { HookRegistry } from '@wzxclaw/brain'
+import { AgentLoop } from '@wzxclaw/brain'
+import type { AgentConfig } from '@wzxclaw/brain'
 
 // ============================================================
 // Sub-agent type definitions

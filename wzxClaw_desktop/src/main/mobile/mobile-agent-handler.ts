@@ -8,7 +8,7 @@ import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { DEFAULT_MODELS } from '../../shared/constants'
 import { isActiveSessionTaskStatus } from '../agent/session-task-state-manager'
-import type { AgentConfig } from '../agent/types'
+import type { AgentConfig } from '@wzxclaw/brain'
 import type { MobileRelayContext, MobileRelayMessage } from './mobile-relay-context'
 
 // Dedup set max size for command:send

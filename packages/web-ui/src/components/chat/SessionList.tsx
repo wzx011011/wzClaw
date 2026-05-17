@@ -70,13 +70,23 @@ interface SessionListProps {
  * 支持搜索过滤、时间分组、右键菜单（删除、重命名）、当前会话高亮。
  */
 export default function SessionList({ store }: SessionListProps): React.ReactElement {
-  // 通过订阅获取最新状态
-  const [state, setState] = useState(store.getState())
+  // 仅跟踪会话列表与激活会话，避免流式消息时整侧栏高频重渲染
+  const [state, setState] = useState(() => {
+    const current = store.getState()
+    return { sessions: current.sessions, conversationId: current.conversationId }
+  })
 
   useEffect(() => {
-    setState(store.getState())
+    const current = store.getState()
+    setState({ sessions: current.sessions, conversationId: current.conversationId })
     return store.subscribe(() => {
-      setState(store.getState())
+      const next = store.getState()
+      setState((prev) => {
+        if (prev.sessions === next.sessions && prev.conversationId === next.conversationId) {
+          return prev
+        }
+        return { sessions: next.sessions, conversationId: next.conversationId }
+      })
     })
   }, [store])
 

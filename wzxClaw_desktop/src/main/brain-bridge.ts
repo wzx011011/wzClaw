@@ -21,12 +21,16 @@ import {
   type IEventSender,
   type IToolExecutor,
   BRAIN_CHANNELS,
+  type LLMGateway,
+  type PermissionManager,
+  type ContextManager,
+  type HookRegistry,
+  ToolResultReplacementState,
+  truncateToolResult,
+  ContextManager as ContextManagerClass,
+  maybePersistLargeToolResult,
 } from '@wzxclaw/brain'
-import type { LLMGateway } from './llm/gateway'
 import type { ToolRegistry } from './tools/tool-registry'
-import type { PermissionManager } from './permission/permission-manager'
-import type { ContextManager } from './context/context-manager'
-import type { HookRegistry } from './hooks/hook-registry'
 import type { FileHistoryManager } from './file-history/file-history-manager'
 import type { Message } from '../shared/types'
 import type { Workspace } from '../shared/types'
@@ -39,13 +43,8 @@ import {
   DesktopToolExecutor,
   DesktopStreamProvider,
 } from './brain-adapters'
-import { ToolResultReplacementState } from './context/tool-result-storage'
 import { getActiveTrace } from './observability/langfuse-observer'
-import { truncateToolResult } from './context/tool-result-budget'
 import { flattenToolOutput } from './tools/tool-interface'
-import { ContextManager as ContextManagerClass } from './context/context-manager'
-import { maybePersistLargeToolResult } from './context/tool-result-storage'
-import path from 'path'
 
 /**
  * 桌面端 AgentLoop 包装器
@@ -238,7 +237,7 @@ class DesktopHookRegistryAdapter implements import('@wzxclaw/brain').IHookRegist
   constructor(private registry: HookRegistry) {}
 
   async emit(event: string, context: Record<string, unknown>): Promise<import('@wzxclaw/brain').IHookResult | void> {
-    const result = await this.registry.emit(event as import('./hooks/hook-registry').HookEvent, context)
+    const result = await this.registry.emit(event as import('@wzxclaw/brain').HookEvent, context)
     // 桌面端 HookResult 和 brain 的 IHookResult 结构一致
     return result
   }

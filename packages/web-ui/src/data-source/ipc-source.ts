@@ -13,6 +13,12 @@ import type {
   RawMessage,
   Settings,
   SendMessageOptions,
+  FsChannel,
+  FileTreeNode,
+  FileWatchEvent,
+  TerminalChannel,
+  TerminalSpawnOptions,
+  PreviewChannel,
 } from './types'
 
 /**
@@ -59,16 +65,37 @@ interface WzxClawApi {
   onStreamTurnEnd: (cb: (payload: { sessionId: string }) => void) => () => void
 
   // Session
-  listSessions: (request?: { activeWorkspaceId?: string }) => Promise<SessionMeta[]>
-  loadSession: (request: { sessionId: string; activeWorkspaceId?: string }) => Promise<{
-    messages: RawMessage[]
-  }>
+  listSessions: (request?: { activeWorkspaceId?: string }) => Promise<SessionMeta[] | { sessions: SessionMeta[] }>
+  loadSession: (request: { sessionId: string; activeWorkspaceId?: string }) => Promise<
+    RawMessage[] | { messages: RawMessage[] }
+  >
   deleteSession: (request: { sessionId: string }) => Promise<void>
   renameSession: (request: { sessionId: string; title: string }) => Promise<void>
 
   // Settings
   getSettings: () => Promise<Settings>
   updateSettings: (request: Partial<Settings>) => Promise<void>
+
+  // FS
+  fsReadFile: (request: { path: string }) => Promise<{ content: string }>
+  fsWriteFile: (request: { path: string; content: string }) => Promise<void>
+  fsTree: (request: { dirPath: string; depth?: number }) => Promise<{ nodes: FileTreeNode[] }>
+  onFsWatch: (cb: (payload: { events: FileWatchEvent[] }) => void) => () => void
+  fsWatchStart: (request: { path: string }) => Promise<void>
+  fsWatchStop: (request: { path: string }) => Promise<void>
+
+  // Terminal
+  terminalSpawn: (request: TerminalSpawnOptions) => Promise<{ terminalId: string }>
+  terminalWrite: (request: { terminalId: string; data: string }) => Promise<void>
+  terminalResize: (request: { terminalId: string; cols: number; rows: number }) => Promise<void>
+  terminalKill: (request: { terminalId: string }) => Promise<void>
+  onTerminalData: (cb: (payload: { terminalId: string; data: string }) => void) => () => void
+  onTerminalExit: (cb: (payload: { terminalId: string; exitCode: number }) => void) => () => void
+
+  // Preview
+  previewOpen: (request: { url: string }) => Promise<void>
+  previewReload: () => Promise<void>
+  onPreviewUrlChange: (cb: (payload: { url: string | null }) => void) => () => void
 }
 
 /** 扩展 Window 类型以包含 wzxclaw API */
@@ -96,7 +123,20 @@ export class IpcDataSource implements DataSource {
 
   constructor() {
     this._available = typeof window !== 'undefined' && !!window.wzxclaw
+
+    // 初始化 IDE 子通道（仅当 preload API 可用时）
+    if (this._available) {
+      this.fs = this._createFsChannel()
+      this.terminal = this._createTerminalChannel()
+      this.preview = this._createPreviewChannel()
+    }
   }
+
+  // ---- IDE 子通道 ----
+
+  readonly fs?: FsChannel
+  readonly terminal?: TerminalChannel
+  readonly preview?: PreviewChannel
 
   // ---- 连接生命周期 ----
 
@@ -251,13 +291,17 @@ export class IpcDataSource implements DataSource {
 
   async listSessions(): Promise<SessionMeta[]> {
     this._ensureAvailable()
-    return window.wzxclaw!.listSessions()
+    const result = await window.wzxclaw!.listSessions()
+    return Array.isArray(result) ? result : result.sessions ?? []
   }
 
   async loadSession(sessionId: string): Promise<RawMessage[]> {
     this._ensureAvailable()
     const result = await window.wzxclaw!.loadSession({ sessionId })
-    return result.messages
+    // 主进程 session:load 当前直接返回消息数组；为兼容历史/过渡形态，
+    // 同时接受 { messages: [...] }，并在异常形态下兜底为空数组。
+    if (Array.isArray(result)) return result
+    return Array.isArray(result?.messages) ? result.messages : []
   }
 
   async createSession(): Promise<string> {
@@ -305,6 +349,109 @@ export class IpcDataSource implements DataSource {
       } catch {
         // 监听器错误不影响其他监听器
       }
+    }
+  }
+
+  /** 创建 FsChannel — 代理 window.wzxclaw IPC */
+  private _createFsChannel(): FsChannel {
+    return {
+      readFile: async (path: string) => {
+        this._ensureAvailable()
+        return window.wzxclaw!.fsReadFile({ path })
+      },
+      writeFile: async (path: string, content: string) => {
+        this._ensureAvailable()
+        await window.wzxclaw!.fsWriteFile({ path, content })
+      },
+      tree: async (dirPath: string, depth?: number) => {
+        this._ensureAvailable()
+        const result = await window.wzxclaw!.fsTree({ dirPath, depth })
+        return result.nodes
+      },
+      watch: (path: string, callback: (events: FileWatchEvent[]) => void) => {
+        this._ensureAvailable()
+        const unsub = window.wzxclaw!.onFsWatch((payload) => {
+          callback(payload.events)
+        })
+        // 启动 watching
+        window.wzxclaw!.fsWatchStart({ path }).catch(() => {})
+        return () => {
+          unsub()
+          window.wzxclaw!.fsWatchStop({ path }).catch(() => {})
+        }
+      },
+    }
+  }
+
+  /** 创建 TerminalChannel — 代理 window.wzxclaw IPC */
+  private _createTerminalChannel(): TerminalChannel {
+    return {
+      spawn: async (options: TerminalSpawnOptions) => {
+        this._ensureAvailable()
+        const result = await window.wzxclaw!.terminalSpawn(options)
+        return result.terminalId
+      },
+      write: async (terminalId: string, data: string) => {
+        this._ensureAvailable()
+        await window.wzxclaw!.terminalWrite({ terminalId, data })
+      },
+      resize: async (terminalId: string, cols: number, rows: number) => {
+        this._ensureAvailable()
+        await window.wzxclaw!.terminalResize({ terminalId, cols, rows })
+      },
+      kill: async (terminalId: string) => {
+        this._ensureAvailable()
+        await window.wzxclaw!.terminalKill({ terminalId })
+      },
+      onData: (terminalId: string, callback: (data: string) => void) => {
+        this._ensureAvailable()
+        return window.wzxclaw!.onTerminalData((payload) => {
+          if (payload.terminalId === terminalId) {
+            callback(payload.data)
+          }
+        })
+      },
+      onExit: (terminalId: string, callback: (exitCode: number) => void) => {
+        this._ensureAvailable()
+        return window.wzxclaw!.onTerminalExit((payload) => {
+          if (payload.terminalId === terminalId) {
+            callback(payload.exitCode)
+          }
+        })
+      },
+    }
+  }
+
+  /** 创建 PreviewChannel — 代理 window.wzxclaw IPC */
+  private _createPreviewChannel(): PreviewChannel {
+    let currentUrl: string | null = null
+    const urlListeners = new Set<(url: string | null) => void>()
+
+    // 监听 URL 变更
+    if (window.wzxclaw) {
+      window.wzxclaw.onPreviewUrlChange((payload) => {
+        currentUrl = payload.url
+        for (const cb of urlListeners) {
+          try { cb(currentUrl) } catch { /* ignore */ }
+        }
+      })
+    }
+
+    return {
+      open: async (url: string) => {
+        this._ensureAvailable()
+        currentUrl = url
+        await window.wzxclaw!.previewOpen({ url })
+      },
+      reload: async () => {
+        this._ensureAvailable()
+        await window.wzxclaw!.previewReload()
+      },
+      getUrl: () => currentUrl,
+      onUrlChange: (callback: (url: string | null) => void) => {
+        urlListeners.add(callback)
+        return () => { urlListeners.delete(callback) }
+      },
     }
   }
 }

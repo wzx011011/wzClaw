@@ -4,7 +4,7 @@
 // Modeled after Claude Code's hook loading flow
 // ============================================================
 
-import type { HookRegistry, HookEvent, HookResult } from '../hooks/hook-registry'
+import type { HookRegistry, HookEvent, HookHandlerResult as HookResult } from '@wzxclaw/brain'
 import type { LoadedPlugin } from '../../shared/types-plugin'
 import { existsSync, readFileSync } from 'fs'
 import { join, basename, isAbsolute } from 'path'

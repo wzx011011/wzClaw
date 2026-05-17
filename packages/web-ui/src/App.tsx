@@ -21,20 +21,19 @@ import { DataSourceProvider, useDataSource, useConnectionState, useReconnect } f
 import ChatPanel from './components/chat/ChatPanel'
 import SessionList from './components/chat/SessionList'
 import SettingsPage from './components/settings/SettingsPage'
+import IDELayout from './components/ide/IDELayout'
+import MobileShell from './layouts/MobileShell'
+import { useCapabilities } from './hooks/useCapabilities'
 import { useI18nStore } from './i18n/i18n-store'
 import { useT } from './i18n/useT'
 import { useConnectionConfig } from './hooks/useConnectionConfig'
 import './styles/global.css'
 import './styles/chat.css'
 import './styles/settings.css'
+import './styles/ide.css'
 
 /** App 视图状态 */
-type AppView = 'chat' | 'settings'
-
-/** 检测移动端视口（<=768px） */
-function isMobileViewport(): boolean {
-  return window.innerWidth <= 768
-}
+type AppView = 'chat' | 'ide' | 'settings'
 
 /**
  * AppInner — 应用内部组件
@@ -47,23 +46,12 @@ function AppInner(): React.ReactElement {
   const dataSource = useDataSource()
   const reconnect = useReconnect()
   const { config } = useConnectionConfig()
+  const caps = useCapabilities(dataSource)
 
   const [view, setView] = useState<AppView>('chat')
-  // 移动端默认折叠侧边栏
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isMobileViewport())
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [store, setStore] = useState<StoreApi<ChatStore> | null>(null)
   const unsubRef = useRef<(() => void) | null>(null)
-
-  // 监听视口变化，移动端自动折叠侧边栏
-  useEffect(() => {
-    const handleResize = () => {
-      if (isMobileViewport()) {
-        setSidebarCollapsed(true)
-      }
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
 
   // 当 DataSource 变化时，创建新的 chat store
   useEffect(() => {
@@ -77,7 +65,7 @@ function AppInner(): React.ReactElement {
 
     // 创建新 store
     const newStore = createChatStore(dataSource)
-    setStore(newStore)
+    setStore(() => newStore)
 
     // 初始化 store（订阅 stream 事件）
     const unsub = newStore.getState().init()
@@ -120,9 +108,6 @@ function AppInner(): React.ReactElement {
     )
   }
 
-  // 是否处于移动端视口
-  const isMobile = isMobileViewport()
-
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {view === 'settings' ? (
@@ -130,6 +115,10 @@ function AppInner(): React.ReactElement {
           onClose={handleSettingsSaved}
           onConnectionChange={() => {}}
         />
+      ) : view === 'ide' && store ? (
+        <IDELayout chatStore={store} connected={connected} />
+      ) : caps.mobileShell && store ? (
+        <MobileShell chatStore={store} connected={connected} setView={setView} dataSource={dataSource} />
       ) : (
         <>
           {/* 顶部导航栏 */}
@@ -176,7 +165,7 @@ function AppInner(): React.ReactElement {
               </span>
             </div>
 
-            {/* 右侧：连接状态 + 设置按钮 */}
+            {/* 右侧：连接状态 + IDE切换 + 设置按钮 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {/* 连接状态指示灯 */}
               <span
@@ -198,6 +187,31 @@ function AppInner(): React.ReactElement {
                 }} />
                 {statusText}
               </span>
+
+              {/* IDE 模式切换按钮 */}
+              {(caps.localEditor || caps.terminal || caps.fileExplorer) && (
+                <button
+                  onClick={() => setView('ide')}
+                  title="IDE 模式"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    transition: 'color var(--transition-fast)',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                    <line x1="8" y1="21" x2="16" y2="21" />
+                    <line x1="12" y1="17" x2="12" y2="21" />
+                  </svg>
+                </button>
+              )}
 
               {/* 设置齿轮按钮 */}
               <button
@@ -225,45 +239,8 @@ function AppInner(): React.ReactElement {
 
           {/* 主体区域 */}
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-            {/* 移动端侧边栏 — 覆盖层模式 */}
-            {isMobile && !sidebarCollapsed && (
-              <>
-                {/* 背景遮罩 — 点击关闭 */}
-                <div
-                  className="mobile-sidebar-overlay"
-                  onClick={() => setSidebarCollapsed(true)}
-                />
-                {/* 侧边栏面板 */}
-                <div className="mobile-sidebar-panel">
-                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                    <SessionList store={store} />
-                  </div>
-                  {/* 底部：新建会话按钮 */}
-                  <div style={{
-                    display: 'flex',
-                    gap: 'var(--sp-2)',
-                    padding: 'var(--sp-2) var(--sp-3)',
-                    borderTop: '1px solid var(--border-subtle)',
-                    flexShrink: 0,
-                  }}>
-                    <button
-                      className="session-confirm-btn"
-                      style={{ flex: 1, fontSize: 'var(--font-size-xs)', padding: '6px' }}
-                      onClick={() => {
-                        store.getState().createSession()
-                        setSidebarCollapsed(true)
-                      }}
-                      title={t('chat.newSession')}
-                    >
-                      {t('session.newSession')}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-
             {/* 桌面端侧边栏 — 内嵌模式 */}
-            {!isMobile && !sidebarCollapsed && (
+            {!sidebarCollapsed && (
               <div style={{
                 width: 'var(--sidebar-width)',
                 flexShrink: 0,

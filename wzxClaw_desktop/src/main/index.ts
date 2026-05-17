@@ -43,7 +43,7 @@ const optimizer = {
     })
   }
 }
-import { LLMGateway } from './llm/gateway'
+import { LLMGateway } from '@wzxclaw/brain'
 import { registerIpcHandlers } from './ipc-handlers'
 import { HostStore } from './hosts/host-store'
 import { SshCredentials } from './hosts/ssh-credentials'
@@ -57,21 +57,20 @@ import { createDefaultTools } from './tools/tool-registry'
 import { BackgroundTaskManager } from './tasks/background-task-manager'
 import { NotificationService } from './notification/notification-service'
 import { AgentTool } from './tools/agent-tool'
-import { PermissionManager } from './permission/permission-manager'
+import { PermissionManager } from '@wzxclaw/brain'
 import { createDesktopAgentLoop } from './brain-bridge'
 import { HandBridge } from './hand-bridge'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
 import { SessionTaskStateManager, isActiveSessionTaskStatus } from './agent/session-task-state-manager'
-import type { AgentConfig } from './agent/types'
+import type { AgentConfig } from '@wzxclaw/brain'
 import { WorkspaceManager } from './workspace/workspace-manager'
 import { SessionStore, type SessionMeta } from './persistence/session-store'
 import { SessionStoreManager } from './persistence/session-store-manager'
-import { ContextManager } from './context/context-manager'
+import { ContextManager } from '@wzxclaw/brain'
 import { TerminalManager } from './terminal/terminal-manager'
 import { StepManager } from './steps/step-manager'
 import { WorkspaceStore } from './tasks/workspace-store'
-import { HookRegistry } from './hooks/hook-registry'
-import { registerBuiltInHooks } from './hooks/built-in-hooks'
+import { HookRegistry, registerBuiltInHooks } from '@wzxclaw/brain'
 import { IndexingEngine } from './indexing/indexing-engine'
 import { EmbeddingClient } from './indexing/embedding-client'
 import { SettingsManager } from './settings-manager'
@@ -101,7 +100,7 @@ import { getMobileSessionTransition, isPathWithinWorkspace } from './mobile/mobi
 import { ensureAppDirs, ensureMcpConfig } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
 import { initLangfuse, shutdownLangfuse } from './observability/langfuse-observer'
-import { cleanupToolResults, cleanupExpiredToolResults } from './context/tool-result-storage'
+import { cleanupToolResults, cleanupExpiredToolResults } from '@wzxclaw/brain'
 
 const gateway = new LLMGateway()
 const workspaceManager = new WorkspaceManager()

@@ -11,7 +11,7 @@
 // ============================================================
 
 import type { Message } from '../../shared/types'
-import type { RestoredFile } from './compact-file-restore'
+import type { RestoredFile } from '@wzxclaw/brain'
 
 export interface CompactAttachmentContext {
   /** Current todo list */

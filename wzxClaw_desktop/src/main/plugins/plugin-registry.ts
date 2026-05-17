@@ -15,7 +15,7 @@ import { loadPluginCommands } from './plugin-commands'
 import { loadPluginHooks, unloadPluginHooks } from './plugin-hooks'
 import { loadPluginAgents, agentToSkill, type PluginAgent } from './plugin-agents'
 import type { SettingsManager } from '../settings-manager'
-import type { HookRegistry } from '../hooks/hook-registry'
+import type { HookRegistry } from '@wzxclaw/brain'
 import type { MCPManager } from '../mcp/mcp-manager'
 
 // ============================================================

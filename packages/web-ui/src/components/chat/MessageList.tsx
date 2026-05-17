@@ -8,6 +8,8 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import ChatMessage from './ChatMessage'
+import AnimatedMessageItem from './AnimatedMessageItem'
+import StreamingShimmer from './StreamingShimmer'
 import ThinkingIndicator from './ThinkingIndicator'
 import {
   getVisibleHistoryWindow,
@@ -157,13 +159,16 @@ export default function MessageList({ useStore }: MessageListProps): React.React
             </div>
           )}
           {visibleMessages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
+            <AnimatedMessageItem key={msg.id}>
+              <ChatMessage message={msg} />
+            </AnimatedMessageItem>
           ))}
         </>
       )}
       {isStreaming && isWaitingForResponse && !streamingMessageId && (
         <div className="chat-message chat-message-assistant chat-message-streaming">
           <ThinkingIndicator />
+          <StreamingShimmer visible={true} />
         </div>
       )}
       <div ref={messagesEndRef} />

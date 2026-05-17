@@ -8,9 +8,10 @@
 // 配置通过 useConnectionConfig hook 保存到 localStorage
 // ============================================================
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useConnectionConfig } from '../../hooks/useConnectionConfig'
 import { createDataSource } from '../../data-source'
+import { useHandStore, type HandInfo } from '../../stores/hand-store'
 
 interface SettingsPageProps {
   /** 关闭设置页面回调 */
@@ -37,6 +38,15 @@ export default function SettingsPage({ onClose, onConnectionChange }: SettingsPa
   // 测试连接状态
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  // Hand 列表
+  const { hands, loading: handsLoading, fetchHands } = useHandStore()
+
+  useEffect(() => {
+    if (config.agentUrl) {
+      fetchHands(config.agentUrl)
+    }
+  }, [config.agentUrl, fetchHands])
 
   // 保存所有配置
   const handleSave = useCallback(() => {
@@ -173,6 +183,60 @@ export default function SettingsPage({ onClose, onConnectionChange }: SettingsPa
                 <option value="zh-CN">中文</option>
                 <option value="en">English</option>
               </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Hand 管理 */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Hand 管理</h3>
+          <div className="settings-card">
+            {handsLoading ? (
+              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                加载中...
+              </span>
+            ) : hands.length === 0 ? (
+              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                暂无在线 Hand。请确保 NAS Hand 或桌面端 Hand 已启动。
+              </span>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                {hands.map((hand: HandInfo) => (
+                  <div
+                    key={hand.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: 'var(--sp-2) var(--sp-3)',
+                      background: 'var(--bg-tertiary)',
+                      borderRadius: 'var(--radius-md)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 500 }}>{hand.id}</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                        {hand.type} · {hand.capabilities.length} 工具 · 优先级 {hand.priority}
+                      </div>
+                    </div>
+                    <span style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: '#4caf50',
+                      display: 'inline-block',
+                    }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="settings-field" style={{ marginTop: 'var(--sp-2)' }}>
+              <button
+                className="settings-test-btn"
+                onClick={() => fetchHands(config.agentUrl)}
+              >
+                刷新列表
+              </button>
             </div>
           </div>
         </section>

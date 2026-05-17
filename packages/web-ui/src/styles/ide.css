@@ -1,0 +1,22 @@
+/* ============================================================
+   IDE 布局样式
+   ============================================================ */
+
+/* 状态栏主题变量 */
+:root {
+  --bg-statusbar: #007acc;
+}
+
+[data-theme="light"] {
+  --bg-statusbar: #1976d2;
+}
+
+/* xterm 终端覆盖 */
+.xterm {
+  padding: 4px;
+}
+
+/* Monaco 编辑器覆盖 */
+.monaco-editor .margin {
+  background: var(--bg-primary) !important;
+}

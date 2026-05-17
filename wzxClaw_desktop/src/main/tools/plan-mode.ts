@@ -3,7 +3,7 @@ import path from 'path'
 import fsp from 'fs/promises'
 import { app } from 'electron'
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from './tool-interface'
-import type { PermissionManager } from '../permission/permission-manager'
+import type { PermissionManager } from '@wzxclaw/brain'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 // ============================================================

@@ -178,9 +178,6 @@ describe('IPC wiring alignment', () => {
   const mainChannels = extractMainChannels([
     path.join(ROOT, 'src/main/ipc-handlers.ts'),
     path.join(ROOT, 'src/main/index.ts'),
-    path.join(ROOT, 'src/main/permission/permission-manager.ts'),
-    path.join(ROOT, 'src/main/agent/agent-loop.ts'),
-    path.join(ROOT, 'src/main/agent/turn-manager.ts'),
     path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
     path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),
     path.join(ROOT, 'src/main/browser/browser-ipc-handlers.ts'),

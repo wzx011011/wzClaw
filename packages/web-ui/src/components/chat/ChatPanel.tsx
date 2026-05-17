@@ -12,6 +12,7 @@
 
 import React, { useState, useRef, useEffect } from 'react'
 import MessageList from './MessageList'
+import MicButton from '../mobile/MicButton'
 import type { StoreApi } from 'zustand'
 import type { ChatStore } from '../../stores/chat-store'
 
@@ -161,6 +162,10 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
               />
               {connected ? '已连接' : '未连接'}
             </span>
+            {/* 语音输入按钮 */}
+            {isMobile && (
+              <MicButton onTranscript={(text) => setInputValue(text)} />
+            )}
           </div>
           <div className="chat-toolbar-right">
             {/* 模型标签 */}

@@ -10,16 +10,20 @@ export default defineConfig({
     plugins: [
       externalizeDepsPlugin({
         exclude: [
+          '@wzxclaw/brain',
+          '@wzxclaw/hand',
           'uuid',
           'openai',
           '@anthropic-ai/sdk',
           'zustand',
           'dotenv',
-          'zod'
+          'zod',
+          'js-tiktoken',
         ]
       })
     ],
     resolve: {
+      preserveSymlinks: true,
       alias: {
         '@shared': resolve('src/shared')
       }
@@ -49,20 +53,7 @@ export default defineConfig({
       outDir: resolve(__dirname, 'out/renderer'),
       base: './',
       rollupOptions: {
-        // 显式指定 web-ui 的 index.html 作为入口
         input: resolve(webUiRoot, 'index.html'),
-        output: {
-          manualChunks: {
-            // React 核心
-            'vendor-react': ['react', 'react-dom'],
-            // 状态管理
-            'vendor-zustand': ['zustand'],
-            // Markdown 渲染
-            'vendor-markdown': ['react-markdown', 'remark-gfm', 'rehype-raw'],
-            // 代码高亮
-            'vendor-highlight': ['highlight.js'],
-          },
-        },
       },
     },
     define: {

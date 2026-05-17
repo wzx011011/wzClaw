@@ -20,17 +20,20 @@ import type {
   IHookRegistry,
   IHookResult,
 } from '@wzxclaw/brain'
-import type { StreamEvent } from '@wzxclaw/brain'
+import type { StreamEvent, LLMGateway } from '@wzxclaw/brain'
+import {
+  type PermissionManager,
+  type HookRegistry,
+  truncateToolResult,
+  maybePersistLargeToolResult,
+  ToolResultReplacementState,
+  ContextManager as ContextManagerClass,
+} from '@wzxclaw/brain'
 import { startTrace, endTrace, getActiveTrace } from './observability/langfuse-observer'
 import { DebugLogger } from './utils/debug-logger'
 import type { ToolRegistry } from './tools/tool-registry'
-import type { PermissionManager } from './permission/permission-manager'
-import { truncateToolResult } from './context/tool-result-budget'
-import { maybePersistLargeToolResult, ToolResultReplacementState } from './context/tool-result-storage'
-import { ContextManager as ContextManagerClass } from './context/context-manager'
 import { flattenToolOutput } from './tools/tool-interface'
 import type { FileHistoryManager } from './file-history/file-history-manager'
-import type { HookRegistry } from './hooks/hook-registry'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import path from 'path'
 
@@ -280,7 +283,7 @@ export class DesktopToolExecutor implements IToolExecutor {
 // ============================================================
 
 export class DesktopStreamProvider implements IStreamProvider {
-  constructor(private gateway: import('./llm/gateway').LLMGateway) {}
+  constructor(private gateway: LLMGateway) {}
 
   async *stream(options: IStreamOptions): AsyncGenerator<StreamEvent> {
     // IStreamOptions -> LLMGateway 的 StreamOptions 格式转换

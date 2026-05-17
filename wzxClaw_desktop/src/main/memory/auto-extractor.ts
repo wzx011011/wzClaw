@@ -3,7 +3,7 @@
 // 轻量级实现：用 LLM 从最近对话摘要中提取增量记忆
 // ============================================================
 
-import type { LLMGateway } from '../llm/gateway'
+import type { LLMGateway } from '@wzxclaw/brain'
 import type { Message } from '../../shared/types'
 import fs from 'fs'
 import path from 'path'

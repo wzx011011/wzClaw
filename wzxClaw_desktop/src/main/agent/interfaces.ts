@@ -4,10 +4,10 @@
 // ============================================================
 
 import type { StreamEvent, LLMProvider, Message } from '../../shared/types'
-import type { StreamOptions } from '../llm/types'
+import type { StreamOptions } from '@wzxclaw/brain'
 import type { Tool } from '../tools/tool-interface'
-import type { CompactResult } from '../context/context-manager'
-import type { AgentRuntimeConfig } from './runtime-config'
+import type { CompactResult } from '@wzxclaw/brain'
+import type { AgentRuntimeConfig } from '@wzxclaw/brain'
 
 // ---- LLM 网关 ----
 

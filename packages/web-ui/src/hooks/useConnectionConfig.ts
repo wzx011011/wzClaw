@@ -27,8 +27,8 @@ const STORAGE_KEY = 'wzxclaw-connection-config'
 
 /** 默认配置 */
 const DEFAULT_CONFIG: ConnectionConfig = {
-  agentUrl: 'ws://localhost:8082',
-  token: '',
+  agentUrl: 'wss://agent.5945.top/',
+  token: 'dev',
   language: 'zh-CN',
   themeMode: 'dark',
 }

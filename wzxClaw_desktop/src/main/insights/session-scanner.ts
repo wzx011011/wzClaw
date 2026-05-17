@@ -7,7 +7,7 @@ import fsp from 'fs/promises'
 import path from 'path'
 import type { ChatMessageLike } from '../persistence/session-store'
 import type { SessionInsightMeta } from './insight-types'
-import { getPricing } from '../llm/model-cost'
+import { getPricing } from '@wzxclaw/brain'
 
 /** Simple line diff counter — avoids external dependency on 'diff' */
 function countLineDiff(oldStr: string, newStr: string): { added: number; removed: number } {

@@ -1,19 +1,19 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import path from 'path'
 import { IPC_CHANNELS, IpcSchemas } from '../shared/ipc-channels'
-import { CostTracker } from './llm/cost-tracker'
+import { CostTracker } from '@wzxclaw/brain'
 import { getCommandsDir, getSkillsDir } from './paths'
 import { invalidateGitCache } from './git/git-context'
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_MODELS } from '../shared/constants'
-import type { LLMGateway } from './llm/gateway'
+import type { LLMGateway } from '@wzxclaw/brain'
 import type { DesktopAgentLoop } from './brain-bridge'
 import { SessionRuntimeManager } from './agent/session-runtime-manager'
-import type { PermissionManager } from './permission/permission-manager'
+import type { PermissionManager } from '@wzxclaw/brain'
 import type { WorkspaceManager } from './workspace/workspace-manager'
-import type { AgentConfig } from './agent/types'
+import type { AgentConfig } from '@wzxclaw/brain'
 import { SessionStore } from './persistence/session-store'
 import { SessionStoreManager } from './persistence/session-store-manager'
-import type { ContextManager } from './context/context-manager'
+import type { ContextManager } from '@wzxclaw/brain'
 import type { TerminalManager } from './terminal/terminal-manager'
 import type { StepManager } from './steps/step-manager'
 import { SettingsManager } from './settings-manager'
@@ -536,7 +536,7 @@ export function registerIpcHandlers(
   // Context breakdown — detailed token usage per category
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['agent:context_breakdown'], async () => {
-    const { countTokens, countMessagesTokens } = await import('./context/token-counter')
+    const { countTokens, countMessagesTokens } = await import('@wzxclaw/brain')
     const { buildSystemPromptBreakdown } = await import('./agent/system-prompt-builder')
     const config = settingsManager.getCurrentConfig()
     const model = config.model

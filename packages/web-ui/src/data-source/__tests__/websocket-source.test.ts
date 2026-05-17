@@ -221,4 +221,136 @@ describe('WebSocketDataSource', () => {
     expect(typeof source.getSettings).toBe('function')
     expect(typeof source.updateSettings).toBe('function')
   })
+
+  // ---- IDE 通道测试 ----
+
+  describe('FsChannel', () => {
+    it('readFile 发送 fs:readFile 请求并解析响应', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const readPromise = source.fs!.readFile('/path/to/file.ts')
+
+      // 验证发送了请求
+      const sent = JSON.parse(fakeWs.sentMessages[fakeWs.sentMessages.length - 1]!)
+      expect(sent.event).toBe('fs:readFile')
+      expect(sent.data).toEqual({ path: '/path/to/file.ts' })
+
+      // 模拟响应
+      fakeWs.simulateMessage({
+        event: 'fs:readFile:result',
+        data: { content: 'file content here' },
+      })
+
+      const result = await readPromise
+      expect(result.content).toBe('file content here')
+    })
+
+    it('tree 发送 fs:tree 请求并解析响应', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const nodes = [{ name: 'src', path: '/src', type: 'directory' as const }]
+      const treePromise = source.fs!.tree('/project', 2)
+
+      // 模拟响应
+      fakeWs.simulateMessage({
+        event: 'fs:tree:result',
+        data: { nodes },
+      })
+
+      const result = await treePromise
+      expect(result).toEqual(nodes)
+    })
+  })
+
+  describe('TerminalChannel', () => {
+    it('spawn 发送 terminal:spawn 请求', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const spawnPromise = source.terminal!.spawn({ shell: '/bin/bash', cwd: '/home' })
+
+      // 模拟响应
+      fakeWs.simulateMessage({
+        event: 'terminal:spawned',
+        data: { terminalId: 'term-1' },
+      })
+
+      const terminalId = await spawnPromise
+      expect(terminalId).toBe('term-1')
+    })
+
+    it('onData 接收 terminal:data 事件', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onData = vi.fn()
+      source.terminal!.onData('term-1', onData)
+
+      // 模拟收到 terminal 数据
+      fakeWs.simulateMessage({
+        event: 'terminal:data',
+        data: { terminalId: 'term-1', data: 'output line\n' },
+      })
+
+      expect(onData).toHaveBeenCalledWith('output line\n')
+    })
+
+    it('onExit 接收 terminal:exit 事件', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onExit = vi.fn()
+      source.terminal!.onExit('term-1', onExit)
+
+      // 模拟终端退出
+      fakeWs.simulateMessage({
+        event: 'terminal:exit',
+        data: { terminalId: 'term-1', exitCode: 0 },
+      })
+
+      expect(onExit).toHaveBeenCalledWith(0)
+    })
+
+    it('write 发送 terminal:write 消息', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      await source.terminal!.write('term-1', 'ls -la\n')
+
+      const sent = JSON.parse(fakeWs.sentMessages[fakeWs.sentMessages.length - 1]!)
+      expect(sent.event).toBe('terminal:write')
+      expect(sent.data).toEqual({ terminalId: 'term-1', data: 'ls -la\n' })
+    })
+  })
+
+  describe('PreviewChannel', () => {
+    it('open 设置 URL 并通知监听器', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onUrlChange = vi.fn()
+      source.preview!.onUrlChange(onUrlChange)
+
+      await source.preview!.open('http://localhost:3000')
+
+      expect(source.preview!.getUrl()).toBe('http://localhost:3000')
+      expect(onUrlChange).toHaveBeenCalledWith('http://localhost:3000')
+    })
+  })
 })

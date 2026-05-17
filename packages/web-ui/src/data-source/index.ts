@@ -23,6 +23,12 @@ export type {
   CompactedStreamPayload,
   ToolProgressStreamPayload,
   TurnEndStreamPayload,
+  FsChannel,
+  FileTreeNode,
+  FileWatchEvent,
+  TerminalChannel,
+  TerminalSpawnOptions,
+  PreviewChannel,
 } from './types'
 
 export { WebSocketDataSource } from './websocket-source'

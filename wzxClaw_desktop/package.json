@@ -31,6 +31,9 @@
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run test:e2e:session && npm run build && electron-builder --win",
     "test:e2e:session": "vitest run src/main/__tests__/e2e-session/",
+    "test:e2e:ui": "npx playwright test test/e2e/",
+    "test:e2e:nas": "npx playwright test test/e2e/nas-agent.spec.ts",
+    "test:smoke": "npx playwright test test/smoke/",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
@@ -80,9 +83,7 @@
     "ws": "^8.20.0",
     "xterm": "^5.3.0",
     "zod": "^3.23.0",
-    "zustand": "^5.0.0",
-    "@wzxclaw/brain": "file:../packages/brain",
-    "@wzxclaw/hand": "file:../packages/hand"
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
@@ -101,6 +102,8 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^3.0.0",
+    "@wzxclaw/brain": "file:../packages/brain",
+    "@wzxclaw/hand": "file:../packages/hand",
     "electron": "^33.4.11",
     "electron-builder": "^25.0.0",
     "electron-vite": "^3.0.0",

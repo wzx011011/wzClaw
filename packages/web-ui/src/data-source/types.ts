@@ -154,6 +154,57 @@ export interface SendMessageOptions {
   }>
 }
 
+// ---- IDE 子通道类型 ----
+
+/** 文件树节点 */
+export interface FileTreeNode {
+  readonly name: string
+  readonly path: string
+  readonly type: 'file' | 'directory'
+  readonly children?: FileTreeNode[]
+}
+
+/** 文件变更事件 */
+export interface FileWatchEvent {
+  readonly type: 'create' | 'modify' | 'delete' | 'rename'
+  readonly path: string
+}
+
+/** 文件系统通道 — readFile/writeFile/tree/watch */
+export interface FsChannel {
+  readFile(path: string): Promise<{ content: string }>
+  writeFile(path: string, content: string): Promise<void>
+  tree(dirPath: string, depth?: number): Promise<FileTreeNode[]>
+  watch(path: string, callback: (events: FileWatchEvent[]) => void): () => void
+}
+
+/** 终端 spawn 选项 */
+export interface TerminalSpawnOptions {
+  readonly shell?: string
+  readonly cwd?: string
+  readonly env?: Record<string, string>
+  readonly cols?: number
+  readonly rows?: number
+}
+
+/** 终端通道 — spawn/write/resize/kill + 数据流 */
+export interface TerminalChannel {
+  spawn(options: TerminalSpawnOptions): Promise<string>
+  write(terminalId: string, data: string): Promise<void>
+  resize(terminalId: string, cols: number, rows: number): Promise<void>
+  kill(terminalId: string): Promise<void>
+  onData(terminalId: string, callback: (data: string) => void): () => void
+  onExit(terminalId: string, callback: (exitCode: number) => void): () => void
+}
+
+/** 预览通道 — open/reload/url 监听 */
+export interface PreviewChannel {
+  open(url: string): Promise<void>
+  reload(): Promise<void>
+  getUrl(): string | null
+  onUrlChange(callback: (url: string | null) => void): () => void
+}
+
 // ---- DataSource 接口 ----
 
 /**
@@ -226,4 +277,15 @@ export interface DataSource {
 
   /** 更新设置 */
   updateSettings(settings: Partial<Settings>): Promise<void>
+
+  // ---- IDE 子通道（capability-driven，可选）----
+
+  /** 文件系统操作（Electron 本地 / 远程 Hand FileRead+FileWrite） */
+  readonly fs?: FsChannel
+
+  /** 终端操作（Electron pty / 远程 Hand ShellExecute） */
+  readonly terminal?: TerminalChannel
+
+  /** 预览操作（Electron BrowserView / iframe） */
+  readonly preview?: PreviewChannel
 }

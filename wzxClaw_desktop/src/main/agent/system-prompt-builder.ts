@@ -4,13 +4,13 @@
 // ============================================================
 
 import type { Workspace } from '../../shared/types'
-import type { AgentConfig } from './types'
+import type { AgentConfig } from '@wzxclaw/brain'
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '../../shared/constants'
 import { getGitContext } from '../git/git-context'
 import { loadInstructionSections } from '../context/instruction-loader'
 import { buildEnvInfo } from '../context/env-info'
 import { MemoryManager } from '../memory/memory-manager'
-import { countTokens } from '../context/token-counter'
+import { countTokens } from '@wzxclaw/brain'
 
 // ============================================================
 // Plan Mode System Prompt — 5-stage workflow instructions

@@ -153,3 +153,300 @@
     padding-top: env(safe-area-inset-top);
   }
 }
+
+/* ---- Mobile Shell 布局 ---- */
+.mobile-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh; /* dynamic viewport height for mobile */
+  overflow: hidden;
+}
+
+.mobile-tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding-bottom: 50px; /* BottomTabBar clearance */
+}
+
+/* MobileShell 内的 ChatPanel 无需额外底部 padding */
+.mobile-shell .chat-panel {
+  padding-bottom: 0;
+}
+
+.mobile-shell .chat-input-area-wrapper {
+  padding-bottom: 50px; /* BottomTabBar clearance for input */
+}
+
+/* ---- TopBar ---- */
+.mobile-top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-3);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  .mobile-top-bar {
+    padding-top: env(safe-area-inset-top);
+    height: calc(44px + env(safe-area-inset-top));
+  }
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-bar-title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---- BottomTabBar ---- */
+.bottom-tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  z-index: 20;
+}
+
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .bottom-tab-bar {
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(50px + env(safe-area-inset-bottom));
+  }
+}
+
+.bottom-tab-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 0;
+  touch-action: manipulation;
+  transition: color 150ms ease, transform 100ms ease;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 44px; /* minimum touch target */
+}
+
+.bottom-tab-item:active {
+  transform: scale(0.95);
+}
+
+.bottom-tab-item.active {
+  color: var(--accent);
+}
+
+.bottom-tab-item.active .bottom-tab-icon::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.bottom-tab-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bottom-tab-label {
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* ---- FloatingBar ---- */
+.floating-bar {
+  position: fixed;
+  bottom: 50px;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  transition: all 200ms ease;
+}
+
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .floating-bar {
+    bottom: calc(50px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---- MobileShell Tab Content Offset for TopBar ---- */
+.mobile-shell .mobile-tab-content {
+  padding-top: 44px;
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  .mobile-shell .mobile-tab-content {
+    padding-top: calc(44px + env(safe-area-inset-top));
+  }
+}
+
+/* ---- MicButton ---- */
+.mic-button {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.mic-button:active {
+  background: var(--bg-tertiary);
+}
+
+.mic-button-recording {
+  color: var(--tool-error);
+  animation: mic-pulse 1s infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(244, 67, 54, 0); }
+}
+
+.mic-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  margin-bottom: 4px;
+}
+
+/* ---- StreamingShimmer ---- */
+.streaming-shimmer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.shimmer-line {
+  height: 12px;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: shimmer-sweep 1.5s infinite;
+}
+
+@keyframes shimmer-sweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---- AnimatedMessageItem ---- */
+.animated-message-item {
+  animation: slideInUp 200ms ease-out;
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- ConnectionStatusBar ---- */
+.connection-status-bar {
+  position: fixed;
+  top: 44px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+  animation: slideDown 200ms ease-out;
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  .connection-status-bar {
+    top: calc(44px + env(safe-area-inset-top));
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Mobile 主题 token（Flutter Material 对齐）---- */
+:root {
+  --mobile-radius-card: 12px;
+  --mobile-radius-button: 8px;
+  --mobile-elevation-1: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+  --mobile-elevation-2: 0 3px 6px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.12);
+}
+
+/* ---- 滚动动量优化 ---- */
+.mobile-shell * {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}

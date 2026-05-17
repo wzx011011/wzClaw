@@ -2,9 +2,9 @@ import { defineConfig } from '@playwright/test'
 import path from 'path'
 
 export default defineConfig({
-  testDir: './test/smoke',
+  testDir: './test',
   testMatch: '**/*.spec.ts',
-  timeout: 60_000,
+  timeout: 90_000, // E2E agent tests need more time than smoke tests
   retries: 0,
   workers: 1, // Electron apps must not run in parallel
   use: {
