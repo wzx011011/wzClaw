@@ -8,9 +8,11 @@ import fs from 'fs'
 import path from 'path'
 import { authenticate } from '../auth.js'
 import { getConfigDir } from '../instructions/instruction-loader.js'
+import type { AgentServer } from '../server.js'
 
 /** 允许远程读写的配置文件名 */
 const ALLOWED_CONFIG_FILES = new Set([
+  'api-keys.json',
   'hand.config.json',
   'mcp.json',
   'MEMORY.md',
@@ -29,7 +31,7 @@ const ALLOWED_CONFIG_DIRS = new Set([
  * - hand.config.json, mcp.json, MEMORY.md — 直接读写
  * - skills/:filename, commands/:filename — 目录下文件读写
  */
-export function handleConfig(req: IncomingMessage, res: ServerResponse): void {
+export function handleConfig(req: IncomingMessage, res: ServerResponse, server?: AgentServer): void {
   // 认证检查
   const token = extractToken(req)
   const authResult = authenticate(token)
@@ -90,7 +92,7 @@ export function handleConfig(req: IncomingMessage, res: ServerResponse): void {
   if (req.method === 'GET') {
     handleGetConfig(resolvedPath, res)
   } else if (req.method === 'PUT') {
-    handlePutConfig(req, resolvedPath, res)
+    handlePutConfig(req, resolvedPath, res, configName, server)
   } else {
     res.writeHead(405)
     res.end('Method not allowed')
@@ -108,7 +110,7 @@ function handleGetConfig(filePath: string, res: ServerResponse): void {
   }
 }
 
-function handlePutConfig(req: IncomingMessage, filePath: string, res: ServerResponse): void {
+function handlePutConfig(req: IncomingMessage, filePath: string, res: ServerResponse, configName: string, server?: AgentServer): void {
   let body = ''
   req.on('data', (chunk: Buffer) => {
     body += chunk.toString()
@@ -125,6 +127,11 @@ function handlePutConfig(req: IncomingMessage, filePath: string, res: ServerResp
       // 确保父目录存在
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
       fs.writeFileSync(filePath, parsed.content, 'utf-8')
+
+      // api-keys.json 写入后热重载 gateway
+      if (configName === 'api-keys.json' && server) {
+        server.reloadApiKeys()
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: true }))

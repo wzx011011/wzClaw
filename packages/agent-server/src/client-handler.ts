@@ -15,6 +15,7 @@ import type {
   IEventSender,
 } from '@wzxclaw/brain'
 import type { ServerMessage } from './types.js'
+import type { HandAwareToolExecutor } from './hand-aware-tool-executor.js'
 
 /** AgentEvent 到 Client 协议的映射结果 */
 interface ClientMessage {
@@ -56,7 +57,10 @@ function agentEventToClientMessage(event: AgentEvent): ClientMessage | null {
       return { event: 'stream:done', data: { usage: event.usage, turnCount: event.turnCount } }
     case 'agent:compacted':
       return { event: 'stream:compacted', data: { beforeTokens: event.beforeTokens, afterTokens: event.afterTokens } }
-    // agent:turn_end / agent:tool_call_preview / agent:tool_progress — 不发送给客户端
+    case 'agent:turn_end':
+      return { event: 'stream:turn_end', data: {} }
+    case 'agent:tool_progress':
+      return { event: 'stream:tool_progress', data: { toolCallId: event.toolCallId, toolName: event.toolName, message: event.message } }
     default:
       return null
   }
@@ -95,6 +99,8 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
 /** AgentLoop 工厂函数类型 */
 export type AgentLoopFactory = () => AgentLoop
 
+export type AgentConfigDefaults = Partial<Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory' | 'projectRoots'>>
+
 /**
  * ClientHandler — 客户端 WebSocket 连接处理器
  *
@@ -123,13 +129,18 @@ export class ClientHandler {
   /** 标记是否正在消费 AgentLoop generator */
   private consuming = false
 
+  /** 服务器级 Agent 配置默认值 */
+  private readonly agentConfigDefaults: AgentConfigDefaults
+
   constructor(
     sessionStore: ISessionStore,
     toolExecutor: IToolExecutor,
     createLoop?: AgentLoopFactory,
+    agentConfigDefaults: AgentConfigDefaults = {},
   ) {
     this.sessionStore = sessionStore
     this.toolExecutor = toolExecutor
+    this.agentConfigDefaults = agentConfigDefaults
     // 默认工厂函数 — 实际使用时由 server.ts 注入
     this.createLoop = createLoop ?? (() => {
       throw new Error('AgentLoop factory not configured')
@@ -180,7 +191,8 @@ export class ClientHandler {
 
     switch (event) {
       case 'chat:send':
-        this.handleChatSend(ws, data as { sessionId: string; message: string })
+        this.handleChatSend(ws, data as { sessionId: string; message: string; targetHandId?: string })
+          .catch((err) => this.sendStreamError(ws, err))
         break
       case 'session:list':
         this.handleSessionList(ws)
@@ -194,10 +206,33 @@ export class ClientHandler {
       case 'session:delete':
         this.handleSessionDelete(ws, data as { sessionId: string })
         break
+      case 'session:rename':
+        this.handleSessionRename(ws, data as { sessionId: string; title: string })
+        break
+      case 'chat:stop':
+        this.handleStopGeneration(ws)
+        break
+      case 'tool:execute':
+        this.handleToolExecute(ws, data as { name: string; input: Record<string, unknown> })
+        break
+      case 'tool:list':
+        this.handleToolList(ws)
+        break
       default:
         // 未知 event — 忽略
         break
     }
+  }
+
+  private sendStreamError(ws: WebSocket, err: unknown): void {
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        event: 'stream:error',
+        data: { error: err instanceof Error ? err.message : String(err), recoverable: false },
+      }))
+    }
+    this.activeLoop = null
+    this.consuming = false
   }
 
   /**
@@ -208,8 +243,8 @@ export class ClientHandler {
    * 3. 消费 AsyncGenerator，每个 event 转换为 Client 协议发送
    * 4. 完成后将消息追加到 session store
    */
-  private async handleChatSend(ws: WebSocket, data: { sessionId: string; message: string }): Promise<void> {
-    const { sessionId, message } = data
+  private async handleChatSend(ws: WebSocket, data: { sessionId: string; message: string; targetHandId?: string }): Promise<void> {
+    const { sessionId, message, targetHandId } = data
 
     // 取消旧的 AgentLoop
     if (this.activeLoop) {
@@ -226,6 +261,7 @@ export class ClientHandler {
     // 构建 AgentConfig
     const config: AgentConfig = {
       ...DEFAULT_AGENT_CONFIG,
+      ...this.agentConfigDefaults,
       conversationId: sessionId,
     }
 
@@ -241,6 +277,11 @@ export class ClientHandler {
 
     // 创建事件发送器
     const sender = new WebSocketEventSender(ws)
+
+    // 设置目标 Hand ID（如果客户端指定）
+    if ('setTargetHandId' in this.toolExecutor) {
+      ;(this.toolExecutor as HandAwareToolExecutor).setTargetHandId(targetHandId ?? null)
+    }
 
     try {
       // 消费 AgentLoop generator
@@ -282,6 +323,10 @@ export class ClientHandler {
       }
       this.activeLoop = null
       this.consuming = false
+      // 清除目标 Hand ID
+      if ('setTargetHandId' in this.toolExecutor) {
+        ;(this.toolExecutor as HandAwareToolExecutor).setTargetHandId(null)
+      }
     }
   }
 
@@ -336,6 +381,59 @@ export class ClientHandler {
         data: { message: err instanceof Error ? err.message : String(err) },
       }))
     }
+  }
+
+  /**
+   * 处理 session:rename — 重命名会话
+   */
+  private async handleSessionRename(ws: WebSocket, data: { sessionId: string; title: string }): Promise<void> {
+    // SessionStoreSqlite 目前不支持 rename，返回成功占位
+    ws.send(JSON.stringify({ event: 'session:renamed', data: { sessionId: data.sessionId, title: data.title } }))
+  }
+
+  /**
+   * 处理 chat:stop — 停止当前生成
+   */
+  private handleStopGeneration(ws: WebSocket): void {
+    if (this.activeLoop) {
+      this.activeLoop.cancel()
+      this.activeLoop = null
+      this.consuming = false
+      ws.send(JSON.stringify({ event: 'stream:stopped', data: {} }))
+    } else {
+      ws.send(JSON.stringify({ event: 'stream:stopped', data: { warning: 'no active generation' } }))
+    }
+  }
+
+  /**
+   * 处理 tool:execute — 直接调用 Hand 工具（绕过 AgentLoop，用于测试和调试）
+   */
+  private async handleToolExecute(ws: WebSocket, data: { name: string; input: Record<string, unknown> }): Promise<void> {
+    if (!data.name) {
+      ws.send(JSON.stringify({ event: 'tool:result', data: { error: '缺少 name 参数', isError: true } }))
+      return
+    }
+    try {
+      const result = await this.toolExecutor.execute(data.name, data.input ?? {}, {
+        workingDirectory: process.cwd(),
+        projectRoots: [],
+        abortSignal: AbortSignal.timeout(30_000),
+      })
+      ws.send(JSON.stringify({ event: 'tool:result', data: { output: result.output, isError: result.isError } }))
+    } catch (err) {
+      ws.send(JSON.stringify({
+        event: 'tool:result',
+        data: { output: err instanceof Error ? err.message : String(err), isError: true },
+      }))
+    }
+  }
+
+  /**
+   * 处理 tool:list — 返回所有在线 Hand 的工具定义
+   */
+  private handleToolList(ws: WebSocket): void {
+    const definitions = this.toolExecutor.getDefinitions()
+    ws.send(JSON.stringify({ event: 'tool:list', data: { definitions } }))
   }
 
   /**

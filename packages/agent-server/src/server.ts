@@ -18,12 +18,19 @@ import { ClientHandler } from './client-handler.js'
 import { buildSystemPrompt } from './instructions/system-prompt-builder.js'
 import { handleReload } from './admin/reload-handler.js'
 import { handleConfig } from './admin/config-handler.js'
+import { handleHandsList } from './admin/hands-list.js'
+import { loadApiKeys, mergeWithEnv } from './api-keys.js'
+import { getConfigDir } from './instructions/instruction-loader.js'
 import type { ServerConfig } from './types.js'
+import type { ApiKeysConfig } from './api-keys.js'
 import {
   ContextManager,
   DEFAULT_MODELS,
   LLMGateway,
   createAgentLoop,
+  HookRegistry,
+  registerBuiltInHooks,
+  LangfuseObserver,
   type AgentConfig,
   type LLMProvider,
 } from '@wzxclaw/brain'
@@ -42,15 +49,18 @@ let startTime = 0
  */
 export class AgentServer {
   private readonly config: ServerConfig
+  private readonly configDir: string
   private readonly sessionStore: SessionStoreSqlite
   private readonly handsRouter: HandsRouter
   private readonly toolExecutor: HandAwareToolExecutor
   private readonly clientHandler: ClientHandler
+  private readonly gateway: LLMGateway
   private httpServer: ReturnType<typeof createServer> | null = null
   private wss: WebSocketServer | null = null
 
   constructor(config: ServerConfig) {
     this.config = config
+    this.configDir = getConfigDir()
 
     // 初始化认证
     if (config.authToken) {
@@ -62,7 +72,9 @@ export class AgentServer {
     this.sessionStore = new SessionStoreSqlite(config.dbPath)
     this.handsRouter = new HandsRouter()
     this.toolExecutor = new HandAwareToolExecutor(this.handsRouter)
-    const { createLoop, agentConfig } = createProductionAgentRuntime(config)
+    this.gateway = new LLMGateway()
+    this.applyApiKeys(mergeWithEnv(loadApiKeys(this.configDir)))
+    const { createLoop, agentConfig } = this.createRuntime(config)
     this.clientHandler = new ClientHandler(
       this.sessionStore,
       this.toolExecutor,
@@ -86,6 +98,75 @@ export class AgentServer {
   }
 
   /**
+   * 热重载 API keys — 重新读取 api-keys.json 并更新 gateway
+   */
+  reloadApiKeys(): void {
+    const keys = mergeWithEnv(loadApiKeys(this.configDir))
+    this.applyApiKeys(keys)
+    console.log('[agent-server] API keys reloaded from config')
+  }
+
+  /**
+   * 将 ApiKeysConfig 应用到 gateway
+   */
+  private applyApiKeys(keys: ApiKeysConfig): void {
+    if (keys.openai) {
+      this.gateway.addProvider({
+        provider: 'openai',
+        apiKey: keys.openai.apiKey,
+        baseURL: keys.openai.baseURL,
+      })
+    }
+    if (keys.anthropic) {
+      this.gateway.addProvider({
+        provider: 'anthropic',
+        apiKey: keys.anthropic.apiKey,
+        baseURL: keys.anthropic.baseURL,
+      })
+    }
+  }
+
+  /**
+   * 创建 AgentLoop 运行时（gateway 已在构造函数中初始化）
+   */
+  private createRuntime(config: ServerConfig): {
+    createLoop: () => ReturnType<typeof createAgentLoop>
+    agentConfig: Partial<Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory' | 'projectRoots'>>
+  } {
+    const model = process.env.AGENT_MODEL || process.env.MODEL || 'deepseek-chat'
+    const provider = resolveProvider(model, process.env.AGENT_PROVIDER || process.env.PROVIDER)
+    const workingDirectory = process.env.AGENT_WORKDIR || '/tmp'
+    const projectRoots = (process.env.AGENT_PROJECT_ROOTS || workingDirectory)
+      .split(/[;,]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+
+    const contextManager = new ContextManager()
+    const hookRegistry = new HookRegistry()
+    registerBuiltInHooks(hookRegistry)
+    const observability = new LangfuseObserver()
+
+    const basePrompt = config.systemPrompt || process.env.AGENT_SYSTEM_PROMPT || ''
+    const systemPrompt = buildSystemPrompt({ basePrompt })
+
+    return {
+      createLoop: () => createAgentLoop({
+        gateway: this.gateway,
+        contextManager,
+        hookRegistry,
+        observability,
+      }),
+      agentConfig: {
+        model,
+        provider,
+        systemPrompt,
+        workingDirectory,
+        projectRoots,
+      },
+    }
+  }
+
+  /**
    * 创建 HTTP 服务器
    * /health 端点返回服务状态信息
    */
@@ -105,10 +186,15 @@ export class AgentServer {
       // Admin API 路由
       if (url === '/admin/reload' && req.method === 'POST') {
         handleReload(req, res, this.handsRouter)
+        this.reloadApiKeys()
         return
       }
       if (url.startsWith('/admin/config/')) {
-        handleConfig(req, res)
+        handleConfig(req, res, this)
+        return
+      }
+      if (url === '/admin/hands' && req.method === 'GET') {
+        handleHandsList(req, res, this.handsRouter)
         return
       }
       // Serve test.html at /
@@ -307,56 +393,6 @@ function resolveProvider(model: string, explicitProvider?: string): LLMProvider 
   if (explicitProvider === 'anthropic' || explicitProvider === 'openai') return explicitProvider
   const preset = DEFAULT_MODELS.find((item) => item.id === model)
   return (preset?.provider as LLMProvider | undefined) ?? (model.startsWith('claude') || model.startsWith('glm-5') ? 'anthropic' : 'openai')
-}
-
-function createProductionAgentRuntime(config: ServerConfig): {
-  createLoop: () => ReturnType<typeof createAgentLoop>
-  agentConfig: Partial<Pick<AgentConfig, 'model' | 'provider' | 'systemPrompt' | 'workingDirectory' | 'projectRoots'>>
-} {
-  const model = process.env.AGENT_MODEL || process.env.MODEL || 'deepseek-chat'
-  const provider = resolveProvider(model, process.env.AGENT_PROVIDER || process.env.PROVIDER)
-  const workingDirectory = process.env.AGENT_WORKDIR || '/tmp'
-  const projectRoots = (process.env.AGENT_PROJECT_ROOTS || workingDirectory)
-    .split(/[;,]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-
-  const gateway = new LLMGateway()
-
-  const openaiKey = process.env.OPENAI_API_KEY
-  if (openaiKey) {
-    gateway.addProvider({
-      provider: 'openai',
-      apiKey: openaiKey,
-      baseURL: process.env.OPENAI_BASE_URL,
-    })
-  }
-
-  const anthropicKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
-  if (anthropicKey) {
-    gateway.addProvider({
-      provider: 'anthropic',
-      apiKey: anthropicKey,
-      baseURL: process.env.ANTHROPIC_BASE_URL,
-    })
-  }
-
-  const contextManager = new ContextManager()
-
-  // 构建含指令的 system prompt
-  const basePrompt = config.systemPrompt || process.env.AGENT_SYSTEM_PROMPT || ''
-  const systemPrompt = buildSystemPrompt({ basePrompt })
-
-  return {
-    createLoop: () => createAgentLoop({ gateway, contextManager }),
-    agentConfig: {
-      model,
-      provider,
-      systemPrompt,
-      workingDirectory,
-      projectRoots,
-    },
-  }
 }
 
 // ---- 模块级 main 函数 ----
