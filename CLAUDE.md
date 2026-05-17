@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Structure
 
-This is a monorepo for wzxClaw — a personal AI coding IDE (similar to Cursor). It contains three top-level code areas:
+This is a monorepo for wzxClaw — a personal AI coding IDE (similar to Cursor). It contains:
 
 - **`wzxClaw_desktop/`** — Electron desktop app (the IDE itself)
-- **`wzxClaw_android/`** — Flutter Android companion app (remote control client)
+- **`packages/brain/`** — AgentLoop + LLM Gateway + Context（独立 Node.js 包）
+- **`packages/agent-server/`** — NAS WebSocket 服务器（Brain runtime + Hand 路由）
+- **`packages/hand/`** — 可插拔工具执行器（npm 包，`npx wzxclaw-hand` 启动）
+- **`packages/web-ui/`** — 共享 React SPA（Electron renderer + 远程 WebSocket）
 - **`relay/`** — Node.js WebSocket relay service deployed on the NAS
+- **`wzxClaw_android/`** — ~~Flutter Android~~ **DEPRECATED** — 已迁移到 Capacitor + web-ui
 
 Both share a single Git repository. The desktop project is the primary codebase.
 
@@ -21,12 +25,68 @@ cd wzxClaw_desktop && npm run build:win
 # 产物: dist/wzxClaw Setup 0.1.0.exe (~102 MB)
 ```
 
-**Android APK**：
+**Android APK**（已弃用 Flutter，新方案见 packages/web-ui + Capacitor）：
+
+~~Flutter APK~~ — 已迁移到 Capacitor + web-ui 方案。
+
+---
+
+## Packages (monorepo)
+
+### packages/brain/ — AgentLoop + LLM Gateway + Context
+
+独立 Node.js 包，无 Electron 依赖。核心模块：
+
+- `agent/` — AgentLoop, TurnManager, StreamPhase, ConversationManager
+- `llm/` — LLMGateway, OpenAI/Anthropic adapters, CostTracker
+- `context/` — ContextManager, token counting, compaction, tool result budget
+- `hooks/` — HookRegistry + built-in hooks
+- `observability/` — LangfuseObserver (console fallback)
+- `permission/` — PermissionManager (4 modes)
 
 ```bash
-cd wzxClaw_android && build_apk.bat
-# 或 bash: export JAVA_HOME="/c/Users/67376/jdk17/jdk-17.0.18+8" && /c/Users/67376/flutter/bin/flutter build apk --release
-# 产物: build/app/outputs/flutter-apk/app-release.apk (~69 MB)
+cd packages/brain && npm run build && npm test   # 27 tests
+```
+
+### packages/agent-server/ — NAS WebSocket 服务器
+
+HTTP + WebSocket 服务器，部署在 NAS Docker。支持 client 和 hand 双通道 WebSocket 连接。
+
+- `server.ts` — HTTP /health + /admin API + WebSocket 服务器
+- `client-handler.ts` — 客户端连接处理 + AgentLoop 桥接
+- `hands-router.ts` — Hand 注册/路由/心跳管理
+- `hand-aware-tool-executor.ts` — 基于 Hand 的工具执行
+- `session-sqlite.ts` — SQLite 会话持久化
+- `instructions/` — System prompt builder
+
+```bash
+cd packages/agent-server && npm run build && npm test   # 53 core tests
+```
+
+### packages/hand/ — 可插拔工具执行器
+
+npm 包，任何机器 `npx wzxclaw-hand` 注册为 Brain 的 Hand。
+
+- `src/connection.ts` — WebSocket 连接管理（注册/心跳/重连）
+- `src/tools/` — FileRead/FileWrite/FileList/ShellExecute/Echo
+- `src/cli.ts` — parseArgs CLI 入口
+
+```bash
+cd packages/hand && npm run build && npm test   # 55 tests
+```
+
+### packages/web-ui/ — 共享 React SPA
+
+Electron renderer 和远程 WebSocket 共用 UI。
+
+- `data-source/` — DataSource 抽象接口 + IpcDataSource + WebSocketDataSource
+- `components/chat/` — ChatPanel, MessageList, ChatMessage
+- `components/ide/` — IDELayout, FileExplorer, EditorPanel, TerminalPanel (capability-driven)
+- `stores/` — chat-store, layout-store, terminal-store, tab-store
+- `hooks/` — useCapabilities, useConnectionConfig
+
+```bash
+cd packages/web-ui && npm run dev && npm test   # 45 tests
 ```
 
 ---
@@ -112,51 +172,18 @@ The system prompt is split by cache markers:
 
 ---
 
-## Android (wzxClaw_android/)
+## ~~Android (wzxClaw_android/)~~ — DEPRECATED
 
-### Commands
+> Flutter Android 项目已弃用，手机端迁移到 Capacitor + web-ui 方案。
+> 新架构：**Phone** ← WSS → **NAS agent-server** (packages/agent-server/)，不再经过桌面端中转。
+> 详见 `.planning/ROADMAP.md` Phase 6/14。
 
-```bash
-cd wzxClaw_android
+### Relay Server (relay/)
 
-# Build APK (requires JAVA_HOME set to JDK 17)
-export JAVA_HOME="/c/Users/67376/jdk17/jdk-17.0.18+8"
-export PATH="$JAVA_HOME/bin:$PATH"
-/c/Users/67376/flutter/bin/flutter build apk --release
-
-# Or use the batch script (Windows)
-build_apk.bat
-
-# Analyze
-/c/Users/67376/flutter/bin/flutter analyze
-
-# Output: build/app/outputs/flutter-apk/app-release.apk
-```
-
-### Architecture
-
-**Phone** ← WSS → **NAS Relay** ← WS/WSS → **Desktop wzxClaw**
-
-The relay server (`relay/`) is a root-level Node.js WebSocket service deployed in Docker on the NAS, exposed via nginx at `wss://5945.top/relay/`. It routes messages between desktop and mobile clients in token-keyed rooms with offline queueing (24h TTL).
-
-**Flutter app structure** (`lib/`):
-
-| Layer    | Files                                                                                                                    | Pattern                                        |
-| -------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| Services | `connection_manager.dart`, `chat_store.dart`, `session_sync_service.dart`, `task_service.dart`, `file_sync_service.dart` | Singletons with `StreamController.broadcast()` |
-| Models   | `ws_message.dart`, `chat_message.dart`, `session_meta.dart`, `task_model.dart`                                           | Immutable data classes                         |
-| Pages    | `home_page.dart`, `settings_page.dart`, `file_browser_page.dart`, `file_viewer_page.dart`                                | StatefulWidget                                 |
-| Widgets  | 15+ widgets                                                                                                              | StreamBuilder-based reactive UI                |
-| Config   | `app_config.dart`, `app_colors.dart`                                                                                     | Constants and theme                            |
-
-No external state management library — state flows from singleton services through Dart streams to `StreamBuilder` widgets. `SharedPreferences` for persisted settings.
-
-**WebSocket protocol**: All messages are JSON `{ "event": "...", "data": ... }`. Event names in `WsEvents` class. Key flows:
-
-- `command:send` → `stream:agent:text/tool_call/tool_result/done` (chat)
-- `session:list/load/create/delete/rename` (session CRUD proxied to desktop)
-- `task:list/get/create/update/delete` (task management)
-- `system:desktop_list/target:confirmed` (multi-desktop targeting)
+- `server.js` — HTTP + WebSocket server, token auth, room management
+- `lib/room.js` — RoomManager: token-keyed rooms, desktop↔mobile routing, offline queues, 30s health pings
+- `lib/auth.js` — Timing-safe token comparison, dev mode fallback
+- Docker deployment on NAS at `127.0.0.1:8081`, nginx reverse proxy at `wss://5945.top/relay/`
 
 ### Relay Server (relay/)
 

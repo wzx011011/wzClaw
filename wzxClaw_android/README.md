@@ -1,5 +1,8 @@
 # wzxClaw Android
 
+> **DEPRECATED** — 本项目已弃用。手机端已迁移到 Capacitor 壳 + web-ui 方案（`packages/web-ui/`），
+> 直连 NAS agent-server，不再依赖 Flutter。新项目结构见 `.planning/ROADMAP.md` Phase 6/14。
+
 **[中文](#中文) | [English](#english)**
 
 ---

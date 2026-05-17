@@ -20,21 +20,21 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
-      // 启动画面显示 1 秒后自动隐藏
       launchShowDuration: 1000,
       backgroundColor: '#1e1e1e',
       showSpinner: false,
       androidScaleType: 'CENTER_CROP',
     },
     StatusBar: {
-      // 暗色状态栏（浅色文字）
       style: 'DARK',
       backgroundColor: '#1e1e1e',
     },
     Keyboard: {
-      // 键盘弹出时调整 WebView body 大小
       resize: 'body',
       resizeOnFullScreen: true,
+    },
+    SpeechRecognition: {
+      permissions: ['RECORD_AUDIO'],
     },
   },
   android: {

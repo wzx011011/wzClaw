@@ -3,7 +3,7 @@
 #
 # 部署方式:
 #   1. 将 deploy/ 目录上传到 NAS: /volume1/wzxclaw/
-#   2. 创建 .env 文件: echo "AUTH_TOKEN=你的token" > .env
+#   2. 创建 .env 文件，至少包含 AUTH_TOKEN 和一个 LLM API key
 #   3. 构建并启动: docker-compose up -d --build
 #   4. 检查状态: docker-compose ps && docker-compose logs -f
 #
@@ -32,6 +32,13 @@ services:
       - AUTH_TOKEN=${AUTH_TOKEN}
       - PORT=8082
       - DB_PATH=/data/sessions.db
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-openai}
+      - AGENT_MODEL=${AGENT_MODEL:-deepseek-chat}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
     volumes:
       - /volume1/wzxclaw/data:/data
     networks:
