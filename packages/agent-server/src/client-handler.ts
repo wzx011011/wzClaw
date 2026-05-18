@@ -29,6 +29,7 @@ interface ClientMessage {
 interface ConnectionState {
   activeLoop: AgentLoop | null
   consuming: boolean
+  permissionMode: string
 }
 
 /**
@@ -151,9 +152,6 @@ export class ClientHandler {
   /** 服务器级 Agent 配置默认值 */
   private readonly agentConfigDefaults: AgentConfigDefaults
 
-  /** 当前权限模式（连接级） */
-  private permissionMode: string
-
   /** 远程主机存储 */
   private readonly hostStore: HostStore
 
@@ -169,7 +167,6 @@ export class ClientHandler {
     this.toolExecutor = toolExecutor
     this.workspaceService = workspaceService ?? null
     this.agentConfigDefaults = agentConfigDefaults
-    this.permissionMode = 'bypass'
     const configDir = process.env.WZXCLAW_CONFIG_DIR || '/root/.wzxclaw'
     this.hostStore = new HostStore(configDir)
     // 默认工厂函数 — 实际使用时由 server.ts 注入
@@ -192,7 +189,7 @@ export class ClientHandler {
    * 每个连接独立管理自己的 AgentLoop 生命周期。
    */
   handleConnection(ws: WebSocket): void {
-    this.connectionStates.set(ws, { activeLoop: null, consuming: false })
+    this.connectionStates.set(ws, { activeLoop: null, consuming: false, permissionMode: 'bypass' })
 
     ws.on('message', (raw: unknown) => {
       this.handleMessage(ws, raw)
@@ -415,9 +412,10 @@ export class ClientHandler {
   // ---- Permission Mode ----
 
   private handlePermissionGet(ws: WebSocket): void {
+    const state = this.getState(ws)
     ws.send(JSON.stringify({
       event: 'permission:mode',
-      data: { mode: this.permissionMode },
+      data: { mode: state.permissionMode },
     }))
   }
 
@@ -427,7 +425,8 @@ export class ClientHandler {
       this.sendProtocolError(ws, new Error(`Invalid permission mode: ${data.mode}`))
       return
     }
-    this.permissionMode = data.mode
+    const state = this.getState(ws)
+    state.permissionMode = data.mode
     ws.send(JSON.stringify({
       event: 'permission:mode',
       data: { mode: data.mode },
@@ -504,6 +503,7 @@ export class ClientHandler {
 
   private handleSettingsGet(ws: WebSocket): void {
     const configDir = process.env.WZXCLAW_CONFIG_DIR || '/root/.wzxclaw'
+    const state = this.getState(ws)
     ws.send(JSON.stringify({
       event: 'settings',
       data: {
@@ -511,7 +511,7 @@ export class ClientHandler {
         apiProviders: ['openai', 'anthropic'],
         defaultModel: this.agentConfigDefaults.model ?? 'deepseek-chat',
         defaultProvider: this.agentConfigDefaults.provider ?? 'openai',
-        permissionMode: this.permissionMode,
+        permissionMode: state.permissionMode,
       },
     }))
   }
@@ -1035,13 +1035,20 @@ export class ClientHandler {
     if (state?.activeLoop) {
       state.activeLoop.cancel()
     }
+    // 清理该连接的 pending ask-user 问题
+    for (const [questionId, pending] of this.pendingQuestions) {
+      if (pending.ws === ws) {
+        this.pendingQuestions.delete(questionId)
+        pending.resolve('')
+      }
+    }
     this.connectionStates.delete(ws)
   }
 
   private getState(ws: WebSocket): ConnectionState {
     let state = this.connectionStates.get(ws)
     if (!state) {
-      state = { activeLoop: null, consuming: false }
+      state = { activeLoop: null, consuming: false, permissionMode: 'bypass' }
       this.connectionStates.set(ws, state)
     }
     return state

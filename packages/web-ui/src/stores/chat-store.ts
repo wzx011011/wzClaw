@@ -11,9 +11,10 @@
 import { create } from 'zustand'
 import type { StoreApi } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import type { DataSource, SessionMeta, RawMessage } from '../data-source/types'
+import type { CreateSessionOptions, DataSource, SessionMeta, RawMessage } from '../data-source/types'
 import { StreamingBatcher, updateMessageById } from './streaming-batcher'
 import type { ChatMessage, ToolCallInfo } from './streaming-batcher'
+import { useHandStore } from './hand-store'
 
 // ---- Store 类型定义 ----
 
@@ -50,7 +51,7 @@ interface ChatActions {
   /** 停止生成 */
   stopGeneration: () => Promise<void>
   /** 创建新会话 */
-  createSession: () => Promise<void>
+  createSession: (options?: CreateSessionOptions) => Promise<void>
   /** 清空当前会话（重置状态） */
   clearConversation: () => void
   /** 加载会话列表 */
@@ -72,6 +73,11 @@ export type ChatStore = ChatState & ChatActions
 
 // 模块级会话消息缓存 — switchSession 时缓存当前会话消息
 const sessionCache = new Map<string, { messages: ChatMessage[]; conversationId: string }>()
+
+/** 清空会话缓存（DataSource 断开时调用） */
+export function clearSessionCache(): void {
+  sessionCache.clear()
+}
 
 /**
  * 将 RawMessage[] 转换为 ChatMessage[]
@@ -370,7 +376,16 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
         })
 
         try {
-          await dataSource.sendMessage(conversationId, content)
+          const selectedHandId = useHandStore.getState().selectedHandId ?? undefined
+          const sessionConfig = await dataSource.getSessionConfig(conversationId).catch(() => null)
+          const targetHandId = sessionConfig?.targetHandId ?? selectedHandId
+          if (!sessionConfig?.targetHandId && selectedHandId) {
+            dataSource.updateSessionConfig(conversationId, { targetHandId: selectedHandId }).catch(() => {})
+          }
+          await dataSource.sendMessage(conversationId, content, {
+            targetHandId,
+            workspaceId: sessionConfig?.workspaceId,
+          })
         } catch (err) {
           set({
             isStreaming: false,
@@ -399,13 +414,19 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
        *
        * 通过 DataSource 创建新会话，重置所有状态
        */
-      createSession: async () => {
+      createSession: async (options?: CreateSessionOptions) => {
         batcher.reset()
         try {
-          const newId = await dataSource.createSession()
+          const newId = await dataSource.createSession(options)
+          const selectedHandId = useHandStore.getState().selectedHandId ?? undefined
+          if (selectedHandId) {
+            await dataSource.updateSessionConfig(newId, { targetHandId: selectedHandId }).catch(() => undefined)
+          }
+          const sessions = await dataSource.listSessions(options?.workspaceId ? { workspaceId: options.workspaceId } : undefined).catch(() => get().sessions)
           set({
             messages: [],
             conversationId: newId,
+            sessions,
             isStreaming: false,
             isWaitingForResponse: false,
             streamingMessageId: null,

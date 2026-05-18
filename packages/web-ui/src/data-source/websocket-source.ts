@@ -13,7 +13,14 @@ import type {
   SessionMeta,
   RawMessage,
   Settings,
+  SessionConfig,
+  SessionConfigPatch,
+  SessionListOptions,
+  CreateSessionOptions,
   SendMessageOptions,
+  Workspace,
+  WorkspaceUpdate,
+  RuntimeCapabilities,
   FsChannel,
   FileTreeNode,
   FileWatchEvent,
@@ -45,6 +52,23 @@ interface ServerMessage {
  * - URL 协议校验：只允许 ws:// 和 wss://（安全考虑）
  */
 export class WebSocketDataSource implements DataSource {
+  readonly capabilities: RuntimeCapabilities = {
+    workspace: true,
+    fs: true,
+    terminal: true,
+    preview: true,
+    tools: true,
+    permission: false,
+    mcp: false,
+    skills: false,
+    plugins: false,
+    hosts: false,
+    indexing: false,
+    insights: false,
+    browser: false,
+    notifications: false,
+  }
+
   /** WebSocket 连接实例 */
   private ws: WebSocket | null = null
 
@@ -64,6 +88,7 @@ export class WebSocketDataSource implements DataSource {
       resolve: (data: unknown) => void
       reject: (error: Error) => void
       timer: ReturnType<typeof setTimeout>
+      responseEvent: string
     }
   >()
 
@@ -128,7 +153,7 @@ export class WebSocketDataSource implements DataSource {
       try {
         // 创建 WebSocket 连接，可选带 token 认证
         const ws = this._token
-          ? new WebSocket(this._url, this._token)
+          ? new WebSocket(this._url, `wzxclaw-${this._token}`)
           : new WebSocket(this._url)
 
         ws.onopen = () => {
@@ -192,23 +217,28 @@ export class WebSocketDataSource implements DataSource {
     }
   }
 
+  async getCapabilities(): Promise<RuntimeCapabilities> {
+    const data = await this._sendRequest('capabilities:get', undefined, 'capabilities')
+    return { ...this.capabilities, ...(data as Partial<RuntimeCapabilities>) }
+  }
+
   // ---- Agent 操作 ----
 
   async sendMessage(
     sessionId: string,
     content: string,
-    _options?: SendMessageOptions,
+    options?: SendMessageOptions,
   ): Promise<void> {
     this._ensureConnected()
     this._send({
       event: 'chat:send',
-      data: { sessionId, message: content },
+      data: { sessionId, message: content, targetHandId: options?.targetHandId, workspaceId: options?.workspaceId },
     })
   }
 
-  async stopGeneration(_sessionId: string): Promise<void> {
+  async stopGeneration(sessionId: string): Promise<void> {
     this._ensureConnected()
-    this._send({ event: 'chat:stop' })
+    this._send({ event: 'chat:stop', data: { sessionId } })
   }
 
   // ---- Stream 事件 ----
@@ -233,9 +263,9 @@ export class WebSocketDataSource implements DataSource {
 
   // ---- 会话 CRUD ----
 
-  async listSessions(): Promise<SessionMeta[]> {
-    const data = await this._sendRequest('session:list', undefined, 'session:list')
-    return (data as { sessions: SessionMeta[] }).sessions ?? []
+  async listSessions(options?: SessionListOptions): Promise<SessionMeta[]> {
+    const data = await this._sendRequest('session:list', options, 'session:list')
+    return Array.isArray(data) ? data as SessionMeta[] : (data as { sessions: SessionMeta[] }).sessions ?? []
   }
 
   async loadSession(sessionId: string): Promise<RawMessage[]> {
@@ -247,10 +277,10 @@ export class WebSocketDataSource implements DataSource {
     return (data as { messages: RawMessage[] }).messages ?? []
   }
 
-  async createSession(): Promise<string> {
+  async createSession(options?: CreateSessionOptions): Promise<string> {
     const data = await this._sendRequest(
       'session:create',
-      undefined,
+      options,
       'session:created',
     )
     return (data as { sessionId: string }).sessionId
@@ -270,6 +300,198 @@ export class WebSocketDataSource implements DataSource {
       { sessionId, title },
       'session:renamed',
     )
+  }
+
+  async getSessionConfig(sessionId: string): Promise<SessionConfig | null> {
+    const data = await this._sendRequest(
+      'session:config:get',
+      { sessionId },
+      'session:config',
+    )
+    return (data as { config: SessionConfig | null }).config ?? null
+  }
+
+  async updateSessionConfig(sessionId: string, patch: SessionConfigPatch): Promise<SessionConfig> {
+    const data = await this._sendRequest(
+      'session:config:update',
+      { sessionId, patch },
+      'session:config:updated',
+    )
+    return (data as { config: SessionConfig }).config
+  }
+
+  async listWorkspaces(options?: { includeArchived?: boolean }): Promise<Workspace[]> {
+    const data = await this._sendRequest('workspace:list', options, 'workspace:list')
+    return Array.isArray(data) ? data as Workspace[] : (data as { workspaces: Workspace[] }).workspaces ?? []
+  }
+
+  async getWorkspace(workspaceId: string): Promise<Workspace | null> {
+    const data = await this._sendRequest('workspace:get', { workspaceId }, 'workspace:loaded')
+    return (data as { workspace: Workspace | null }).workspace ?? null
+  }
+
+  async createWorkspace(input: { title: string; description?: string }): Promise<Workspace> {
+    const data = await this._sendRequest('workspace:create', input, 'workspace:created')
+    return (data as { workspace: Workspace }).workspace
+  }
+
+  async updateWorkspace(workspaceId: string, updates: WorkspaceUpdate): Promise<Workspace> {
+    const data = await this._sendRequest('workspace:update', { workspaceId, updates }, 'workspace:updated')
+    return (data as { workspace: Workspace }).workspace
+  }
+
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await this._sendRequest('workspace:delete', { workspaceId }, 'workspace:deleted')
+  }
+
+  async addWorkspaceProject(workspaceId: string, folderPath: string): Promise<Workspace> {
+    const data = await this._sendRequest('workspace:add-project', { workspaceId, folderPath }, 'workspace:updated')
+    return (data as { workspace: Workspace }).workspace
+  }
+
+  async removeWorkspaceProject(workspaceId: string, projectId: string): Promise<Workspace> {
+    const data = await this._sendRequest('workspace:remove-project', { workspaceId, projectId }, 'workspace:updated')
+    return (data as { workspace: Workspace }).workspace
+  }
+
+  // ---- 权限模式 ----
+
+  async getPermissionMode(): Promise<string> {
+    const data = await this._sendRequest('permission:get', {}, 'permission:mode')
+    return (data as { mode: string }).mode
+  }
+
+  async setPermissionMode(mode: string): Promise<string> {
+    const data = await this._sendRequest('permission:set', { mode }, 'permission:mode')
+    return (data as { mode: string }).mode
+  }
+
+  async answerAskUser(questionId: string, answer: string): Promise<void> {
+    this._send({ event: 'ask-user:answer', data: { questionId, answer } })
+  }
+
+  // ---- 会话控制 ----
+
+  async exportSession(sessionId: string): Promise<{ messages: RawMessage[]; config: SessionConfig | null }> {
+    const data = await this._sendRequest('session:export', { sessionId }, 'session:exported')
+    return data as { messages: RawMessage[]; config: SessionConfig | null }
+  }
+
+  async duplicateSession(sessionId: string): Promise<string> {
+    const data = await this._sendRequest('session:duplicate', { sessionId }, 'session:duplicated')
+    return (data as { newSessionId: string }).newSessionId
+  }
+
+  async compactSession(sessionId: string): Promise<void> {
+    await this._sendRequest('session:compact', { sessionId }, 'session:compacted')
+  }
+
+  async rewindSession(sessionId: string, keepMessageCount: number): Promise<void> {
+    await this._sendRequest('session:rewind', { sessionId, keepMessageCount }, 'session:rewound')
+  }
+
+  // ---- Knowledge ----
+
+  async getKnowledge(): Promise<{ skills: string; commands: string; memory: string }> {
+    const data = await this._sendRequest('knowledge:get', {}, 'knowledge')
+    return data as { skills: string; commands: string; memory: string }
+  }
+
+  // ---- MCP ----
+
+  async listMcpTools(): Promise<Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>> {
+    const data = await this._sendRequest('mcp:list', {}, 'mcp:list')
+    return (data as { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> }).tools
+  }
+
+  // ---- Hosts ----
+
+  async listHosts(includeArchived?: boolean): Promise<Array<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; archived?: boolean
+    createdAt: number; updatedAt: number
+  }>> {
+    const data = await this._sendRequest('host:list', { includeArchived }, 'host:list')
+    return (data as { hosts: Array<{
+      id: string; name: string; address: string; port: number
+      username: string; authType: string; tags?: string[]
+      description?: string; archived?: boolean
+      createdAt: number; updatedAt: number
+    }> }).hosts ?? []
+  }
+
+  async getHost(hostId: string): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; archived?: boolean
+    createdAt: number; updatedAt: number
+  } | null> {
+    const data = await this._sendRequest('host:get', { hostId }, 'host:get')
+    return (data as { host: unknown }).host as any ?? null
+  }
+
+  async createHost(input: {
+    name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string
+  }): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; createdAt: number; updatedAt: number
+  }> {
+    const data = await this._sendRequest('host:create', input, 'host:created')
+    return (data as { host: any }).host
+  }
+
+  async updateHost(hostId: string, updates: Record<string, unknown>): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; createdAt: number; updatedAt: number
+  }> {
+    const data = await this._sendRequest('host:update', { hostId, updates }, 'host:updated')
+    return (data as { host: any }).host
+  }
+
+  async deleteHost(hostId: string): Promise<void> {
+    await this._sendRequest('host:delete', { hostId }, 'host:deleted')
+  }
+
+  // ---- Plugins ----
+
+  async listPlugins(): Promise<Array<{
+    id: string; name: string; description?: string
+    enabled: boolean; version?: string
+  }>> {
+    const data = await this._sendRequest('plugin:list', {}, 'plugin:list')
+    return (data as { plugins: Array<{
+      id: string; name: string; description?: string
+      enabled: boolean; version?: string
+    }> }).plugins ?? []
+  }
+
+  // ---- Indexing ----
+
+  async getIndexingStatus(): Promise<{
+    available: boolean; backend: string
+    indexedFiles: number; lastIndexed: number | null
+  }> {
+    const data = await this._sendRequest('indexing:status', {}, 'indexing:status')
+    return data as { available: boolean; backend: string; indexedFiles: number; lastIndexed: number | null }
+  }
+
+  async searchIndex(query: string, limit?: number): Promise<{ results: unknown }> {
+    const data = await this._sendRequest('indexing:search', { query, limit }, 'indexing:search')
+    return data as { results: unknown }
+  }
+
+  // ---- Insights ----
+
+  async getInsightsStatus(): Promise<{
+    available: boolean; reportExists: boolean; lastGenerated: number | null
+  }> {
+    const data = await this._sendRequest('insights:status', {}, 'insights:status')
+    return data as { available: boolean; reportExists: boolean; lastGenerated: number | null }
   }
 
   // ---- 设置 ----
@@ -312,21 +534,14 @@ export class WebSocketDataSource implements DataSource {
     return new Promise((resolve, reject) => {
       this._ensureConnected()
 
-      const requestKey = responseEvent
-
-      // 如果已有相同类型的 pending 请求，先取消
-      const existing = this._pendingRequests.get(requestKey)
-      if (existing) {
-        clearTimeout(existing.timer)
-        this._pendingRequests.delete(requestKey)
-      }
+      const requestKey = `${responseEvent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
       const timer = setTimeout(() => {
         this._pendingRequests.delete(requestKey)
         reject(new Error(`请求超时: ${sendEvent}`))
       }, timeout)
 
-      this._pendingRequests.set(requestKey, { resolve, reject, timer })
+      this._pendingRequests.set(requestKey, { resolve, reject, timer, responseEvent })
 
       this._send({ event: sendEvent, data: sendData })
     })
@@ -349,12 +564,20 @@ export class WebSocketDataSource implements DataSource {
 
     const { event: msgEvent, data } = message
 
-    // 1. 检查 pending request
-    const pending = this._pendingRequests.get(msgEvent)
-    if (pending) {
-      clearTimeout(pending.timer)
-      this._pendingRequests.delete(msgEvent)
-      pending.resolve(data)
+    // 1. 检查 pending request（按 responseEvent 匹配，取最早的一个）
+    let matchedKey: string | null = null
+    let matchedPending: { resolve: (data: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; responseEvent: string } | null = null
+    for (const [key, pending] of this._pendingRequests) {
+      if (pending.responseEvent === msgEvent) {
+        matchedKey = key
+        matchedPending = pending
+        break
+      }
+    }
+    if (matchedPending && matchedKey) {
+      clearTimeout(matchedPending.timer)
+      this._pendingRequests.delete(matchedKey)
+      matchedPending.resolve(data)
       return
     }
 

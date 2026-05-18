@@ -2,12 +2,13 @@
 // API Keys 配置加载器
 //
 // 从 {configDir}/api-keys.json 读取 API 密钥配置，
-// 环境变量优先级高于文件（向后兼容）。
+// 配置文件优先，环境变量作为无文件配置时的兜底。
 // ============================================================
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
+import { platform } from 'node:process'
 
 /** 单个 provider 的密钥配置 */
 export interface ApiKeyEntry {
@@ -29,6 +30,18 @@ export function loadApiKeys(configDir: string): ApiKeysConfig {
   const filePath = join(configDir, 'api-keys.json')
   if (!existsSync(filePath)) return {}
   try {
+    // 检查文件权限（仅非 Windows 系统有效）
+    if (platform !== 'win32') {
+      try {
+        const stat = statSync(filePath)
+        // mode & 0o077 获取 group/other 权限位
+        if (stat.mode & 0o077) {
+          console.warn(`WARNING: ${filePath} has overly permissive permissions (mode ${(stat.mode & 0o777).toString(8)}). API keys may be readable by other users. Recommended: chmod 600`)
+        }
+      } catch {
+        // stat 失败不影响加载
+      }
+    }
     const raw = readFileSync(filePath, 'utf-8')
     const parsed = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
@@ -40,29 +53,29 @@ export function loadApiKeys(configDir: string): ApiKeysConfig {
 
 /**
  * 合并文件配置和环境变量
- * 环境变量覆盖文件中的值
+ * 文件配置覆盖环境变量；环境变量用于无配置文件的首次部署。
  */
 export function mergeWithEnv(fileKeys: ApiKeysConfig): ApiKeysConfig {
   const result: ApiKeysConfig = {}
 
-  // OpenAI: env 覆盖文件
-  const openaiKey = process.env.OPENAI_API_KEY || fileKeys.openai?.apiKey
+  // OpenAI: 文件配置优先，env 兜底
+  const openaiKey = fileKeys.openai?.apiKey || process.env.OPENAI_API_KEY
   if (openaiKey) {
     result.openai = {
       apiKey: openaiKey,
-      baseURL: process.env.OPENAI_BASE_URL || fileKeys.openai?.baseURL,
+      baseURL: fileKeys.openai?.baseURL || process.env.OPENAI_BASE_URL,
     }
   }
 
-  // Anthropic: env 覆盖文件
+  // Anthropic: 文件配置优先，env 兜底
   const anthropicKey =
+    fileKeys.anthropic?.apiKey ||
     process.env.ANTHROPIC_AUTH_TOKEN ||
-    process.env.ANTHROPIC_API_KEY ||
-    fileKeys.anthropic?.apiKey
+    process.env.ANTHROPIC_API_KEY
   if (anthropicKey) {
     result.anthropic = {
       apiKey: anthropicKey,
-      baseURL: process.env.ANTHROPIC_BASE_URL || fileKeys.anthropic?.baseURL,
+      baseURL: fileKeys.anthropic?.baseURL || process.env.ANTHROPIC_BASE_URL,
     }
   }
 

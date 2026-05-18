@@ -22,18 +22,22 @@ import ChatPanel from './components/chat/ChatPanel'
 import SessionList from './components/chat/SessionList'
 import SettingsPage from './components/settings/SettingsPage'
 import IDELayout from './components/ide/IDELayout'
+import WorkspaceHomePage from './components/workspaces/WorkspaceHomePage'
 import MobileShell from './layouts/MobileShell'
 import { useCapabilities } from './hooks/useCapabilities'
 import { useI18nStore } from './i18n/i18n-store'
 import { useT } from './i18n/useT'
 import { useConnectionConfig } from './hooks/useConnectionConfig'
+import { setWorkspaceDataSource } from './stores/workspace-store'
+import { clearSessionCache } from './stores/chat-store'
 import './styles/global.css'
 import './styles/chat.css'
 import './styles/settings.css'
 import './styles/ide.css'
+import './styles/workspaces.css'
 
 /** App 视图状态 */
-type AppView = 'chat' | 'ide' | 'settings'
+type AppView = 'chat' | 'ide' | 'workspaces' | 'settings'
 
 /**
  * AppInner — 应用内部组件
@@ -57,6 +61,8 @@ function AppInner(): React.ReactElement {
   useEffect(() => {
     if (!dataSource) return
 
+    setWorkspaceDataSource(dataSource)
+
     // 清理旧 store
     if (unsubRef.current) {
       unsubRef.current()
@@ -76,6 +82,8 @@ function AppInner(): React.ReactElement {
 
     return () => {
       unsub()
+      setWorkspaceDataSource(null)
+      clearSessionCache()
     }
   }, [dataSource])
 
@@ -117,6 +125,8 @@ function AppInner(): React.ReactElement {
         />
       ) : view === 'ide' && store ? (
         <IDELayout chatStore={store} connected={connected} />
+      ) : view === 'workspaces' && store ? (
+        <WorkspaceHomePage chatStore={store} onEnterChat={() => setView('chat')} />
       ) : caps.mobileShell && store ? (
         <MobileShell chatStore={store} connected={connected} setView={setView} dataSource={dataSource} />
       ) : (
@@ -187,6 +197,26 @@ function AppInner(): React.ReactElement {
                 }} />
                 {statusText}
               </span>
+
+              <button
+                onClick={() => setView('workspaces')}
+                title="工作区"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  transition: 'color var(--transition-fast)',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+              </button>
 
               {/* IDE 模式切换按钮 */}
               {(caps.localEditor || caps.terminal || caps.fileExplorer) && (
