@@ -4,7 +4,7 @@
 // 零 Electron 依赖
 // ============================================================
 
-import type { StreamEvent, Message, TokenUsage } from './types.js'
+import type { StreamEvent, Message, TokenUsage, LLMProvider } from './types.js'
 import type { CompactResult } from './types.js'
 import type { AgentRuntimeConfig } from './agent/runtime-config.js'
 
@@ -15,6 +15,7 @@ export interface IToolExecutionContext {
   workingDirectory: string
   projectRoots: string[]
   abortSignal: AbortSignal
+  targetHandId?: string
   workspaceId?: string
   langfuseParentSpan?: unknown
   onSubAgentEvent?: (event: Record<string, unknown>) => void
@@ -60,12 +61,59 @@ export interface IStreamProvider {
 
 // ---- 会话持久化 ----
 
+export type SessionOwner = 'desktop-local' | 'nas-remote'
+
+export interface SessionConfig {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  workspaceId?: string
+  model?: string
+  provider?: LLMProvider
+  targetHandId?: string
+  owner?: SessionOwner
+  workingDirectory?: string
+  projectRoots?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SessionRuntimeState {
+  sessionId: string
+  status: 'idle' | 'running' | 'waiting_permission'
+  turnCount: number
+  persistedMessageCount: number
+  lastActivityAt: number
+}
+
+export type SessionConfigPatch = Partial<Omit<SessionConfig, 'id' | 'createdAt' | 'updatedAt'>>
+
+export interface SessionMeta {
+  id: string
+  title: string
+  updatedAt: number
+  createdAt?: number
+  messageCount?: number
+  workspaceId?: string
+  model?: string
+  provider?: LLMProvider
+  targetHandId?: string
+  owner?: SessionOwner
+  isRunning?: boolean
+}
+
 /** 会话持久化抽象 */
 export interface ISessionStore {
   appendMessage(sessionId: string, message: unknown): Promise<void>
   loadSession(sessionId: string): Promise<unknown[]>
-  listSessions(): Promise<Array<{ id: string; title: string; updatedAt: number }>>
+  listSessions(): Promise<SessionMeta[]>
   deleteSession(sessionId: string): Promise<void>
+  replaceMessages?(sessionId: string, messages: unknown[]): Promise<void>
+  renameSession?(sessionId: string, title: string): Promise<void>
+  createSession?(config: { id: string } & SessionConfigPatch): Promise<SessionConfig>
+  getSessionConfig?(sessionId: string): Promise<SessionConfig | null>
+  updateSessionConfig?(sessionId: string, patch: SessionConfigPatch): Promise<SessionConfig>
+  getRuntimeState?(sessionId: string): SessionRuntimeState | null
 }
 
 // ---- 事件发送 ----
