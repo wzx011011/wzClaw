@@ -10,9 +10,13 @@
 // 移除：Settings / PluginManager 内嵌面板
 // ============================================================
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import MessageList from './MessageList'
 import MicButton from '../mobile/MicButton'
+import SlashCommandPicker from './SlashCommandPicker'
+import MentionPicker from './MentionPicker'
+import type { MentionItem } from './MentionPicker'
+import { useHandStore } from '../../stores/hand-store'
 import type { StoreApi } from 'zustand'
 import type { ChatStore } from '../../stores/chat-store'
 
@@ -78,6 +82,25 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // 斜线命令选择器状态
+  const [slashOpen, setSlashOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
+  // @提及选择器状态
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
+  const inputAreaRef = useRef<HTMLDivElement>(null)
+
+  // 生成提及候选项：Hand 列表
+  const mentionItems: MentionItem[] = useHandStore(
+    useCallback((s) => s.hands.map((h) => ({
+      id: h.id,
+      label: h.id,
+      value: `@${h.id}`,
+      type: 'hand' as const,
+      description: h.capabilities.slice(0, 3).join(', '),
+    })), [])
+  )
+
   // 自动调整 textarea 高度
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     const value = e.target.value
@@ -85,6 +108,30 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+    }
+
+    // 检测斜线命令：输入框内以 '/' 开头
+    if (value.startsWith('/')) {
+      setSlashQuery(value.slice(1))
+      setSlashOpen(true)
+      setMentionOpen(false)
+    } else {
+      setSlashOpen(false)
+    }
+
+    // 检测 @ 提及：找到最后一个 '@'
+    const atIdx = value.lastIndexOf('@')
+    if (atIdx !== -1) {
+      const after = value.slice(atIdx + 1)
+      if (!/\s/.test(after)) {
+        setMentionQuery(after)
+        setMentionOpen(true)
+        setSlashOpen(false)
+      } else {
+        setMentionOpen(false)
+      }
+    } else {
+      setMentionOpen(false)
     }
   }
 
@@ -114,6 +161,33 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
 
   return (
     <div className="chat-panel">
+      {/* 斜线命令选择器 */}
+      {slashOpen && (
+        <SlashCommandPicker
+          query={slashQuery}
+          anchorRef={inputAreaRef as React.RefObject<HTMLElement>}
+          onSelect={(template) => {
+            setInputValue(template)
+            setSlashOpen(false)
+          }}
+          onClose={() => setSlashOpen(false)}
+        />
+      )}
+      {/* @提及选择器 */}
+      {mentionOpen && (
+        <MentionPicker
+          query={mentionQuery}
+          items={mentionItems}
+          anchorRef={inputAreaRef as React.RefObject<HTMLElement>}
+          onSelect={(item) => {
+            const atIdx = inputValue.lastIndexOf('@')
+            const newVal = inputValue.slice(0, atIdx) + item.value + ' '
+            setInputValue(newVal)
+            setMentionOpen(false)
+          }}
+          onClose={() => setMentionOpen(false)}
+        />
+      )}
       {/* 消息列表 — 高频更新隔离在此组件内部 */}
       <MessageList useStore={useStore} />
 
@@ -126,7 +200,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
 
       {/* 输入区域 */}
       <div className="chat-input-area-wrapper">
-        <div className="chat-input-area" style={{ position: 'relative' }}>
+        <div ref={inputAreaRef} className="chat-input-area" style={{ position: 'relative' }}>
           <textarea
             ref={textareaRef}
             className="chat-input"
@@ -134,6 +208,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
+            aria-label="聊天输入框"
             rows={1}
             style={{ touchAction: 'manipulation' }}
           />
@@ -156,7 +231,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  backgroundColor: connected ? '#4caf50' : '#f44336',
+                  backgroundColor: connected ? 'var(--status-connected)' : 'var(--status-disconnected)',
                   display: 'inline-block',
                 }}
               />

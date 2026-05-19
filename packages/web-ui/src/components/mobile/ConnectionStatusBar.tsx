@@ -48,7 +48,7 @@ export default function ConnectionStatusBar(): React.ReactElement | null {
         background: isOk ? 'var(--tool-completed)' : 'var(--tool-error)',
       }}
     >
-      <span style={{ fontSize: 'var(--font-size-xs)', color: '#fff' }}>{text}</span>
+      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-on-statusbar)' }}>{text}</span>
     </div>
   )
 }

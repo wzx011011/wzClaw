@@ -15,7 +15,6 @@ export default function TerminalPanel(): React.ReactElement {
   const terminals = useTerminalStore((s) => s.terminals)
   const activeTerminalId = useTerminalStore((s) => s.activeTerminalId)
   const addTerminal = useTerminalStore((s) => s.addTerminal)
-  const panelVisible = useTerminalStore((s) => s.panelVisible)
 
   /** terminalId → Terminal 实例映射 */
   const terminalInstances = useRef<Map<string, any>>(new Map())
@@ -63,13 +62,13 @@ export default function TerminalPanel(): React.ReactElement {
     // 懒加载 xterm
     const { Terminal } = await import('@xterm/xterm')
     const { FitAddon } = await import('@xterm/addon-fit')
-    await import('@xterm/addon-web-links')
+    const { WebLinksAddon } = await import('@xterm/addon-web-links')
 
     const term = new Terminal({
       theme: {
-        background: '#1e1e1e',
-        foreground: '#d4d4d4',
-        cursor: '#d4d4d4',
+        background: 'var(--bg-primary)' in document.documentElement.style ? getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() : '#1e1e1e',
+        foreground: getComputedStyle(document.documentElement).getPropertyValue('--terminal-fg').trim() || '#d4d4d4',
+        cursor: getComputedStyle(document.documentElement).getPropertyValue('--terminal-fg').trim() || '#d4d4d4',
       },
       fontSize: 13,
       fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace",
@@ -78,6 +77,7 @@ export default function TerminalPanel(): React.ReactElement {
 
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    term.loadAddon(new WebLinksAddon())
     term.open(container)
     fitAddon.fit()
 
@@ -133,7 +133,7 @@ export default function TerminalPanel(): React.ReactElement {
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
-      background: '#1e1e1e',
+      background: 'var(--bg-primary)',
     }}>
       <TerminalTabs />
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>

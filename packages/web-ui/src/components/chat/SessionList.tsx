@@ -205,9 +205,17 @@ export default function SessionList({ store }: SessionListProps): React.ReactEle
   const renderSessionItem = (session: SessionMeta): React.ReactElement => (
     <div
       key={session.id}
+      role="button"
+      tabIndex={0}
+      aria-label={session.title}
       className={`session-item${session.id === conversationId ? ' active' : ''}`}
       onClick={() => {
         if (confirmDeleteId !== session.id && editingSessionId !== session.id) {
+          switchSession(session.id)
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && confirmDeleteId !== session.id && editingSessionId !== session.id) {
           switchSession(session.id)
         }
       }}

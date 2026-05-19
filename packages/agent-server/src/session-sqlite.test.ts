@@ -47,6 +47,57 @@ describe('SessionStoreSqlite', () => {
       expect(sessions[0].updatedAt).toBeTypeOf('number')
     })
 
+    it('createSession 后空会话立即出现在 listSessions', async () => {
+      const config = await store.createSession({
+        id: 's-empty',
+        title: '空会话',
+        targetHandId: 'desktop-hand-1',
+        model: 'glm-5.1',
+      })
+
+      expect(config.id).toBe('s-empty')
+      expect(config.targetHandId).toBe('desktop-hand-1')
+
+      const sessions = await store.listSessions()
+      expect(sessions).toHaveLength(1)
+      expect(sessions[0].id).toBe('s-empty')
+      expect(sessions[0].title).toBe('空会话')
+      expect(sessions[0].messageCount).toBe(0)
+      expect(sessions[0].targetHandId).toBe('desktop-hand-1')
+      expect(sessions[0].model).toBe('glm-5.1')
+    })
+
+    it('updateSessionConfig 持久化 per-session 默认配置', async () => {
+      await store.createSession({ id: 's-config', title: '配置会话' })
+
+      const config = await store.updateSessionConfig('s-config', {
+        model: 'deepseek-chat',
+        provider: 'openai',
+        targetHandId: 'docker-hand',
+        workspaceId: 'workspace-1',
+        projectRoots: ['/repo'],
+      })
+
+      expect(config.model).toBe('deepseek-chat')
+      expect(config.provider).toBe('openai')
+      expect(config.targetHandId).toBe('docker-hand')
+      expect(config.workspaceId).toBe('workspace-1')
+      expect(config.projectRoots).toEqual(['/repo'])
+
+      const loaded = await store.getSessionConfig('s-config')
+      expect(loaded?.targetHandId).toBe('docker-hand')
+      expect(loaded?.projectRoots).toEqual(['/repo'])
+    })
+
+    it('renameSession 持久化标题，后续 appendMessage 不覆盖标题', async () => {
+      await store.appendMessage('s1', { role: 'user', content: 'original title' })
+      await store.renameSession('s1', '用户标题')
+      await store.appendMessage('s1', { role: 'assistant', content: 'assistant reply' })
+
+      const sessions = await store.listSessions()
+      expect(sessions[0].title).toBe('用户标题')
+    })
+
     it('deleteSession 后 loadSession 返回空数组', async () => {
       await store.appendMessage('s1', { role: 'user', content: 'hello' })
       await store.deleteSession('s1')

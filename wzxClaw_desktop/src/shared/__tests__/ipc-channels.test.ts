@@ -51,44 +51,33 @@ function extractMainChannels(filePaths: string[]): Set<string> {
 
 describe('IPC_CHANNELS', () => {
   it('has all required channel names', () => {
-    expect(IPC_CHANNELS['agent:send_message']).toBe('agent:send_message')
-    expect(IPC_CHANNELS['agent:stop']).toBe('agent:stop')
-    expect(IPC_CHANNELS['stream:text_delta']).toBe('stream:text_delta')
-    expect(IPC_CHANNELS['stream:done']).toBe('stream:done')
     expect(IPC_CHANNELS['settings:get']).toBe('settings:get')
     expect(IPC_CHANNELS['settings:update']).toBe('settings:update')
+    expect(IPC_CHANNELS['terminal:create']).toBe('terminal:create')
+    expect(IPC_CHANNELS['workspace:list']).toBe('workspace:list')
   })
 
   it('all channel names are const (readonly)', () => {
-    // Type-level check: values should be string literals, not string
-    const channel: 'agent:send_message' = IPC_CHANNELS['agent:send_message']
-    expect(channel).toBe('agent:send_message')
+    const channel: 'settings:get' = IPC_CHANNELS['settings:get']
+    expect(channel).toBe('settings:get')
   })
 })
 
 describe('IpcSchemas', () => {
-  it('validates send_message request', () => {
-    const result = IpcSchemas['agent:send_message'].request.safeParse({
-      conversationId: 'conv-123',
-      content: 'Hello agent'
+  it('validates file:save request', () => {
+    const result = IpcSchemas['file:save'].request.safeParse({
+      filePath: '/test/file.ts',
+      content: 'Hello'
     })
     expect(result.success).toBe(true)
   })
 
-  it('rejects send_message with empty content', () => {
-    const result = IpcSchemas['agent:send_message'].request.safeParse({
-      conversationId: 'conv-123',
-      content: ''
+  it('rejects file:save with empty path', () => {
+    const result = IpcSchemas['file:save'].request.safeParse({
+      filePath: '',
+      content: 'Hello'
     })
     expect(result.success).toBe(false)
-  })
-
-  it('validates stream:text_delta payload', () => {
-    const result = IpcSchemas['stream:text_delta'].safeParse({
-      content: 'hello token',
-      sessionId: 'session-123'
-    })
-    expect(result.success).toBe(true)
   })
 })
 
@@ -182,7 +171,7 @@ describe('IPC wiring alignment', () => {
     path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),
     path.join(ROOT, 'src/main/browser/browser-ipc-handlers.ts'),
     path.join(ROOT, 'src/main/mobile/mobile-ipc-handlers.ts'),
-    path.join(ROOT, 'src/main/mobile/mobile-relay-handler.ts'),
+    path.join(ROOT, 'src/main/tools/symbol-nav.ts'),
   ])
 
   it('every preload channel exists in IPC_CHANNELS', () => {
@@ -217,11 +206,9 @@ describe('IPC wiring alignment', () => {
     // 提取 main 中 ipcMain.handle 用的 channel（从 IPC_CHANNELS 引用和裸字符串两种）
     const mainSrcs = [
       path.join(ROOT, 'src/main/ipc-handlers.ts'),
-      path.join(ROOT, 'src/main/ipc-handlers/session-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/ipc-handlers/file-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/ipc-handlers/skill-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/ipc-handlers/plugin-ipc-handlers.ts'),
-      path.join(ROOT, 'src/main/ipc-handlers/insights-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/index.ts'),
       path.join(ROOT, 'src/main/hosts/host-ipc-handlers.ts'),
       path.join(ROOT, 'src/main/agent/agent-ipc-handlers.ts'),

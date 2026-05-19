@@ -51,6 +51,14 @@ export const DEFAULT_HAND_CONFIG: HandConfigFile = {
       denyPrefixes: DEFAULT_DENY_PREFIXES,
     },
     Echo: { enabled: true },
+    Grep: { enabled: true },
+    Glob: { enabled: true },
+    FileEdit: { enabled: true, allowedPaths: ['/data'] },
+    MultiEdit: { enabled: true, allowedPaths: ['/data'] },
+    TerminalSpawn: { enabled: true },
+    TerminalWrite: { enabled: true },
+    TerminalResize: { enabled: true },
+    TerminalKill: { enabled: true },
   },
 }
 

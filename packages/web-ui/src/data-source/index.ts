@@ -11,7 +11,15 @@ export type {
   StreamEventCallback,
   StreamPayloadMap,
   SessionMeta,
+  SessionConfig,
+  SessionConfigPatch,
+  SessionListOptions,
+  CreateSessionOptions,
   RawMessage,
+  Workspace,
+  Project,
+  WorkspaceUpdate,
+  RuntimeCapabilities,
   Settings,
   SendMessageOptions,
   TextStreamPayload,
@@ -35,7 +43,6 @@ export { WebSocketDataSource } from './websocket-source'
 export { IpcDataSource } from './ipc-source'
 
 import { WebSocketDataSource } from './websocket-source'
-import { IpcDataSource } from './ipc-source'
 
 /**
  * createDataSource — 自动选择 DataSource 实现
@@ -51,12 +58,8 @@ export function createDataSource(
   webSocketUrl?: string,
   token?: string,
 ): import('./types').DataSource {
-  // 检测 Electron 环境
-  if (typeof window !== 'undefined' && window.wzxclaw) {
-    return new IpcDataSource()
-  }
-
-  // 远程模式 — 使用 WebSocket
+  // 所有客户端统一通过 WebSocket 连接 agent-server
+  // 桌面端 native 能力 (fs/terminal/preview) 通过 agent-server Hand 路由
   const url = webSocketUrl ?? (typeof __VITE_AGENT_URL__ !== 'undefined' ? __VITE_AGENT_URL__ : 'ws://localhost:8082')
   return new WebSocketDataSource(url, token)
 }

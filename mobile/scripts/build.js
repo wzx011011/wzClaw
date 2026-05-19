@@ -5,7 +5,7 @@
 // 1. 检查 JDK 17 环境变量
 // 2. 构建 web-ui 前端产物
 // 3. Capacitor sync 同步到 Android 项目
-// 4. Gradle assembleRelease 构建 release APK
+// 4. Gradle assembleDebug + assembleRelease 构建 APK
 //
 // 使用：node scripts/build.js
 // 环境要求：JDK 17 + Android SDK
@@ -110,39 +110,42 @@ if (!existsSync(resolve(ANDROID_ROOT))) {
 }
 run('npx cap sync android', MOBILE_ROOT, 'cap sync');
 
-// 步骤 3: Gradle 构建 release APK
-console.log('\n--- 步骤 3/3: Gradle assembleRelease ---');
-const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
+// 步骤 3: Gradle 构建 APK
+console.log('\n--- 步骤 3/3: Gradle assembleDebug + assembleRelease ---');
+const gradlew = process.platform === 'win32' ? '.\\gradlew.bat' : './gradlew';
 if (!existsSync(resolve(ANDROID_ROOT, gradlew))) {
   console.error(`错误: Gradle wrapper 未找到 (${ANDROID_ROOT}/${gradlew})`);
   console.error('  请先运行: npx cap add android');
   process.exit(1);
 }
-run(`${gradlew} assembleRelease`, ANDROID_ROOT, 'Gradle');
+run(`${gradlew} assembleDebug assembleRelease`, ANDROID_ROOT, 'Gradle');
 
 // 输出结果
 const totalElapsed = Date.now() - totalStart;
-const apkDir = resolve(ANDROID_ROOT, 'app', 'build', 'outputs', 'apk', 'release');
-// 未配置签名时输出 app-release-unsigned.apk，配置签名后输出 app-release.apk
-const apkSigned = resolve(apkDir, 'app-release.apk');
-const apkUnsigned = resolve(apkDir, 'app-release-unsigned.apk');
-const apkPath = existsSync(apkSigned) ? apkSigned : apkUnsigned;
+const releaseApkDir = resolve(ANDROID_ROOT, 'app', 'build', 'outputs', 'apk', 'release');
+const debugApkDir = resolve(ANDROID_ROOT, 'app', 'build', 'outputs', 'apk', 'debug');
+const apkSigned = resolve(releaseApkDir, 'app-release.apk');
+const apkUnsigned = resolve(releaseApkDir, 'app-release-unsigned.apk');
+const apkDebug = resolve(debugApkDir, 'app-debug.apk');
+const installableApkPath = existsSync(apkSigned) ? apkSigned : apkDebug;
 
-if (existsSync(apkPath)) {
+if (existsSync(installableApkPath)) {
   const { statSync } = await import('node:fs');
-  const stat = statSync(apkPath);
+  const stat = statSync(installableApkPath);
   const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
-  const isUnsigned = apkPath === apkUnsigned;
   console.log('\n========================================');
   console.log('  构建成功！');
-  console.log(`  APK: ${apkPath}`);
+  console.log(`  可安装 APK: ${installableApkPath}`);
   console.log(`  大小: ${sizeMB} MB`);
-  if (isUnsigned) {
-    console.log('  注意: APK 未签名（debug 签名，可用于测试安装）');
+  if (installableApkPath === apkDebug) {
+    console.log('  说明: 当前未配置 release 签名，已输出 debug 签名 APK，可直接安装测试。');
+  }
+  if (existsSync(apkUnsigned)) {
+    console.log(`  未签名 release APK（不能直接安装）: ${apkUnsigned}`);
   }
   console.log(`  总耗时: ${(totalElapsed / 1000).toFixed(1)}s`);
   console.log('========================================');
 } else {
-  console.warn(`\n警告: APK 文件未在预期位置找到 (${apkDir})`);
+  console.warn(`\n警告: 可安装 APK 文件未在预期位置找到 (${debugApkDir})`);
   console.warn('  请检查 Gradle 输出中的实际路径。');
 }

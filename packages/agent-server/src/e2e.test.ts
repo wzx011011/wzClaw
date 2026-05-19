@@ -327,8 +327,8 @@ describe('E2E: Client → AgentServer → Hand', () => {
 
     // 列表
     sendMsg(clientWs, 'session:list')
-    const list = await waitForEvent(clientWs, 'session:list') as Array<{ id: string }>
-    expect(list).toBeInstanceOf(Array)
+    const list = await waitForEvent(clientWs, 'session:list') as { sessions: Array<{ id: string }> }
+    expect(list.sessions).toBeInstanceOf(Array)
 
     // 加载
     sendMsg(clientWs, 'session:load', { sessionId: created.sessionId })
@@ -339,6 +339,36 @@ describe('E2E: Client → AgentServer → Hand', () => {
     sendMsg(clientWs, 'session:delete', { sessionId: created.sessionId })
     const deleted = await waitForEvent(clientWs, 'session:deleted') as { sessionId: string }
     expect(deleted.sessionId).toBe(created.sessionId)
+  })
+
+  it('Client 创建 workspace / 绑定 project / 创建 workspace session', async () => {
+    await connectHandAndClient()
+
+    sendMsg(clientWs, 'workspace:create', { title: 'E2E 工作区', description: 'workspace parity' })
+    const createdWorkspace = await waitForEvent(clientWs, 'workspace:created') as {
+      workspace: { id: string; title: string; projects: unknown[] }
+    }
+    expect(createdWorkspace.workspace.id).toBeTruthy()
+    expect(createdWorkspace.workspace.title).toBe('E2E 工作区')
+
+    sendMsg(clientWs, 'workspace:add-project', { workspaceId: createdWorkspace.workspace.id, folderPath: tempDir })
+    const updatedWorkspace = await waitForEvent(clientWs, 'workspace:updated') as {
+      workspace: { id: string; projects: Array<{ path: string }> }
+    }
+    expect(updatedWorkspace.workspace.projects[0]?.path).toBe(tempDir)
+
+    sendMsg(clientWs, 'workspace:list', { includeArchived: true })
+    const list = await waitForEvent(clientWs, 'workspace:list') as { workspaces: Array<{ id: string }> }
+    expect(list.workspaces.map(item => item.id)).toContain(createdWorkspace.workspace.id)
+
+    sendMsg(clientWs, 'session:create', { workspaceId: createdWorkspace.workspace.id, title: 'Workspace session' })
+    const createdSession = await waitForEvent(clientWs, 'session:created') as {
+      sessionId: string
+      session: { workspaceId?: string; workingDirectory?: string; projectRoots?: string[] }
+    }
+    expect(createdSession.session.workspaceId).toBe(createdWorkspace.workspace.id)
+    expect(createdSession.session.workingDirectory).toBe(tempDir)
+    expect(createdSession.session.projectRoots).toEqual([tempDir])
   })
 
   // ---- 4. 工具执行: 直接通过 HandAwareToolExecutor ----
@@ -384,14 +414,20 @@ describe('E2E: Client → AgentServer → Hand', () => {
 
     const executor = server['toolExecutor']
     const filePath = join(tempDir, 'new-file.txt')
+    const previous = process.env.WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS
+    process.env.WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS = '1'
     const result = await executor.execute('FileWrite', {
-      path: filePath,
-      content: 'New content from E2E test',
-    }, {
-      workingDirectory: tempDir,
-      projectRoots: [],
-      abortSignal: new AbortController().signal,
-    })
+        path: filePath,
+        content: 'New content from E2E test',
+      }, {
+        workingDirectory: tempDir,
+        projectRoots: [],
+        abortSignal: new AbortController().signal,
+      })
+      .finally(() => {
+        if (previous === undefined) delete process.env.WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS
+        else process.env.WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS = previous
+      })
 
     expect(result.isError).toBe(false)
 

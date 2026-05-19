@@ -6,6 +6,7 @@
 import { readdir, stat } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 /** 目录条目结构 */
 interface FileEntry {
@@ -47,13 +48,17 @@ export class FileListTool implements HandTool {
 
   async execute(
     input: Record<string, unknown>,
-    _context: { workingDirectory: string; projectRoots: string[] },
+    context: { workingDirectory: string; projectRoots: string[] },
   ): Promise<{ output: string; isError: boolean }> {
     // 校验必需参数
     const dirPath = input.path
     if (typeof dirPath !== 'string' || dirPath.length === 0) {
       return { output: '缺少 path 参数', isError: true }
     }
+
+    // 路径白名单校验
+    const violation = assertPathInWorkspace(dirPath, context)
+    if (violation) return violation
 
     try {
       const recursive = input.recursive === true

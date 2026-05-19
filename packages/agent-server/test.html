@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Server Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Consolas, monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #00d4ff; margin-bottom: 8px; font-size: 22px; }
+  .subtitle { color: #888; margin-bottom: 20px; font-size: 13px; }
+  .status-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; padding: 10px 16px; background: #16213e; border-radius: 8px; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #f44; }
+  .status-dot.connected { background: #0f0; box-shadow: 0 0 6px #0f0; }
+  .status-dot.connecting { background: #ff0; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0.3; } }
+  .status-text { font-size: 14px; }
+  .panel { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { color: #00d4ff; font-size: 15px; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  label { font-size: 13px; min-width: 60px; color: #aaa; }
+  input, select, textarea { background: #0f3460; border: 1px solid #333; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-family: inherit; font-size: 13px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #00d4ff; }
+  textarea { width: 100%; min-height: 60px; resize: vertical; }
+  button { background: #0f3460; color: #00d4ff; border: 1px solid #00d4ff; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; font-family: inherit; }
+  button:hover { background: #1a4a8a; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger { border-color: #f44; color: #f44; }
+  button.danger:hover { background: #4a1a1a; }
+  .tools-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tool-badge { background: #0f3460; border: 1px solid #333; padding: 3px 10px; border-radius: 12px; font-size: 12px; cursor: pointer; }
+  .tool-badge:hover { border-color: #00d4ff; }
+  .tool-badge.active { border-color: #00d4ff; color: #00d4ff; background: #1a3a6a; }
+  .log-area { background: #0d1117; border: 1px solid #333; border-radius: 4px; padding: 12px; max-height: 400px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+  .log-area .sent { color: #f0883e; }
+  .log-area .received { color: #3fb950; }
+  .log-area .error { color: #f85149; }
+  .log-area .info { color: #8b949e; }
+  .result-box { background: #0d1117; border: 1px solid #3fb950; border-radius: 4px; padding: 12px; margin-top: 8px; font-size: 13px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Agent Server Test Console</h1>
+<div class="subtitle">wss://agent.5945.top/ — Brain-Hand tool execution test</div>
+
+<div class="status-bar">
+  <div class="status-dot" id="dot"></div>
+  <span class="status-text" id="statusText">Disconnected</span>
+  <span style="margin-left:auto;color:#888;font-size:12px" id="handsInfo"></span>
+  <button onclick="connect()">Connect</button>
+  <button class="danger" onclick="disconnect()">Disconnect</button>
+</div>
+
+<div class="grid">
+  <div>
+    <!-- Tools Panel -->
+    <div class="panel">
+      <h2>Available Tools</h2>
+      <div class="tools-list" id="toolsList">
+        <span style="color:#888">Connect to see tools...</span>
+      </div>
+    </div>
+
+    <!-- Tool Execute Panel -->
+    <div class="panel">
+      <h2>Execute Tool</h2>
+      <div class="row">
+        <label>Tool:</label>
+        <select id="toolName" style="flex:1">
+          <option value="">-- select tool --</option>
+          <option value="Echo">Echo</option>
+          <option value="FileRead">FileRead</option>
+          <option value="FileWrite">FileWrite</option>
+          <option value="FileList">FileList</option>
+          <option value="ShellExecute">ShellExecute</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Input:</label>
+      </div>
+      <textarea id="toolInput" placeholder='{"message": "hello"}'>{"message": "hello from browser!"}</textarea>
+      <div class="row" style="margin-top:8px">
+        <button onclick="executeTool()" id="execBtn" disabled>Execute</button>
+        <button onclick="quickTest()" id="quickBtn" disabled>Quick Test All</button>
+      </div>
+      <div id="resultArea"></div>
+    </div>
+
+    <!-- Sessions Panel -->
+    <div class="panel">
+      <h2>Sessions</h2>
+      <div class="row">
+        <button onclick="listSessions()">List Sessions</button>
+        <button onclick="createSession()">Create Session</button>
+      </div>
+      <div id="sessionArea" class="result-box" style="display:none"></div>
+    </div>
+  </div>
+
+  <div>
+    <!-- Raw Messages -->
+    <div class="panel">
+      <h2>Send Raw Message</h2>
+      <textarea id="rawInput" placeholder='{"event":"tool:list"}'>{"event":"tool:list"}</textarea>
+      <div class="row" style="margin-top:8px">
+        <button onclick="sendRaw()" id="rawBtn" disabled>Send</button>
+        <button onclick="clearLog()">Clear Log</button>
+      </div>
+    </div>
+
+    <!-- Message Log -->
+    <div class="panel">
+      <h2>Message Log</h2>
+      <div class="log-area" id="logArea"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SERVER_URL = 'wss://agent.5945.top/'
+const TOKEN = 'dev'
+
+let ws = null
+const logEl = document.getElementById('logArea')
+const dotEl = document.getElementById('dot')
+const statusEl = document.getElementById('statusText')
+const handsEl = document.getElementById('handsInfo')
+const toolsEl = document.getElementById('toolsList')
+const resultEl = document.getElementById('resultArea')
+const sessionEl = document.getElementById('sessionArea')
+
+function log(msg, cls = 'info') {
+  const time = new Date().toLocaleTimeString()
+  logEl.innerHTML += `<span class="${cls}">[${time}] ${msg}</span>\n`
+  logEl.scrollTop = logEl.scrollHeight
+}
+
+function clearLog() { logEl.innerHTML = '' }
+
+function setStatus(text, state) {
+  statusEl.textContent = text
+  dotEl.className = 'status-dot ' + state
+}
+
+function setConnected(connected) {
+  document.getElementById('execBtn').disabled = !connected
+  document.getElementById('quickBtn').disabled = !connected
+  document.getElementById('rawBtn').disabled = !connected
+}
+
+function connect() {
+  if (ws && ws.readyState <= 1) return
+  setStatus('Connecting...', 'connecting')
+  log('Connecting to ' + SERVER_URL)
+
+  ws = new WebSocket(SERVER_URL, 'wzxclaw-' + TOKEN)
+
+  ws.onopen = () => {
+    setStatus('Connected', 'connected')
+    setConnected(true)
+    log('WebSocket connected', 'received')
+    // Fetch tool list and health
+    fetchHealth()
+    sendMsg({ event: 'tool:list' })
+  }
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data)
+    log(`← ${JSON.stringify(data)}`, 'received')
+    handleMessage(data)
+  }
+
+  ws.onclose = (e) => {
+    setStatus('Disconnected', '')
+    setConnected(false)
+    log(`Connection closed: ${e.code} ${e.reason}`, 'error')
+  }
+
+  ws.onerror = (e) => {
+    log('WebSocket error', 'error')
+  }
+}
+
+function disconnect() {
+  if (ws) ws.close(1000, 'user disconnect')
+}
+
+function sendMsg(obj) {
+  const str = JSON.stringify(obj)
+  log(`→ ${str}`, 'sent')
+  ws.send(str)
+}
+
+function handleMessage(msg) {
+  switch (msg.event) {
+    case 'tool:list':
+      renderTools(msg.data.definitions)
+      break
+    case 'tool:result':
+      renderResult(msg.data)
+      break
+    case 'session:list':
+    case 'session:created':
+    case 'session:loaded':
+    case 'session:deleted':
+      renderSession(msg)
+      break
+  }
+}
+
+function renderTools(defs) {
+  if (!defs || defs.length === 0) {
+    toolsEl.innerHTML = '<span style="color:#f44">No tools available (no Hands connected)</span>'
+    return
+  }
+  toolsEl.innerHTML = defs.map(d =>
+    `<span class="tool-badge" onclick="selectTool('${d.name}')">${d.name}${d.isReadOnly ? ' (R)' : ''}</span>`
+  ).join('')
+  log(`Tools: ${defs.map(d => d.name).join(', ')}`)
+}
+
+function selectTool(name) {
+  document.getElementById('toolName').value = name
+  // Set default input
+  const defaults = {
+    Echo: '{"message": "hello from browser!"}',
+    FileRead: '{"path": "C:/Users/67376/Desktop/test.txt"}',
+    FileWrite: '{"path": "C:/Users/67376/Desktop/test.txt", "content": "Hello from Agent Server!", "createDirs": true}',
+    FileList: '{"path": "C:/Users/67376/Desktop"}',
+    ShellExecute: '{"command": "echo hello && hostname && date /t"}',
+  }
+  document.getElementById('toolInput').value = defaults[name] || '{}'
+  document.querySelectorAll('.tool-badge').forEach(el => {
+    el.classList.toggle('active', el.textContent.startsWith(name))
+  })
+}
+
+function renderResult(data) {
+  if (data.error) {
+    resultEl.innerHTML = `<div class="result-box" style="border-color:#f85149"><b>Error:</b> ${data.error}</div>`
+  } else {
+    let output = data.output || ''
+    // Try to pretty-print JSON
+    try { output = JSON.stringify(JSON.parse(output), null, 2) } catch {}
+    resultEl.innerHTML = `<div class="result-box"><b>Output</b> (isError: ${data.isError}):\n${escapeHtml(output)}</div>`
+  }
+}
+
+function renderSession(msg) {
+  sessionEl.style.display = 'block'
+  sessionEl.textContent = JSON.stringify(msg.data, null, 2)
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+}
+
+function executeTool() {
+  const name = document.getElementById('toolName').value
+  if (!name) { alert('Select a tool first'); return }
+  let input = {}
+  try { input = JSON.parse(document.getElementById('toolInput').value) }
+  catch { alert('Invalid JSON input'); return }
+  sendMsg({ event: 'tool:execute', data: { name, input } })
+}
+
+async function quickTest() {
+  const results = []
+  // Test Echo
+  sendMsg({ event: 'tool:execute', data: { name: 'Echo', input: { message: 'ping from browser' } } })
+  await sleep(2000)
+  // Test FileList
+  sendMsg({ event: 'tool:execute', data: { name: 'FileList', input: { path: 'C:/Users/67376' } } })
+  await sleep(2000)
+  // Test ShellExecute
+  sendMsg({ event: 'tool:execute', data: { name: 'ShellExecute', input: { command: 'echo hello && hostname' } } })
+}
+
+function listSessions() { sendMsg({ event: 'session:list' }) }
+function createSession() { sendMsg({ event: 'session:create' }) }
+
+function sendRaw() {
+  try {
+    const obj = JSON.parse(document.getElementById('rawInput').value)
+    sendMsg(obj)
+  } catch { alert('Invalid JSON') }
+}
+
+function fetchHealth() {
+  fetch('https://agent.5945.top/health')
+    .then(r => r.json())
+    .then(d => { handsEl.textContent = `uptime: ${d.uptime}s | hands: ${d.hands}` })
+    .catch(() => {})
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+// Auto-connect on load
+setTimeout(connect, 500)
+</script>
+</body>
+</html>

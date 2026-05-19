@@ -22,16 +22,17 @@ services:
   # Agent Server — WebSocket 服务器（Brain）
   agent-server:
     build:
-      context: ../
+      context: .
       dockerfile: packages/agent-server/Dockerfile
     container_name: wzxclaw-agent-server
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8082:8082"
+      - "127.0.0.1:8083:8082"
     environment:
       - AUTH_TOKEN=${AUTH_TOKEN}
       - PORT=8082
       - DB_PATH=/data/sessions.db
+      - WZXCLAW_CONFIG_DIR=/data/.wzxclaw
       - AGENT_PROVIDER=${AGENT_PROVIDER:-openai}
       - AGENT_MODEL=${AGENT_MODEL:-deepseek-chat}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -39,8 +40,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS=${WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS:-0}
     volumes:
-      - /volume1/wzxclaw/data:/data
+      - ./data:/data
     networks:
       - wzxclaw
     healthcheck:
@@ -52,7 +54,7 @@ services:
   # Docker Hand — NAS 本地工具执行器
   docker-hand:
     build:
-      context: ../
+      context: .
       dockerfile: packages/hand/Dockerfile
     container_name: wzxclaw-docker-hand
     restart: unless-stopped
@@ -63,7 +65,7 @@ services:
       - SERVER_URL=ws://agent-server:8082/
       - AUTH_TOKEN=${AUTH_TOKEN}
     volumes:
-      - /volume1/wzxclaw/data:/data
+      - ./data:/data
     networks:
       - wzxclaw
 

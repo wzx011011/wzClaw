@@ -55,6 +55,12 @@ test.describe('Packaged smoke tests', () => {
   let app: ElectronApplication
   let win: Page
 
+  async function ensureSidebarOpen(): Promise<void> {
+    if (await win.locator('.session-list').count()) return
+    await win.getByRole('button', { name: '切换侧边栏' }).click()
+    await expect(win.locator('.session-list')).toBeVisible({ timeout: 5_000 })
+  }
+
   test.beforeAll(async () => {
     // Skip gracefully when build hasn't been run yet
     if (!fs.existsSync(EXE_PATH)) {
@@ -77,95 +83,83 @@ test.describe('Packaged smoke tests', () => {
     expect(title.toLowerCase()).toContain('wzxclaw')
   })
 
-  // ── SM2: Home page renders ─────────────────────────────────
-  test('SM2: workspace home page renders key UI elements', async () => {
-    // The WorkspaceHomePage renders h1.workspace-home-title = "工作区"
-    const heading = win.locator('h1.workspace-home-title')
-    await expect(heading).toBeVisible({ timeout: 12_000 })
-    await expect(heading).toHaveText('工作区')
-
-    // No error boundary
+  // ── SM2: Chat workspace renders ────────────────────────────
+  test('SM2: chat workspace renders key UI elements', async () => {
+    await expect(win.locator('text=wzxClaw')).toBeVisible({ timeout: 12_000 })
+    await expect(win.locator('.chat-panel')).toBeVisible({ timeout: 12_000 })
+    await expect(win.locator('textarea.chat-input')).toBeVisible({ timeout: 12_000 })
+    await expect(win.locator('text=加载中...')).not.toBeVisible()
     await expect(win.locator('text=Something went wrong')).not.toBeVisible()
   })
 
-  // ── SM3: Create workspace ──────────────────────────────────
-  test('SM3: can create a workspace and see it in the list', async () => {
-    // Click "+ 新建工作区" button in header
-    const newWsBtn = win.locator('button.workspace-btn-primary').filter({ hasText: '新建工作区' })
-    await expect(newWsBtn).toBeVisible({ timeout: 8_000 })
-    await newWsBtn.click()
-
-    // Modal title "新建工作区" should appear
-    await expect(win.locator('.workspace-modal-title')).toBeVisible({ timeout: 5_000 })
-
-    // Fill the WORKSPACE NAME input (id="workspace-title") — NOT the folder path input
-    const nameInput = win.locator('#workspace-title')
-    await expect(nameInput).toBeVisible({ timeout: 5_000 })
-    await nameInput.fill('Smoke Test')
-
-    // The "创建" submit button should now be enabled
-    const createBtn = win.locator('button[type="submit"].workspace-btn-primary')
-    await expect(createBtn).toBeEnabled({ timeout: 3_000 })
-    await createBtn.click()
-
-    // Workspace appears in WorkspaceDetailPage (title is shown)
-    await expect(win.locator('text=Smoke Test')).toBeVisible({ timeout: 8_000 })
-  })
-
-  // ── SM4: Enter IDE layout ──────────────────────────────────
-  test('SM4: entering a workspace opens the IDE layout', async () => {
-    // WorkspaceDetailPage shows "进入工作区" button (.workspace-detail-enter-btn)
-    const enterBtn = win.locator('.workspace-detail-enter-btn')
-    await expect(enterBtn).toBeVisible({ timeout: 8_000 })
-    await enterBtn.click()
-
-    // IDELayout has an activity bar
-    await expect(win.locator('.activity-bar')).toBeVisible({ timeout: 15_000 })
-
-    // Chat input should also be present
-    await expect(win.locator('.chat-input-textarea, textarea.chat-input, .chat-input')).toBeVisible({ timeout: 10_000 })
-  })
-
-  // ── SM5: Session creation via sidebar ─────────────────────
-  test('SM5: session sidebar panel is accessible and new-session button works', async () => {
-    // Click the ActivityBar sessions icon (title="会话管理")
-    const sessionsBtn = win.locator('.activity-bar-item[title="会话管理"]')
-    await expect(sessionsBtn).toBeVisible({ timeout: 5_000 })
-    await sessionsBtn.click()
-
-    // Sessions panel should now be visible
-    const sessionsPanel = win.locator('.sidebar-sessions')
-    await expect(sessionsPanel).toBeVisible({ timeout: 5_000 })
-
-    // New session button in sidebar header should be present and clickable
-    const newSessionBtn = win.locator('.sidebar-new-session-btn')
-    await expect(newSessionBtn).toBeVisible({ timeout: 5_000 })
-
-    // Click it — createSession() resets conversationId but doesn't write to disk
-    // until the first message is sent, so we only verify the click succeeds
+  // ── SM3: Create session via UI ─────────────────────────────
+  test('SM3: can create a session from the sidebar', async () => {
+    await ensureSidebarOpen()
+    const newSessionBtn = win.locator('button.session-confirm-btn').filter({ hasText: '新建会话' })
+    await expect(newSessionBtn).toBeVisible({ timeout: 8_000 })
     await newSessionBtn.click()
 
-    // The sessions panel container remains visible after the click
-    await expect(sessionsPanel).toBeVisible({ timeout: 3_000 })
+    await expect
+      .poll(async () => win.evaluate(async () => {
+        const result = await (window as any).wzxclaw.listSessions()
+        return Array.isArray(result) ? result.length : result.sessions.length
+      }), { timeout: 8_000, intervals: [200, 500, 1000] })
+      .toBeGreaterThan(0)
+
+    await expect(win.locator('.session-item').first()).toBeVisible({ timeout: 8_000 })
   })
 
-  // ── SM6: Workspace persistence via disk ─────────────────────
-  test('SM6: workspace persists — workspaces.json written to userData dir', async () => {
-    // The main process saves workspaces to {userData}/workspaces.json.
-    // Reading the file directly (no IPC) is the most reliable verification.
-    const wsJsonPath = path.join(userDataDir, 'workspaces.json')
+  // ── SM4: Chat input is usable without calling an LLM ───────
+  test('SM4: chat input accepts text and enables send', async () => {
+    const input = win.locator('textarea.chat-input')
+    await expect(input).toBeVisible({ timeout: 8_000 })
+    await input.fill('Packaged smoke input')
 
-    // Wait up to 5 s for the file to be flushed to disk
+    const sendBtn = win.locator('button.chat-send-btn')
+    await expect(sendBtn).toBeEnabled({ timeout: 3_000 })
+    await expect(input).toHaveValue('Packaged smoke input')
+    await input.fill('')
+  })
+
+  // ── SM5: Session IPC roundtrip ─────────────────────────────
+  test('SM5: session IPC create/list/rename/load works', async () => {
+    const createdId = await win.evaluate(async () => {
+      const result = await (window as any).wzxclaw.createSession()
+      return typeof result === 'string' ? result : result.sessionId
+    })
+
+    await win.evaluate(async (sessionId) => {
+      await (window as any).wzxclaw.renameSession({ sessionId, title: 'Smoke IPC Session' })
+    }, createdId)
+
+    const listed = await win.evaluate(async () => {
+      const result = await (window as any).wzxclaw.listSessions()
+      return Array.isArray(result) ? result : result.sessions
+    }) as Array<{ id: string; title: string }>
+
+    expect(listed.some((session) => session.id === createdId && session.title === 'Smoke IPC Session')).toBe(true)
+
+    const loaded = await win.evaluate(async (sessionId) => {
+      const result = await (window as any).wzxclaw.loadSession({ sessionId })
+      return Array.isArray(result) ? result : result.messages
+    }, createdId)
+    expect(Array.isArray(loaded)).toBe(true)
+  })
+
+  // ── SM6: Session persistence via disk ──────────────────────
+  test('SM6: session persists under isolated userData dir', async () => {
+    const sessionsRoot = path.join(userDataDir, 'sessions')
+
     await expect
-      .poll(() => fs.existsSync(wsJsonPath), { timeout: 5_000, intervals: [200, 500, 1000] })
-      .toBe(true)
-
-    const raw = fs.readFileSync(wsJsonPath, 'utf-8')
-    const list = JSON.parse(raw) as Array<{ title: string; archived?: boolean }>
-
-    expect(Array.isArray(list)).toBe(true)
-    expect(list.length).toBeGreaterThan(0)
-    const titles = list.map((w) => w.title)
-    expect(titles).toContain('Smoke Test')
+      .poll(() => {
+        if (!fs.existsSync(sessionsRoot)) return 0
+        const projectDirs = fs.readdirSync(sessionsRoot)
+        return projectDirs.reduce((count, dir) => {
+          const fullDir = path.join(sessionsRoot, dir)
+          if (!fs.statSync(fullDir).isDirectory()) return count
+          return count + fs.readdirSync(fullDir).filter((name) => name.endsWith('.jsonl')).length
+        }, 0)
+      }, { timeout: 5_000, intervals: [200, 500, 1000] })
+      .toBeGreaterThan(0)
   })
 })

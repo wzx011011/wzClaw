@@ -11,8 +11,6 @@ import { GlobTool } from './glob'
 import { WebSearchTool } from './web-search'
 import { WebFetchTool } from './web-fetch'
 import { GoToDefinitionTool, FindReferencesTool, SearchSymbolsTool } from './symbol-nav'
-import { CreateStepTool } from './create-step'
-import { UpdateStepTool } from './update-step'
 import { SemanticSearchTool } from './semantic-search'
 import { TodoWriteTool } from './todo-write'
 import { LsTool } from './ls'
@@ -20,7 +18,6 @@ import { MultiEditTool } from './multi-edit'
 import { TaskOutputTool } from './task-output-tool'
 import { BackgroundTaskManager } from '../tasks/background-task-manager'
 import { ToolSearchTool } from './tool-search-tool'
-import type { StepManager } from '../steps/step-manager'
 import type { IndexingEngine } from '../indexing/indexing-engine'
 
 export class ToolRegistry {
@@ -74,7 +71,7 @@ export function createDefaultTools(
   workingDirectory: string,
   terminalManager?: TerminalManager,
   getWebContents?: () => Electron.WebContents | null,
-  stepManager?: StepManager,
+  _stepManager?: unknown,
   indexingEngine?: IndexingEngine,
   backgroundTaskManager?: BackgroundTaskManager
 ): ToolRegistry {
@@ -107,11 +104,7 @@ export function createDefaultTools(
     registry.register(new SearchSymbolsTool(getWebContents))
   }
 
-  // Step tools (no approval required)
-  if (stepManager && getWebContents) {
-    registry.register(new CreateStepTool(stepManager, getWebContents))
-    registry.register(new UpdateStepTool(stepManager, getWebContents))
-  }
+  // Step tools removed — steps now handled by agent-server
 
   // TodoWrite — session task list manager (no approval required)
   if (getWebContents) {

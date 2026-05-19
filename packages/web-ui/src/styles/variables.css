@@ -20,13 +20,16 @@
   /* ---- 边框色 ---- */
   --border: #404040;
   --border-subtle: #333333;
+  --border-primary: #404040;
 
   /* ---- 交互色 ---- */
   --accent: #4a9eff;
   --accent-hover: #5fb0ff;
   --accent-green: #89d185;
   --hover-bg: rgba(255, 255, 255, 0.06);
+  --bg-hover: rgba(255, 255, 255, 0.06);
   --active-bg: rgba(74, 158, 255, 0.1);
+  --bg-active: rgba(74, 158, 255, 0.1);
 
   /* ---- 气泡色 ---- */
   --user-bubble: #4a9eff;
@@ -40,6 +43,13 @@
 
   /* ---- 错误色 ---- */
   --error: #f48771;
+
+  /* ---- 状态色 ---- */
+  --status-connected: #4caf50;
+  --status-disconnected: #f44336;
+  --bg-statusbar: #007acc;
+  --text-on-statusbar: #ffffff;
+  --terminal-fg: #d4d4d4;
 
   /* ---- 间距 ---- */
   --sp-1: 4px;
@@ -61,6 +71,8 @@
   --font-size-base: 13px;
   --font-size-md: 14px;
   --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 22px;
 
   /* ---- 阴影 ---- */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -95,8 +107,17 @@
   --text-disabled: #aaaaaa;
   --border: #d0d0d0;
   --border-subtle: #e0e0e0;
+  --border-primary: #d0d0d0;
   --hover-bg: rgba(0, 0, 0, 0.04);
+  --bg-hover: rgba(0, 0, 0, 0.04);
   --active-bg: rgba(74, 158, 255, 0.08);
+  --bg-active: rgba(74, 158, 255, 0.08);
+  --status-connected: #388e3c;
+  --status-disconnected: #d32f2f;
+  --bg-statusbar: #007acc;
+  --text-on-statusbar: #ffffff;
+  --terminal-fg: #333333;
+  --user-bubble: #3d8ef0;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);

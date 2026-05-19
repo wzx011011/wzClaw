@@ -1,5 +1,5 @@
 // Minimal test: just React + zustand, no other deps
-import { StrictMode, useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { create } from 'zustand'
 

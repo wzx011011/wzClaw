@@ -109,6 +109,47 @@ describe('HandAwareToolExecutor', () => {
       expect(result.isError).toBe(false)
     })
 
+    it('targetHandId 通过执行上下文按会话隔离传递', async () => {
+      const hand1 = makeHand({
+        id: 'h1',
+        capabilities: ['FileRead'],
+        definitions: [{ name: 'FileRead', description: '读取文件', inputSchema: {}, isReadOnly: true }],
+      })
+      const hand2 = makeHand({
+        id: 'h2',
+        capabilities: ['FileRead'],
+        definitions: [{ name: 'FileRead', description: '读取文件', inputSchema: {}, isReadOnly: true }],
+      })
+      router.register(hand1)
+      router.register(hand2)
+
+      const ctx = { workingDirectory: '/project', projectRoots: ['/project'], targetHandId: 'h2', abortSignal: new AbortController().signal }
+      const promise = executor.execute('FileRead', { path: '/a.ts' }, ctx)
+
+      expect(hand1.ws.send).not.toHaveBeenCalled()
+      expect(hand2.ws.send).toHaveBeenCalled()
+
+      const sent = getLastSentMessage(hand2.ws)
+      executor.handleResult(sent.data.callId, 'ok', false)
+      await expect(promise).resolves.toEqual({ output: 'ok', isError: false })
+    })
+
+    it('默认阻止非只读远程工具执行', async () => {
+      const hand = makeHand({
+        id: 'h1',
+        capabilities: ['FileWrite'],
+        definitions: [{ name: 'FileWrite', description: '写文件', inputSchema: {}, isReadOnly: false }],
+      })
+      router.register(hand)
+
+      const ctx = { workingDirectory: '/project', projectRoots: ['/project'], abortSignal: new AbortController().signal }
+      const result = await executor.execute('FileWrite', { path: '/a.ts', content: 'x' }, ctx)
+
+      expect(result.isError).toBe(true)
+      expect(result.output).toContain('blocked by policy')
+      expect(hand.ws.send).not.toHaveBeenCalled()
+    })
+
     it('工具不存在时返回错误结果', async () => {
       const ctx = { workingDirectory: '/project', projectRoots: ['/project'], abortSignal: new AbortController().signal }
       const result = await executor.execute('不存在', { path: '/a.ts' }, ctx)
@@ -259,17 +300,17 @@ describe('HandAwareToolExecutor', () => {
     it('清理该 Hand 所有 pending calls', async () => {
       const hand = makeHand({
         id: 'h1',
-        capabilities: ['FileRead', 'FileWrite'],
+        capabilities: ['FileRead', 'FileList'],
         definitions: [
           { name: 'FileRead', description: '读取', inputSchema: {}, isReadOnly: true },
-          { name: 'FileWrite', description: '写入', inputSchema: {}, isReadOnly: false },
+          { name: 'FileList', description: '列目录', inputSchema: {}, isReadOnly: true },
         ],
       })
       router.register(hand)
 
       const ctx = { workingDirectory: '/project', projectRoots: ['/project'], abortSignal: new AbortController().signal }
       const promise1 = executor.execute('FileRead', { path: '/a.ts' }, ctx)
-      const promise2 = executor.execute('FileWrite', { path: '/b.ts' }, ctx)
+      const promise2 = executor.execute('FileList', { path: '/project' }, ctx)
 
       // 模拟 Hand 断开
       executor.handleHandDisconnect('h1')

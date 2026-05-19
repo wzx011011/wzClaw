@@ -29,6 +29,7 @@ export type {
   LLMProvider,
   Project,
   Workspace,
+  RuntimeCapabilities,
 } from './types.js'
 
 // DI 接口
@@ -50,6 +51,11 @@ export type {
   IGenerationSpan,
   IToolSpan,
   ILogger,
+  SessionOwner,
+  SessionConfig,
+  SessionConfigPatch,
+  SessionRuntimeState,
+  SessionMeta,
 } from './interfaces.js'
 
 // Channel 常量
@@ -71,6 +77,10 @@ export type {
   AgentToolProgressEvent,
   AgentConfig,
 } from './agent/types.js'
+
+// Wire codec (AgentEvent ↔ stream:* wire envelope)
+export { encodeAgentEvent, decodeStreamMessage } from './agent/wire-codec.js'
+export type { WireStreamMessage } from './agent/wire-codec.js'
 
 // Agent 配置
 export {
@@ -98,9 +108,6 @@ export type { AgentLoopDeps } from './agent/agent-factory.js'
 
 export { TurnManager } from './agent/turn-manager.js'
 export type { TurnInput, TurnResult } from './agent/turn-manager.js'
-
-export { executeStreamPhase } from './agent/stream-phase.js'
-export type { StreamPhaseMeta, ExecuteToolFn, StreamFn } from './agent/stream-phase.js'
 
 export { buildBrainSystemPrompt } from './agent/system-prompt-builder.js'
 
@@ -160,7 +167,6 @@ export {
   TOOL_RESULT_CLEARED_MESSAGE,
   maybeTimeBasedMicrocompact,
   maybeTokenPressureMicrocompact,
-  resetMicrocompactState,
 } from './context/microcompact.js'
 
 export type {

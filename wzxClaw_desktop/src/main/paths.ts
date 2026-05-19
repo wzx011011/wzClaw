@@ -123,25 +123,8 @@ export function getMediaDir(): string {
 export function getScratchpadDir(): string {
   return path.join(getUserDir(), 'scratchpad')
 }
-/** Insights facet 缓存目录：~/.wzxclaw/insights-cache/ */
-export function getInsightsCacheDir(): string {
-  return path.join(getUserDir(), 'insights-cache')
-}
-
-/** Insights HTML 报告目录：~/.wzxclaw/insights/ */
-export function getInsightsReportDir(): string {
-  return path.join(getUserDir(), 'insights')
-}
 
 // ---- AppData 级子目录（%APPDATA%/wzxclaw/） ----
-
-/**
- * 会话存储目录：%APPDATA%/wzxclaw/sessions/{projectHash}/
- * projectHash 由调用方传入（来自 workspace root）
- */
-export function getSessionsDir(projectHash: string): string {
-  return path.join(getAppDataDir(), 'sessions', projectHash)
-}
 
 /** 设置文件备份目录：%APPDATA%/wzxclaw/backups/ */
 export function getBackupsDir(): string {
@@ -189,8 +172,6 @@ export async function ensureAppDirs(): Promise<void> {
     getCommandsDir(),
     getSkillsDir(),
     getMediaDir(),
-    getInsightsCacheDir(),
-    getInsightsReportDir(),
     // AppData 级
     getBackupsDir(),
   ]

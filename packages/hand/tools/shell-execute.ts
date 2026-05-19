@@ -6,6 +6,7 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 const execAsync = promisify(exec)
 
@@ -27,12 +28,22 @@ const DEFAULT_CWD = '/data'
  * - del /s (Windows 递归删除)
  */
 const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
-  { pattern: /rm\s+-rf\s+\//, description: 'rm -rf / — 递归删除根目录' },
+  // 递归删除关键路径（根、家目录、系统目录、数据卷）
+  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*\s+)+(\/|~|\$HOME|\/\*|\/etc|\/usr|\/var|\/home|\/root|\/bin|\/sbin|\/boot|\/lib|\/opt|\/data)(\s|$|\/)/, description: 'rm -rf 递归删除系统/数据目录' },
   { pattern: /mkfs/, description: 'mkfs — 格式化文件系统' },
-  { pattern: /dd\s+if=/, description: 'dd if= — 直接磁盘写入' },
+  { pattern: /\bdd\s+if=/, description: 'dd if= — 直接磁盘写入' },
   { pattern: /:\(\)\{\s*:\|:&\s*\};\s*:/, description: 'fork bomb — 进程炸弹' },
   { pattern: /\bformat\b/, description: 'format — 格式化' },
-  { pattern: /del\s+\/s/, description: 'del /s — 递归删除' },
+  { pattern: /\bdel\s+\/s/i, description: 'del /s — 递归删除' },
+  // 从网络下载后直接执行（供应链攻击常见手法）
+  { pattern: /\b(curl|wget|fetch)\s+[^|;]*[|;]\s*(bash|sh|zsh|ksh|python|node|perl)\b/, description: 'curl|sh — 下载即执行' },
+  // 重定向覆盖裸块设备
+  { pattern: />\s*\/dev\/sd[a-z]/, description: '重定向裸块设备' },
+  // 全局 chmod/chown 递归修改根
+  { pattern: /\bchmod\s+(-[a-zA-Z]*[Rr][a-zA-Z]*\s+)?[0-9]+\s+\/(\s|$)/, description: 'chmod 修改根目录权限' },
+  { pattern: /\bchown\s+(-[a-zA-Z]*[Rr][a-zA-Z]*\s+)?[^\s]+\s+\/(\s|$)/, description: 'chown 修改根目录拥有者' },
+  // shutdown/reboot/halt
+  { pattern: /\b(shutdown|reboot|halt|poweroff)\b/, description: '系统关机/重启命令' },
 ]
 
 /**
@@ -60,7 +71,7 @@ export class ShellExecuteTool implements HandTool {
 
   async execute(
     input: Record<string, unknown>,
-    _context: { workingDirectory: string; projectRoots: string[] },
+    context: { workingDirectory: string; projectRoots: string[] },
   ): Promise<{ output: string; isError: boolean }> {
     // 校验必需参数
     const command = input.command
@@ -82,9 +93,22 @@ export class ShellExecuteTool implements HandTool {
     const timeoutSeconds = typeof input.timeout === 'number' && input.timeout > 0
       ? input.timeout
       : DEFAULT_TIMEOUT_SECONDS
-    const cwd = typeof input.cwd === 'string' && input.cwd.length > 0
+    const requestedCwd = typeof input.cwd === 'string' && input.cwd.length > 0
       ? input.cwd
       : DEFAULT_CWD
+
+    // cwd 必须是绝对路径
+    const isAbsolute = requestedCwd.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(requestedCwd)
+    if (!isAbsolute) {
+      return { output: `cwd 必须为绝对路径: ${requestedCwd}`, isError: true }
+    }
+
+    // 路径白名单校验：cwd 必须在 workspace 内，或在 DEFAULT_CWD (/data) 子树
+    // DEFAULT_CWD 作为兜底白名单，兼容无 workspace 配置的 chat:send 场景
+    const violation = assertPathInWorkspace(requestedCwd, context, [DEFAULT_CWD])
+    if (violation) return violation
+
+    const cwd = requestedCwd
 
     try {
       const timeoutMs = timeoutSeconds * 1000

@@ -5,6 +5,7 @@
 
 import { readFile } from 'node:fs/promises'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 /**
  * FileReadTool — 读取 NAS 卷上的文件内容
@@ -32,13 +33,17 @@ export class FileReadTool implements HandTool {
 
   async execute(
     input: Record<string, unknown>,
-    _context: { workingDirectory: string; projectRoots: string[] },
+    context: { workingDirectory: string; projectRoots: string[] },
   ): Promise<{ output: string; isError: boolean }> {
     // 校验必需参数
     const filePath = input.path
     if (typeof filePath !== 'string' || filePath.length === 0) {
       return { output: '缺少 path 参数', isError: true }
     }
+
+    // 路径白名单校验
+    const violation = assertPathInWorkspace(filePath, context)
+    if (violation) return violation
 
     try {
       // 读取文件

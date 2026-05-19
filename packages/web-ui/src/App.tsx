@@ -17,6 +17,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { StoreApi } from 'zustand'
 import { createChatStore } from './stores/chat-store'
 import type { ChatStore } from './stores/chat-store'
+import { useHandStore } from './stores/hand-store'
 import { DataSourceProvider, useDataSource, useConnectionState, useReconnect } from './providers/DataSourceProvider'
 import ChatPanel from './components/chat/ChatPanel'
 import SessionList from './components/chat/SessionList'
@@ -30,6 +31,10 @@ import { useT } from './i18n/useT'
 import { useConnectionConfig } from './hooks/useConnectionConfig'
 import { setWorkspaceDataSource } from './stores/workspace-store'
 import { clearSessionCache } from './stores/chat-store'
+import ToastContainer from './components/ToastContainer'
+import ErrorBoundary from './components/ErrorBoundary'
+import CommandPalette from './components/CommandPalette'
+import { useCommandStore } from './stores/command-store'
 import './styles/global.css'
 import './styles/chat.css'
 import './styles/settings.css'
@@ -54,6 +59,18 @@ function AppInner(): React.ReactElement {
 
   const [view, setView] = useState<AppView>('chat')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+
+  // 全局快捷键：Ctrl+Shift+P 打开命令面板
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
+        e.preventDefault()
+        useCommandStore.getState().openPalette()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   const [store, setStore] = useState<StoreApi<ChatStore> | null>(null)
   const unsubRef = useRef<(() => void) | null>(null)
 
@@ -69,8 +86,10 @@ function AppInner(): React.ReactElement {
       unsubRef.current = null
     }
 
-    // 创建新 store
-    const newStore = createChatStore(dataSource)
+    // 创建新 store（依赖注入：hand 选择从 useHandStore 读取）
+    const newStore = createChatStore(dataSource, {
+      getTargetHandId: () => useHandStore.getState().selectedHandId ?? undefined,
+    })
     setStore(() => newStore)
 
     // 初始化 store（订阅 stream 事件）
@@ -88,7 +107,7 @@ function AppInner(): React.ReactElement {
   }, [dataSource])
 
   // 连接状态指示器样式
-  const statusColor = connected ? '#4caf50' : '#f44336'
+  const statusColor = connected ? 'var(--status-connected)' : 'var(--status-disconnected)'
   const statusText = connected ? t('chat.connected') : t('chat.disconnected')
 
   // 处理设置保存后重连
@@ -337,7 +356,11 @@ function App(): React.ReactElement {
       initialUrl={config.agentUrl}
       initialToken={config.token || undefined}
     >
-      <AppInner />
+      <ErrorBoundary>
+        <AppInner />
+        <ToastContainer />
+        <CommandPalette />
+      </ErrorBoundary>
     </DataSourceProvider>
   )
 }

@@ -19,8 +19,8 @@ export default function StatusBar(): React.ReactElement {
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: '0 8px',
-      background: 'var(--bg-statusbar, #007acc)',
-      color: '#fff',
+      background: 'var(--bg-statusbar)',
+      color: 'var(--text-on-statusbar)',
       fontSize: '11px',
       flexShrink: 0,
       userSelect: 'none',
@@ -32,7 +32,7 @@ export default function StatusBar(): React.ReactElement {
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: connected ? '#4caf50' : '#f44336',
+            background: connected ? 'var(--status-connected)' : 'var(--status-disconnected)',
           }} />
           {connected ? '已连接' : '未连接'}
         </span>

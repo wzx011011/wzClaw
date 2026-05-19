@@ -67,14 +67,14 @@ describe('mergeWithEnv', () => {
     expect(mergeWithEnv(fileKeys)).toEqual(fileKeys)
   })
 
-  it('env overrides file keys', () => {
+  it('file keys override env vars', () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'env-key'
     process.env.ANTHROPIC_BASE_URL = 'https://env.test.com'
     const result = mergeWithEnv({
       anthropic: { apiKey: 'file-key', baseURL: 'https://file.test.com' },
     })
-    expect(result.anthropic?.apiKey).toBe('env-key')
-    expect(result.anthropic?.baseURL).toBe('https://env.test.com')
+    expect(result.anthropic?.apiKey).toBe('file-key')
+    expect(result.anthropic?.baseURL).toBe('https://file.test.com')
   })
 
   it('ANTHROPIC_API_KEY as fallback when no AUTH_TOKEN', () => {
@@ -90,12 +90,12 @@ describe('mergeWithEnv', () => {
     expect(result.anthropic?.apiKey).toBe('primary')
   })
 
-  it('file baseURL used when env var absent', () => {
+  it('file baseURL and key are used when env var is also present', () => {
     process.env.OPENAI_API_KEY = 'env-openai'
     const result = mergeWithEnv({
       openai: { apiKey: 'file-openai', baseURL: 'https://file.openai.com' },
     })
-    expect(result.openai?.apiKey).toBe('env-openai')
+    expect(result.openai?.apiKey).toBe('file-openai')
     expect(result.openai?.baseURL).toBe('https://file.openai.com')
   })
 })

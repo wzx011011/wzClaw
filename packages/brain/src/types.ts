@@ -207,3 +207,29 @@ export interface Workspace {
   systemPrompt?: string
   archived: boolean
 }
+
+// ============================================================
+// Runtime Capabilities — 客户端/数据源能力声明
+// 桌面端 IPC、WebSocket 远程等数据源各自实现一个子集
+// ============================================================
+
+/**
+ * 运行时能力契约。
+ * 各 DataSource 实现声明自己支持的功能，UI 通过 useCapabilities 做特性开关。
+ */
+export interface RuntimeCapabilities {
+  readonly workspace: boolean
+  readonly fs: boolean
+  readonly terminal: boolean
+  readonly preview: boolean
+  readonly tools: boolean
+  readonly permission: boolean
+  readonly mcp: boolean
+  readonly skills: boolean
+  readonly plugins: boolean
+  readonly hosts: boolean
+  readonly indexing: boolean
+  readonly insights: boolean
+  readonly browser: boolean
+  readonly notifications: boolean
+}

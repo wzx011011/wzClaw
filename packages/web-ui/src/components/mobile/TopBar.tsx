@@ -60,7 +60,7 @@ export default function TopBar({ title, connected, showPicker, onPickerOpen }: T
               width: 6,
               height: 6,
               borderRadius: '50%',
-              backgroundColor: connected ? '#4caf50' : '#f44336',
+              backgroundColor: connected ? 'var(--status-connected)' : 'var(--status-disconnected)',
               display: 'inline-block',
             }}
           />

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wzxClaw 当前架构</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #0f1720;
+    --line: #30363d;
+    --muted: #8b949e;
+    --text: #e6edf3;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --purple: #bc8cff;
+    --orange: #d29922;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    line-height: 1.62;
+  }
+  main { max-width: 1220px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { margin: 0; text-align: center; font-size: 34px; color: var(--blue); }
+  h2 { margin: 0 0 18px; padding-bottom: 8px; border-bottom: 1px solid #21262d; font-size: 21px; color: var(--blue); }
+  h3 { margin: 0 0 10px; font-size: 16px; }
+  p { margin: 0; }
+  .subtitle { margin: 8px 0 34px; text-align: center; color: var(--muted); font-size: 14px; }
+  .section { margin: 0 0 54px; }
+  .note {
+    margin: 16px 0 0;
+    padding: 12px 14px;
+    border: 1px solid #2f3a45;
+    border-left: 4px solid var(--blue);
+    background: #111820;
+    color: #c9d1d9;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px;
+    min-width: 0;
+  }
+  .box strong { display: block; margin-bottom: 8px; font-size: 15px; }
+  .box small { color: var(--muted); }
+  .blue { border-color: #1f6feb; }
+  .blue strong { color: var(--blue); }
+  .green { border-color: #238636; }
+  .green strong { color: var(--green); }
+  .purple { border-color: #6e40c9; }
+  .purple strong { color: var(--purple); }
+  .orange { border-color: #9e6a03; }
+  .orange strong { color: var(--orange); }
+  .red { border-color: #8957e5; }
+  .red strong { color: var(--red); }
+  ul { margin: 8px 0 0 18px; padding: 0; }
+  li { margin: 4px 0; color: #c9d1d9; }
+  code {
+    background: #0b1016;
+    border: 1px solid #25313d;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: #d2a8ff;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+  }
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+  .node {
+    min-width: 126px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: #111820;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .node span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .arrow { color: var(--muted); font-size: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; overflow-wrap: anywhere; }
+  th, td { padding: 10px 8px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 700; }
+  td { color: #c9d1d9; }
+  .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #21262d; text-align: center; color: #586069; font-size: 12px; }
+  @media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .node { flex: 1 1 140px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>wzxClaw Current Architecture</h1>
+  <p class="subtitle">当前真实架构：共享 Web UI + 本地 IPC 模式 + NAS Agent Server + 可注册 Hands</p>
+
+  <section class="section">
+    <h2>1. 一句话总览</h2>
+    <div class="grid grid-4">
+      <div class="box purple">
+        <strong>@wzxclaw/brain</strong>
+        <small>纯 TypeScript Agent 核心，不依赖 Electron。</small>
+        <ul>
+          <li>AgentLoop / streaming tool execution</li>
+          <li>LLMGateway / OpenAI-compatible / Anthropic</li>
+          <li>Context / permission / observability interfaces</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>agent-server</strong>
+        <small>NAS 上的远程 Brain 入口。</small>
+        <ul>
+          <li>WebSocket chat/client protocol</li>
+          <li>Hand registry and tool routing</li>
+          <li>SQLite session persistence</li>
+        </ul>
+      </div>
+      <div class="box orange">
+        <strong>Hands</strong>
+        <small>真正执行工具的进程。</small>
+        <ul>
+          <li>Desktop HandBridge</li>
+          <li>NAS docker-hand</li>
+          <li>capabilities + isReadOnly metadata</li>
+        </ul>
+      </div>
+      <div class="box blue">
+        <strong>web-ui / clients</strong>
+        <small>同一套 React UI 运行在桌面和手机。</small>
+        <ul>
+          <li>Electron: IpcDataSource</li>
+          <li>Capacitor/mobile: WebSocketSource</li>
+          <li>Browser: WebSocketSource</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note">
+      当前主链路已经不是旧的“手机 &harr; relay &harr; 桌面”模式。主聊天链路是客户端直接连接 NAS <code>agent-server</code>；桌面同时可以作为 Hand 注册给 NAS，让远程 Brain 调用本地工具。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>2. 当前部署拓扑</h2>
+    <div class="flow">
+      <div class="node" style="border-color:#58a6ff">Desktop App<span>Electron 33</span></div>
+      <div class="arrow">&harr;</div>
+      <div class="node" style="border-color:#30363d">preload IPC<span>window.wzxclaw</span></div>
+      <div class="arrow">&harr;</div>
+      <div class="node" style="border-color:#58a6ff">web-ui<span>IpcDataSource</span></div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="flow">
+      <div class="node" style="border-color:#d29922">Mobile APK<span>Capacitor 7</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="node" style="border-color:#58a6ff">web-ui<span>WebSocketSource</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="node" style="border-color:#3fb950">agent.5945.top<span>HTTPS/WSS</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="node" style="border-color:#3fb950">NAS agent-server<span>container 8082</span></div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="flow">
+      <div class="node" style="border-color:#d29922">Desktop HandBridge<span>wzxclaw-token subprotocol</span></div>
+      <div class="arrow">&harr;</div>
+      <div class="node" style="border-color:#3fb950">NAS agent-server<span>Hand registry</span></div>
+      <div class="arrow">&harr;</div>
+      <div class="node" style="border-color:#d29922">docker-hand<span>/data tools</span></div>
+    </div>
+    <div class="note">
+      NAS 实际部署目录是 <code>/volume1/docker/wzxclaw-deploy</code>。Compose 中 <code>agent-server</code> 暴露为容器 <code>8082</code>，宿主机绑定 <code>127.0.0.1:8083</code>，公网入口是 <code>https://agent.5945.top</code> 和 <code>wss://agent.5945.top</code>。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>3. Monorepo 模块边界</h2>
+    <div class="grid grid-3">
+      <div class="box purple">
+        <strong>packages/brain</strong>
+        <ul>
+          <li>纯逻辑核心，零 Electron 依赖。</li>
+          <li>通过 <code>IStreamProvider</code>、<code>IToolExecutor</code>、<code>ISessionStore</code>、<code>IPermissionManager</code> 注入外部能力。</li>
+          <li><code>AgentConfig.targetHandId</code> 贯穿到 <code>IToolExecutionContext</code>，用于远程工具按 Hand 定向。</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>packages/agent-server</strong>
+        <ul>
+          <li>使用 <code>@wzxclaw/brain</code> 创建远程 AgentLoop。</li>
+          <li><code>ClientHandler</code> 按 WebSocket 连接隔离运行状态和 stop 信号。</li>
+          <li><code>HandAwareToolExecutor</code> 把工具调用转给健康 Hand。</li>
+          <li><code>SessionStoreSqlite</code> 持久化远程会话。</li>
+        </ul>
+      </div>
+      <div class="box orange">
+        <strong>packages/hand</strong>
+        <ul>
+          <li>Hand 协议、状态、工具定义和本地执行器。</li>
+          <li>可作为 NAS docker-hand 运行，也被桌面 HandBridge 复用。</li>
+          <li>注册时上报 <code>capabilities</code> 和 <code>isReadOnly</code>。</li>
+        </ul>
+      </div>
+      <div class="box blue">
+        <strong>packages/web-ui</strong>
+        <ul>
+          <li>共享 React SPA。</li>
+          <li>通过 <code>DataSource</code> 接口屏蔽 IPC 和 WebSocket 差异。</li>
+          <li>包含 chat、sessions、IDE layout、Monaco、xterm、mobile shell。</li>
+        </ul>
+      </div>
+      <div class="box blue">
+        <strong>wzxClaw_desktop</strong>
+        <ul>
+          <li>Electron main/preload/renderer 外壳。</li>
+          <li>Main 进程提供本地 IPC 能力、桌面本地 Agent、工具、MCP、工作区和会话。</li>
+          <li>HandBridge 可连接 NAS，把桌面注册为远程 Hand。</li>
+        </ul>
+      </div>
+      <div class="box orange">
+        <strong>mobile</strong>
+        <ul>
+          <li>Capacitor Android 壳。</li>
+          <li>构建 <code>packages/web-ui</code> 后同步到 Android WebView。</li>
+          <li>通过 WSS 连接 NAS agent-server。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>4. 两条聊天运行路径</h2>
+    <div class="grid grid-2">
+      <div class="box blue">
+        <strong>桌面本地模式：Electron IPC</strong>
+        <div class="flow" style="margin-top:10px">
+          <div class="node">React UI<span>packages/web-ui</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">IpcDataSource<span>window.wzxclaw</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">Main Process<span>local AgentLoop</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">Local Tools<span>file/terminal/mcp</span></div>
+        </div>
+        <ul>
+          <li>桌面 packaged smoke 覆盖这条路径。</li>
+          <li>会话落在 <code>app.getPath('userData')/sessions/{projectHash}</code> 的 JSONL 文件；per-session 默认配置写在首行 <code>meta.config</code>。</li>
+          <li>preload 暴露 <code>window.wzxclaw.*</code>，web-ui 不直接 import Electron。</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>远程/NAS 模式：WebSocket</strong>
+        <div class="flow" style="margin-top:10px">
+          <div class="node">Mobile/Browser<span>WebSocketSource</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">agent-server<span>ClientHandler</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">Brain<span>AgentLoop</span></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node">Hand<span>tool execute</span></div>
+        </div>
+        <ul>
+          <li>认证通过 WebSocket subprotocol <code>wzxclaw-${token}</code>，兼容 query <code>?token=...</code>。</li>
+          <li>会话落在 NAS <code>/data/sessions.db</code>，<code>session_config</code> 保存模型、workspace、owner 和默认 Hand。</li>
+          <li>客户端可通过 <code>session:config:update</code> 持久化 <code>targetHandId</code>，让工具调用定向到指定 Desktop Hand。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>5. Agent Server 内部结构</h2>
+    <div class="grid grid-3">
+      <div class="box green">
+        <strong>HTTP + WebSocket server</strong>
+        <ul>
+          <li><code>/health</code> 返回服务、会话和 Hand 状态。</li>
+          <li><code>/admin/hands</code> 需要 token。</li>
+          <li>WebSocket 统一承载 client 和 hand 协议。</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>ClientHandler + SessionService</strong>
+        <ul>
+          <li>处理 <code>chat:send</code>、<code>chat:stop</code>、<code>session:list/load/create/delete/rename</code>。</li>
+          <li><code>SessionService</code> 是会话元数据、运行状态和 AgentConfig 默认值合成的边界。</li>
+          <li>支持 <code>session:config:get/update</code>，会话级默认值优先于客户端全局选择。</li>
+          <li>每个连接有独立 <code>ConnectionState</code>，避免多客户端串扰。</li>
+          <li>流式事件回传给客户端。</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>HandAwareToolExecutor</strong>
+        <ul>
+          <li>按 <code>targetHandId</code> 或工具名选择健康 Hand。</li>
+          <li>发送 <code>hand:execute</code>，等待 <code>hand:result</code>。</li>
+          <li>默认阻止非只读远程工具。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note">
+      远程写工具的默认策略是拒绝：除非设置 <code>WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS=1</code>，否则 <code>FileWrite</code>、<code>FileEdit</code>、<code>Bash</code> 等非 readonly 工具不会通过远程 Hand 执行。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>6. Desktop Electron 三进程</h2>
+    <div class="grid grid-3">
+      <div class="box orange">
+        <strong>Main Process</strong>
+        <ul>
+          <li>BrowserWindow、Menu、启动生命周期。</li>
+          <li>IPC handlers：agent、session、workspace、file、terminal、browser、settings、host、mcp。</li>
+          <li>本地 Brain adapter、ToolRegistry、PermissionManager、SessionStore、MCP client。</li>
+          <li>HandBridge 连接 NAS agent-server。</li>
+        </ul>
+      </div>
+      <div class="box orange">
+        <strong>Preload</strong>
+        <ul>
+          <li><code>contextBridge.exposeInMainWorld('wzxclaw', api)</code>。</li>
+          <li>把主进程 IPC 映射为稳定的 <code>window.wzxclaw.*</code> API。</li>
+          <li>包含 web-ui 需要的 fs、terminal、preview 兼容别名。</li>
+        </ul>
+      </div>
+      <div class="box blue">
+        <strong>Renderer</strong>
+        <ul>
+          <li>加载共享 <code>packages/web-ui</code> bundle。</li>
+          <li>Electron 下自动选择 <code>IpcDataSource</code>。</li>
+          <li>React 19 + Zustand 5 + Monaco + xterm。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>7. Hand 协议和工具执行</h2>
+    <table>
+      <thead>
+        <tr><th>事件</th><th>方向</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>hand:register</code></td><td>Hand &rarr; agent-server</td><td>注册 Hand ID、名称、capabilities、工具 definitions 和 readonly 标记。</td></tr>
+        <tr><td><code>hand:heartbeat</code></td><td>Hand &rarr; agent-server</td><td>保持健康状态；服务端返回 <code>hand:heartbeat_ack</code>。</td></tr>
+        <tr><td><code>hand:execute</code></td><td>agent-server &rarr; Hand</td><td>远程工具调用，携带 callId、toolName、input、workingDirectory。</td></tr>
+        <tr><td><code>hand:result</code></td><td>Hand &rarr; agent-server</td><td>返回工具输出和 isError。</td></tr>
+        <tr><td><code>hand:reload</code></td><td>agent-server &rarr; Hand</td><td>管理端触发 Hand 重新加载能力。</td></tr>
+      </tbody>
+    </table>
+    <div class="note">
+      Desktop HandBridge 和 NAS docker-hand 都走同一套 <code>@wzxclaw/hand</code> 协议。区别在于 Desktop Hand 能访问用户本机工作区和 UI/IPC 能力，docker-hand 主要访问 NAS Compose 挂载的 <code>/data</code>。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>8. 数据和配置存储</h2>
+    <div class="grid grid-2">
+      <div class="box blue">
+        <strong>Desktop local storage</strong>
+        <ul>
+          <li><code>%APPDATA%/wzxclaw/settings.json</code>：桌面设置。</li>
+          <li><code>%APPDATA%/wzxclaw/sessions/{projectHash}/*.jsonl</code>：桌面本地会话。</li>
+          <li><code>~/.wzxclaw/MEMORY.md</code> 和 <code>~/.wzxclaw/memory/{projectHash}</code>：记忆。</li>
+          <li><code>{workspace}/.wzxclaw/index</code>：本地语义索引。</li>
+        </ul>
+      </div>
+      <div class="box green">
+        <strong>NAS server storage</strong>
+        <ul>
+          <li><code>/data/sessions.db</code>：远程会话 SQLite。</li>
+          <li><code>/data/.wzxclaw/api-keys.json</code>：API key 配置，优先级高于旧 env key。</li>
+          <li><code>./data:/data</code>：Compose 数据卷。</li>
+          <li><code>AUTH_TOKEN</code>：HTTP/WSS 统一认证 token。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>9. 旧 Relay 的位置</h2>
+    <div class="box red">
+      <strong>relay/ 现在不是主聊天架构的中心</strong>
+      <ul>
+        <li><code>relay/</code> 仍保留为独立 WebSocket relay 服务代码，面向旧的手机 &harr; 桌面房间模型。</li>
+        <li>桌面端已移除 legacy relay runtime；旧 relay IPC 仅保留兼容壳并返回断开状态。</li>
+        <li>当前已验证的真实端到端链路使用 <code>agent-server</code> 的公网入口 <code>agent.5945.top</code>。</li>
+        <li>新文档和测试应优先描述 <code>WebSocketSource &rarr; agent-server &rarr; Brain &rarr; Hand</code>。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>10. 技术栈和当前版本</h2>
+    <table>
+      <thead>
+        <tr><th>层</th><th>技术</th><th>当前版本/来源</th><th>用途</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Desktop shell</td><td>Electron</td><td><code>^33.4.11</code></td><td>Windows 桌面壳、主进程和 Chromium renderer。</td></tr>
+        <tr><td>Desktop build</td><td>electron-vite / electron-builder</td><td><code>^3.0.0</code> / <code>^25.0.0</code></td><td>多进程构建和 Windows NSIS 打包。</td></tr>
+        <tr><td>Shared UI</td><td>React / Zustand / Vite</td><td><code>^19.0.0</code> / <code>^5.0.0</code> / <code>^6.0.0</code></td><td>共享 SPA、状态和构建。</td></tr>
+        <tr><td>IDE UI</td><td>Monaco / xterm</td><td><code>^0.55.1</code> / <code>^5.5.0</code></td><td>代码编辑器和终端面板。</td></tr>
+        <tr><td>Mobile</td><td>Capacitor Android</td><td><code>^7.0.0</code></td><td>把 web-ui 打包为 Android WebView。</td></tr>
+        <tr><td>Brain</td><td>TypeScript package</td><td><code>@wzxclaw/brain</code></td><td>Agent loop、LLM、context、permission 抽象。</td></tr>
+        <tr><td>Server</td><td>Node 22 Alpine / ws / better-sqlite3</td><td><code>ws ^8.18.0</code> / <code>better-sqlite3 ^12.10.0</code></td><td>NAS agent-server、WSS、SQLite 会话。</td></tr>
+        <tr><td>LLM</td><td>openai / @anthropic-ai/sdk</td><td><code>^6.0.0</code> / <code>^0.82.0</code></td><td>OpenAI-compatible、Anthropic、DeepSeek、GLM 等后端。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>11. 已验证端到端路径</h2>
+    <div class="grid grid-3">
+      <div class="box green">
+        <strong>NAS public E2E</strong>
+        <small><code>packages/agent-server/test/e2e/nas-e2e.test.ts</code></small>
+        <ul>
+          <li>12 个真实场景通过。</li>
+          <li>覆盖 health、auth、session、LLM、Hand、远程工具安全策略。</li>
+        </ul>
+      </div>
+      <div class="box blue">
+        <strong>Desktop packaged smoke</strong>
+        <small><code>wzxClaw_desktop/test/smoke/packaged.spec.ts</code></small>
+        <ul>
+          <li>6 个 packaged UI/IPC 场景通过。</li>
+          <li>覆盖窗口启动、web-ui 渲染、会话 IPC、磁盘持久化。</li>
+        </ul>
+      </div>
+      <div class="box orange">
+        <strong>Desktop-as-Hand NAS E2E</strong>
+        <small><code>wzxClaw_desktop/test/e2e/nas-agent.spec.ts</code></small>
+        <ul>
+          <li>4 个真实 NAS 场景通过。</li>
+          <li>覆盖 Desktop HandBridge 注册、远程消息、FileRead 工具执行、UI 状态。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer">wzxClaw Architecture — updated 2026-05-17</div>
+</main>
+</body>
+</html>

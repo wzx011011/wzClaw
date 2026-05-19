@@ -3,11 +3,15 @@
 // mock AgentLoop、SessionStore、WebSocket，验证协议映射
 // ============================================================
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { AgentEvent, AgentConfig } from '@wzxclaw/brain'
 import type { ISessionStore, IEventSender, IToolExecutor } from '@wzxclaw/brain'
 import type { WebSocket } from 'ws'
 import { ClientHandler } from './client-handler.js'
+import type { WorkspaceService } from './workspace-service.js'
+import os from 'os'
+import path from 'path'
+import fsp from 'fs/promises'
 
 // ---- 工具函数 ----
 
@@ -63,6 +67,53 @@ function createMockSessionStore(): ISessionStore {
     loadSession: vi.fn(() => Promise.resolve([])),
     listSessions: vi.fn(() => Promise.resolve([])),
     deleteSession: vi.fn(() => Promise.resolve()),
+    renameSession: vi.fn(() => Promise.resolve()),
+    createSession: vi.fn((config) => Promise.resolve({
+      id: config.id,
+      title: config.title ?? 'Untitled',
+      createdAt: 1000,
+      updatedAt: 1000,
+      owner: config.owner ?? 'nas-remote',
+      targetHandId: config.targetHandId,
+      model: config.model,
+      provider: config.provider,
+    })),
+    getSessionConfig: vi.fn(() => Promise.resolve(null)),
+    updateSessionConfig: vi.fn((sessionId, patch) => Promise.resolve({
+      id: sessionId,
+      title: patch.title ?? 'Untitled',
+      createdAt: 1000,
+      updatedAt: 2000,
+      owner: patch.owner ?? 'nas-remote',
+      targetHandId: patch.targetHandId,
+      model: patch.model,
+      provider: patch.provider,
+    })),
+  }
+}
+
+function createMockWorkspaceService(): Pick<WorkspaceService, 'listWorkspaces' | 'getWorkspace' | 'createWorkspace' | 'updateWorkspace' | 'deleteWorkspace' | 'addProject' | 'removeProject' | 'getSessionDefaults'> {
+  const workspace = {
+    id: 'w1',
+    title: '工作区',
+    projects: [],
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+  }
+  return {
+    listWorkspaces: vi.fn(() => Promise.resolve([workspace])),
+    getWorkspace: vi.fn(() => Promise.resolve(workspace)),
+    createWorkspace: vi.fn(() => Promise.resolve(workspace)),
+    updateWorkspace: vi.fn(() => Promise.resolve({ ...workspace, title: '新标题', updatedAt: 2 })),
+    deleteWorkspace: vi.fn(() => Promise.resolve()),
+    addProject: vi.fn(() => Promise.resolve({
+      ...workspace,
+      projects: [{ id: 'p1', path: '/repo/app', name: 'app', addedAt: 2 }],
+      updatedAt: 2,
+    })),
+    removeProject: vi.fn(() => Promise.resolve(workspace)),
+    getSessionDefaults: vi.fn(() => Promise.resolve({ workingDirectory: '/repo/app', projectRoots: ['/repo/app'] })),
   }
 }
 
@@ -91,15 +142,37 @@ function createMockAgentLoop(events: AgentEvent[]) {
 describe('ClientHandler', () => {
   let handler: ClientHandler
   let sessionStore: ISessionStore
+  let workspaceService: ReturnType<typeof createMockWorkspaceService>
   let ws: ReturnType<typeof createMockWs>
+  let tmpConfigDir: string
+  let origConfigDir: string | undefined
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    tmpConfigDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ch-test-'))
+    origConfigDir = process.env.WZXCLAW_CONFIG_DIR
+    process.env.WZXCLAW_CONFIG_DIR = tmpConfigDir
     sessionStore = createMockSessionStore()
+    workspaceService = createMockWorkspaceService()
     handler = new ClientHandler(sessionStore, {
       execute: vi.fn(() => Promise.resolve({ output: '', isError: false })),
-      getDefinitions: vi.fn(() => []),
+      getDefinitions: vi.fn(() => [
+        { name: 'FileRead', description: 'Read file', inputSchema: {} },
+        { name: 'FileList', description: 'List dir', inputSchema: {} },
+        { name: 'ShellExecute', description: 'Run shell', inputSchema: {} },
+        { name: 'Grep', description: 'Search files', inputSchema: {} },
+        { name: 'Glob', description: 'Find files', inputSchema: {} },
+      ]),
       isReadOnly: vi.fn(() => false),
-    } as unknown as IToolExecutor)
+    } as unknown as IToolExecutor, workspaceService as WorkspaceService)
+  })
+
+  afterEach(async () => {
+    if (origConfigDir !== undefined) {
+      process.env.WZXCLAW_CONFIG_DIR = origConfigDir
+    } else {
+      delete process.env.WZXCLAW_CONFIG_DIR
+    }
+    await fsp.rm(tmpConfigDir, { recursive: true, force: true })
   })
 
   describe('AgentEvent → Client 协议映射', () => {
@@ -250,7 +323,7 @@ describe('ClientHandler', () => {
       const msgs = ws._getSentMessages()
       const compactMsg = msgs.find(m => m.event === 'stream:compacted')
       expect(compactMsg).toBeDefined()
-      expect(compactMsg!.data).toEqual({ beforeTokens: 10000, afterTokens: 3000 })
+      expect(compactMsg!.data).toEqual({ beforeTokens: 10000, afterTokens: 3000, auto: true })
     })
   })
 
@@ -274,7 +347,7 @@ describe('ClientHandler', () => {
       const msgs = ws._getSentMessages()
       const listMsg = msgs.find(m => m.event === 'session:list')
       expect(listMsg).toBeDefined()
-      expect(listMsg!.data).toEqual(sessions)
+      expect(listMsg!.data).toEqual({ sessions: sessions.map(session => ({ ...session, isRunning: false })) })
       expect(sessionStore.listSessions).toHaveBeenCalled()
     })
 
@@ -310,6 +383,52 @@ describe('ClientHandler', () => {
       expect(createMsg!.data).toHaveProperty('sessionId')
       // sessionId 应该是 UUID 格式
       expect(typeof (createMsg!.data as { sessionId: string }).sessionId).toBe('string')
+      expect(sessionStore.createSession).toHaveBeenCalled()
+    })
+
+    it('workspace:create/list/add-project → 通过 workspace service 返回结果', async () => {
+      ws._emit('message', JSON.stringify({ event: 'workspace:create', data: { title: '工作区' } }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'workspace:created'))
+      expect(workspaceService.createWorkspace).toHaveBeenCalledWith({ title: '工作区' })
+
+      ws._emit('message', JSON.stringify({ event: 'workspace:list', data: { includeArchived: true } }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'workspace:list'))
+      expect(workspaceService.listWorkspaces).toHaveBeenCalledWith(true)
+
+      ws._emit('message', JSON.stringify({ event: 'workspace:add-project', data: { workspaceId: 'w1', folderPath: '/repo/app' } }))
+      await pollUntil(() => ws._getSentMessages().filter(m => m.event === 'workspace:updated').length >= 1)
+      expect(workspaceService.addProject).toHaveBeenCalledWith('w1', '/repo/app')
+    })
+
+    it('capabilities:get → 返回当前服务端能力', async () => {
+      ws._emit('message', JSON.stringify({ event: 'capabilities:get' }))
+
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'capabilities'))
+
+      const msg = ws._getSentMessages().find(m => m.event === 'capabilities')!
+      expect(msg.data).toMatchObject({
+        workspace: true,
+        fs: true,
+        terminal: true,
+        tools: true,
+        hosts: true,
+        plugins: true,
+        indexing: true,
+        insights: true,
+      })
+    })
+
+    it('session:config:update/get → 持久化并读取会话配置', async () => {
+      ws._emit('message', JSON.stringify({
+        event: 'session:config:update',
+        data: { sessionId: 's1', patch: { targetHandId: 'desktop-hand-1', model: 'glm-5.1' } },
+      }))
+
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'session:config:updated'))
+
+      expect(sessionStore.updateSessionConfig).toHaveBeenCalledWith('s1', { targetHandId: 'desktop-hand-1', model: 'glm-5.1' })
+      const updated = ws._getSentMessages().find(m => m.event === 'session:config:updated')!
+      expect((updated.data as { config: { targetHandId?: string } }).config.targetHandId).toBe('desktop-hand-1')
     })
 
     it('session:delete → 删除会话', async () => {
@@ -326,9 +445,79 @@ describe('ClientHandler', () => {
       expect(deleteMsg!.data).toEqual({ sessionId: 's1' })
       expect(sessionStore.deleteSession).toHaveBeenCalledWith('s1')
     })
+
+    it('session:rename → 持久化会话标题', async () => {
+      ws._emit('message', JSON.stringify({
+        event: 'session:rename',
+        data: { sessionId: 's1', title: '新标题' },
+      }))
+
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'session:renamed'))
+
+      expect(sessionStore.renameSession).toHaveBeenCalledWith('s1', '新标题')
+      const msgs = ws._getSentMessages()
+      expect(msgs.find(m => m.event === 'session:renamed')!.data).toEqual({ sessionId: 's1', title: '新标题' })
+    })
+
+    it('permission:get → 返回默认 always-ask 模式', async () => {
+      ws._emit('message', JSON.stringify({ event: 'permission:get' }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'permission:mode'))
+      const msg = ws._getSentMessages().find(m => m.event === 'permission:mode')!
+      expect(msg.data).toEqual({ mode: 'always-ask' })
+    })
+
+    it('permission:set → 更新权限模式', async () => {
+      ws._emit('message', JSON.stringify({ event: 'permission:set', data: { mode: 'plan' } }))
+      await pollUntil(() => ws._getSentMessages().filter(m => m.event === 'permission:mode').length >= 1)
+      const msg = ws._getSentMessages().find(m => m.event === 'permission:mode')!
+      expect(msg.data).toEqual({ mode: 'plan' })
+    })
+
+    it('permission:set → 拒绝无效模式', async () => {
+      ws._emit('message', JSON.stringify({ event: 'permission:set', data: { mode: 'invalid' } }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'error'))
+      const msg = ws._getSentMessages().find(m => m.event === 'error')!
+      expect((msg.data as { message: string }).message).toContain('Invalid')
+    })
+
+    it('session:export → 返回会话消息和配置', async () => {
+      ws._emit('message', JSON.stringify({ event: 'session:export', data: { sessionId: 's1' } }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'session:exported'))
+      const msg = ws._getSentMessages().find(m => m.event === 'session:exported')!
+      expect(msg.data).toMatchObject({ sessionId: 's1' })
+    })
   })
 
   describe('AgentLoop 生命周期', () => {
+    it('chat:send 使用 session config 中的 targetHandId', async () => {
+      ;(sessionStore.getSessionConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 's1',
+        title: '会话',
+        createdAt: 1000,
+        updatedAt: 1000,
+        owner: 'nas-remote',
+        targetHandId: 'desktop-hand-1',
+        model: 'glm-5.1',
+      })
+      const mockLoop = createMockAgentLoop([
+        { type: 'agent:done', usage: { inputTokens: 1, outputTokens: 1 }, turnCount: 1 },
+      ])
+      handler.setLoopFactory(() => mockLoop as unknown as ReturnType<typeof createMockAgentLoop>)
+
+      ws = createMockWs()
+      handler.handleConnection(ws)
+      ws._emit('message', JSON.stringify({
+        event: 'chat:send',
+        data: { sessionId: 's1', message: 'hi' },
+      }))
+
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
+
+      const runCall = mockLoop.run.mock.calls[0]
+      expect(runCall![1].targetHandId).toBe('desktop-hand-1')
+      expect(runCall![1].model).toBe('glm-5.1')
+    })
+
     it('WebSocket 关闭时取消正在运行的 AgentLoop', async () => {
       // 创建一个长运行的 generator — yield 后挂起直到被取消
       let resolveBlock: () => void = () => {}
@@ -420,6 +609,71 @@ describe('ClientHandler', () => {
       // 解除挂起
       resolveFirst()
     })
+
+    it('不同客户端的 chat:stop 不会取消其他客户端的 AgentLoop', async () => {
+      let resolveFirst: () => void = () => {}
+      const firstBlock = new Promise<void>(r => { resolveFirst = r })
+      const firstLoop = {
+        run: vi.fn(async function* (): AsyncGenerator<AgentEvent, void, unknown> {
+          yield { type: 'agent:text', content: 'client-a' }
+          await firstBlock
+          yield { type: 'agent:done', usage: { inputTokens: 1, outputTokens: 1 }, turnCount: 1 }
+        }),
+        cancel: vi.fn(),
+        getMessages: vi.fn(() => []),
+        replaceMessages: vi.fn(),
+      }
+      const secondLoop = createMockAgentLoop([
+        { type: 'agent:text', content: 'client-b' },
+        { type: 'agent:done', usage: { inputTokens: 1, outputTokens: 1 }, turnCount: 1 },
+      ])
+
+      let callCount = 0
+      handler.setLoopFactory(() => {
+        callCount++
+        return (callCount === 1 ? firstLoop : secondLoop) as unknown as ReturnType<typeof createMockAgentLoop>
+      })
+
+      const wsA = createMockWs()
+      const wsB = createMockWs()
+      handler.handleConnection(wsA)
+      handler.handleConnection(wsB)
+
+      wsA._emit('message', JSON.stringify({ event: 'chat:send', data: { sessionId: 'a', message: 'first' } }))
+      await pollUntil(() => wsA._sent.length > 0)
+
+      wsB._emit('message', JSON.stringify({ event: 'chat:send', data: { sessionId: 'b', message: 'second' } }))
+      await pollUntil(() => wsB._sent.length >= 2)
+
+      wsB._emit('message', JSON.stringify({ event: 'chat:stop', data: { sessionId: 'b' } }))
+
+      expect(firstLoop.cancel).not.toHaveBeenCalled()
+      resolveFirst()
+    })
+
+    it('持久化时只追加本轮新增消息，不重复历史消息', async () => {
+      const history = [{ role: 'user', content: 'old' }]
+      ;(sessionStore.loadSession as ReturnType<typeof vi.fn>).mockResolvedValue(history)
+      const mockLoop = createMockAgentLoop([
+        { type: 'agent:done', usage: { inputTokens: 1, outputTokens: 1 }, turnCount: 1 },
+      ])
+      mockLoop.getMessages.mockReturnValue([
+        ...history,
+        { role: 'user', content: 'new' },
+        { role: 'assistant', content: 'reply' },
+      ])
+      handler.setLoopFactory(() => mockLoop as unknown as ReturnType<typeof createMockAgentLoop>)
+
+      ws = createMockWs()
+      handler.handleConnection(ws)
+      ws._emit('message', JSON.stringify({ event: 'chat:send', data: { sessionId: 's1', message: 'new' } }))
+
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
+
+      expect(sessionStore.appendMessage).toHaveBeenCalledTimes(2)
+      expect(sessionStore.appendMessage).toHaveBeenNthCalledWith(1, 's1', { role: 'user', content: 'new' })
+      expect(sessionStore.appendMessage).toHaveBeenNthCalledWith(2, 's1', { role: 'assistant', content: 'reply' })
+    })
   })
 
   describe('消息格式', () => {
@@ -439,6 +693,71 @@ describe('ClientHandler', () => {
         event: 'unknown:event',
         data: {},
       }))).not.toThrow()
+    })
+  })
+
+  describe('Host CRUD', () => {
+    it('host:list → 返回空列表', async () => {
+      ws = createMockWs()
+      handler.handleConnection(ws)
+
+      ws._emit('message', JSON.stringify({ event: 'host:list', data: {} }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'host:list'))
+
+      const msg = ws._getSentMessages().find(m => m.event === 'host:list')!
+      expect((msg.data as { hosts: unknown[] }).hosts).toEqual([])
+    })
+
+    it('host:create + host:list → 创建后可列出', async () => {
+      ws = createMockWs()
+      handler.handleConnection(ws)
+
+      ws._emit('message', JSON.stringify({
+        event: 'host:create',
+        data: { name: 'nas', address: '192.168.1.100', port: 22, username: 'root', authType: 'key' },
+      }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'host:created'))
+
+      const created = ws._getSentMessages().find(m => m.event === 'host:created')!
+      const host = (created.data as { host: { id: string; name: string } }).host
+      expect(host.name).toBe('nas')
+      expect(host.id).toBeTruthy()
+    })
+  })
+
+  describe('Plugin / Indexing / Insights', () => {
+    it('plugin:list → 返回空列表', async () => {
+      ws = createMockWs()
+      handler.handleConnection(ws)
+
+      ws._emit('message', JSON.stringify({ event: 'plugin:list', data: {} }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'plugin:list'))
+
+      const msg = ws._getSentMessages().find(m => m.event === 'plugin:list')!
+      expect((msg.data as { plugins: unknown[] }).plugins).toEqual([])
+    })
+
+    it('indexing:status → 返回可用状态', async () => {
+      ws = createMockWs()
+      handler.handleConnection(ws)
+
+      ws._emit('message', JSON.stringify({ event: 'indexing:status', data: {} }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'indexing:status'))
+
+      const msg = ws._getSentMessages().find(m => m.event === 'indexing:status')!
+      expect((msg.data as { available: boolean }).available).toBe(true)
+      expect((msg.data as { backend: string }).backend).toBe('hand-tools')
+    })
+
+    it('insights:status → 返回状态', async () => {
+      ws = createMockWs()
+      handler.handleConnection(ws)
+
+      ws._emit('message', JSON.stringify({ event: 'insights:status', data: {} }))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'insights:status'))
+
+      const msg = ws._getSentMessages().find(m => m.event === 'insights:status')!
+      expect((msg.data as { available: boolean }).available).toBe(true)
     })
   })
 })

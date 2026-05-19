@@ -4,8 +4,8 @@
 // ============================================================
 
 import { readFile, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 export class FileEditTool implements HandTool {
   readonly name = 'FileEdit'
@@ -30,12 +30,9 @@ export class FileEditTool implements HandTool {
     if (typeof filePath !== 'string' || filePath.length === 0) {
       return { output: '缺少 path 参数', isError: true }
     }
-    // 校验路径是否在允许范围内
-    const resolved = path.resolve(filePath)
-    const allowedRoots = context.projectRoots.length > 0 ? context.projectRoots : [context.workingDirectory]
-    if (!allowedRoots.some(root => resolved.startsWith(root + '/') || resolved === root)) {
-      return { output: `路径不在允许范围内: ${filePath}`, isError: true }
-    }
+    // 路径白名单校验
+    const violation = assertPathInWorkspace(filePath, context)
+    if (violation) return violation
     const oldString = input.oldString
     if (typeof oldString !== 'string') {
       return { output: '缺少 oldString 参数', isError: true }

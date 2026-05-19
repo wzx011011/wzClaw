@@ -1,0 +1,226 @@
+.workspace-page {
+  position: relative;
+  height: 100%;
+  overflow: auto;
+  padding: var(--sp-4);
+  background: var(--bg-primary);
+}
+
+.workspace-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.workspace-toolbar h1 {
+  font-size: 24px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.workspace-toolbar p {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.workspace-toolbar button,
+.workspace-create-panel button,
+.workspace-card-actions button,
+.workspace-detail-panel button {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.workspace-create-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(220px, 1fr) auto;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.workspace-create-panel input,
+.workspace-inline-form input,
+.workspace-detail-section textarea {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.workspace-error,
+.workspace-empty {
+  padding: var(--sp-4);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.workspace-error {
+  color: var(--error);
+  margin-bottom: var(--sp-3);
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp-3);
+}
+
+.workspace-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-height: 160px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  cursor: pointer;
+}
+
+.workspace-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.workspace-card-title-group h3 {
+  font-size: var(--font-size-md);
+  font-weight: 650;
+}
+
+.workspace-card-title-group p,
+.workspace-card-projects,
+.workspace-card-sessions {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.workspace-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.workspace-card-projects,
+.workspace-card-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace-card-projects span,
+.workspace-card-sessions span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+.workspace-detail-panel {
+  position: fixed;
+  top: var(--navbar-height);
+  right: 0;
+  bottom: 0;
+  width: min(520px, 100vw);
+  overflow: auto;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
+  padding: var(--sp-4);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
+}
+
+.workspace-detail-header,
+.workspace-inline-form,
+.workspace-project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.workspace-detail-header {
+  justify-content: space-between;
+  margin-bottom: var(--sp-4);
+}
+
+.workspace-detail-header h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+}
+
+.workspace-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.workspace-detail-section label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.workspace-inline-form input {
+  flex: 1;
+}
+
+.workspace-project-list,
+.workspace-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.workspace-project-row {
+  justify-content: space-between;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+
+.workspace-project-row div {
+  min-width: 0;
+}
+
+.workspace-project-row span,
+.workspace-session-list span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .workspace-page {
+    padding: var(--sp-3);
+  }
+
+  .workspace-toolbar,
+  .workspace-create-panel {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .workspace-detail-panel {
+    top: 0;
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+}

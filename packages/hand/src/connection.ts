@@ -146,6 +146,18 @@ export class HandConnection {
   }
 
   /**
+   * 发送任意 JSON 帧（用于 terminal:data / terminal:exit 等推送帧）
+   *
+   * @param frame 已序列化的 JSON 字符串（由 protocol.ts 的工厂函数构造）
+   */
+  sendFrame(frame: string): void {
+    if (this.status !== HandStatus.Connected || !this.ws) {
+      return
+    }
+    this.ws.send(frame)
+  }
+
+  /**
    * 主动断开连接（不触发重连）
    */
   disconnect(): void {

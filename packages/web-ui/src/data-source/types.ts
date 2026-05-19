@@ -10,6 +10,10 @@
 // - Store 通过工厂函数注入 DataSource（便于测试）
 // ============================================================
 
+// 平台能力契约 — 由各 DataSource 实现声明支持的子集
+// 注：此类型在 @wzxclaw/brain 中也有同名定义（供 agent-server 端使用），
+// web-ui 不直接依赖 brain（浏览器端），故保留本地定义。两边字段必须一致。
+
 // ---- Stream 事件类型 ----
 
 /** 流式事件类型枚举 */
@@ -103,6 +107,25 @@ export type StreamEventCallback<T extends StreamEventType = StreamEventType> =
 
 // ---- 会话相关类型 ----
 
+export type SessionOwner = 'desktop-local' | 'nas-remote'
+
+export interface SessionConfig {
+  readonly id: string
+  readonly title: string
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly workspaceId?: string
+  readonly model?: string
+  readonly provider?: string
+  readonly targetHandId?: string
+  readonly owner?: SessionOwner
+  readonly workingDirectory?: string
+  readonly projectRoots?: string[]
+  readonly metadata?: Record<string, unknown>
+}
+
+export type SessionConfigPatch = Partial<Omit<SessionConfig, 'id' | 'createdAt' | 'updatedAt'>>
+
 /** 会话元信息 */
 export interface SessionMeta {
   readonly id: string
@@ -112,7 +135,71 @@ export interface SessionMeta {
   readonly messageCount: number
   readonly preview?: string
   readonly isRunning?: boolean
+  readonly workspaceId?: string
+  readonly model?: string
+  readonly provider?: string
+  readonly targetHandId?: string
+  readonly owner?: SessionOwner
 }
+
+// ---- 工作区相关类型 ----
+
+export interface Project {
+  readonly id: string
+  readonly path: string
+  readonly name: string
+  readonly addedAt: number
+}
+
+export interface Workspace {
+  readonly id: string
+  readonly title: string
+  readonly description?: string
+  readonly projects: Project[]
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly archived: boolean
+  readonly lastSessionId?: string
+  readonly systemPrompt?: string
+}
+
+export interface WorkspaceUpdate {
+  readonly title?: string
+  readonly description?: string
+  readonly archived?: boolean
+  readonly lastSessionId?: string
+  readonly systemPrompt?: string
+}
+
+// ---- 平台能力 ----
+
+/**
+ * RuntimeCapabilities — DataSource 声明的运行时能力。
+ * UI 通过 useCapabilities() 读取并条件渲染。
+ * 与 @wzxclaw/brain 的同名接口保持字段一致。
+ */
+export interface RuntimeCapabilities {
+  readonly workspace: boolean
+  readonly fs: boolean
+  readonly terminal: boolean
+  readonly preview: boolean
+  readonly tools: boolean
+  readonly permission: boolean
+  readonly mcp: boolean
+  readonly skills: boolean
+  readonly plugins: boolean
+  readonly hosts: boolean
+  readonly indexing: boolean
+  readonly insights: boolean
+  readonly browser: boolean
+  readonly notifications: boolean
+}
+
+export interface SessionListOptions {
+  readonly workspaceId?: string
+}
+
+export interface CreateSessionOptions extends SessionConfigPatch {}
 
 /** 原始消息（从后端返回的消息格式） */
 export interface RawMessage {
@@ -146,6 +233,10 @@ export interface Settings {
 
 /** 发送消息时的附加选项 */
 export interface SendMessageOptions {
+  /** 当前工作区，用于解析 workingDirectory/projectRoots */
+  readonly workspaceId?: string
+  /** 指定本轮工具调用使用的 Hand */
+  readonly targetHandId?: string
   /** 附加图片（base64 编码） */
   readonly images?: Array<{
     readonly data: string
@@ -214,6 +305,8 @@ export interface PreviewChannel {
  * 具体实现（WebSocket / IPC）在运行时注入。
  */
 export interface DataSource {
+  readonly capabilities?: RuntimeCapabilities
+
   // ---- 连接生命周期 ----
 
   /** 建立连接（WebSocket 会创建新连接，IPC 直接 resolve） */
@@ -227,6 +320,9 @@ export interface DataSource {
 
   /** 监听连接状态变化，返回取消订阅函数 */
   onConnectionChange(callback: (connected: boolean) => void): () => void
+
+  /** 获取运行时能力 */
+  getCapabilities?(): Promise<RuntimeCapabilities>
 
   // ---- Agent 操作 ----
 
@@ -256,19 +352,139 @@ export interface DataSource {
   // ---- 会话 CRUD ----
 
   /** 获取会话列表 */
-  listSessions(): Promise<SessionMeta[]>
+  listSessions(options?: SessionListOptions): Promise<SessionMeta[]>
 
   /** 加载会话历史消息 */
   loadSession(sessionId: string): Promise<RawMessage[]>
 
   /** 创建新会话，返回新会话 ID */
-  createSession(): Promise<string>
+  createSession(options?: CreateSessionOptions): Promise<string>
 
   /** 删除指定会话 */
   deleteSession(sessionId: string): Promise<void>
 
   /** 重命名指定会话 */
   renameSession(sessionId: string, title: string): Promise<void>
+
+  /** 获取指定会话配置 */
+  getSessionConfig(sessionId: string): Promise<SessionConfig | null>
+
+  /** 更新指定会话配置 */
+  updateSessionConfig(sessionId: string, patch: SessionConfigPatch): Promise<SessionConfig>
+
+  /** 导出会话（消息 + 配置） */
+  exportSession?(sessionId: string): Promise<{ messages: RawMessage[]; config: SessionConfig | null }>
+
+  /** 复制会话，返回新会话 ID */
+  duplicateSession?(sessionId: string): Promise<string>
+
+  /** 压缩会话上下文（触发自动 compaction） */
+  compactSession?(sessionId: string): Promise<void>
+
+  /** 回退会话到最后 N 条消息 */
+  rewindSession?(sessionId: string, keepMessageCount: number): Promise<void>
+
+  // ---- 工作区 CRUD ----
+
+  listWorkspaces(options?: { includeArchived?: boolean }): Promise<Workspace[]>
+
+  getWorkspace(workspaceId: string): Promise<Workspace | null>
+
+  createWorkspace(input: { title: string; description?: string }): Promise<Workspace>
+
+  updateWorkspace(workspaceId: string, updates: WorkspaceUpdate): Promise<Workspace>
+
+  deleteWorkspace(workspaceId: string): Promise<void>
+
+  addWorkspaceProject(workspaceId: string, folderPath: string): Promise<Workspace>
+
+  removeWorkspaceProject(workspaceId: string, projectId: string): Promise<Workspace>
+
+  // ---- 权限模式 ----
+
+  /** 获取当前权限模式 */
+  getPermissionMode?(): Promise<string>
+
+  /** 设置权限模式 */
+  setPermissionMode?(mode: string): Promise<string>
+
+  /** 回答 ask-user 问题 */
+  answerAskUser?(questionId: string, answer: string): Promise<void>
+
+  // ---- Knowledge (Skills/Commands/Memory) ----
+
+  /** 获取 skills/commands/memory 内容 */
+  getKnowledge?(): Promise<{ skills: string; commands: string; memory: string }>
+
+  // ---- MCP ----
+
+  /** 列出 MCP 工具 */
+  listMcpTools?(): Promise<Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>>
+
+  // ---- Hosts ----
+
+  /** 列出远程主机 */
+  listHosts?(includeArchived?: boolean): Promise<Array<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; archived?: boolean
+    createdAt: number; updatedAt: number
+  }>>
+
+  /** 获取单个主机 */
+  getHost?(hostId: string): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; archived?: boolean
+    createdAt: number; updatedAt: number
+  } | null>
+
+  /** 创建主机 */
+  createHost?(input: {
+    name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string
+  }): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; createdAt: number; updatedAt: number
+  }>
+
+  /** 更新主机 */
+  updateHost?(hostId: string, updates: Record<string, unknown>): Promise<{
+    id: string; name: string; address: string; port: number
+    username: string; authType: string; tags?: string[]
+    description?: string; createdAt: number; updatedAt: number
+  }>
+
+  /** 删除主机 */
+  deleteHost?(hostId: string): Promise<void>
+
+  // ---- Plugins ----
+
+  /** 列出插件 */
+  listPlugins?(): Promise<Array<{
+    id: string; name: string; description?: string
+    enabled: boolean; version?: string
+  }>>
+
+  // ---- Indexing ----
+
+  /** 获取索引状态 */
+  getIndexingStatus?(): Promise<{
+    available: boolean; backend: string
+    indexedFiles: number; lastIndexed: number | null
+  }>
+
+  /** 搜索索引 */
+  searchIndex?(query: string, limit?: number): Promise<{ results: unknown }>
+
+  // ---- Insights ----
+
+  /** 获取洞察状态 */
+  getInsightsStatus?(): Promise<{
+    available: boolean; reportExists: boolean; lastGenerated: number | null
+  }>
 
   // ---- 设置 ----
 

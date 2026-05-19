@@ -76,6 +76,16 @@ button {
   font-family: inherit;
 }
 
+/* ---- 焦点可见性 ---- */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 input, textarea, select {
   font-family: inherit;
 }

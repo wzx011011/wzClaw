@@ -10,6 +10,8 @@ import { LocalToolExecutor } from './tool-executor.js'
 import type { HandConfig } from './types.js'
 import { HandStatus } from './types.js'
 import { ToolLoader } from './tool-loader.js'
+import { TerminalManager } from './terminal-manager.js'
+import { createTerminalDataMessage, createTerminalExitMessage } from './protocol.js'
 
 // ---- 参数解析 ----
 
@@ -171,7 +173,20 @@ export async function runCli(): Promise<void> {
 
   // 创建工具执行器，使用 ToolLoader 加载工具
   const executor = new LocalToolExecutor()
-  const toolLoader = new ToolLoader({ configDir: args.configDir, executor })
+
+  // 创建 TerminalManager — 数据/退出帧通过 connection.sendFrame 推送
+  // connection 此时尚未创建，先用占位 refs
+  let connectionRef: HandConnection | null = null
+  const terminalManager = new TerminalManager({
+    onData: (terminalId, data) => {
+      connectionRef?.sendFrame(createTerminalDataMessage(terminalId, data))
+    },
+    onExit: (terminalId, exitCode, signal) => {
+      connectionRef?.sendFrame(createTerminalExitMessage(terminalId, exitCode, signal))
+    },
+  })
+
+  const toolLoader = new ToolLoader({ configDir: args.configDir, executor, terminalManager })
   const loadResult = await toolLoader.loadTools()
 
   console.log(`[wzxclaw-hand] 启动中...`)
@@ -194,6 +209,8 @@ export async function runCli(): Promise<void> {
     },
     onDisconnect() {
       console.log('[wzxclaw-hand] 连接断开，正在重连...')
+      // 清理所有终端，防止僵尸 PTY
+      terminalManager.disposeAll()
     },
     onStatusChange(status) {
       const statusNames: Record<HandStatus, string> = {
@@ -210,6 +227,7 @@ export async function runCli(): Promise<void> {
   // 优雅退出
   const cleanup = () => {
     console.log('\n[wzxclaw-hand] 正在关闭...')
+    terminalManager.disposeAll()
     connection.disconnect()
     process.exit(0)
   }
@@ -217,6 +235,7 @@ export async function runCli(): Promise<void> {
   process.on('SIGINT', cleanup)
   process.on('SIGTERM', cleanup)
 
+  connectionRef = connection
   connection.connect()
   console.log('[wzxclaw-hand] 已启动，按 Ctrl+C 退出')
 }

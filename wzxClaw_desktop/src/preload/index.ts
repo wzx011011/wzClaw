@@ -1,80 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentStep, Workspace } from '../shared/types'
+import type { Workspace } from '../shared/types'
 
 const api = {
-  // Agent
-  sendMessage: (request: { conversationId: string; content: string; activeWorkspaceId?: string; images?: Array<{ data: string; mimeType: string; name?: string }> }) =>
-    ipcRenderer.invoke('agent:send_message', request),
-  stopGeneration: (sessionId: string) => ipcRenderer.invoke('agent:stop', { sessionId }),
+  // Settings
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
 
-  // Stream listeners — return unsubscribe functions
-  onStreamText: (callback: (payload: { content: string; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { content: string; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:text_delta', handler)
-    return () => ipcRenderer.removeListener('stream:text_delta', handler)
-  },
-  onStreamThinking: (callback: (payload: { content: string; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { content: string; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:thinking_delta', handler)
-    return () => ipcRenderer.removeListener('stream:thinking_delta', handler)
-  },
-  onStreamToolStart: (callback: (payload: { id: string; name: string; input?: Record<string, unknown>; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { id: string; name: string; input?: Record<string, unknown>; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:tool_use_start', handler)
-    return () => ipcRenderer.removeListener('stream:tool_use_start', handler)
-  },
-  onStreamToolCallPreview: (callback: (payload: { id: string; name: string; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { id: string; name: string; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:tool_call_preview', handler)
-    return () => ipcRenderer.removeListener('stream:tool_call_preview', handler)
-  },
-  onStreamToolResult: (callback: (payload: { id: string; output: string; isError: boolean; toolName: string; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { id: string; output: string; isError: boolean; toolName: string; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:tool_use_end', handler)
-    return () => ipcRenderer.removeListener('stream:tool_use_end', handler)
-  },
-  onStreamToolProgress: (callback: (payload: { toolCallId: string; toolName: string; message: string; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { toolCallId: string; toolName: string; message: string; sessionId?: string }) => callback(payload)
-    ipcRenderer.on('stream:tool_progress', handler)
-    return () => ipcRenderer.removeListener('stream:tool_progress', handler)
-  },
-  onStreamEnd: (callback: (payload: { usage: { inputTokens: number; outputTokens: number }; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { usage: { inputTokens: number; outputTokens: number }; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:done', handler)
-    return () => ipcRenderer.removeListener('stream:done', handler)
-  },
-  onStreamTurnEnd: (callback: (payload: { sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:turn_end', handler)
-    return () => ipcRenderer.removeListener('stream:turn_end', handler)
-  },
-  onStreamError: (callback: (payload: { error: string; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { error: string; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:error', handler)
-    return () => ipcRenderer.removeListener('stream:error', handler)
-  },
-  onStreamRetrying: (callback: (payload: { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { attempt: number; maxAttempts: number; delayMs: number; sessionId: string }) => callback(payload)
-    ipcRenderer.on('stream:retrying', handler)
-    return () => ipcRenderer.removeListener('stream:retrying', handler)
-  },
-  onSubStreamToolStart: (callback: (payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown>; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; name: string; input?: Record<string, unknown>; sessionId?: string }) => callback(payload)
-    ipcRenderer.on('stream:sub_tool_use_start', handler)
-    return () => ipcRenderer.removeListener('stream:sub_tool_use_start', handler)
-  },
-  onSubStreamToolResult: (callback: (payload: { parentToolCallId: string; id: string; output: string; isError: boolean; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; id: string; output: string; isError: boolean; sessionId?: string }) => callback(payload)
-    ipcRenderer.on('stream:sub_tool_use_end', handler)
-    return () => ipcRenderer.removeListener('stream:sub_tool_use_end', handler)
-  },
-  onSubStreamText: (callback: (payload: { parentToolCallId: string; content: string; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { parentToolCallId: string; content: string; sessionId?: string }) => callback(payload)
-    ipcRenderer.on('stream:sub_text', handler)
-    return () => ipcRenderer.removeListener('stream:sub_text', handler)
-  },
-
-  // Workspace
+  // Workspace (native folder operations)
   openFolder: () => ipcRenderer.invoke('workspace:open_folder'),
   getDirectoryTree: (request: { dirPath?: string; depth?: number }) =>
     ipcRenderer.invoke('workspace:get_tree', request),
@@ -86,72 +18,26 @@ const api = {
   readFileContent: (request: { filePath: string }) => ipcRenderer.invoke('file:read-content', request),
   readFolderTree: (request: { dirPath: string }) => ipcRenderer.invoke('file:read-folder-tree', request),
   saveFile: (request: { filePath: string; content: string }) => ipcRenderer.invoke('file:save', request),
+  fsReadFile: (request: { path: string }) => ipcRenderer.invoke('file:read', { filePath: request.path }),
+  fsWriteFile: (request: { path: string; content: string }) => ipcRenderer.invoke('file:save', { filePath: request.path, content: request.content }),
+  fsTree: (request: { dirPath: string; depth?: number }) => ipcRenderer.invoke('workspace:get_tree', request),
+  fsWatchStart: (_request: { path: string }) => Promise.resolve(),
+  fsWatchStop: (_request: { path: string }) => Promise.resolve(),
   renameFile: (request: { oldPath: string; newPath: string }) => ipcRenderer.invoke('file:rename', request),
   deleteFile: (request: { filePath: string }) => ipcRenderer.invoke('file:delete', request),
   createFile: (request: { dirPath: string; name: string; type: 'file' | 'directory' }) => ipcRenderer.invoke('file:create', request),
-
-  // File change listener — returns unsubscribe function
   onFileChanged: (callback: (payload: { filePath: string; changeType: string }) => void) => {
     const handler = (_: unknown, payload: { filePath: string; changeType: string }) => callback(payload)
     ipcRenderer.on('file:changed', handler)
     return () => ipcRenderer.removeListener('file:changed', handler)
   },
-
-  // Permission request listener — returns unsubscribe function (per D-64, D-65)
-  onPermissionRequest: (callback: (payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => void) => {
-    const handler = (_: unknown, payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => callback(payload)
-    ipcRenderer.on('agent:permission_request', handler)
-    return () => ipcRenderer.removeListener('agent:permission_request', handler)
+  onFsWatch: (callback: (payload: { events: Array<{ path: string; type: string }> }) => void) => {
+    const handler = (_: unknown, payload: { filePath: string; changeType: string }) => {
+      callback({ events: [{ path: payload.filePath, type: payload.changeType }] })
+    }
+    ipcRenderer.on('file:changed', handler)
+    return () => ipcRenderer.removeListener('file:changed', handler)
   },
-  sendPermissionResponse: (response: { approved: boolean; sessionCache: boolean }) =>
-    ipcRenderer.invoke('agent:permission_response', response),
-
-  // Settings
-  getSettings: () => ipcRenderer.invoke('settings:get'),
-  updateSettings: (request: Record<string, unknown>) => ipcRenderer.invoke('settings:update', request),
-
-  // Sessions
-  listSessions: (request?: { activeWorkspaceId?: string }) => ipcRenderer.invoke('session:list', request),
-  loadSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:load', request),
-  loadSessionTail: (request: { sessionId: string; tailCount: number; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:load-tail', request),
-  deleteSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:delete', request),
-  renameSession: (request: { sessionId: string; title: string }) => ipcRenderer.invoke('session:rename', request),
-  duplicateSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:duplicate', request),
-  ensureSession: (request: { sessionId: string; activeWorkspaceId?: string }) => ipcRenderer.invoke('session:ensure', request),
-  // 创建新会话 — 生成 UUID 并在主进程创建 JSONL 文件，返回 sessionId
-  createSession: (request?: { activeWorkspaceId?: string }) => ipcRenderer.invoke('session:create', request),
-  saveLastSession: (request: { sessionId: string }) => ipcRenderer.invoke('session:save-last', request),
-  getLastSession: (): Promise<{ sessionId: string | null }> => ipcRenderer.invoke('session:get-last'),
-  onSessionRestore: (callback: (payload: { sessionId: string }) => void) => {
-    const handler = (_: unknown, payload: { sessionId: string }) => callback(payload)
-    ipcRenderer.on('session:restore', handler)
-    return () => ipcRenderer.removeListener('session:restore', handler)
-  },
-
-  // Session compacted stream listener
-  onSessionCompacted: (callback: (payload: { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: { beforeTokens: number; afterTokens: number; auto: boolean; sessionId?: string }) => callback(payload)
-    ipcRenderer.on('session:compacted', handler)
-    return () => ipcRenderer.removeListener('session:compacted', handler)
-  },
-
-  // Session context restored — fires after session:load restores the agent loop (Phase 3.4)
-  onSessionContextRestored: (callback: (payload: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => void) => {
-    const handler = (_: unknown, payload: { sessionId: string; messageCount: number; compacted: boolean; beforeTokens: number; afterTokens: number }) => callback(payload)
-    ipcRenderer.on('session:context-restored', handler)
-    return () => ipcRenderer.removeListener('session:context-restored', handler)
-  },
-
-  // Session running state changed — fires when a session starts/stops running (Phase B)
-  onSessionRunningChanged: (callback: (payload: { sessionId: string; isRunning: boolean }) => void) => {
-    const handler = (_: unknown, payload: { sessionId: string; isRunning: boolean }) => callback(payload)
-    ipcRenderer.on('session:running_changed', handler)
-    return () => ipcRenderer.removeListener('session:running_changed', handler)
-  },
-
-  // Compact context (manual trigger via /compact command)
-  compactContext: () => ipcRenderer.invoke('agent:compact_context'),
-  runDoctor: () => ipcRenderer.invoke('system:doctor'),
 
   // Diff: apply accepted hunks to disk
   applyHunk: (request: { filePath: string; hunksToApply: string[]; modifiedContent: string }) =>
@@ -163,35 +49,73 @@ const api = {
   terminalInput: (request: { terminalId: string; data: string }) => ipcRenderer.invoke('terminal:input', request),
   terminalResize: (request: { terminalId: string; cols: number; rows: number }) => ipcRenderer.invoke('terminal:resize', request),
   terminalOutput: (request: { terminalId: string }) => ipcRenderer.invoke('terminal:output', request),
+  terminalSpawn: (request: { cwd?: string }) => ipcRenderer.invoke('terminal:create', { cwd: request.cwd }),
+  terminalWrite: (request: { terminalId: string; data: string }) => ipcRenderer.invoke('terminal:input', request),
   onTerminalData: (callback: (payload: { terminalId: string; data: string }) => void) => {
     const handler = (_: unknown, payload: { terminalId: string; data: string }) => callback(payload)
     ipcRenderer.on('terminal:data', handler)
     return () => ipcRenderer.removeListener('terminal:data', handler)
   },
-
-  // Symbol navigation (main -> renderer query, renderer -> main result)
-  onSymbolQuery: (callback: (payload: { queryId: string; operation: string; params: Record<string, unknown> }) => void) => {
-    const handler = (_: unknown, payload: { queryId: string; operation: string; params: Record<string, unknown> }) => callback(payload)
-    ipcRenderer.on('symbol:query', handler)
-    return () => ipcRenderer.removeListener('symbol:query', handler)
-  },
-  sendSymbolResult: (response: { queryId: string; result: unknown; isError: boolean }) =>
-    ipcRenderer.send('symbol:result', response),
-
-  // Steps
-  listSteps: (sessionId?: string) => ipcRenderer.invoke('step:list', { sessionId }),
-  onStepCreated: (callback: (payload: AgentStep & { sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: AgentStep & { sessionId?: string }) => callback(payload)
-    ipcRenderer.on('step:created', handler)
-    return () => ipcRenderer.removeListener('step:created', handler)
-  },
-  onStepUpdated: (callback: (payload: AgentStep & { sessionId?: string }) => void) => {
-    const handler = (_: unknown, payload: AgentStep & { sessionId?: string }) => callback(payload)
-    ipcRenderer.on('step:updated', handler)
-    return () => ipcRenderer.removeListener('step:updated', handler)
+  onTerminalExit: (_callback: (payload: { terminalId: string; exitCode: number }) => void) => {
+    return () => {}
   },
 
-  // Workspaces — top-level user work units
+  // Preview (browser)
+  previewOpen: (request: { url: string }) => ipcRenderer.invoke('browser:navigate', { url: request.url }),
+  previewReload: () => ipcRenderer.invoke('browser:take_screenshot'),
+  onPreviewUrlChange: (callback: (payload: { url: string | null }) => void) => {
+    const handler = (_: unknown, payload: { url: string | null }) => callback({ url: payload.url })
+    ipcRenderer.on('browser:status', handler)
+    return () => ipcRenderer.removeListener('browser:status', handler)
+  },
+
+  // Hand status (NAS Hand Bridge)
+  onHandStatus: (callback: (payload: { status: string; handId: string }) => void) => {
+    const handler = (_: unknown, payload: { status: string; handId: string }) => callback(payload)
+    ipcRenderer.on('hand:status', handler)
+    return () => ipcRenderer.removeListener('hand:status', handler)
+  },
+  getHandStatus: (): Promise<{ status: string; handId: string }> =>
+    ipcRenderer.invoke('hand:get_status'),
+  reconnectHand: () => ipcRenderer.invoke('hand:reconnect'),
+  disconnectHand: () => ipcRenderer.invoke('hand:disconnect'),
+
+  // Permission mode
+  getPermissionMode: () => ipcRenderer.invoke('permission:get_mode'),
+  setPermissionMode: (request: { mode: string }) => ipcRenderer.invoke('permission:set_mode', request),
+
+  // Plan mode (main -> renderer events, renderer -> main decision)
+  onPlanModeEntered: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('agent:plan-mode-entered', handler)
+    return () => ipcRenderer.removeListener('agent:plan-mode-entered', handler)
+  },
+  onPlanModeExited: (callback: (payload: { plan: string }) => void) => {
+    const handler = (_: unknown, payload: { plan: string }) => callback(payload)
+    ipcRenderer.on('agent:plan-mode-exited', handler)
+    return () => ipcRenderer.removeListener('agent:plan-mode-exited', handler)
+  },
+  sendPlanDecision: (request: { approved: boolean }) =>
+    ipcRenderer.invoke('agent:plan-decision', request),
+  togglePlanMode: () =>
+    ipcRenderer.invoke('agent:toggle_plan_mode'),
+
+  // AskUserQuestion
+  onAskUserQuestion: (callback: (payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => void) => {
+    const handler = (_: unknown, payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => callback(payload)
+    ipcRenderer.on('ask-user:question', handler)
+    return () => ipcRenderer.removeListener('ask-user:question', handler)
+  },
+  answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) =>
+    ipcRenderer.invoke('ask-user:answer', payload),
+
+  // File history / revert
+  getFileHistory: (request: { filePath: string }) =>
+    ipcRenderer.invoke('file:get-history', request),
+  revertFile: (request: { toolCallId: string }) =>
+    ipcRenderer.invoke('file:revert', request),
+
+  // Workspaces — top-level user work units (local CRUD, mirrors agent-server)
   listWorkspaces: (request?: { includeArchived?: boolean }): Promise<Workspace[]> =>
     ipcRenderer.invoke('workspace:list', request),
   getWorkspace: (request: { workspaceId: string }): Promise<Workspace | null> =>
@@ -206,6 +130,16 @@ const api = {
     ipcRenderer.invoke('workspace:add-project', request),
   removeWorkspaceProject: (request: { workspaceId: string; projectId: string }): Promise<Workspace> =>
     ipcRenderer.invoke('workspace:remove-project', request),
+
+  // Shell utility
+  openInExplorer: (folderPath: string) =>
+    ipcRenderer.invoke('shell:open_path', { path: folderPath }),
+  getExtensionPaths: (): Promise<{ commandsDir: string; skillsDir: string }> =>
+    ipcRenderer.invoke('shell:get_extension_paths'),
+
+  // Theme
+  setTitleBarOverlay: (request: { color: string; symbolColor: string }) =>
+    ipcRenderer.invoke('theme:set-titlebar-overlay', request),
 
   // Host management — SSH-based server management
   listHosts: (request?: { includeArchived?: boolean }) =>
@@ -286,111 +220,7 @@ const api = {
   getRelayStatus: () =>
     ipcRenderer.invoke('relay:get_status'),
 
-  // Hand — NAS Hand Bridge status and control
-  onHandStatus: (callback: (payload: { status: string; handId: string }) => void) => {
-    const handler = (_: unknown, payload: { status: string; handId: string }) => callback(payload)
-    ipcRenderer.on('hand:status', handler)
-    return () => ipcRenderer.removeListener('hand:status', handler)
-  },
-  getHandStatus: (): Promise<{ status: string; handId: string }> =>
-    ipcRenderer.invoke('hand:get_status'),
-  reconnectHand: () => ipcRenderer.invoke('hand:reconnect'),
-  disconnectHand: () => ipcRenderer.invoke('hand:disconnect'),
-
-  // Mobile user message (relay/mobile -> renderer)
-  onMobileUserMessage: (callback: (payload: { content: string; source: 'mobile' }) => void) => {
-    const handler = (_: unknown, payload: { content: string; source: 'mobile' }) => callback(payload)
-    ipcRenderer.on('stream:mobile_user_message', handler)
-    return () => ipcRenderer.removeListener('stream:mobile_user_message', handler)
-  },
-
-  // Permission mode
-  getPermissionMode: () => ipcRenderer.invoke('permission:get_mode'),
-  setPermissionMode: (request: { mode: string }) => ipcRenderer.invoke('permission:set_mode', request),
-
-  // Theme: update native titlebar overlay colors
-  setTitleBarOverlay: (request: { color: string; symbolColor: string }) =>
-    ipcRenderer.invoke('theme:set-titlebar-overlay', request),
-
-  // Plan mode (main -> renderer events, renderer -> main decision)
-  onPlanModeEntered: (callback: () => void) => {
-    const handler = () => callback()
-    ipcRenderer.on('agent:plan-mode-entered', handler)
-    return () => ipcRenderer.removeListener('agent:plan-mode-entered', handler)
-  },
-  onPlanModeExited: (callback: (payload: { plan: string }) => void) => {
-    const handler = (_: unknown, payload: { plan: string }) => callback(payload)
-    ipcRenderer.on('agent:plan-mode-exited', handler)
-    return () => ipcRenderer.removeListener('agent:plan-mode-exited', handler)
-  },
-  sendPlanDecision: (request: { approved: boolean }) =>
-    ipcRenderer.invoke('agent:plan-decision', request),
-  togglePlanMode: () =>
-    ipcRenderer.invoke('agent:toggle_plan_mode'),
-
-  // File history / revert (Phase 3.3)
-  getFileHistory: (request: { filePath: string }) =>
-    ipcRenderer.invoke('file:get-history', request),
-  revertFile: (request: { toolCallId: string }) =>
-    ipcRenderer.invoke('file:revert', request),
-  rewindSession: (request: { sessionId: string; targetMessageId: string }) =>
-    ipcRenderer.invoke('session:rewind', request),
-  exportSession: (request: { sessionId: string; format: 'markdown' | 'json' }) =>
-    ipcRenderer.invoke('session:export', request),
-
-  // AskUserQuestion — main pushes question, renderer invokes answer (Phase 4.2)
-  onAskUserQuestion: (callback: (payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => void) => {
-    const handler = (_: unknown, payload: { questionId: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }) => callback(payload)
-    ipcRenderer.on('ask-user:question', handler)
-    return () => ipcRenderer.removeListener('ask-user:question', handler)
-  },
-  answerUserQuestion: (payload: { questionId: string; selectedLabels: string[]; customText?: string }) =>
-    ipcRenderer.invoke('ask-user:answer', payload),
-
-  // TodoWrite — session task list updates (main -> renderer)
-  onTodoUpdated: (callback: (payload: { todos: Array<{ content: string; status: string; activeForm: string }> }) => void) => {
-    const handler = (_: unknown, payload: { todos: Array<{ content: string; status: string; activeForm: string }> }) => callback(payload)
-    ipcRenderer.on('todo:updated', handler)
-    return () => ipcRenderer.removeListener('todo:updated', handler)
-  },
-  loadTodos: (sessionId: string) =>
-    ipcRenderer.invoke('todo:load', { sessionId }),
-
-  // Shell utility — open a directory in the OS file manager
-  openInExplorer: (folderPath: string) =>
-    ipcRenderer.invoke('shell:open_path', { path: folderPath }),
-  getExtensionPaths: (): Promise<{ commandsDir: string; skillsDir: string }> =>
-    ipcRenderer.invoke('shell:get_extension_paths'),
-
-  // Usage / cost tracking (Phase 4.4) — main pushes updates after each LLM response
-  onUsageUpdate: (callback: (payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => void) => {
-    const handler = (_: unknown, payload: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalCostUSD: number; model: string }) => callback(payload)
-    ipcRenderer.on('usage:update', handler)
-    return () => ipcRenderer.removeListener('usage:update', handler)
-  },
-
-  // Insights — generate session analysis report
-  generateInsights: (): Promise<{ summary: string; htmlPath: string; totalSessions: number; totalCostUSD: number }> =>
-    ipcRenderer.invoke('insights:generate'),
-  onInsightsProgress: (callback: (payload: { stage: string; current: number; total: number; message: string }) => void) => {
-    const handler = (_: unknown, payload: { stage: string; current: number; total: number; message: string }) => callback(payload)
-    ipcRenderer.on('insights:progress', handler)
-    return () => ipcRenderer.removeListener('insights:progress', handler)
-  },
-
-  // Context breakdown — returns detailed token usage per category
-  getContextBreakdown: (): Promise<import('../shared/types').ContextBreakdownResponse> =>
-    ipcRenderer.invoke('agent:context_breakdown'),
-
-  // Skills — list, get prompt, reload, invoke
-  listSkills: (): Promise<import('../shared/types-skill').SkillInfo[]> =>
-    ipcRenderer.invoke('skill:list'),
-
-  // Tools — list registered agent tools
-  listTools: (): Promise<Array<{ name: string; description: string; isReadOnly: boolean; requiresApproval: boolean }>> =>
-    ipcRenderer.invoke('tools:list'),
-
-  // MCP — list servers, add/remove, list tools
+  // MCP
   listMcpServers: (): Promise<Array<{ name: string; transport: string; connected: boolean }>> =>
     ipcRenderer.invoke('mcp:list_servers'),
   addMcpServer: (request: { name: string; command?: string; args?: string[]; url?: string; transport: 'stdio' | 'sse' }): Promise<void> =>
@@ -399,6 +229,10 @@ const api = {
     ipcRenderer.invoke('mcp:remove_server', request),
   listMcpTools: (): Promise<Array<{ name: string; description: string; serverName: string }>> =>
     ipcRenderer.invoke('mcp:list_tools'),
+
+  // Skills
+  listSkills: (): Promise<import('../shared/types-skill').SkillInfo[]> =>
+    ipcRenderer.invoke('skill:list'),
   getSkillPrompt: (request: { name: string; args: string }): Promise<string | null> =>
     ipcRenderer.invoke('skill:get-prompt', request),
   reloadSkills: (): Promise<void> =>
@@ -406,14 +240,11 @@ const api = {
   invokeSkill: (request: { name: string; args: string }): Promise<{ content: string } | { error: string }> =>
     ipcRenderer.invoke('skill:invoke', request),
 
-  // Data changed notification (mobile <-> desktop sync)
-  onDataChanged: (callback: (payload: { source: string; entity: string; action: string; data: unknown }) => void) => {
-    const handler = (_: unknown, payload: { source: string; entity: string; action: string; data: unknown }) => callback(payload)
-    ipcRenderer.on('data:changed', handler)
-    return () => ipcRenderer.removeListener('data:changed', handler)
-  },
+  // Tools list
+  listTools: (): Promise<Array<{ name: string; description: string; isReadOnly: boolean; requiresApproval: boolean }>> =>
+    ipcRenderer.invoke('tools:list'),
 
-  // Plugins — list, get, install, uninstall, enable, disable, reload, get-skills
+  // Plugins
   listPlugins: (): Promise<import('../shared/types-plugin').PluginInfo[]> =>
     ipcRenderer.invoke('plugin:list'),
   getPlugin: (request: { name: string }): Promise<import('../shared/types-plugin').PluginInfo | null> =>
@@ -440,6 +271,22 @@ const api = {
     ipcRenderer.invoke('plugin:set-user-config', request),
   searchPluginMarketplace: (request?: { query?: string }): Promise<import('../shared/types-plugin').MarketplacePluginDisplay[]> =>
     ipcRenderer.invoke('plugin:search_marketplace', request ?? {}),
+
+  // Permission request listener (local desktop permission system)
+  onPermissionRequest: (callback: (payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => void) => {
+    const handler = (_: unknown, payload: { toolName: string; toolInput: Record<string, unknown>; reason: string }) => callback(payload)
+    ipcRenderer.on('agent:permission_request', handler)
+    return () => ipcRenderer.removeListener('agent:permission_request', handler)
+  },
+  sendPermissionResponse: (response: { approved: boolean; sessionCache: boolean }) =>
+    ipcRenderer.invoke('agent:permission_response', response),
+
+  // Data sync notification
+  onDataChanged: (callback: (payload: { source: string; entity: string; action: string; data: unknown }) => void) => {
+    const handler = (_: unknown, payload: { source: string; entity: string; action: string; data: unknown }) => callback(payload)
+    ipcRenderer.on('data:changed', handler)
+    return () => ipcRenderer.removeListener('data:changed', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('wzxclaw', api)

@@ -56,7 +56,7 @@ export class WebSocketDataSource implements DataSource {
     workspace: true,
     fs: true,
     terminal: true,
-    preview: true,
+    preview: false,
     tools: true,
     permission: false,
     mcp: false,
@@ -118,6 +118,9 @@ export class WebSocketDataSource implements DataSource {
 
   /** 终端退出监听器 */
   private readonly _terminalExitListeners = new Map<string, Set<(exitCode: number) => void>>()
+
+  /** fs.watch 未实现警告抑制标记（仅首次调用打印 warn） */
+  private _warnedWatch = false
 
   constructor(url: string, token?: string) {
     // 安全校验：只允许 ws:// 和 wss:// 协议（T-04-01）
@@ -706,9 +709,17 @@ export class WebSocketDataSource implements DataSource {
         const data = await this._sendRequest('fs:tree', { dirPath, depth }, 'fs:tree:result', 15_000)
         return (data as { nodes: FileTreeNode[] }).nodes
       },
-      watch: (_path: string, _callback: (events: FileWatchEvent[]) => void) => {
-        // WebSocket 模式暂不支持实时文件 watch
-        // 后续可通过 agent-server 长连接推送实现
+      watch: (path: string, _callback: (events: FileWatchEvent[]) => void) => {
+        // WebSocket 模式暂不支持实时文件 watch。
+        // capabilities.fs 仍为 true（readFile/writeFile/tree 可用），
+        // 但 watch 需要 NAS Hand 长连接事件流，未实现 → 仅警告一次，返回 no-op。
+        if (!this._warnedWatch) {
+          this._warnedWatch = true
+          console.warn(
+            `[WebSocketDataSource] fs.watch() is not implemented in remote mode (requested path: ${path}). ` +
+              `Falling back to no-op. Use polling or capability-gate this feature.`
+          )
+        }
         return () => {}
       },
     }
@@ -728,11 +739,21 @@ export class WebSocketDataSource implements DataSource {
       },
       write: async (terminalId: string, data: string) => {
         this._ensureConnected()
-        this._send({ event: 'terminal:write', data: { terminalId, data } })
+        await this._sendRequest(
+          'terminal:write',
+          { terminalId, data },
+          'terminal:write:ack',
+          3_000,
+        )
       },
       resize: async (terminalId: string, cols: number, rows: number) => {
         this._ensureConnected()
-        this._send({ event: 'terminal:resize', data: { terminalId, cols, rows } })
+        await this._sendRequest(
+          'terminal:resize',
+          { terminalId, cols, rows },
+          'terminal:resize:ack',
+          3_000,
+        )
       },
       kill: async (terminalId: string) => {
         await this._sendRequest(

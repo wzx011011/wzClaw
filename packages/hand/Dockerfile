@@ -8,12 +8,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 复制依赖配置和源码
-COPY package*.json ./
-COPY tsconfig.json ./
-COPY src/ src/
-COPY tools/ tools/
-COPY docker-entry.ts ./
+# 复制依赖配置和源码（compose 使用仓库根目录作为 build context）
+COPY packages/hand/package*.json ./
+COPY packages/hand/tsconfig.json ./
+COPY packages/hand/src/ src/
+COPY packages/hand/tools/ tools/
+COPY packages/hand/docker-entry.ts ./
 
 # 安装依赖并编译
 RUN npm install && npm run build

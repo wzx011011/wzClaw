@@ -8,7 +8,7 @@
 // capability-driven：根据 useCapabilities 隐藏不可用区域。
 // ============================================================
 
-import React, { useCallback, useEffect } from 'react'
+import React, { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 import type { ChatStore } from '../../stores/chat-store'
 import { useCapabilities } from '../../hooks/useCapabilities'
@@ -27,7 +27,7 @@ interface IDELayoutProps {
   connected: boolean
 }
 
-export default function IDELayout({ chatStore, connected }: IDELayoutProps): React.ReactElement {
+export default function IDELayout({ chatStore }: IDELayoutProps): React.ReactElement {
   const dataSource = useDataSource()
   const caps = useCapabilities(dataSource)
   const sidebarVisible = useLayoutStore((s) => s.sidebarVisible)
@@ -38,8 +38,6 @@ export default function IDELayout({ chatStore, connected }: IDELayoutProps): Rea
   const rightSidebarWidth = useLayoutStore((s) => s.rightSidebarWidth)
 
   const terminalPanelVisible = useTerminalStore((s) => s.panelVisible)
-  const toggleBottomPanel = useLayoutStore((s) => s.toggleBottomPanel)
-
   // 全局快捷键
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

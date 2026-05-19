@@ -14,7 +14,12 @@ import { v4 as uuidv4 } from 'uuid'
 import type { CreateSessionOptions, DataSource, SessionMeta, RawMessage } from '../data-source/types'
 import { StreamingBatcher, updateMessageById } from './streaming-batcher'
 import type { ChatMessage, ToolCallInfo } from './streaming-batcher'
-import { useHandStore } from './hand-store'
+
+/** createChatStore 可选配置：解耦外部依赖（如 hand 选择） */
+export interface CreateChatStoreOptions {
+  /** 返回当前用户选择的目标 Hand ID（用于路由远程工具调用）。未提供则跳过。 */
+  getTargetHandId?: () => string | undefined
+}
 
 // ---- Store 类型定义 ----
 
@@ -103,9 +108,14 @@ function buildChatMessagesFromRaw(rawMessages: RawMessage[]): ChatMessage[] {
  * 创建 chat store 实例
  *
  * @param dataSource 数据源实例（WebSocket / IPC）
+ * @param options    可选配置（targetHandId 获取等）
  * @returns Zustand store 实例
  */
-export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
+export function createChatStore(
+  dataSource: DataSource,
+  options: CreateChatStoreOptions = {}
+): StoreApi<ChatStore> {
+  const getTargetHandId = options.getTargetHandId ?? (() => undefined)
   return create<ChatStore>((set, get) => {
     // 初始会话 ID
     const initialId = uuidv4()
@@ -376,7 +386,7 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
         })
 
         try {
-          const selectedHandId = useHandStore.getState().selectedHandId ?? undefined
+          const selectedHandId = getTargetHandId()
           const sessionConfig = await dataSource.getSessionConfig(conversationId).catch(() => null)
           const targetHandId = sessionConfig?.targetHandId ?? selectedHandId
           if (!sessionConfig?.targetHandId && selectedHandId) {
@@ -418,7 +428,7 @@ export function createChatStore(dataSource: DataSource): StoreApi<ChatStore> {
         batcher.reset()
         try {
           const newId = await dataSource.createSession(options)
-          const selectedHandId = useHandStore.getState().selectedHandId ?? undefined
+          const selectedHandId = getTargetHandId()
           if (selectedHandId) {
             await dataSource.updateSessionConfig(newId, { targetHandId: selectedHandId }).catch(() => undefined)
           }

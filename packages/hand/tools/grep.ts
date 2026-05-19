@@ -6,6 +6,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 const DEFAULT_MAX_RESULTS = 200
 
@@ -48,7 +49,7 @@ export class GrepTool implements HandTool {
 
   async execute(
     input: Record<string, unknown>,
-    _context: { workingDirectory: string; projectRoots: string[] },
+    context: { workingDirectory: string; projectRoots: string[] },
   ): Promise<{ output: string; isError: boolean }> {
     const pattern = input.pattern
     if (typeof pattern !== 'string' || pattern.length === 0) {
@@ -58,6 +59,10 @@ export class GrepTool implements HandTool {
     if (typeof searchPath !== 'string' || searchPath.length === 0) {
       return { output: '缺少 path 参数', isError: true }
     }
+
+    // 路径白名单校验
+    const violation = assertPathInWorkspace(searchPath, context)
+    if (violation) return violation
 
     try {
       const ignoreCase = input.ignoreCase === true

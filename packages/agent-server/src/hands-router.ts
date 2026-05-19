@@ -92,7 +92,9 @@ export class HandsRouter {
    * 按 handId 查找 Hand 条目
    */
   getHandById(handId: string): HandEntry | undefined {
-    return this.hands.get(handId)
+    const entry = this.hands.get(handId)
+    if (!entry || !this.isHealthy(entry)) return undefined
+    return entry
   }
 
   /**

@@ -79,6 +79,10 @@ describe('docker-entry', () => {
         FileList: { enabled: true },
         ShellExecute: { enabled: true, timeout: 30 },
         Echo: { enabled: true },
+        Grep: { enabled: true },
+        Glob: { enabled: true },
+        FileEdit: { enabled: true },
+        MultiEdit: { enabled: true },
       },
     }))
     origConfigDir = process.env.WZXCLAW_CONFIG_DIR
@@ -97,19 +101,23 @@ describe('docker-entry', () => {
 
   const wsFactory = () => mockWs as unknown as ReturnType<typeof import('./src/connection.js').HandConnection.prototype.connect>
 
-  it('createDockerHand 注册 5 个工具（4 NAS + 1 Echo）', async () => {
+  it('createDockerHand 注册 9 个工具（8 NAS + 1 Echo）', async () => {
     const { executor } = await createDockerHand(
       { serverUrl: 'ws://localhost:8082/', authToken: 'test-token', handId: 'test-docker-hand', heartbeatIntervalMs: 100, reconnectBaseMs: 50, maxReconnectAttempts: 2 },
       { wsFactory },
     )
 
     const caps = executor.getCapabilities()
-    expect(caps).toHaveLength(5)
+    expect(caps).toHaveLength(9)
     expect(caps).toContain('FileRead')
     expect(caps).toContain('FileWrite')
     expect(caps).toContain('FileList')
     expect(caps).toContain('ShellExecute')
     expect(caps).toContain('Echo')
+    expect(caps).toContain('Grep')
+    expect(caps).toContain('Glob')
+    expect(caps).toContain('FileEdit')
+    expect(caps).toContain('MultiEdit')
   })
 
   it('createDockerHand 返回的 executor 包含所有 NAS 工具定义', async () => {

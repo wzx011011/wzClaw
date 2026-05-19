@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>wzxClaw 架构地图 — 现状 & 缺口规划</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c2230;
+    --border: #2a3142;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #5aa9ff;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --red: #f87171;
+    --violet: #c084fc;
+    --cyan: #22d3ee;
+    --orange: #fb923c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 36px 60px;
+    font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 {
+    font-size: 17px; margin: 32px 0 14px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  h3 { font-size: 14px; margin: 18px 0 8px; color: var(--cyan); }
+  .lede { color: var(--muted); margin-bottom: 20px; max-width: 820px; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; margin-right: 6px;
+  }
+  .pill.ok    { background: rgba(74,222,128,.15);  color: var(--green); }
+  .pill.warn  { background: rgba(250,204,21,.15);  color: var(--yellow); }
+  .pill.miss  { background: rgba(248,113,113,.15); color: var(--red); }
+  .pill.new   { background: rgba(192,132,252,.15); color: var(--violet); }
+  .pill.dep   { background: rgba(138,147,166,.18); color: var(--muted); }
+
+  /* ---- Stack diagram ---- */
+  .stack {
+    display: grid;
+    grid-template-columns: 1.1fr 1.1fr 1fr;
+    gap: 14px;
+    margin: 16px 0 8px;
+  }
+  .layer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .layer h4 {
+    font-size: 13px; margin: 0 0 6px;
+    color: var(--accent);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .layer .meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; font-family: ui-monospace, Consolas, monospace; }
+  .layer ul { margin: 0; padding-left: 16px; }
+  .layer li { margin: 2px 0; }
+  .layer code { color: #b8d4ff; background: #0b0d12; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+
+  .flow {
+    text-align: center; color: var(--muted); font-size: 12px;
+    margin: 4px 0 10px;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+
+  /* ---- Table ---- */
+  table {
+    width: 100%; border-collapse: collapse; margin: 10px 0 20px;
+    background: var(--panel); border-radius: 8px; overflow: hidden;
+  }
+  th, td {
+    padding: 8px 12px; text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { background: var(--panel-2); font-size: 12px; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td code { color: #b8d4ff; background: #0b0d12; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  td.center { text-align: center; }
+
+  /* ---- Two col ---- */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr; } .stack { grid-template-columns: 1fr; } }
+
+  .callout {
+    background: var(--panel-2); border-left: 3px solid var(--accent);
+    padding: 10px 14px; border-radius: 6px; margin: 10px 0;
+  }
+  .callout.warn { border-left-color: var(--yellow); }
+  .callout.ok   { border-left-color: var(--green); }
+
+  .legend { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>wzxClaw 架构地图</h1>
+<div class="lede">
+  当前分支 <code>feat/agent-server-migration</code>（领先 master 约 16 个阶段）。文档分三部分：
+  <b>① 现状架构</b>（各模块边界与职责），
+  <b>② 主要功能落点</b>（master → 当前 的迁移映射），
+  <b>③ 未实现功能的归属</b>（按当前架构，每个缺口应当落在哪个模块，不引入偏移）。
+</div>
+
+<!-- ============================================================ -->
+<h2>一、现状架构（无偏移确认）</h2>
+
+<div class="stack">
+  <div class="layer">
+    <h4>Brain 层（纯逻辑） <span class="pill ok">完成</span></h4>
+    <div class="meta">packages/brain · 27 tests</div>
+    <ul>
+      <li><b>agent/</b> AgentLoop, TurnManager, ConversationManager</li>
+      <li><b>llm/</b> Gateway + OpenAI/Anthropic adapter + 3 层 prompt cache</li>
+      <li><b>context/</b> token 计数 / 自动压缩 / tool-result 预算</li>
+      <li><b>permission/</b> 4 模式 + 会话级缓存</li>
+      <li><b>hooks/</b> HookRegistry</li>
+      <li><b>observability/</b> Langfuse / console fallback</li>
+    </ul>
+    <div class="legend">无 Electron / 无浏览器依赖，可在 Node 任意运行。</div>
+  </div>
+
+  <div class="layer">
+    <h4>Agent-Server（NAS 编排） <span class="pill ok">完成</span></h4>
+    <div class="meta">packages/agent-server · 部署在 NAS Docker</div>
+    <ul>
+      <li><b>server.ts</b> HTTP /health + /admin + WS</li>
+      <li><b>client-handler.ts</b> Client WS ↔ AgentLoop 桥接</li>
+      <li><b>hands-router.ts</b> Hand 注册 / 心跳 / 路由</li>
+      <li><b>hand-aware-tool-executor.ts</b> 工具按 Hand 分发</li>
+      <li><b>session-sqlite.ts</b> 会话持久化</li>
+      <li><b>instructions/</b> System prompt builder</li>
+    </ul>
+    <div class="legend">引用 Brain 作为运行时；不实现工具，只路由。</div>
+  </div>
+
+  <div class="layer">
+    <h4>Hand（可插拔执行器） <span class="pill ok">完成</span></h4>
+    <div class="meta">packages/hand · npx wzxclaw-hand</div>
+    <ul>
+      <li><b>connection.ts</b> WS 注册 / 心跳 / 重连</li>
+      <li><b>tools/</b> FileRead, FileWrite, FileList, ShellExecute, Echo</li>
+      <li><b>cli.ts</b> CLI 入口</li>
+    </ul>
+    <div class="legend">任何机器（含桌面端通过 hand-bridge）都可作为 Hand 注册。</div>
+  </div>
+</div>
+
+<div class="flow">▼ Brain 与上下两层的依赖方向（无环、无反向耦合）▼</div>
+
+<div class="stack">
+  <div class="layer">
+    <h4>Web-UI（共享渲染层） <span class="pill ok">完成</span></h4>
+    <div class="meta">packages/web-ui · React 19 + Zustand 5</div>
+    <ul>
+      <li><b>data-source/</b> <code>IpcDataSource</code> / <code>WebSocketDataSource</code> — 统一契约</li>
+      <li><b>providers/</b> DataSourceProvider</li>
+      <li><b>hooks/</b> useCapabilities（按能力裁剪 UI）</li>
+      <li><b>components/chat/</b> ChatPanel, MessageList, SessionList ...</li>
+      <li><b>components/ide/</b> IDELayout, FileExplorer, Editor, Terminal</li>
+      <li><b>components/mobile/</b> 11 个手机 UI</li>
+      <li><b>stores/</b> chat, layout, terminal, tab, hand, settings, workspace</li>
+    </ul>
+    <div class="callout warn" style="margin:8px 0 0;font-size:12px;">
+      <b>唯一渲染源</b>：<code>wzxClaw_desktop/src/renderer/</code> 已删除，electron.vite 配置 <code>root = packages/web-ui</code>。
+    </div>
+  </div>
+
+  <div class="layer">
+    <h4>Desktop（Hand 插件宿主） <span class="pill ok">完成</span></h4>
+    <div class="meta">wzxClaw_desktop/src/main · <b>无本地 Brain</b>，Brain 常驻 NAS</div>
+    <ul>
+      <li><b>index.ts</b> 47 行 orchestrator</li>
+      <li><b>bootstrap/</b> init-services, create-core-managers, register-all-tools, wire-all-ipc-handlers, setup-app-lifecycle</li>
+      <li><b>hand-bridge.ts</b> 将桌面端作为 Hand 注册到 NAS agent-server</li>
+      <li><b>tools/</b> 内置 Hand 插件的工具集（22+ 个：bash/文件/索引/浏览器/MCP…）——通过 <code>tool-hand-adapter.ts</code> 适配为 Hand 协议</li>
+      <li><b>plugins/</b> 插件系统——可安装额外 Hand 插件扩展工具集</li>
+      <li><b>shared/ipc/</b> 15 个域文件（agent/file/terminal/host/…）+ <code>ipc-channels.ts</code> barrel</li>
+      <li><b>preload/</b> contextBridge 暴露 <code>window.wzxclaw</code></li>
+    </ul>
+    <div class="callout warn" style="margin:8px 0 0;font-size:12px;">
+      桌面端是纯粹的 Hand 插件宿主，<b>不运行 AgentLoop/Brain</b>；工具不属于“桌面功能”，属于“预装的默认 Hand 插件能力”。
+    </div>
+  </div>
+
+  <div class="layer">
+    <h4>Mobile <span class="pill ok">在用</span></h4>
+    <div class="meta">mobile/ · Capacitor 包裹 web-ui</div>
+    <ul>
+      <li><b>mobile/</b> Capacitor 直连 NAS agent-server（WSS）</li>
+      <li><b>relay/</b> <span class="pill dep">已退役</span> 已下线；旧桌面↔手机中转路径彻底移除</li>
+      <li><b>wzxClaw_android/</b> <span class="pill dep">DEPRECATED</span> Flutter 项目</li>
+    </ul>
+    <div class="legend">手机直连 NAS，relay 层已退役。</div>
+  </div>
+</div>
+
+<div class="callout ok">
+  <b>架构无偏移结论：</b>
+  ① Brain → Agent-Server / Desktop（单向依赖，无回指）；
+  ② Hand 与 Brain 通过 WS 协议解耦；
+  ③ Web-UI 通过 DataSource 抽象同时服务 Electron 与远程，已删除桌面专属渲染器；
+  ④ IPC 通道域拆完成；
+  ⑤ 端 capability 由 <code>useCapabilities()</code> 在 UI 侧裁剪，而非靠分支代码。
+</div>
+
+<!-- ============================================================ -->
+<h2>二、主要功能落点（master → 当前 的迁移映射）</h2>
+
+<table>
+  <thead>
+  <tr><th style="width:22%">功能</th><th style="width:32%">master 实现位置</th><th style="width:32%">当前实现位置</th><th>状态</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Agent 主循环</td><td>desktop/src/main/agent/</td><td><code>packages/brain/agent</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>LLM 网关 + Prompt 缓存</td><td>desktop/src/main/llm/</td><td><code>packages/brain/llm</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>上下文/压缩</td><td>desktop/src/main/context/</td><td><code>packages/brain/context</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>权限管理</td><td>desktop/src/main/permission/</td><td><code>packages/brain/permission</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>NAS 远程会话</td><td>relay + mobile-relay-handler</td><td><code>packages/agent-server</code> 直连 WS</td><td><span class="pill ok">已重构</span></td></tr>
+    <tr><td>工具执行</td><td>desktop/src/main/tools</td><td><code>tools/</code> 是桌面端内置 Hand 插件的工具集（即“预装默认插件”），通过 <code>tool-hand-adapter.ts</code> 适配为 Hand 协议后由 <code>hand-bridge.ts</code> 注册到 NAS；<code>packages/hand</code> 小包面向其他机器（NAS/CI）；两者都只是 Hand 插件，不存在“工具归属地”之争</td><td><span class="pill ok">单轨</span></td></tr>
+    <tr><td>渲染层 / IDE Layout</td><td>desktop/src/renderer/</td><td><code>packages/web-ui</code>（唯一）</td><td><span class="pill ok">已合并</span></td></tr>
+    <tr><td>聊天 UI</td><td>renderer/components/chat/</td><td><code>web-ui/components/chat/</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>IDE 子组件</td><td>renderer/components/ide/</td><td><code>web-ui/components/ide/</code></td><td><span class="pill ok">已迁移</span></td></tr>
+    <tr><td>手机端 UI</td><td>wzxClaw_android (Flutter)</td><td><code>web-ui/components/mobile</code> + <code>mobile/</code> (Capacitor)</td><td><span class="pill new">新架构</span></td></tr>
+    <tr><td>IPC 通道</td><td>1 个 1000+ 行文件</td><td><code>shared/ipc/</code> 15 个域文件</td><td><span class="pill ok">已域拆</span></td></tr>
+    <tr><td>主进程 bootstrap</td><td>1000 行 index.ts</td><td>5 个 bootstrap 模块</td><td><span class="pill ok">已拆分</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>三、未实现功能的归属（按当前架构落点）</h2>
+
+<div class="callout">
+  原则：<b>UI 一律落 <code>packages/web-ui</code></b>（不再回写到 desktop/src/renderer）；
+  <b>能力差异通过 <code>useCapabilities</code> 区分 IPC / WS</b>；
+  <b>需要新后端能力的，前端先在 DataSource 接口加方法，后端 IPC 端 + agent-server 端各实现一次</b>。
+</div>
+
+<h3>3.1 Settings 面板（9 个，最大缺口）</h3>
+<table>
+  <thead><tr><th>面板</th><th>前端落点</th><th>后端依赖</th><th>能力</th></tr></thead>
+  <tbody>
+    <tr><td>GeneralPanel（语言/主题/启动）</td><td><code>web-ui/components/settings/GeneralPanel.tsx</code></td><td><code>settings:get/update</code> 已存在</td><td>两端共用</td></tr>
+    <tr><td>AppearancePanel（外观/字体）</td><td><code>web-ui/components/settings/AppearancePanel.tsx</code> + 复用 <code>theme/appearance.ts</code>（需迁入 web-ui）</td><td><code>theme:set-titlebar-overlay</code></td><td>IPC only（gated by caps）</td></tr>
+    <tr><td>ModelsPanel（模型/API key）</td><td><code>web-ui/components/settings/ModelsPanel.tsx</code></td><td><code>settings:update</code></td><td>两端</td></tr>
+    <tr><td>McpPanel（MCP 服务器）</td><td><code>web-ui/components/settings/McpPanel.tsx</code></td><td>已有 <code>MCP_CHANNELS</code>；agent-server 待补 MCP 路由（新增能力）</td><td>IPC 已就绪 / WS 待加</td></tr>
+    <tr><td>PluginPanel</td><td><code>web-ui/components/settings/PluginPanel.tsx</code></td><td>已有 <code>PLUGIN_CHANNELS</code>（13个）</td><td>IPC only</td></tr>
+    <tr><td>SkillsPanel</td><td><code>web-ui/components/settings/SkillsPanel.tsx</code></td><td>已有 <code>SKILL_CHANNELS</code></td><td>IPC only</td></tr>
+    <tr><td>AgentsPanel（子代理）</td><td><code>web-ui/components/settings/AgentsPanel.tsx</code></td><td>desktop main 中 agent-tool 已存在；UI 需调 settings:get/update</td><td>两端</td></tr>
+    <tr><td>CommandsPanel（斜杠命令）</td><td><code>web-ui/components/settings/CommandsPanel.tsx</code></td><td>读取 <code>~/.wzxclaw/commands/</code>；需新 IPC <code>commands:list/save</code></td><td>IPC（WS 后补）</td></tr>
+    <tr><td>ToolsPanel</td><td><code>web-ui/components/settings/ToolsPanel.tsx</code></td><td>已有 <code>tools:list</code></td><td>两端</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 聊天交互组件</h3>
+<table>
+  <thead><tr><th>组件</th><th>前端落点</th><th>后端 / 依赖</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>DiffPreview（diff 展示）</td><td><code>web-ui/components/chat/DiffPreview.tsx</code> + <code>stores/diff-store.ts</code></td><td>解析 tool_result 的 patch，前端纯逻辑</td><td>不需新通道</td></tr>
+    <tr><td>SlashCommandPicker</td><td><code>web-ui/components/chat/SlashCommandPicker.tsx</code> + <code>stores/command-store.ts</code></td><td><code>SKILL_CHANNELS</code> + 新 <code>commands:list</code></td><td>下拉补全</td></tr>
+    <tr><td>MentionPicker（@ 文件）</td><td><code>web-ui/components/chat/MentionPicker.tsx</code></td><td>复用 <code>file:read-folder-tree</code> / <code>symbol:query</code></td><td>已就绪</td></tr>
+    <tr><td>PermissionRequest 弹窗（桌面）</td><td><code>web-ui/components/chat/PermissionRequest.tsx</code></td><td>已有 <code>agent:permission_request/response</code></td><td>替换现仅 mobile 的 PermissionBar</td></tr>
+    <tr><td>StepPanel（Plan 步骤面板）</td><td><code>web-ui/components/chat/StepPanel.tsx</code> + <code>stores/step-store.ts</code></td><td>已有 <code>plan-mode-entered/exited</code> + <code>plan-decision</code></td><td>事件已通</td></tr>
+    <tr><td>CommandPalette（Ctrl+P）</td><td><code>web-ui/components/CommandPalette.tsx</code> + <code>stores/command-store.ts</code></td><td>聚合 file:* / workspace:* / 内置命令</td><td>纯前端</td></tr>
+    <tr><td>Toast / ToastContainer</td><td><code>web-ui/components/ui/Toast.tsx</code> + <code>stores/toast-store.ts</code></td><td>纯前端</td><td>替换零散 alert</td></tr>
+    <tr><td>ErrorBoundary</td><td><code>web-ui/components/ErrorBoundary.tsx</code></td><td>纯前端</td><td>需包裹路由</td></tr>
+    <tr><td>TitleBar（自绘标题栏）</td><td><code>web-ui/components/TitleBar.tsx</code></td><td><code>theme:set-titlebar-overlay</code></td><td>IPC only，caps 裁剪</td></tr>
+    <tr><td>SymbolService（符号索引集成）</td><td><code>web-ui/components/ide/SymbolService.tsx</code></td><td>已有 <code>symbol:query/result</code> + <code>index:status</code></td><td>IPC only</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 Host 管理（SSH/Docker，桌面专属）</h3>
+<table>
+  <thead><tr><th>组件</th><th>前端落点</th><th>后端</th></tr></thead>
+  <tbody>
+    <tr><td>HostCard / CreateHostModal</td><td><code>web-ui/components/hosts/</code></td><td>已有 <code>HOST_CHANNELS</code>（20 个通道：host/sftp/docker）</td></tr>
+    <tr><td>host-store</td><td><code>web-ui/stores/host-store.ts</code></td><td>通过 IpcDataSource 调用；WS 端不暴露（caps.hosts=false）</td></tr>
+  </tbody>
+</table>
+
+<h3>3.4 Stores 层补齐</h3>
+<table>
+  <thead><tr><th>Store</th><th>落点</th><th>依赖</th></tr></thead>
+  <tbody>
+    <tr><td>command-store</td><td><code>web-ui/stores/command-store.ts</code></td><td>SlashCommandPicker / CommandPalette 共用</td></tr>
+    <tr><td>diff-store</td><td><code>web-ui/stores/diff-store.ts</code></td><td>承载文件 hunk apply 状态</td></tr>
+    <tr><td>host-store</td><td><code>web-ui/stores/host-store.ts</code></td><td>caps gated</td></tr>
+    <tr><td>index-store</td><td><code>web-ui/stores/index-store.ts</code></td><td>订阅 <code>index:progress</code></td></tr>
+    <tr><td>notification-store / toast-store</td><td><code>web-ui/stores/</code></td><td>全局事件总线，纯前端</td></tr>
+    <tr><td>step-store</td><td><code>web-ui/stores/step-store.ts</code></td><td>Plan 模式状态机</td></tr>
+  </tbody>
+</table>
+
+<h3>3.5 Workspace 详情页</h3>
+<table>
+  <tbody>
+    <tr><td>WorkspaceDetailPage</td><td><code>web-ui/components/workspaces/WorkspaceDetailPage.tsx</code></td><td>已有 <code>WORKSPACE_CHANNELS</code>（12 个）</td><td>路由 view = 'workspace-detail'</td></tr>
+  </tbody>
+</table>
+
+<h3>3.6 后端侧 capability 扩展（agent-server 需要补的）</h3>
+<table>
+  <thead><tr><th>能力</th><th>落点</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>MCP 远程编排</td><td><code>packages/agent-server/src/mcp-router.ts</code>（新）</td><td>WS 模式下也能配置 MCP；当前仅本地</td></tr>
+    <tr><td>命令/技能列表 WS API</td><td><code>packages/agent-server/src/commands-router.ts</code>（新）</td><td>把 <code>~/.wzxclaw/commands</code> & skills 通过 WS 暴露给 mobile/远程 UI</td></tr>
+    <tr><td>Plan 决策 WS API</td><td>已在 client-handler，但 UI 端 step-store 尚未消费</td><td>事件层无需新增</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>四、规划合理性 self-check</h2>
+<ul>
+  <li><span class="pill ok">合理</span> 所有缺口都能落在<b>已有 4 个模块</b>之内，不需要新建顶层目录。</li>
+  <li><span class="pill ok">合理</span> 缺口主要集中于 <b>web-ui 的 UI 表达层</b>，底层（Brain / Agent-Server / IPC 通道 / Hand 工具）<b>已就绪</b>。</li>
+  <li><span class="pill warn">注意</span> 桌面专属能力（Host / 自绘 TitleBar / Plugin 安装）必须用 <code>useCapabilities</code> 包裹，避免 WS 模式空指针。</li>
+  <li><span class="pill warn">注意</span> 新 IPC（commands:list/save）添加时要：<b>shared/ipc/ 域文件 → preload → main handler → DataSource 接口 → IpcDataSource 实现 → WebSocketDataSource 占位</b>。一次性 6 处。</li>
+  <li><span class="pill ok">已确认</span> relay/ 已退役，目录可归档删除。</li>
+  <li><span class="pill ok">架构无偏移</span> 桌面端无本地 Brain，<b>Brain 常驻 NAS</b>；桌面仅作为 Hand 插件宿主，扩展工具靠安装 Hand 插件，不加本地工具文件。</li>
+</ul>
+
+<h2 style="border:none;color:var(--muted);font-size:12px;font-weight:400;margin-top:30px">
+  生成于 e:/ai/wzxClaw · 基于 HEAD <code>23ab48d</code> 对照 master <code>v1.2.4</code>
+</h2>
+
+</body>
+</html>

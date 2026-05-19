@@ -118,6 +118,15 @@ describe('WebSocketDataSource', () => {
     expect(onConnectionChange).toHaveBeenCalledWith(true)
   })
 
+  it('token 作为 wzxclaw- 前缀子协议发送', async () => {
+    const source = new WebSocketDataSource('ws://localhost:8082', 'secret-token')
+    const connectPromise = source.connect()
+    fakeWs.simulateOpen()
+    await connectPromise
+
+    expect(fakeWs.protocols).toBe('wzxclaw-secret-token')
+  })
+
   it('发送 chat:send 并收到 stream:text 事件', async () => {
     const source = new WebSocketDataSource('ws://localhost:8082')
     const connectPromise = source.connect()
@@ -129,14 +138,14 @@ describe('WebSocketDataSource', () => {
     source.onStreamEvent('text', onText)
 
     // 发送消息
-    await source.sendMessage('session-1', '你好')
+    await source.sendMessage('session-1', '你好', { targetHandId: 'hand-1' })
 
     // 验证发送的消息格式
     expect(fakeWs.sentMessages).toHaveLength(1)
     const sent = JSON.parse(fakeWs.sentMessages[0]!)
     expect(sent).toEqual({
       event: 'chat:send',
-      data: { sessionId: 'session-1', message: '你好' },
+      data: { sessionId: 'session-1', message: '你好', targetHandId: 'hand-1' },
     })
 
     // 模拟收到 stream:text 事件
@@ -201,6 +210,143 @@ describe('WebSocketDataSource', () => {
     expect(sessions[0]!.title).toBe('测试会话')
   })
 
+  it('workspace:create/list/add-project 通过 WebSocket contract 工作', async () => {
+    const source = new WebSocketDataSource('ws://localhost:8082')
+    const connectPromise = source.connect()
+    fakeWs.simulateOpen()
+    await connectPromise
+
+    const createPromise = source.createWorkspace({ title: '工作区', description: 'desc' })
+    expect(JSON.parse(fakeWs.sentMessages[0]!)).toEqual({
+      event: 'workspace:create',
+      data: { title: '工作区', description: 'desc' },
+    })
+
+    fakeWs.simulateMessage({
+      event: 'workspace:created',
+      data: {
+        workspace: {
+          id: 'w1',
+          title: '工作区',
+          description: 'desc',
+          projects: [],
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+        },
+      },
+    })
+    const workspace = await createPromise
+    expect(workspace.id).toBe('w1')
+
+    const listPromise = source.listWorkspaces({ includeArchived: true })
+    expect(JSON.parse(fakeWs.sentMessages[1]!)).toEqual({
+      event: 'workspace:list',
+      data: { includeArchived: true },
+    })
+    fakeWs.simulateMessage({ event: 'workspace:list', data: { workspaces: [workspace] } })
+    expect(await listPromise).toEqual([workspace])
+
+    const addProjectPromise = source.addWorkspaceProject('w1', '/repo/app')
+    expect(JSON.parse(fakeWs.sentMessages[2]!)).toEqual({
+      event: 'workspace:add-project',
+      data: { workspaceId: 'w1', folderPath: '/repo/app' },
+    })
+    fakeWs.simulateMessage({
+      event: 'workspace:updated',
+      data: { workspace: { ...workspace, projects: [{ id: 'p1', path: '/repo/app', name: 'app', addedAt: 2 }] } },
+    })
+    expect((await addProjectPromise).projects).toHaveLength(1)
+  })
+
+  it('capabilities:get 发送请求并合并默认能力', async () => {
+    const source = new WebSocketDataSource('ws://localhost:8082')
+    const connectPromise = source.connect()
+    fakeWs.simulateOpen()
+    await connectPromise
+
+    const capabilitiesPromise = source.getCapabilities()
+    expect(JSON.parse(fakeWs.sentMessages[0]!)).toEqual({
+      event: 'capabilities:get',
+    })
+
+    fakeWs.simulateMessage({
+      event: 'capabilities',
+      data: { workspace: true, fs: true, terminal: false, tools: true },
+    })
+
+    const capabilities = await capabilitiesPromise
+    expect(capabilities.workspace).toBe(true)
+    expect(capabilities.fs).toBe(true)
+    expect(capabilities.terminal).toBe(false)
+    expect(capabilities.preview).toBe(false)
+  })
+
+  it('session:config:get 发送请求并解析响应', async () => {
+    const source = new WebSocketDataSource('ws://localhost:8082')
+    const connectPromise = source.connect()
+    fakeWs.simulateOpen()
+    await connectPromise
+
+    const configPromise = source.getSessionConfig('s1')
+
+    const sent = JSON.parse(fakeWs.sentMessages[0]!)
+    expect(sent).toEqual({ event: 'session:config:get', data: { sessionId: 's1' } })
+
+    fakeWs.simulateMessage({
+      event: 'session:config',
+      data: {
+        sessionId: 's1',
+        config: {
+          id: 's1',
+          title: '测试会话',
+          createdAt: 1000,
+          updatedAt: 2000,
+          owner: 'nas-remote',
+          targetHandId: 'desktop-hand-1',
+        },
+      },
+    })
+
+    const config = await configPromise
+    expect(config?.targetHandId).toBe('desktop-hand-1')
+  })
+
+  it('session:config:update 发送 patch 并解析响应', async () => {
+    const source = new WebSocketDataSource('ws://localhost:8082')
+    const connectPromise = source.connect()
+    fakeWs.simulateOpen()
+    await connectPromise
+
+    const updatePromise = source.updateSessionConfig('s1', { targetHandId: 'docker-hand', model: 'glm-5.1' })
+
+    const sent = JSON.parse(fakeWs.sentMessages[0]!)
+    expect(sent).toEqual({
+      event: 'session:config:update',
+      data: { sessionId: 's1', patch: { targetHandId: 'docker-hand', model: 'glm-5.1' } },
+    })
+
+    fakeWs.simulateMessage({
+      event: 'session:config:updated',
+      data: {
+        sessionId: 's1',
+        config: {
+          id: 's1',
+          title: '测试会话',
+          createdAt: 1000,
+          updatedAt: 3000,
+          owner: 'nas-remote',
+          targetHandId: 'docker-hand',
+          model: 'glm-5.1',
+        },
+      },
+    })
+
+    const config = await updatePromise
+    expect(config.targetHandId).toBe('docker-hand')
+    expect(config.model).toBe('glm-5.1')
+  })
+
   it('DataSource 接口类型检查 — WebSocketDataSource implements DataSource', () => {
     // 编译期类型检查：WebSocketDataSource 必须实现 DataSource 所有方法
     const source: import('../types').DataSource = new WebSocketDataSource('ws://localhost:8082')
@@ -218,6 +364,8 @@ describe('WebSocketDataSource', () => {
     expect(typeof source.createSession).toBe('function')
     expect(typeof source.deleteSession).toBe('function')
     expect(typeof source.renameSession).toBe('function')
+    expect(typeof source.getSessionConfig).toBe('function')
+    expect(typeof source.updateSessionConfig).toBe('function')
     expect(typeof source.getSettings).toBe('function')
     expect(typeof source.updateSettings).toBe('function')
   })
@@ -329,7 +477,15 @@ describe('WebSocketDataSource', () => {
       fakeWs.simulateOpen()
       await connectPromise
 
-      await source.terminal!.write('term-1', 'ls -la\n')
+      const writePromise = source.terminal!.write('term-1', 'ls -la\n')
+
+      // 等待请求发出后模拟 ack
+      await Promise.resolve()
+      fakeWs.simulateMessage({
+        event: 'terminal:write:ack',
+        data: { success: true, terminalId: 'term-1' },
+      })
+      await writePromise
 
       const sent = JSON.parse(fakeWs.sentMessages[fakeWs.sentMessages.length - 1]!)
       expect(sent.event).toBe('terminal:write')

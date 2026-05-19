@@ -23,13 +23,6 @@ function getFileIcon(name: string): string {
   return icons[ext] ?? '📄'
 }
 
-/** 树节点状态 */
-interface TreeNodeState {
-  expanded: boolean
-  children: FileTreeNode[]
-  loaded: boolean
-}
-
 export default function FileExplorer(): React.ReactElement {
   const dataSource = useDataSource()
   const openFile = useTabStore((s) => s.openFile)

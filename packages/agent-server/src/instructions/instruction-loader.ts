@@ -88,5 +88,7 @@ function readDirectoryFiles(dirPath: string): string {
  * 获取配置目录路径
  */
 export function getConfigDir(): string {
-  return process.env.WZXCLAW_CONFIG_DIR || '/root/.wzxclaw'
+  if (process.env.WZXCLAW_CONFIG_DIR) return process.env.WZXCLAW_CONFIG_DIR
+  if (process.env.HOME) return `${process.env.HOME}/.wzxclaw`
+  return '/data/config'
 }

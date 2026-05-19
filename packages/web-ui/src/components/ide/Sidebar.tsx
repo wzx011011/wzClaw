@@ -14,7 +14,7 @@ interface SidebarProps {
   chatStore: StoreApi<ChatStore>
 }
 
-export default function Sidebar({ chatStore }: SidebarProps): React.ReactElement {
+export default function Sidebar({ chatStore: _chatStore }: SidebarProps): React.ReactElement {
   const activePanel = useLayoutStore((s) => s.activeSidebarPanel)
 
   return (

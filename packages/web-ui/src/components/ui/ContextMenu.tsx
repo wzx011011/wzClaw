@@ -79,7 +79,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps):
   }, [x, y])
 
   return (
-    <div className="context-menu" style={{ left: x, top: y }}>
+    <div className="context-menu" role="menu" style={{ left: x, top: y }}>
       {items.map((item, index) => (
         item.separator && index > 0 ? (
           <div key={index} className="context-menu-separator" />
@@ -94,6 +94,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps):
               }
             }}
             disabled={item.disabled}
+            role="menuitem"
           >
             <span>{item.label}</span>
             {item.shortcut && <span className="context-menu-shortcut">{item.shortcut}</span>}

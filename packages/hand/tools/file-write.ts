@@ -6,6 +6,7 @@
 import { writeFile, appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { HandTool } from '../src/tool-executor.js'
+import { assertPathInWorkspace } from '../src/path-guard.js'
 
 /**
  * FileWriteTool — 写入/创建文件到 NAS 卷
@@ -33,7 +34,7 @@ export class FileWriteTool implements HandTool {
 
   async execute(
     input: Record<string, unknown>,
-    _context: { workingDirectory: string; projectRoots: string[] },
+    context: { workingDirectory: string; projectRoots: string[] },
   ): Promise<{ output: string; isError: boolean }> {
     // 校验必需参数
     const filePath = input.path
@@ -45,6 +46,10 @@ export class FileWriteTool implements HandTool {
     if (typeof content !== 'string') {
       return { output: '缺少 content 参数', isError: true }
     }
+
+    // 路径白名单校验
+    const violation = assertPathInWorkspace(filePath, context)
+    if (violation) return violation
 
     try {
       const shouldAppend = input.append === true

@@ -132,7 +132,7 @@ export default function MessageList({ useStore }: MessageListProps): React.React
   }
 
   return (
-    <div className="chat-messages" ref={messagesContainerRef} style={{ position: 'relative' }}>
+    <div className="chat-messages" ref={messagesContainerRef} role="log" aria-live="polite" style={{ position: 'relative' }}>
       {messages.length === 0 ? (
         <div className="chat-empty">
           开始新的对话

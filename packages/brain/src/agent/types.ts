@@ -92,6 +92,7 @@ export interface AgentConfig {
   /** All project roots for the active task. [0] == workingDirectory. */
   projectRoots: string[]
   conversationId: string
+  targetHandId?: string
   maxTurns?: number // defaults to MAX_AGENT_TURNS
   maxBudgetTokens?: number // 0 = unlimited
   thinkingDepth?: 'none' | 'low' | 'medium' | 'high'

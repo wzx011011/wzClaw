@@ -23,7 +23,7 @@ interface HandState {
 }
 
 interface HandActions {
-  fetchHands: (agentUrl: string) => Promise<void>
+  fetchHands: (agentUrl: string, token?: string) => Promise<void>
   selectHand: (id: string | null) => void
   clearSelection: () => void
 }
@@ -41,11 +41,12 @@ export const useHandStore = create<HandStore>((set) => ({
   selectedHandId: restoreSelectedHand(),
   loading: false,
 
-  fetchHands: async (agentUrl: string) => {
+  fetchHands: async (agentUrl: string, token?: string) => {
     set({ loading: true })
     try {
       const base = agentUrl.replace(/^ws/, 'http').replace(/\/$/, '')
-      const res = await fetch(`${base}/admin/hands`)
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+      const res = await fetch(`${base}/admin/hands`, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const hands: HandInfo[] = await res.json()
       set({ hands, loading: false })

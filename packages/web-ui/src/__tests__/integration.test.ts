@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocketDataSource } from '../data-source/websocket-source'
 import { createChatStore } from '../stores/chat-store'
 import type { ChatStore } from '../stores/chat-store'
+import { useHandStore } from '../stores/hand-store'
 import { useI18nStore } from '../i18n/i18n-store'
 
 // ---- FakeWebSocket 模拟 ----
@@ -63,6 +64,26 @@ class FakeWebSocket {
 
 let fakeWs: FakeWebSocket
 const OriginalWebSocket = globalThis.WebSocket
+const OriginalRAF = globalThis.requestAnimationFrame
+const OriginalCAF = globalThis.cancelAnimationFrame
+let rafId = 0
+const rafCallbacks = new Map<number, FrameRequestCallback>()
+
+function mockRAF(callback: FrameRequestCallback): number {
+  rafId += 1
+  rafCallbacks.set(rafId, callback)
+  return rafId
+}
+
+function mockCAF(id: number): void {
+  rafCallbacks.delete(id)
+}
+
+function flushRAF(): void {
+  const callbacks = [...rafCallbacks.values()]
+  rafCallbacks.clear()
+  for (const callback of callbacks) callback(Date.now())
+}
 
 function mockWebSocket() {
   // @ts-expect-error — 测试用，覆盖全局 WebSocket
@@ -80,7 +101,7 @@ function restoreWebSocket() {
 
 /** 辅助：等待 Promise 执行 */
 function flushPromises(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
+  return Promise.resolve()
 }
 
 /** 辅助：解析 FakeWebSocket 最后发送的消息 */
@@ -94,15 +115,21 @@ function parseLastSent(): { event: string; data?: unknown } | null {
 describe('Integration: 端到端流程', () => {
   beforeEach(() => {
     mockWebSocket()
+    globalThis.requestAnimationFrame = mockRAF
+    globalThis.cancelAnimationFrame = mockCAF
+    useHandStore.getState().clearSelection()
     vi.useFakeTimers()
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    globalThis.requestAnimationFrame = OriginalRAF
+    globalThis.cancelAnimationFrame = OriginalCAF
+    rafCallbacks.clear()
     restoreWebSocket()
   })
 
-  it('完整消息收发流程：createSession -> sendMessage -> stream:text -> stream:done', async () => {
+  it('完整消息收发流程：sendMessage -> stream:text -> stream:done', async () => {
     // 创建 DataSource
     const ds = new WebSocketDataSource('ws://localhost:8082')
     const connectPromise = ds.connect()
@@ -113,16 +140,15 @@ describe('Integration: 端到端流程', () => {
     const store = createChatStore(ds)
     const unsub = store.getState().init()
 
-    // 1. 创建会话
-    const createPromise = store.getState().createSession()
-    // 模拟服务器返回 session:created
-    fakeWs.simulateMessage({ event: 'session:created', data: { sessionId: 'test-session-1' } })
-    await createPromise
+    // 1. 使用已有会话；Session CRUD 在下一个用例单独覆盖
+    store.setState({ conversationId: 'test-session-1', activeSessionId: 'test-session-1' } as unknown as Partial<ChatStore>)
     expect(store.getState().conversationId).toBe('test-session-1')
 
     // 2. 发送消息
     const sendPromise = store.getState().sendMessage('你好')
-    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    fakeWs.simulateMessage({ event: 'session:config', data: { config: null } })
+    await sendPromise
     const sentMsg = parseLastSent()
     expect(sentMsg?.event).toBe('chat:send')
     expect(sentMsg?.data).toEqual({ sessionId: 'test-session-1', message: '你好' })
@@ -138,7 +164,8 @@ describe('Integration: 端到端流程', () => {
     })
 
     // 等待状态更新
-    await vi.advanceTimersByTimeAsync(0)
+    flushRAF()
+    await flushPromises()
 
     const state = store.getState()
     expect(state.isStreaming).toBe(false)
@@ -270,8 +297,10 @@ describe('Integration: 端到端流程', () => {
     store.setState({ conversationId: 'multi-event-session' } as unknown as Partial<ChatStore>)
 
     // 发送消息
-    store.getState().sendMessage('读取 config.json')
-    await vi.advanceTimersByTimeAsync(0)
+    const sendPromise = store.getState().sendMessage('读取 config.json')
+    await flushPromises()
+    fakeWs.simulateMessage({ event: 'session:config', data: { config: null } })
+    await sendPromise
 
     // 1. 收到 thinking 事件
     fakeWs.simulateMessage({ event: 'stream:thinking', data: { content: '分析用户请求...' } })
@@ -301,7 +330,8 @@ describe('Integration: 端到端流程', () => {
       data: { usage: { inputTokens: 100, outputTokens: 50 }, turnCount: 1 },
     })
 
-    await vi.advanceTimersByTimeAsync(0)
+    flushRAF()
+    await flushPromises()
 
     const state = store.getState()
     expect(state.isStreaming).toBe(false)

@@ -7,6 +7,7 @@ import { LocalToolExecutor } from './tool-executor.js'
 import { loadHandConfig, getEnabledTools, getHandConfigPath, getMcpConfigPath, type HandConfigFile } from './config/hand-config-loader.js'
 import { MCPManager } from './mcp/mcp-manager.js'
 import { createNasTools } from '../tools/index.js'
+import type { TerminalManager } from './terminal-manager.js'
 
 // ---- 接口 ----
 
@@ -16,6 +17,8 @@ export interface ToolLoaderConfig {
   configDir?: string
   /** 工具执行器 */
   executor: LocalToolExecutor
+  /** 可选 TerminalManager，提供时会注册 4 个 Terminal* 工具 */
+  terminalManager?: TerminalManager
 }
 
 /** 工具加载结果 */
@@ -61,9 +64,9 @@ export class ToolLoader {
     const handConfig = loadHandConfig(handConfigPath)
     this.lastConfig = handConfig
 
-    // 2. 注册启用的内置 NAS 工具
+    // 2. 注册启用的内置 NAS 工具（含可选 Terminal* 工具）
     const enabledTools = getEnabledTools(handConfig)
-    const allNasTools = createNasTools()
+    const allNasTools = createNasTools(this.config.terminalManager)
     let builtinCount = 0
 
     for (const tool of allNasTools) {

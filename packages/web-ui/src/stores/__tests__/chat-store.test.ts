@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { DataSource } from '../../data-source/types'
 import { createChatStore } from '../chat-store'
+import { useHandStore } from '../hand-store'
 
 // ---- rAF polyfill for test environment ----
 const _rafCallbacks: Array<() => void> = []
@@ -39,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.requestAnimationFrame = _origRAF
   globalThis.cancelAnimationFrame = _origCAF
+  useHandStore.getState().clearSelection()
   _rafMap.clear()
 })
 
@@ -79,6 +81,21 @@ function createMockDataSource(): {
     createSession: createSessionSpy,
     deleteSession: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
+    getSessionConfig: vi.fn().mockResolvedValue(null),
+    updateSessionConfig: vi.fn().mockResolvedValue({
+      id: 'session-id',
+      title: 'Untitled',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      owner: 'nas-remote',
+    }),
+    listWorkspaces: vi.fn().mockResolvedValue([]),
+    getWorkspace: vi.fn().mockResolvedValue(null),
+    createWorkspace: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 1, archived: false }),
+    updateWorkspace: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 2, archived: false }),
+    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+    addWorkspaceProject: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 2, archived: false }),
+    removeWorkspaceProject: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 3, archived: false }),
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn().mockResolvedValue(undefined),
   }
@@ -139,6 +156,18 @@ describe('createChatStore', () => {
     // 流式状态应该激活
     expect(state.isStreaming).toBe(true)
     expect(state.isWaitingForResponse).toBe(true)
+  })
+
+  it('Test 2b: sendMessage 透传已选 Hand', async () => {
+    useHandStore.getState().selectHand('desktop-hand-1')
+    const store = createChatStore(mock.dataSource, {
+      getTargetHandId: () => useHandStore.getState().selectedHandId ?? undefined,
+    })
+
+    await store.getState().sendMessage('hello')
+
+    expect(mock.sendMessageSpy).toHaveBeenCalledTimes(1)
+    expect(mock.sendMessageSpy.mock.calls[0]![2]).toEqual({ targetHandId: 'desktop-hand-1' })
   })
 
   it('Test 3: stream:text 事件后 assistant 消息 content 更新', async () => {

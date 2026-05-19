@@ -1,36 +1,22 @@
 // ============================================================
-// Default Model List (per D-15)
+// 从 @wzxclaw/brain 重新导出共享常量
+// 桌面端特有常量定义在下方
 // ============================================================
 
-export interface ModelPreset {
-  id: string
-  name: string
-  provider: 'openai' | 'anthropic'
-  maxTokens: number
-  contextWindowSize: number
-}
+export {
+  DEFAULT_MODELS,
+  DEFAULT_MAX_TOKENS,
+  MAX_AGENT_TURNS,
+  SYSTEM_PROMPT_CACHE_BOUNDARY,
+  TOOL_DEFS_CACHE_BOUNDARY,
+} from '@wzxclaw/brain'
 
-export const DEFAULT_MODELS: ModelPreset[] = [
-  { id: 'glm-5.1', name: 'GLM-5.1', provider: 'anthropic', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'glm-5-turbo', name: 'GLM-5 Turbo', provider: 'anthropic', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'glm-5', name: 'GLM-5', provider: 'anthropic', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: 'openai', maxTokens: 8192, contextWindowSize: 128000 },
-  { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'openai', maxTokens: 8192, contextWindowSize: 128000 },
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', maxTokens: 16384, contextWindowSize: 128000 },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4 Pro', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4 Flash', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
-  { id: 'deepseek-chat', name: 'DeepSeek-V3', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
-  { id: 'deepseek-reasoner', name: 'DeepSeek-R1', provider: 'openai', maxTokens: 8192, contextWindowSize: 64000 },
-  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', maxTokens: 8192, contextWindowSize: 200000 },
-  { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic', maxTokens: 8192, contextWindowSize: 200000 }
-]
+export type { ModelPreset } from '@wzxclaw/brain'
 
 // ============================================================
-// Default Configuration
+// Desktop-only Constants
 // ============================================================
 
-export const DEFAULT_MAX_TOKENS = 16384
 export const DEFAULT_SYSTEM_PROMPT = `You are an expert AI coding assistant running inside wzxClaw, an AI-powered coding IDE.
 
 You assist the user with software engineering tasks: writing code, debugging, refactoring, explaining code, running commands, and more.
@@ -115,18 +101,6 @@ export const MAX_TOOL_RESULT_CHARS = 30000
 export const MAX_FILE_READ_LINES = 2000
 /** FileRead 读取前的文件大小上限（stat 预检查）。超过此大小的文件建议使用 offset/limit 分段读取。*/
 export const MAX_FILE_READ_BYTES = 1024 * 1024 // 1 MB
-// 主对话安全天花板：正常对话靠 compaction + shouldStop 自然终止，
-// 不会达到此限制。仅作为意外死循环的最后防线（参考 Claude Code 主对话不设上限）。
-export const MAX_AGENT_TURNS = 200
-
-// Boundary marker for system prompt cache layering.
-// Content before this marker is static (cacheable across turns).
-// Content after is dynamic (changes per session/turn).
-export const SYSTEM_PROMPT_CACHE_BOUNDARY = '\n<!-- CACHE_BOUNDARY -->\n'
-
-// Second boundary: separates tool definitions from dynamic context.
-// Allows caching tool defs independently (they change only when tools are added/removed).
-export const TOOL_DEFS_CACHE_BOUNDARY = '\n<!-- TOOL_DEFS_BOUNDARY -->\n'
 
 // ============================================================
 // Terminal Constants (per TERM-06)

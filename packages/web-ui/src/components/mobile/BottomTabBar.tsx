@@ -7,7 +7,7 @@
 
 import React from 'react'
 
-type MobileTab = 'chat' | 'files' | 'sessions' | 'settings'
+type MobileTab = 'chat' | 'workspaces' | 'files' | 'sessions' | 'settings'
 
 interface BottomTabBarProps {
   activeTab: MobileTab
@@ -36,6 +36,15 @@ const tabs: TabItem[] = [
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'workspaces',
+    label: '工作区',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
       </svg>
     ),
   },
@@ -69,6 +78,7 @@ export default function BottomTabBar({ activeTab, onTabChange }: BottomTabBarPro
           key={tab.id}
           className={`bottom-tab-item${activeTab === tab.id ? ' active' : ''}`}
           onClick={() => onTabChange(tab.id)}
+          aria-label={tab.label}
           style={{ touchAction: 'manipulation' }}
         >
           <span className="bottom-tab-icon">{tab.icon}</span>

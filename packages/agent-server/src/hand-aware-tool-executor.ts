@@ -44,17 +44,9 @@ export class HandAwareToolExecutor implements IToolExecutor {
   /** 执行超时时间 */
   private readonly timeoutMs: number
 
-  /** 当前会话的目标 Hand ID（由 client-handler 设置） */
-  private targetHandId: string | null = null
-
   constructor(router: HandsRouter, timeoutMs: number = DEFAULT_EXECUTE_TIMEOUT_MS) {
     this.router = router
     this.timeoutMs = timeoutMs
-  }
-
-  /** 设置当前会话的目标 Hand ID */
-  setTargetHandId(handId: string | null): void {
-    this.targetHandId = handId
   }
 
   /**
@@ -74,15 +66,21 @@ export class HandAwareToolExecutor implements IToolExecutor {
    * 4. Hand 断连时通过 handleHandDisconnect 清理
    */
   async execute(name: string, input: Record<string, unknown>, context: IToolExecutionContext): Promise<IToolExecutionResult> {
+    const targetHandId = context.targetHandId ?? null
     // 如果设置了 targetHandId，直接按 ID 查找；否则按工具名查找
-    const hand = this.targetHandId
-      ? this.router.getHandById(this.targetHandId) ?? null
+    const hand = targetHandId
+      ? this.router.getHandById(targetHandId) ?? null
       : this.router.findHand(name)
     if (!hand) {
-      return { output: `No hand available for tool: ${name}${this.targetHandId ? ` (targetHandId: ${this.targetHandId})` : ''}`, isError: true }
+      return { output: `No hand available for tool: ${name}${targetHandId ? ` (targetHandId: ${targetHandId})` : ''}`, isError: true }
     }
-    if (this.targetHandId && !hand.capabilities.includes(name)) {
-      return { output: `Target hand ${this.targetHandId} does not support tool: ${name}`, isError: true }
+    if (targetHandId && !hand.capabilities.includes(name)) {
+      return { output: `Target hand ${targetHandId} does not support tool: ${name}`, isError: true }
+    }
+
+    const allowUnsafe = process.env.WZXCLAW_ALLOW_REMOTE_WRITE_TOOLS === '1'
+    if (!allowUnsafe && !this.isReadOnly(name)) {
+      return { output: `Remote execution of non-readonly tool is blocked by policy: ${name}`, isError: true }
     }
 
     const callId = randomUUID()

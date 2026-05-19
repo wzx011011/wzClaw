@@ -12,13 +12,17 @@ import { URL } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { initAuth, authenticate } from './auth.js'
 import { SessionStoreSqlite } from './session-sqlite.js'
+import { WorkspaceService } from './workspace-service.js'
 import { HandsRouter } from './hands-router.js'
 import { HandAwareToolExecutor } from './hand-aware-tool-executor.js'
 import { ClientHandler } from './client-handler.js'
+import { TerminalSessionRouter } from './terminal-session-router.js'
 import { buildSystemPrompt } from './instructions/system-prompt-builder.js'
 import { handleReload } from './admin/reload-handler.js'
 import { handleConfig } from './admin/config-handler.js'
 import { handleHandsList } from './admin/hands-list.js'
+import { McpRouter } from './mcp-router.js'
+import { CommandsRouter } from './commands-router.js'
 import { loadApiKeys, mergeWithEnv } from './api-keys.js'
 import { getConfigDir } from './instructions/instruction-loader.js'
 import type { ServerConfig } from './types.js'
@@ -51,10 +55,14 @@ export class AgentServer {
   private readonly config: ServerConfig
   private readonly configDir: string
   private readonly sessionStore: SessionStoreSqlite
+  private readonly workspaceService: WorkspaceService
   private readonly handsRouter: HandsRouter
   private readonly toolExecutor: HandAwareToolExecutor
+  private readonly terminalRouter: TerminalSessionRouter
   private readonly clientHandler: ClientHandler
   private readonly gateway: LLMGateway
+  private readonly mcpRouter: McpRouter
+  private readonly commandsRouter: CommandsRouter
   private httpServer: ReturnType<typeof createServer> | null = null
   private wss: WebSocketServer | null = null
 
@@ -70,16 +78,23 @@ export class AgentServer {
 
     // 初始化子模块
     this.sessionStore = new SessionStoreSqlite(config.dbPath)
+    this.workspaceService = new WorkspaceService(config.dbPath)
     this.handsRouter = new HandsRouter()
     this.toolExecutor = new HandAwareToolExecutor(this.handsRouter)
+    this.terminalRouter = new TerminalSessionRouter()
     this.gateway = new LLMGateway()
+    this.mcpRouter = new McpRouter(this.toolExecutor, this.handsRouter)
+    this.commandsRouter = new CommandsRouter(this.handsRouter)
     this.applyApiKeys(mergeWithEnv(loadApiKeys(this.configDir)))
     const { createLoop, agentConfig } = this.createRuntime(config)
     this.clientHandler = new ClientHandler(
       this.sessionStore,
       this.toolExecutor,
+      this.workspaceService,
       createLoop,
       agentConfig,
+      this.handsRouter,
+      this.terminalRouter,
     )
   }
 
@@ -194,7 +209,23 @@ export class AgentServer {
         return
       }
       if (url === '/admin/hands' && req.method === 'GET') {
+        const authResult = authenticate(this.extractHttpToken(req))
+        if (!authResult.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: authResult.reason }))
+          return
+        }
         handleHandsList(req, res, this.handsRouter)
+        return
+      }
+      // MCP HTTP 路由
+      if (this.mcpRouter.matches(url, req.method ?? 'GET')) {
+        void this.mcpRouter.handle(req, res)
+        return
+      }
+      // Commands / Skills / Knowledge HTTP 路由
+      if (this.commandsRouter.matches(url, req.method ?? 'GET')) {
+        this.commandsRouter.handle(req, res)
         return
       }
       // Serve test.html at /
@@ -213,6 +244,18 @@ export class AgentServer {
       res.writeHead(404)
       res.end('Not Found')
     })
+  }
+
+  private extractHttpToken(req: IncomingMessage): string {
+    const authHeader = req.headers['authorization']
+    if (authHeader) {
+      const value = Array.isArray(authHeader) ? authHeader[0] : authHeader
+      if (value.startsWith('Bearer ')) return value.slice('Bearer '.length)
+      return value
+    }
+
+    const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+    return reqUrl.searchParams.get('token') || ''
   }
 
   /**
@@ -304,6 +347,13 @@ export class AgentServer {
       switch (event) {
         case 'hand:register': {
           const regData = data as { id: string; capabilities: string[]; definitions: unknown[] }
+          if (!regData.id || typeof regData.id !== 'string') return
+          if (!Array.isArray(regData.capabilities)) return
+          // 清理旧的注册（防止同连接重复注册导致泄漏）
+          if (handId && handId !== regData.id) {
+            this.handsRouter.unregister(handId)
+            this.toolExecutor.handleHandDisconnect(handId)
+          }
           handId = regData.id
           this.handsRouter.register({
             ws,
@@ -327,11 +377,51 @@ export class AgentServer {
           }
           break
         }
+        case 'terminal:data': {
+          const td = data as { terminalId?: string; data?: string }
+          if (!td?.terminalId || typeof td.data !== 'string') break
+          const clientWs = this.terminalRouter.getClient(td.terminalId)
+          if (clientWs && clientWs.readyState === 1 /* OPEN */) {
+            clientWs.send(JSON.stringify({
+              event: 'terminal:data',
+              data: { terminalId: td.terminalId, data: td.data },
+            }))
+          }
+          break
+        }
+        case 'terminal:exit': {
+          const te = data as { terminalId?: string; exitCode?: number | null; signal?: number | null }
+          if (!te?.terminalId) break
+          const clientWs = this.terminalRouter.getClient(te.terminalId)
+          this.terminalRouter.unregister(te.terminalId)
+          if (clientWs && clientWs.readyState === 1) {
+            clientWs.send(JSON.stringify({
+              event: 'terminal:exit',
+              data: {
+                terminalId: te.terminalId,
+                exitCode: te.exitCode ?? null,
+                signal: te.signal ?? null,
+              },
+            }))
+          }
+          break
+        }
       }
     })
 
     ws.on('close', () => {
       if (handId) {
+        // 通知所有受影响的客户端 PTY 已 exit
+        for (const tid of this.terminalRouter.getTerminalsForHand(handId)) {
+          const clientWs = this.terminalRouter.getClient(tid)
+          this.terminalRouter.unregister(tid)
+          if (clientWs && clientWs.readyState === 1) {
+            clientWs.send(JSON.stringify({
+              event: 'terminal:exit',
+              data: { terminalId: tid, exitCode: null, signal: null, reason: 'hand-disconnected' },
+            }))
+          }
+        }
         this.handsRouter.unregister(handId)
         this.toolExecutor.handleHandDisconnect(handId)
       }
@@ -373,6 +463,7 @@ export class AgentServer {
         this.httpServer.close(() => {
           // 关闭数据库
           this.sessionStore.close()
+          this.workspaceService.close()
           console.log('[agent-server] Server stopped')
           resolve()
         })

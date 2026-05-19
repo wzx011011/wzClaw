@@ -1392,3 +1392,86 @@
   color: var(--text-disabled);
   margin-left: 12px;
 }
+
+/* ============================================================
+   AskUser Dialog — 模态询问框
+   ============================================================ */
+
+.ask-user-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.ask-user-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4);
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.ask-user-question {
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  margin-bottom: var(--sp-3);
+  line-height: 1.5;
+}
+
+.ask-user-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ask-user-choices button {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.ask-user-choices button:hover {
+  background: var(--bg-hover);
+}
+
+.ask-user-input {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.ask-user-input input {
+  flex: 1;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.ask-user-input input:focus {
+  border-color: var(--accent);
+}
+
+.ask-user-input button {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}

@@ -28,6 +28,15 @@ function createMockDataSource(withChannels: {
     createSession: vi.fn().mockResolvedValue('s1'),
     deleteSession: vi.fn(),
     renameSession: vi.fn(),
+    getSessionConfig: vi.fn().mockResolvedValue(null),
+    updateSessionConfig: vi.fn(),
+    listWorkspaces: vi.fn().mockResolvedValue([]),
+    getWorkspace: vi.fn().mockResolvedValue(null),
+    createWorkspace: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 1, archived: false }),
+    updateWorkspace: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 2, archived: false }),
+    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+    addWorkspaceProject: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 2, archived: false }),
+    removeWorkspaceProject: vi.fn().mockResolvedValue({ id: 'w1', title: 'Workspace', projects: [], createdAt: 1, updatedAt: 3, archived: false }),
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
     ...(withChannels.fs ? { fs: {} as any } : {}),
@@ -89,7 +98,7 @@ describe('useCapabilities', () => {
     expect(caps.terminal).toBe(true)
     expect(caps.preview).toBe(false)
     expect(caps.fileExplorer).toBe(true)
-    expect(caps.taskMode).toBe(false)
+    expect(caps.taskMode).toBe(true)
   })
 
   it('WebSocket 模式无通道时全部禁用', () => {
@@ -101,6 +110,7 @@ describe('useCapabilities', () => {
     expect(caps.terminal).toBe(false)
     expect(caps.preview).toBe(false)
     expect(caps.fileExplorer).toBe(false)
+    expect(caps.taskMode).toBe(true)
   })
 })
 
@@ -126,6 +136,6 @@ function computeCapabilities(dataSource: DataSource | null) {
     terminal: hasTerminal,
     preview: hasPreview,
     fileExplorer: hasFs,
-    taskMode: false,
+    taskMode: dataSource.capabilities?.workspace ?? true,
   }
 }

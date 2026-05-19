@@ -1,8 +1,7 @@
 import { countMessagesTokens } from './token-counter.js'
 import type { Message } from '../types.js'
 import { DEFAULT_MODELS } from '../constants.js'
-import type { LLMGateway } from '../llm/gateway.js'
-import type { StreamOptions } from '../llm/types.js'
+import type { IStreamProvider } from '../interfaces.js'
 import type { AgentRuntimeConfig } from '../agent/runtime-config.js'
 import { DEFAULT_RUNTIME_CONFIG } from '../agent/runtime-config.js'
 import type { CompactResult } from './types.js'
@@ -86,7 +85,7 @@ export class ContextManager {
    */
   async compact(
     messages: Message[],
-    gateway: LLMGateway,
+    gateway: IStreamProvider,
     model: string,
     provider: string,
     systemPrompt?: string
@@ -142,7 +141,7 @@ Provide a detailed summary following the sections above. Be especially thorough 
       ]
 
       let summary = ''
-      const streamOptions: StreamOptions = {
+      const streamOptions = {
         model,
         messages: summaryMessages,
         systemPrompt: 'You are an expert technical summarizer. Create detailed, structured summaries that capture all the context needed to resume development work. Be thorough, especially for pending tasks and current work status.',
@@ -206,30 +205,6 @@ Provide a detailed summary following the sections above. Be especially thorough 
     return messages.slice(-keptCount)
   }
 
-  /**
-   * Turn-based reactive compaction（参考 Claude Code PTL 分组重试）。
-   * 按轮次分组消息，从最早的轮次开始移除，保留最近 2 轮。
-   * 比简单的 reactiveCompact 保留更多上下文。
-   *
-   * 分组规则：assistant 消息及其后的 tool_result 消息为一轮。
-   * 用户消息单独算一轮（或归入前一轮）。
-   */
-  reactiveCompactByTurns(messages: Message[]): Message[] {
-    if (messages.length <= this.config.reactiveCompactKeepCount) return messages
-
-    // 按轮次分组
-    const turns = groupMessagesByTurns(messages)
-    if (turns.length <= 2) {
-      // 不足 2 轮，fallback 到简单截断
-      return messages.slice(-this.config.reactiveCompactKeepCount)
-    }
-
-    // 保留最近 2 轮
-    const keptTurns = turns.slice(-2)
-    const kept = keptTurns.flat()
-    return kept.length > 0 ? kept : messages.slice(-this.config.reactiveCompactKeepCount)
-  }
-
   /** 获取 microcompact 配置（供 agent-loop 传入） */
   getMicrocompactConfig(): { gapMinutes: number; keepRecent: number } {
     return {
@@ -250,46 +225,4 @@ Provide a detailed summary following the sections above. Be especially thorough 
   estimateTokens(messages: Message[], modelId?: string): number {
     return countMessagesTokens(messages, modelId)
   }
-}
-
-/**
- * 按轮次分组消息。一轮 = user 消息 + 后续 assistant + tool_result 消息。
- * 连续的 user 消息（如 system-reminder 注入）合并到前一组，
- * 避免将逻辑上属于同一轮的消息拆成多个 turn。
- */
-function isSystemReminder(msg: Message): boolean {
-  return typeof msg.content === 'string' &&
-    msg.content.startsWith('<system-reminder>')
-}
-
-function groupMessagesByTurns(messages: Message[]): Message[][] {
-  const turns: Message[][] = []
-  let currentTurn: Message[] = []
-
-  for (const msg of messages) {
-    if (msg.role === 'user') {
-      // system-reminder 的 user 消息合并到当前组（不属于新的一轮）
-      if (isSystemReminder(msg) && currentTurn.length > 0) {
-        currentTurn.push(msg)
-        continue
-      }
-      // 真正的用户消息开启新的一组
-      if (currentTurn.length > 0) {
-        turns.push(currentTurn)
-      }
-      currentTurn = [msg]
-    } else if (msg.role === 'assistant') {
-      // assistant 消息归入当前组（紧跟 user 消息）
-      currentTurn.push(msg)
-    } else if (msg.role === 'tool_result') {
-      // tool_result 归入当前 assistant 所在的组
-      currentTurn.push(msg)
-    }
-  }
-
-  if (currentTurn.length > 0) {
-    turns.push(currentTurn)
-  }
-
-  return turns
 }

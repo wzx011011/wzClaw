@@ -148,8 +148,8 @@ describe.skipIf(!process.env.NAS_E2E)('E2E: NAS Agent-Server', () => {
     const sid = created.sessionId
 
     // List — session might not appear until first message (SQLite only persists on chat)
-    const listed = await sendAndWait(ws, 'session:list', {}, 'session:list') as Array<{ id: string }>
-    expect(Array.isArray(listed)).toBe(true)
+    const listed = await sendAndWait(ws, 'session:list', {}, 'session:list') as { sessions: Array<{ id: string }> }
+    expect(Array.isArray(listed.sessions)).toBe(true)
 
     // Delete
     const deleted = await sendAndWait(ws, 'session:delete', { sessionId: sid }, 'session:deleted') as { sessionId: string }
@@ -157,7 +157,7 @@ describe.skipIf(!process.env.NAS_E2E)('E2E: NAS Agent-Server', () => {
   })
 
   // ---- S6: Chat with LLM (GLM-5.1) ----
-  it('S6: chat:send triggers LLM response via GLM-5.1', async () => {
+  it('S6: chat:send triggers LLM response via GLM-5.1', { timeout: 30000 }, async () => {
     const created = await sendAndWait(ws, 'session:create', {}, 'session:created') as { sessionId: string }
     const result = await chatAndCollect(ws, created.sessionId, '请用一句话回答：1+1等于几？')
     expect(result.done).toBe(true)
@@ -169,30 +169,31 @@ describe.skipIf(!process.env.NAS_E2E)('E2E: NAS Agent-Server', () => {
 
   // ---- S7: Admin Config API ----
   it('S7: admin config GET/PUT works with auth', async () => {
-    // GET
-    const getRes = await fetch(`${NAS_HTTP}/admin/config/api-keys.json`, {
-      headers: { Authorization: `Bearer ${NAS_TOKEN}` },
-    })
-    expect(getRes.status).toBe(200)
-    const getData = await getRes.json()
-    expect(getData.content).toBeDefined()
+    const configPath = 'MEMORY.md'
+    const content = `# E2E memory check\n\nupdated=${Date.now()}\n`
 
-    // PUT (re-write same content to test round-trip)
-    const originalContent = getData.content
-    const putRes = await fetch(`${NAS_HTTP}/admin/config/api-keys.json`, {
+    // PUT a harmless allowed config file, then GET it back.
+    const putRes = await fetch(`${NAS_HTTP}/admin/config/${configPath}`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${NAS_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content: originalContent }),
+      body: JSON.stringify({ content }),
     })
     expect(putRes.status).toBe(200)
     const putData = await putRes.json()
     expect(putData.ok).toBe(true)
 
+    const getRes = await fetch(`${NAS_HTTP}/admin/config/${configPath}`, {
+      headers: { Authorization: `Bearer ${NAS_TOKEN}` },
+    })
+    expect(getRes.status).toBe(200)
+    const getData = await getRes.json()
+    expect(getData.content).toBe(content)
+
     // Unauthorized
-    const noAuthRes = await fetch(`${NAS_HTTP}/admin/config/api-keys.json`, {
+    const noAuthRes = await fetch(`${NAS_HTTP}/admin/config/${configPath}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: '{}' }),
@@ -248,6 +249,21 @@ describe.skipIf(!process.env.NAS_E2E)('E2E: NAS Agent-Server', () => {
     expect(hand.id).toBeDefined()
     expect(hand.capabilities).toBeDefined()
     expect(hand.capabilities.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('S11: direct non-readonly tool execution is blocked by default', async () => {
+    const data = await sendAndWait(ws, 'tool:execute', {
+      name: 'FileWrite',
+      input: { path: '/data/e2e-blocked.txt', content: 'should-not-write' },
+    }, 'tool:result', 15000) as { output: string; isError: boolean }
+
+    expect(data.isError).toBe(true)
+    expect(data.output).toContain('blocked by policy')
+  })
+
+  it('S12: admin hands list requires auth', async () => {
+    const res = await fetch(`${NAS_HTTP}/admin/hands`)
+    expect(res.status).toBe(401)
   })
 })
 

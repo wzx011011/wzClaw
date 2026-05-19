@@ -6,74 +6,40 @@
 
 import type { WebSocket } from 'ws'
 import path from 'path'
-import type {
-  AgentLoop,
-  AgentEvent,
-  AgentConfig,
-  ISessionStore,
-  IToolExecutor,
-  IEventSender,
-  SessionConfigPatch,
+import {
+  encodeAgentEvent,
+  type AgentLoop,
+  type AgentConfig,
+  type ISessionStore,
+  type IToolExecutor,
+  type IEventSender,
+  type SessionConfigPatch,
 } from '@wzxclaw/brain'
 import type { ServerMessage } from './types.js'
 import { SessionService } from './session-service.js'
 import { WorkspaceService, type WorkspaceUpdate } from './workspace-service.js'
 import { HostStore, type HostEntry } from './host-store.js'
-
-/** AgentEvent 到 Client 协议的映射结果 */
-interface ClientMessage {
-  event: string
-  data: unknown
-}
+import { TerminalSessionRouter } from './terminal-session-router.js'
+import type { HandsRouter } from './hands-router.js'
 
 interface ConnectionState {
   activeLoop: AgentLoop | null
   consuming: boolean
   permissionMode: string
+  /** 心跳定时器 — 定期 ping 检测连接存活 */
+  heartbeatTimer: ReturnType<typeof setInterval> | null
+  /** 上一次收到 pong 或消息的时间 */
+  lastAliveAt: number
 }
 
-/**
- * 将 AgentEvent 转换为 Client 协议消息
- *
- * 映射规则:
- * - agent:text → stream:text { delta }
- * - agent:thinking → stream:thinking { content }
- * - agent:tool_call → stream:tool_call { toolCallId, name, input }
- * - agent:tool_result → stream:tool_result { toolCallId, name, output, isError }
- * - agent:error → stream:error { error, recoverable }
- * - agent:done → stream:done { usage, turnCount }
- * - agent:compacted → stream:compacted { beforeTokens, afterTokens }
- */
-function agentEventToClientMessage(event: AgentEvent): ClientMessage | null {
-  switch (event.type) {
-    case 'agent:text':
-      return { event: 'stream:text', data: { delta: event.content } }
-    case 'agent:thinking':
-      return { event: 'stream:thinking', data: { content: event.content } }
-    case 'agent:tool_call':
-      return {
-        event: 'stream:tool_call',
-        data: { toolCallId: event.toolCallId, name: event.toolName, input: event.input },
-      }
-    case 'agent:tool_result':
-      return {
-        event: 'stream:tool_result',
-        data: { toolCallId: event.toolCallId, name: event.toolName, output: event.output, isError: event.isError },
-      }
-    case 'agent:error':
-      return { event: 'stream:error', data: { error: event.error, recoverable: event.recoverable } }
-    case 'agent:done':
-      return { event: 'stream:done', data: { usage: event.usage, turnCount: event.turnCount } }
-    case 'agent:compacted':
-      return { event: 'stream:compacted', data: { beforeTokens: event.beforeTokens, afterTokens: event.afterTokens } }
-    case 'agent:turn_end':
-      return { event: 'stream:turn_end', data: {} }
-    case 'agent:tool_progress':
-      return { event: 'stream:tool_progress', data: { toolCallId: event.toolCallId, toolName: event.toolName, message: event.message } }
-    default:
-      return null
-  }
-}
+/** 服务器默认权限模式。优先从环境变量读取，默认以“总是询问”为安全基准。 */
+const DEFAULT_PERMISSION_MODE: ConnectionState['permissionMode'] = (() => {
+  const envValue = process.env.WZXCLAW_DEFAULT_PERMISSION_MODE
+  const valid = ['always-ask', 'accept-edits', 'plan', 'bypass'] as const
+  return (valid as readonly string[]).includes(envValue ?? '')
+    ? (envValue as ConnectionState['permissionMode'])
+    : 'always-ask'
+})()
 
 /**
  * WebSocket 事件发送适配器
@@ -155,24 +121,39 @@ export class ClientHandler {
   /** 远程主机存储 */
   private readonly hostStore: HostStore
 
+  /** Terminal 会话路由器（terminalId → clientWs / handId） */
+  private readonly terminalRouter: TerminalSessionRouter
+
+  /** Hands 路由器（用于按工具名查找在线 Hand，可选） */
+  private readonly handsRouter: HandsRouter | null
+
   constructor(
     sessionStore: ISessionStore,
     toolExecutor: IToolExecutor,
     workspaceService?: WorkspaceService | null,
     createLoop?: AgentLoopFactory,
     agentConfigDefaults: AgentConfigDefaults = {},
+    handsRouter?: HandsRouter | null,
+    terminalRouter?: TerminalSessionRouter,
   ) {
     this.sessionStore = sessionStore
     this.sessionService = new SessionService(sessionStore)
     this.toolExecutor = toolExecutor
     this.workspaceService = workspaceService ?? null
     this.agentConfigDefaults = agentConfigDefaults
+    this.handsRouter = handsRouter ?? null
+    this.terminalRouter = terminalRouter ?? new TerminalSessionRouter()
     const configDir = process.env.WZXCLAW_CONFIG_DIR || '/root/.wzxclaw'
     this.hostStore = new HostStore(configDir)
     // 默认工厂函数 — 实际使用时由 server.ts 注入
     this.createLoop = createLoop ?? (() => {
       throw new Error('AgentLoop factory not configured')
     })
+  }
+
+  /** 获取 TerminalSessionRouter（用于 server 层路由 hand 推送帧） */
+  getTerminalRouter(): TerminalSessionRouter {
+    return this.terminalRouter
   }
 
   /**
@@ -189,9 +170,32 @@ export class ClientHandler {
    * 每个连接独立管理自己的 AgentLoop 生命周期。
    */
   handleConnection(ws: WebSocket): void {
-    this.connectionStates.set(ws, { activeLoop: null, consuming: false, permissionMode: 'bypass' })
+    const now = Date.now()
+    this.connectionStates.set(ws, { activeLoop: null, consuming: false, permissionMode: DEFAULT_PERMISSION_MODE, heartbeatTimer: null, lastAliveAt: now })
+
+    // 启动心跳：每 30 秒 ping 一次，60 秒无响应则关闭连接
+    const timer = setInterval(() => {
+      const state = this.connectionStates.get(ws)
+      if (!state) { clearInterval(timer); return }
+      if (Date.now() - state.lastAliveAt > 60_000) {
+        ws.terminate()
+        return
+      }
+      if (ws.readyState === 1) {
+        ws.ping()
+      }
+    }, 30_000)
+
+    this.connectionStates.get(ws)!.heartbeatTimer = timer
+
+    ws.on('pong', () => {
+      const state = this.connectionStates.get(ws)
+      if (state) state.lastAliveAt = Date.now()
+    })
 
     ws.on('message', (raw: unknown) => {
+      const state = this.connectionStates.get(ws)
+      if (state) state.lastAliveAt = Date.now()
       this.handleMessage(ws, raw)
     })
 
@@ -371,6 +375,31 @@ export class ClientHandler {
       case 'insights:status':
         this.handleInsightsStatus(ws)
           .catch((err) => this.sendProtocolError(ws, err))
+        break
+      // ---- Terminal (PTY over Hand) ----
+      case 'terminal:spawn':
+        this.handleTerminalSpawn(ws, data as { cwd?: string; cols?: number; rows?: number; shell?: string; targetHandId?: string; workspaceId?: string })
+          .catch((err) => this.sendTerminalError(ws, 'terminal:spawned', err))
+        break
+      case 'terminal:write':
+        this.handleTerminalWrite(ws, data as { terminalId: string; data: string })
+          .catch((err) => this.sendTerminalError(ws, 'terminal:write:ack', err))
+        break
+      case 'terminal:resize':
+        this.handleTerminalResize(ws, data as { terminalId: string; cols: number; rows: number })
+          .catch((err) => this.sendTerminalError(ws, 'terminal:resize:ack', err))
+        break
+      case 'terminal:kill':
+        this.handleTerminalKill(ws, data as { terminalId: string })
+          .catch((err) => this.sendTerminalError(ws, 'terminal:killed', err))
+        break
+      // ---- Preview (desktop-only — WebSocket clients get supported:false) ----
+      case 'preview:open':
+      case 'preview:reload':
+        ws.send(JSON.stringify({
+          event: 'preview:ack',
+          data: { supported: false, error: 'preview not supported over WebSocket; use desktop client' },
+        }))
         break
       default:
         // 未知 event — 忽略
@@ -828,8 +857,8 @@ export class ClientHandler {
         // 如果被新的请求中断，停止消费
         if (!state.consuming || state.activeLoop !== loop) break
 
-        // 将 AgentEvent 转换为 Client 协议消息
-        const clientMsg = agentEventToClientMessage(event)
+        // 将 AgentEvent 转换为 Client 协议消息（共享 brain wire-codec）
+        const clientMsg = encodeAgentEvent(event)
         if (clientMsg && ws.readyState === 1) {
           ws.send(JSON.stringify(clientMsg))
         }
@@ -1035,11 +1064,29 @@ export class ClientHandler {
     if (state?.activeLoop) {
       state.activeLoop.cancel()
     }
+    if (state?.heartbeatTimer) {
+      clearInterval(state.heartbeatTimer)
+    }
     // 清理该连接的 pending ask-user 问题
     for (const [questionId, pending] of this.pendingQuestions) {
       if (pending.ws === ws) {
         this.pendingQuestions.delete(questionId)
         pending.resolve('')
+      }
+    }
+    // 清理该 client 的所有 terminal（异步 kill — 不等待结果）
+    for (const tid of this.terminalRouter.getTerminalsForClient(ws)) {
+      const handId = this.terminalRouter.getHandId(tid)
+      this.terminalRouter.unregister(tid)
+      if (handId) {
+        // 尝试通知 Hand 关闭 PTY（best-effort）
+        const abort = new AbortController()
+        this.toolExecutor.execute('TerminalKill', { terminalId: tid }, {
+          workingDirectory: process.cwd(),
+          projectRoots: [],
+          targetHandId: handId,
+          abortSignal: abort.signal,
+        }).catch(() => { /* swallow */ })
       }
     }
     this.connectionStates.delete(ws)
@@ -1048,9 +1095,174 @@ export class ClientHandler {
   private getState(ws: WebSocket): ConnectionState {
     let state = this.connectionStates.get(ws)
     if (!state) {
-      state = { activeLoop: null, consuming: false, permissionMode: 'bypass' }
+      state = { activeLoop: null, consuming: false, permissionMode: DEFAULT_PERMISSION_MODE, heartbeatTimer: null, lastAliveAt: Date.now() }
       this.connectionStates.set(ws, state)
     }
     return state
+  }
+
+  /**
+   * Terminal:spawn — 选取在线 Hand，调用 TerminalSpawn 工具，
+   * 解析 terminalId 并注册到 TerminalSessionRouter
+   */
+  private async handleTerminalSpawn(
+    ws: WebSocket,
+    data: { cwd?: string; cols?: number; rows?: number; shell?: string; targetHandId?: string; workspaceId?: string },
+  ): Promise<void> {
+    // 选择 Hand：优先使用客户端指定的 targetHandId，否则按工具名查找
+    let handId: string | null = data.targetHandId ?? null
+    if (!handId && this.handsRouter) {
+      const hand = this.handsRouter.findHand('TerminalSpawn')
+      handId = hand?.id ?? null
+    }
+    if (!handId) {
+      ws.send(JSON.stringify({
+        event: 'terminal:spawned',
+        data: { error: 'No Hand online provides TerminalSpawn' },
+      }))
+      return
+    }
+
+    const cwd = data.cwd ?? process.cwd()
+    const abort = new AbortController()
+    const result = await this.toolExecutor.execute('TerminalSpawn', {
+      cwd,
+      cols: data.cols ?? 80,
+      rows: data.rows ?? 24,
+      ...(data.shell ? { shell: data.shell } : {}),
+    }, {
+      workingDirectory: cwd,
+      projectRoots: [],
+      targetHandId: handId,
+      workspaceId: data.workspaceId,
+      abortSignal: abort.signal,
+    })
+
+    if (result.isError) {
+      ws.send(JSON.stringify({ event: 'terminal:spawned', data: { error: result.output } }))
+      return
+    }
+
+    let terminalId: string | null = null
+    try {
+      const parsed = JSON.parse(result.output) as { terminalId?: string }
+      terminalId = parsed.terminalId ?? null
+    } catch {
+      ws.send(JSON.stringify({
+        event: 'terminal:spawned',
+        data: { error: `Failed to parse TerminalSpawn output: ${result.output}` },
+      }))
+      return
+    }
+
+    if (!terminalId) {
+      ws.send(JSON.stringify({
+        event: 'terminal:spawned',
+        data: { error: 'TerminalSpawn did not return terminalId' },
+      }))
+      return
+    }
+
+    this.terminalRouter.register(terminalId, ws, handId)
+    ws.send(JSON.stringify({
+      event: 'terminal:spawned',
+      data: { terminalId, handId },
+    }))
+  }
+
+  private async handleTerminalWrite(
+    ws: WebSocket,
+    data: { terminalId: string; data: string },
+  ): Promise<void> {
+    const handId = this.terminalRouter.getHandId(data.terminalId)
+    if (!handId) {
+      ws.send(JSON.stringify({
+        event: 'terminal:write:ack',
+        data: { success: false, terminalId: data.terminalId, error: 'unknown terminalId' },
+      }))
+      return
+    }
+    const abort = new AbortController()
+    const result = await this.toolExecutor.execute('TerminalWrite', {
+      terminalId: data.terminalId,
+      data: data.data,
+    }, {
+      workingDirectory: process.cwd(),
+      projectRoots: [],
+      targetHandId: handId,
+      abortSignal: abort.signal,
+    })
+    ws.send(JSON.stringify({
+      event: 'terminal:write:ack',
+      data: { success: !result.isError, terminalId: data.terminalId, ...(result.isError ? { error: result.output } : {}) },
+    }))
+  }
+
+  private async handleTerminalResize(
+    ws: WebSocket,
+    data: { terminalId: string; cols: number; rows: number },
+  ): Promise<void> {
+    const handId = this.terminalRouter.getHandId(data.terminalId)
+    if (!handId) {
+      ws.send(JSON.stringify({
+        event: 'terminal:resize:ack',
+        data: { success: false, terminalId: data.terminalId, error: 'unknown terminalId' },
+      }))
+      return
+    }
+    const abort = new AbortController()
+    const result = await this.toolExecutor.execute('TerminalResize', {
+      terminalId: data.terminalId,
+      cols: data.cols,
+      rows: data.rows,
+    }, {
+      workingDirectory: process.cwd(),
+      projectRoots: [],
+      targetHandId: handId,
+      abortSignal: abort.signal,
+    })
+    ws.send(JSON.stringify({
+      event: 'terminal:resize:ack',
+      data: { success: !result.isError, terminalId: data.terminalId, ...(result.isError ? { error: result.output } : {}) },
+    }))
+  }
+
+  private async handleTerminalKill(
+    ws: WebSocket,
+    data: { terminalId: string },
+  ): Promise<void> {
+    const handId = this.terminalRouter.getHandId(data.terminalId)
+    if (!handId) {
+      // 已经清理 — 幂等返回
+      ws.send(JSON.stringify({
+        event: 'terminal:killed',
+        data: { terminalId: data.terminalId },
+      }))
+      return
+    }
+    const abort = new AbortController()
+    const result = await this.toolExecutor.execute('TerminalKill', {
+      terminalId: data.terminalId,
+    }, {
+      workingDirectory: process.cwd(),
+      projectRoots: [],
+      targetHandId: handId,
+      abortSignal: abort.signal,
+    })
+    this.terminalRouter.unregister(data.terminalId)
+    ws.send(JSON.stringify({
+      event: 'terminal:killed',
+      data: { terminalId: data.terminalId, ...(result.isError ? { error: result.output } : {}) },
+    }))
+  }
+
+  /** 统一封装 terminal 错误回包 */
+  private sendTerminalError(ws: WebSocket, ackEvent: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err)
+    try {
+      ws.send(JSON.stringify({ event: ackEvent, data: { success: false, error: message } }))
+    } catch {
+      // ignore
+    }
   }
 }

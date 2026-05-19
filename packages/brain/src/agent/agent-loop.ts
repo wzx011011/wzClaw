@@ -119,6 +119,7 @@ export class AgentLoop {
               const result = await toolExecutor.execute(toolCall.name, toolCall.input, {
                 workingDirectory: config.workingDirectory,
                 projectRoots: config.projectRoots,
+                targetHandId: config.targetHandId,
                 abortSignal: this.abortController!.signal,
                 workspaceId: undefined,
                 onSubAgentEvent: sender ? (event: Record<string, unknown>) => {

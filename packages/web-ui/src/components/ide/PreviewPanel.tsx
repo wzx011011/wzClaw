@@ -97,7 +97,7 @@ export default function PreviewPanel(): React.ReactElement {
           style={{
             flex: 1,
             border: 'none',
-            background: '#fff',
+            background: 'var(--bg-primary)',
           }}
           sandbox="allow-scripts allow-same-origin allow-forms"
         />

@@ -1,6 +1,69 @@
 import { z } from 'zod'
 
 // ============================================================
+// 从 @wzxclaw/brain 重新导出核心共享类型
+// 桌面端特有类型定义在下方
+// ============================================================
+
+import type {
+  ContentBlock as _ContentBlock,
+  TextContentBlock as _TextContentBlock,
+  ToolUseContentBlock as _ToolUseContentBlock,
+  ThinkingContentBlock as _ThinkingContentBlock,
+  Message,
+  UserMessage as _UserMessage,
+  AssistantMessage as _AssistantMessage,
+  ToolResultMessage as _ToolResultMessage,
+  ImageContent as _ImageContent,
+  ToolCall as _ToolCall,
+  ToolResult as _ToolResult,
+  ToolDefinition as _ToolDefinition,
+  StreamEvent as _StreamEvent,
+  TextDeltaEvent as _TextDeltaEvent,
+  ThinkingDeltaEvent as _ThinkingDeltaEvent,
+  ThinkingBlockDoneEvent as _ThinkingBlockDoneEvent,
+  ToolUseStartEvent as _ToolUseStartEvent,
+  ToolUseDeltaEvent as _ToolUseDeltaEvent,
+  ToolUseEndEvent as _ToolUseEndEvent,
+  StreamErrorEvent as _StreamErrorEvent,
+  StreamDoneEvent as _StreamDoneEvent,
+  TokenUsage as _TokenUsage,
+  LLMProvider,
+  Project as _Project,
+  Workspace as _Workspace,
+  CompactResult as _CompactResult,
+} from '@wzxclaw/brain'
+
+export type {
+  _ContentBlock as ContentBlock,
+  _TextContentBlock as TextContentBlock,
+  _ToolUseContentBlock as ToolUseContentBlock,
+  _ThinkingContentBlock as ThinkingContentBlock,
+  Message,
+  _UserMessage as UserMessage,
+  _AssistantMessage as AssistantMessage,
+  _ToolResultMessage as ToolResultMessage,
+  _ImageContent as ImageContent,
+  _ToolCall as ToolCall,
+  _ToolResult as ToolResult,
+  _ToolDefinition as ToolDefinition,
+  _StreamEvent as StreamEvent,
+  _TextDeltaEvent as TextDeltaEvent,
+  _ThinkingDeltaEvent as ThinkingDeltaEvent,
+  _ThinkingBlockDoneEvent as ThinkingBlockDoneEvent,
+  _ToolUseStartEvent as ToolUseStartEvent,
+  _ToolUseDeltaEvent as ToolUseDeltaEvent,
+  _ToolUseEndEvent as ToolUseEndEvent,
+  _StreamErrorEvent as StreamErrorEvent,
+  _StreamDoneEvent as StreamDoneEvent,
+  _TokenUsage as TokenUsage,
+  LLMProvider,
+  _Project as Project,
+  _Workspace as Workspace,
+  _CompactResult as CompactResult,
+}
+
+// ============================================================
 // Appearance Settings
 // ============================================================
 
@@ -8,162 +71,27 @@ export type ThemeMode = 'system' | 'light' | 'dark'
 export type AccentColor = 'green' | 'purple'
 
 // ============================================================
-// Content Block Types (preserves interleaved text/tool ordering)
+// Session Config
 // ============================================================
 
-export interface TextContentBlock {
-  type: 'text'
-  text: string
-}
+export type SessionOwner = 'desktop-local' | 'nas-remote'
 
-export interface ToolUseContentBlock {
-  type: 'tool_use'
+export interface SessionConfig {
   id: string
-  name: string
-  input: Record<string, unknown>
+  title: string
+  createdAt: number
+  updatedAt: number
+  workspaceId?: string
+  model?: string
+  provider?: string
+  targetHandId?: string
+  owner?: SessionOwner
+  workingDirectory?: string
+  projectRoots?: string[]
+  metadata?: Record<string, unknown>
 }
 
-export interface ThinkingContentBlock {
-  type: 'thinking'
-  thinking: string
-  /** Anthropic returns an opaque signature that must be passed back verbatim */
-  signature?: string
-}
-
-export type ContentBlock = TextContentBlock | ToolUseContentBlock | ThinkingContentBlock
-
-// ============================================================
-// Message Types
-// ============================================================
-
-export interface ImageContent {
-  /** Base64-encoded image data (no data: prefix) */
-  data: string
-  /** MIME type: image/png, image/jpeg, image/gif, image/webp */
-  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
-  /** Original file name */
-  name?: string
-}
-
-export interface UserMessage {
-  /** 唯一消息 ID（新消息自动生成，旧消息反序列化时可能为 undefined） */
-  id?: string
-  role: 'user'
-  content: string
-  /** Attached images (base64) */
-  images?: ImageContent[]
-  timestamp: number
-}
-
-export interface AssistantMessage {
-  id?: string
-  role: 'assistant'
-  content: string
-  toolCalls: ToolCall[]
-  /** Interleaved content blocks preserving original text/tool ordering.
-   *  When present, message-builder uses this instead of content+toolCalls. */
-  contentBlocks?: ContentBlock[]
-  timestamp: number
-}
-
-export interface ToolResultMessage {
-  id?: string
-  role: 'tool_result'
-  toolCallId: string
-  content: string
-  isError: boolean
-  timestamp: number
-}
-
-export type Message = UserMessage | AssistantMessage | ToolResultMessage
-
-// ============================================================
-// Tool Types
-// ============================================================
-
-export interface ToolCall {
-  id: string
-  name: string
-  input: Record<string, unknown>
-}
-
-export interface ToolResult {
-  toolCallId: string
-  output: string
-  isError: boolean
-}
-
-export interface ToolDefinition {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown> // JSON Schema object
-}
-
-// ============================================================
-// LLM Stream Events (per D-06)
-// ============================================================
-
-export interface TextDeltaEvent {
-  type: 'text_delta'
-  content: string
-}
-
-export interface ThinkingDeltaEvent {
-  type: 'thinking_delta'
-  content: string
-}
-
-export interface ThinkingBlockDoneEvent {
-  type: 'thinking_block_done'
-  thinking: string
-  /** Opaque signature from Anthropic — must be echoed back in subsequent requests */
-  signature?: string
-}
-
-export interface ToolUseStartEvent {
-  type: 'tool_use_start'
-  id: string
-  name: string
-}
-
-export interface ToolUseDeltaEvent {
-  type: 'tool_use_delta'
-  id: string
-  partialJson: string
-}
-
-export interface ToolUseEndEvent {
-  type: 'tool_use_end'
-  id: string
-  parsedInput: Record<string, unknown>
-}
-
-export interface StreamErrorEvent {
-  type: 'error'
-  error: string
-}
-
-export interface TokenUsage {
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens?: number
-  cacheWriteTokens?: number
-}
-
-export interface StreamDoneEvent {
-  type: 'done'
-  usage: TokenUsage
-}
-
-export type StreamEvent =
-  | TextDeltaEvent
-  | ThinkingDeltaEvent
-  | ThinkingBlockDoneEvent
-  | ToolUseStartEvent
-  | ToolUseDeltaEvent
-  | ToolUseEndEvent
-  | StreamErrorEvent
-  | StreamDoneEvent
+export type SessionConfigPatch = Partial<Omit<SessionConfig, 'id' | 'createdAt' | 'updatedAt'>>
 
 // ============================================================
 // File Tree & Editor Types (Phase 3)
@@ -246,8 +174,6 @@ export interface SessionTaskState {
 // ============================================================
 // LLM Configuration (per D-15, D-16)
 // ============================================================
-
-export type LLMProvider = 'openai' | 'anthropic'
 
 /** Thinking depth controls extended reasoning effort */
 export type ThinkingDepth = 'none' | 'low' | 'medium' | 'high'
@@ -387,31 +313,6 @@ export interface AgentStep {
   blockedBy: string[]    // step IDs this step depends on
   createdAt: number
   updatedAt: number
-}
-
-// ============================================================
-// Workspace Management Types — top-level user work units
-// ============================================================
-
-/** A folder-based code repository mounted under a Workspace */
-export interface Project {
-  id: string           // uuid
-  path: string         // absolute folder path
-  name: string         // display name (basename of folder)
-  addedAt: number
-}
-
-/** Top-level user work unit — can have 0-N Projects (folders) */
-export interface Workspace {
-  id: string           // uuid
-  title: string
-  description?: string
-  projects: Project[]  // mounted folders
-  createdAt: number
-  updatedAt: number
-  lastSessionId?: string // most recent chat session
-  systemPrompt?: string  // 工作区级系统提示词覆盖（Task 12）
-  archived: boolean
 }
 
 // ============================================================

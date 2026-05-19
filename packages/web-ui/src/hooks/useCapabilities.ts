@@ -60,6 +60,7 @@ export function useCapabilities(dataSource: DataSource | null): PlatformCapabili
     const hasFs = !!dataSource.fs
     const hasTerminal = !!dataSource.terminal
     const hasPreview = !!dataSource.preview
+    const runtimeCapabilities = dataSource.capabilities
 
     // Electron IPC 模式（window.wzxclaw 存在）
     if (typeof window !== 'undefined' && window.wzxclaw) {
@@ -73,7 +74,7 @@ export function useCapabilities(dataSource: DataSource | null): PlatformCapabili
       terminal: hasTerminal,
       preview: hasPreview,
       fileExplorer: hasFs,
-      taskMode: false,
+      taskMode: runtimeCapabilities?.workspace ?? true,
       mobileShell: isMobile,
     }
   }, [dataSource, dataSource?.fs, dataSource?.terminal, dataSource?.preview])

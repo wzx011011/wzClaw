@@ -4,18 +4,24 @@
 // ============================================================
 
 import { ipcMain } from 'electron'
-import crypto from 'crypto'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
-import type { RelayClient } from './relay-client'
 import type { SettingsManager } from '../settings-manager'
 
 export interface MobileIpcDeps {
-  relayClient: RelayClient
   settingsManager: SettingsManager
 }
 
+const disabledRelayStatus = {
+  connected: false,
+  connecting: false,
+  reconnectAttempt: 0,
+  mobileConnected: false,
+  mobileIdentity: null,
+  mobiles: [],
+}
+
 export function registerMobileIpcHandlers(deps: MobileIpcDeps): void {
-  const { relayClient, settingsManager } = deps
+  const { settingsManager } = deps
 
   // Relay IPC handlers
   ipcMain.handle(IPC_CHANNELS['relay:connect'], async (_e, request: { token: string }) => {
@@ -23,34 +29,19 @@ export function registerMobileIpcHandlers(deps: MobileIpcDeps): void {
       settingsManager.setRelayToken(request.token)
     }
     const token = request.token || settingsManager.getRelayToken()
-    if (token) {
-      relayClient.connect(token)
-    }
-    return relayClient.getStatus()
+    return disabledRelayStatus
   })
 
   ipcMain.handle(IPC_CHANNELS['relay:disconnect'], async () => {
-    relayClient.disconnect()
+    return disabledRelayStatus
   })
 
   ipcMain.handle(IPC_CHANNELS['relay:get_status'], async () => {
-    return relayClient.getStatus()
+    return disabledRelayStatus
   })
 
   ipcMain.handle(IPC_CHANNELS['relay:qrcode'], async (_e, request?: { token: string }) => {
-    let token = request?.token || settingsManager.getRelayToken()
-    // Auto-generate a random token if none configured — user just needs to scan
-    if (!token) {
-      token = crypto.randomUUID().replace(/-/g, '').slice(0, 16)
-      settingsManager.setRelayToken(token)
-    }
-    // Ensure desktop is connected to relay with this token
-    if (!relayClient.connected) {
-      relayClient.connect(token)
-    }
-    const { generateQRCode } = await import('./qr-generator')
-    const relayUrl = `https://relay.5945.top/?token=${encodeURIComponent(token)}`
-    const qrCode = await generateQRCode(relayUrl)
-    return { qrCode, token }
+    const token = request?.token || settingsManager.getRelayToken()
+    return { qrCode: '', token: token ?? '' }
   })
 }

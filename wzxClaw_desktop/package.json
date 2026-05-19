@@ -34,6 +34,8 @@
     "test:e2e:ui": "npx playwright test test/e2e/",
     "test:e2e:nas": "npx playwright test test/e2e/nas-agent.spec.ts",
     "test:smoke": "npx playwright test test/smoke/",
+    "perf:baseline": "node scripts/perf.js",
+    "perf:compare": "node scripts/perf.js --compare",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",

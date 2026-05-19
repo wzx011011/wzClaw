@@ -21,16 +21,17 @@ import TopBar from '../components/mobile/TopBar'
 import FloatingBar from '../components/mobile/FloatingBar'
 import DesktopPicker from '../components/mobile/DesktopPicker'
 import ConnectionStatusBar from '../components/mobile/ConnectionStatusBar'
+import WorkspaceHomePage from '../components/workspaces/WorkspaceHomePage'
 import { useHandStore } from '../stores/hand-store'
 import { createFileBrowserStore } from '../stores/file-browser-store'
 import { useConnectionConfig } from '../hooks/useConnectionConfig'
 
-type MobileTab = 'chat' | 'files' | 'sessions' | 'settings'
+type MobileTab = 'chat' | 'workspaces' | 'files' | 'sessions' | 'settings'
 
 interface MobileShellProps {
   chatStore: StoreApi<ChatStore>
   connected: boolean
-  setView: (view: 'chat' | 'ide' | 'settings') => void
+  setView: (view: 'chat' | 'ide' | 'workspaces' | 'settings') => void
   dataSource: DataSource | null
 }
 
@@ -51,10 +52,10 @@ export default function MobileShell({ chatStore, connected, setView, dataSource 
   // 定期刷新 Hand 列表
   useEffect(() => {
     if (!config.agentUrl) return
-    fetchHands(config.agentUrl)
-    const timer = setInterval(() => fetchHands(config.agentUrl), 30000)
+    fetchHands(config.agentUrl, config.token || undefined)
+    const timer = setInterval(() => fetchHands(config.agentUrl, config.token || undefined), 30000)
     return () => clearInterval(timer)
-  }, [config.agentUrl, fetchHands])
+  }, [config.agentUrl, config.token, fetchHands])
 
   const handleTabChange = (tab: MobileTab): void => {
     if (tab === 'settings') {
@@ -81,6 +82,9 @@ export default function MobileShell({ chatStore, connected, setView, dataSource 
       <div className="mobile-tab-content">
         {activeTab === 'chat' && (
           <ChatPanel store={chatStore} connected={connected} />
+        )}
+        {activeTab === 'workspaces' && (
+          <WorkspaceHomePage chatStore={chatStore} onEnterChat={() => setActiveTab('chat')} />
         )}
         {activeTab === 'files' && selectedFile && dataSource?.fs ? (
           <FileViewerPage

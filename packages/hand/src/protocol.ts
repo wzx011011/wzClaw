@@ -64,6 +64,33 @@ export function createHeartbeatMessage(): string {
 }
 
 /**
+ * 构造 terminal:data 推送消息（Hand → server）
+ *
+ * @param terminalId Hand 端分配的 terminalId
+ * @param data PTY 增量输出
+ */
+export function createTerminalDataMessage(terminalId: string, data: string): string {
+  return JSON.stringify({
+    event: 'terminal:data',
+    data: { terminalId, data },
+  })
+}
+
+/**
+ * 构造 terminal:exit 推送消息（Hand → server）
+ *
+ * @param terminalId Hand 端分配的 terminalId
+ * @param exitCode 进程退出码
+ * @param signal 终止信号（可为 null）
+ */
+export function createTerminalExitMessage(terminalId: string, exitCode: number, signal: number | null): string {
+  return JSON.stringify({
+    event: 'terminal:exit',
+    data: { terminalId, exitCode, signal },
+  })
+}
+
+/**
  * 解析入站消息（从 agent-server 收到的原始字符串）
  *
  * 严格验证消息格式：

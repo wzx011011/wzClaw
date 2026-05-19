@@ -8,7 +8,7 @@ import type { SessionRuntimeManager } from '../agent/session-runtime-manager'
 import type { StepManager } from '../steps/step-manager'
 import { SettingsManager } from '../settings-manager'
 import type { WorkspaceManager } from '../workspace/workspace-manager'
-import type { WorkspaceStore } from '../tasks/workspace-store'
+import type { WorkspaceStore } from '../tasks/workspace-persistence'
 import { SessionStore } from '../persistence/session-store'
 import { SessionStoreManager } from '../persistence/session-store-manager'
 
@@ -27,18 +27,34 @@ export interface SessionIpcDeps {
 
 export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   const { runtimes, stepManager, settingsManager, workspaceManager, workspaceStore,
-    getSessionStore, storeManager, onDataChanged, persistedMessageCounts } = deps
+    storeManager, onDataChanged, persistedMessageCounts } = deps
 
   // Helper: resolve SessionStore for a given activeWorkspaceId
   const resolveStore = (activeWorkspaceId?: string) =>
     storeManager.getForWorkspace(activeWorkspaceId, workspaceManager, workspaceStore)
+
+  const buildSessionDefaults = async (activeWorkspaceId?: string) => {
+    const appConfig = settingsManager.getCurrentConfig()
+    const workspace = activeWorkspaceId
+      ? await workspaceStore.getWorkspace(activeWorkspaceId).catch(() => null)
+      : null
+    const workingDirectory = workspace?.projects[0]?.path ?? workspaceManager.getWorkspaceRoot() ?? process.cwd()
+    return {
+      owner: 'desktop-local' as const,
+      workspaceId: activeWorkspaceId,
+      model: appConfig.model,
+      provider: appConfig.provider,
+      workingDirectory,
+      projectRoots: workspace ? workspace.projects.map(project => project.path) : [workingDirectory],
+    }
+  }
 
   // ============================================================
   // Session: list — returns all sessions for current project or task
   // ============================================================
   ipcMain.handle(IPC_CHANNELS['session:list'], async (_event, payload?: { activeWorkspaceId?: string }) => {
     const store = await resolveStore(payload?.activeWorkspaceId)
-    let sessions = await store.listSessions()
+    const sessions = await store.listSessions()
 
     // Enrich each session with todo summary and running status
     const runningIds = runtimes.listRunning()
@@ -145,7 +161,7 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     if (!result.success) {
       throw new Error(`Invalid request: ${result.error.message}`)
     }
-    let store = await resolveStore(result.data.activeWorkspaceId)
+    const store = await resolveStore(result.data.activeWorkspaceId)
     const success = await store.deleteSession(result.data.sessionId)
     if (success) {
       // Clean up associated steps from memory and disk
@@ -201,10 +217,10 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
   ipcMain.handle(IPC_CHANNELS['session:ensure'], async (_event, request: { sessionId: string; activeWorkspaceId?: string }) => {
     if (!/^[a-zA-Z0-9-]+$/.test(request.sessionId)) throw new Error('Invalid session ID format')
     const store = await resolveStore(request.activeWorkspaceId)
-    // appendMessages skips empty arrays, so use a canonical meta line.
-    // Keep the shape aligned with rename/mobile creation so listSessions()
-    // treats it as session metadata instead of counting it as a real message.
-    await store.appendMessage(request.sessionId, { type: 'meta', title: 'Untitled' })
+    await store.updateSessionConfig(request.sessionId, {
+      title: 'Untitled',
+      ...(await buildSessionDefaults(request.activeWorkspaceId)),
+    })
     onDataChanged?.('session:changed', { action: 'created', sessionId: request.sessionId })
     return { success: true }
   })
@@ -217,9 +233,50 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     const sessionId = crypto.randomUUID()
     const store = await resolveStore(request?.activeWorkspaceId)
     // 写入空 meta 行，使 listSessions() 能立即看到新会话
-    await store.appendMessage(sessionId, { type: 'meta', title: 'Untitled' })
+    await store.updateSessionConfig(sessionId, {
+      title: 'Untitled',
+      ...(await buildSessionDefaults(request?.activeWorkspaceId)),
+    })
     onDataChanged?.('session:changed', { action: 'created', sessionId })
     return { sessionId }
+  })
+
+  // ============================================================
+  // Session: config:get — 读取桌面本地会话的持久化默认配置
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:config:get'], async (_event, request) => {
+    const result = IpcSchemas['session:config:get'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    const store = await resolveStore(result.data.activeWorkspaceId)
+    const config = await store.getSessionConfig(result.data.sessionId)
+    if (!config) return { config: null }
+    return {
+      config: {
+        ...(await buildSessionDefaults(result.data.activeWorkspaceId)),
+        ...config,
+        owner: config.owner ?? 'desktop-local',
+      }
+    }
+  })
+
+  // ============================================================
+  // Session: config:update — 更新桌面本地会话的模型/Hand/工作区默认值
+  // ============================================================
+  ipcMain.handle(IPC_CHANNELS['session:config:update'], async (_event, request) => {
+    const result = IpcSchemas['session:config:update'].request.safeParse(request)
+    if (!result.success) {
+      throw new Error(`Invalid request: ${result.error.message}`)
+    }
+    const store = await resolveStore(result.data.activeWorkspaceId)
+    const config = await store.updateSessionConfig(result.data.sessionId, {
+      ...(await buildSessionDefaults(result.data.activeWorkspaceId)),
+      ...result.data.patch,
+      owner: result.data.patch.owner ?? 'desktop-local',
+    })
+    onDataChanged?.('session:changed', { action: 'config-updated', sessionId: result.data.sessionId })
+    return { config }
   })
 
   // ============================================================
@@ -240,7 +297,16 @@ export function registerSessionIpcHandlers(deps: SessionIpcDeps): void {
     const messages = await store.loadSession(sessionId)
     const exportDir = path.join(os.homedir(), '.wzxclaw', 'exports')
     const filePath = path.join(exportDir, `conversation-${sessionId.slice(0, 8)}`)
-    const result = await ConversationExporter.exportToFile(messages as any, filePath, format)
+    const exportMessages = messages.map(message => ({
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      toolCalls: message.toolCalls,
+      toolCallId: message.toolCallId,
+      isError: message.isError,
+      usage: message.usage,
+    }))
+    const result = await ConversationExporter.exportToFile(exportMessages, filePath, format)
     return { filePath: result, messageCount: messages.length }
   })
 }
