@@ -8,12 +8,17 @@ import type { WebSocket } from 'ws'
 import path from 'path'
 import {
   encodeAgentEvent,
+  CostTracker,
+  maybeTimeBasedMicrocompact,
   type AgentLoop,
   type AgentConfig,
+  type AgentDoneEvent,
   type ISessionStore,
   type IToolExecutor,
+  type IToolExecutionContext,
   type IEventSender,
   type SessionConfigPatch,
+  type Message,
 } from '@wzxclaw/brain'
 import type { ServerMessage } from './types.js'
 import { SessionService } from './session-service.js'
@@ -126,6 +131,12 @@ export class ClientHandler {
 
   /** Hands 路由器（用于按工具名查找在线 Hand，可选） */
   private readonly handsRouter: HandsRouter | null
+
+  /** 费用追踪器 — 按 ClientHandler 共享，跨连接累计 token 使用 */
+  private readonly costTracker = new CostTracker()
+
+  /** 当前费用追踪关联的会话 ID，切换会话时重置 */
+  private costSessionId: string | null = null
 
   constructor(
     sessionStore: ISessionStore,
@@ -360,6 +371,63 @@ export class ClientHandler {
       // ---- Plugins ----
       case 'plugin:list':
         this.handlePluginList(ws)
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      // ---- Host Operations (via Hand tool executor) ----
+      case 'host:test-connection':
+        this.handleHostTestConnection(ws, data as { hostId: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:exec':
+        this.handleHostExec(ws, data as { hostId: string; command: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:monitor':
+        this.handleHostMonitor(ws, data as { hostId: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:list':
+        this.handleHostSftpList(ws, data as { hostId: string; path: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:read':
+        this.handleHostSftpRead(ws, data as { hostId: string; path: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:download':
+        this.handleHostSftpDownload(ws, data as { hostId: string; remotePath: string; localPath?: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:upload':
+        this.handleHostSftpUpload(ws, data as { hostId: string; localPath: string; remotePath: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:mkdir':
+        this.handleHostSftpMkdir(ws, data as { hostId: string; path: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:sftp:delete':
+        this.handleHostSftpDelete(ws, data as { hostId: string; path: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:docker:list':
+        this.handleHostDockerList(ws, data as { hostId: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:docker:logs':
+        this.handleHostDockerLogs(ws, data as { hostId: string; containerId: string; tail?: number })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:docker:action':
+        this.handleHostDockerAction(ws, data as { hostId: string; containerId: string; action: 'start' | 'stop' | 'restart' | 'remove' })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:docker:stats':
+        this.handleHostDockerStats(ws, data as { hostId: string })
+          .catch((err) => this.sendProtocolError(ws, err))
+        break
+      case 'host:docker:images':
+        this.handleHostDockerImages(ws, data as { hostId: string })
           .catch((err) => this.sendProtocolError(ws, err))
         break
       // ---- Indexing ----
@@ -635,11 +703,61 @@ export class ClientHandler {
   }
 
   private async handleSessionCompact(ws: WebSocket, data: { sessionId: string }): Promise<void> {
-    // 触发 compaction 通知 — 实际 compaction 由 AgentLoop 在下次 turn 中执行
-    ws.send(JSON.stringify({
-      event: 'session:compacted',
-      data: { sessionId: data.sessionId },
-    }))
+    try {
+      // 加载会话消息
+      const rawMessages = await this.sessionStore.loadSession(data.sessionId)
+      const messages = Array.isArray(rawMessages) ? rawMessages as Message[] : []
+      const beforeCount = messages.length
+
+      // 消息不足时跳过（至少需要 2 条才有意义）
+      if (messages.length < 2) {
+        ws.send(JSON.stringify({
+          event: 'session:compacted',
+          data: { sessionId: data.sessionId, beforeCount, afterCount: beforeCount, skipped: true },
+        }))
+        return
+      }
+
+      // 执行基于时间的微压缩（无 LLM 调用）
+      const { messages: compacted, result } = maybeTimeBasedMicrocompact(messages)
+
+      if (!result.didCompact) {
+        ws.send(JSON.stringify({
+          event: 'session:compacted',
+          data: { sessionId: data.sessionId, beforeCount, afterCount: beforeCount, skipped: true },
+        }))
+        return
+      }
+
+      // 保存压缩后的消息
+      if (this.sessionStore.replaceMessages) {
+        await this.sessionStore.replaceMessages(data.sessionId, compacted)
+      } else {
+        // 降级：无法原子替换，跳过压缩
+        ws.send(JSON.stringify({
+          event: 'session:compacted',
+          data: { sessionId: data.sessionId, beforeCount, afterCount: beforeCount, skipped: true, reason: 'no replaceMessages' },
+        }))
+        return
+      }
+
+      ws.send(JSON.stringify({
+        event: 'session:compacted',
+        data: {
+          sessionId: data.sessionId,
+          beforeCount,
+          afterCount: compacted.length,
+          clearedCount: result.clearedCount,
+          charsSaved: result.charsSaved,
+          trigger: result.trigger,
+        },
+      }))
+    } catch (err) {
+      ws.send(JSON.stringify({
+        event: 'session:compacted',
+        data: { sessionId: data.sessionId, error: err instanceof Error ? err.message : String(err) },
+      }))
+    }
   }
 
   private async handleSessionRewind(ws: WebSocket, data: { sessionId: string; keepMessageCount: number }): Promise<void> {
@@ -725,6 +843,7 @@ export class ClientHandler {
 
   private async handleIndexingStatus(ws: WebSocket): Promise<void> {
     // agent-server 的索引用 Hand Grep/Glob 工具模拟
+    // indexedFiles: -1 表示文件数未知但搜索可用
     const defs = this.toolExecutor.getDefinitions()
     const toolNames = new Set(defs.map(d => d.name))
     ws.send(JSON.stringify({
@@ -732,9 +851,190 @@ export class ClientHandler {
       data: {
         available: toolNames.has('Grep') && toolNames.has('Glob'),
         backend: 'hand-tools',
-        indexedFiles: 0,
+        indexedFiles: -1,
         lastIndexed: null,
       },
+    }))
+  }
+
+  // ---- Host Operations (via Hand tool executor) ----
+
+  /** 构建主机操作的工具执行上下文 */
+  private buildHostToolContext(hostId?: string): IToolExecutionContext {
+    return {
+      workingDirectory: '/',
+      projectRoots: [],
+      abortSignal: AbortSignal.timeout(30_000),
+      targetHandId: hostId,
+    }
+  }
+
+  /** host:test-connection — 通过 ShellExecute 执行 echo 测试连通性 */
+  private async handleHostTestConnection(ws: WebSocket, data: { hostId: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: 'echo ok' }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:test-connection',
+      data: {
+        hostId: data.hostId,
+        success: !result.isError,
+        output: result.output,
+      },
+    }))
+  }
+
+  /** host:exec — 在主机上执行命令 */
+  private async handleHostExec(ws: WebSocket, data: { hostId: string; command: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: data.command }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:exec',
+      data: { hostId: data.hostId, output: result.output, isError: result.isError },
+    }))
+  }
+
+  /** host:monitor — 返回 stub 监控数据（真实监控需 SSH） */
+  private async handleHostMonitor(ws: WebSocket, data: { hostId: string }): Promise<void> {
+    ws.send(JSON.stringify({
+      event: 'host:monitor',
+      data: { hostId: data.hostId, cpu: 0, memory: 0, disk: 0, note: 'stub data; real monitoring requires SSH setup' },
+    }))
+  }
+
+  /** host:sftp:list — 列出远程路径下的文件 */
+  private async handleHostSftpList(ws: WebSocket, data: { hostId: string; path: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('FileList', { path: data.path }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:list',
+      data: result.isError
+        ? { hostId: data.hostId, entries: [], error: result.output }
+        : { hostId: data.hostId, entries: result.output },
+    }))
+  }
+
+  /** host:sftp:read — 读取远程文件 */
+  private async handleHostSftpRead(ws: WebSocket, data: { hostId: string; path: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('FileRead', { path: data.path }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:read',
+      data: result.isError
+        ? { hostId: data.hostId, content: '', error: result.output }
+        : { hostId: data.hostId, content: result.output },
+    }))
+  }
+
+  /** host:sftp:download — 下载远程文件（委托 Hand 执行） */
+  private async handleHostSftpDownload(ws: WebSocket, data: { hostId: string; remotePath: string; localPath?: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('FileRead', { path: data.remotePath }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:download',
+      data: result.isError
+        ? { hostId: data.hostId, success: false, error: result.output }
+        : { hostId: data.hostId, success: true, content: result.output },
+    }))
+  }
+
+  /** host:sftp:upload — 上传文件到远程（委托 Hand 执行） */
+  private async handleHostSftpUpload(ws: WebSocket, data: { hostId: string; localPath: string; remotePath: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    // 先读本地内容，再写远程（简化版；真实场景需分段传输）
+    const readResult = await this.toolExecutor.execute('FileRead', { path: data.localPath }, ctx)
+    if (readResult.isError) {
+      ws.send(JSON.stringify({ event: 'host:sftp:upload', data: { hostId: data.hostId, success: false, error: readResult.output } }))
+      return
+    }
+    const writeResult = await this.toolExecutor.execute('FileWrite', { path: data.remotePath, content: readResult.output }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:upload',
+      data: { hostId: data.hostId, success: !writeResult.isError, error: writeResult.isError ? writeResult.output : undefined },
+    }))
+  }
+
+  /** host:sftp:mkdir — 创建远程目录 */
+  private async handleHostSftpMkdir(ws: WebSocket, data: { hostId: string; path: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: `mkdir -p "${data.path}"` }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:mkdir',
+      data: { hostId: data.hostId, success: !result.isError, error: result.isError ? result.output : undefined },
+    }))
+  }
+
+  /** host:sftp:delete — 删除远程文件/目录 */
+  private async handleHostSftpDelete(ws: WebSocket, data: { hostId: string; path: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: `rm -rf "${data.path}"` }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:sftp:delete',
+      data: { hostId: data.hostId, success: !result.isError, error: result.isError ? result.output : undefined },
+    }))
+  }
+
+  /** host:docker:list — 列出 Docker 容器 */
+  private async handleHostDockerList(ws: WebSocket, data: { hostId: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: 'docker ps --format json' }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:docker:list',
+      data: result.isError
+        ? { hostId: data.hostId, containers: [], error: result.output }
+        : { hostId: data.hostId, raw: result.output },
+    }))
+  }
+
+  /** host:docker:logs — 获取容器日志 */
+  private async handleHostDockerLogs(ws: WebSocket, data: { hostId: string; containerId: string; tail?: number }): Promise<void> {
+    const tail = data.tail ?? 100
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: `docker logs --tail ${tail} "${data.containerId}"` }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:docker:logs',
+      data: result.isError
+        ? { hostId: data.hostId, logs: '', error: result.output }
+        : { hostId: data.hostId, logs: result.output, containerId: data.containerId },
+    }))
+  }
+
+  /** host:docker:action — 执行 Docker 容器操作 */
+  private async handleHostDockerAction(ws: WebSocket, data: { hostId: string; containerId: string; action: 'start' | 'stop' | 'restart' | 'remove' }): Promise<void> {
+    const validActions = ['start', 'stop', 'restart', 'remove']
+    if (!validActions.includes(data.action)) {
+      ws.send(JSON.stringify({ event: 'host:docker:action', data: { hostId: data.hostId, error: `Invalid action: ${data.action}` } }))
+      return
+    }
+    const cmd = data.action === 'remove' ? `docker rm -f "${data.containerId}"` : `docker ${data.action} "${data.containerId}"`
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: cmd }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:docker:action',
+      data: { hostId: data.hostId, containerId: data.containerId, action: data.action, success: !result.isError, output: result.output },
+    }))
+  }
+
+  /** host:docker:stats — 获取 Docker 资源使用统计 */
+  private async handleHostDockerStats(ws: WebSocket, data: { hostId: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: 'docker stats --no-stream' }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:docker:stats',
+      data: result.isError
+        ? { hostId: data.hostId, stats: '', error: result.output }
+        : { hostId: data.hostId, stats: result.output },
+    }))
+  }
+
+  /** host:docker:images — 列出 Docker 镜像 */
+  private async handleHostDockerImages(ws: WebSocket, data: { hostId: string }): Promise<void> {
+    const ctx = this.buildHostToolContext(data.hostId)
+    const result = await this.toolExecutor.execute('ShellExecute', { command: 'docker images --format json' }, ctx)
+    ws.send(JSON.stringify({
+      event: 'host:docker:images',
+      data: result.isError
+        ? { hostId: data.hostId, images: [], error: result.output }
+        : { hostId: data.hostId, raw: result.output },
     }))
   }
 
@@ -799,6 +1099,7 @@ export class ClientHandler {
    * 2. 创建新 AgentLoop
    * 3. 消费 AsyncGenerator，每个 event 转换为 Client 协议发送
    * 4. 完成后将消息追加到 session store
+   * 5. 费用追踪 + 运行状态广播
    */
   private async handleChatSend(ws: WebSocket, data: ChatSendData): Promise<void> {
     const { sessionId, message } = data
@@ -815,6 +1116,12 @@ export class ClientHandler {
     const loop = this.createLoop()
     state.activeLoop = loop
     state.consuming = true
+
+    // 费用追踪：切换会话时重置 CostTracker
+    if (this.costSessionId !== sessionId) {
+      this.costTracker.resetSession()
+      this.costSessionId = sessionId
+    }
 
     // 构建 AgentConfig
     const sessionConfig = await this.sessionService.getSessionConfig(sessionId).catch(() => null)
@@ -847,8 +1154,10 @@ export class ClientHandler {
     }
 
     this.sessionService.startRun(sessionId, historyLength)
+    // 广播运行状态给所有已连接客户端
+    this.broadcastToAll('session:running', { sessionId, status: 'running' })
 
-    // 创建事件发送器
+    // 创建事件发送器（支持子 Agent 事件转发）
     const sender = new WebSocketEventSender(ws)
 
     try {
@@ -856,6 +1165,19 @@ export class ClientHandler {
       for await (const event of loop.run(message, config, sender, this.toolExecutor)) {
         // 如果被新的请求中断，停止消费
         if (!state.consuming || state.activeLoop !== loop) break
+
+        // 费用追踪：从 agent:done 事件提取 usage
+        if (event.type === 'agent:done') {
+          const doneEvent = event as AgentDoneEvent
+          const model = doneEvent.model ?? config.model ?? 'unknown'
+          this.costTracker.addUsage(
+            model,
+            doneEvent.usage.inputTokens,
+            doneEvent.usage.outputTokens,
+            doneEvent.usage.cacheReadTokens ?? 0,
+            doneEvent.usage.cacheWriteTokens ?? 0,
+          )
+        }
 
         // 将 AgentEvent 转换为 Client 协议消息（共享 brain wire-codec）
         const clientMsg = encodeAgentEvent(event)
@@ -882,9 +1204,20 @@ export class ClientHandler {
           await this.sessionService.appendMessage(sessionId, msg)
         }
         this.sessionService.finishRun(sessionId, 0, messages.length)
+        // 广播空闲状态给所有已连接客户端
+        this.broadcastToAll('session:running', { sessionId, status: 'idle' })
       } catch {
         // 持久化失败 — 不影响客户端
       }
+
+      // 发送费用统计事件
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({
+          event: 'usage:updated',
+          data: this.costTracker.getSession(),
+        }))
+      }
+
       state.activeLoop = null
       state.consuming = false
     }
@@ -1053,6 +1386,19 @@ export class ClientHandler {
   private handleToolList(ws: WebSocket): void {
     const definitions = this.toolExecutor.getDefinitions()
     ws.send(JSON.stringify({ event: 'tool:list', data: { definitions } }))
+  }
+
+  /**
+   * 向所有已连接客户端广播消息
+   * 用于 session 运行状态变更等全局事件
+   */
+  private broadcastToAll(event: string, data: unknown): void {
+    const msg = JSON.stringify({ event, data })
+    for (const [ws] of this.connectionStates) {
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        ws.send(msg)
+      }
+    }
   }
 
   /**

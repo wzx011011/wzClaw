@@ -193,8 +193,8 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'hi' },
       }))
 
-      // 等待异步 handleChatSend 完成
-      await pollUntil(() => ws._sent.length >= 2)
+      // 等待异步 handleChatSend 完成（现在还会发送 session:running + usage:updated）
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const textMsg = msgs.find(m => m.event === 'stream:text')
@@ -204,6 +204,12 @@ describe('ClientHandler', () => {
       const doneMsg = msgs.find(m => m.event === 'stream:done')
       expect(doneMsg).toBeDefined()
       expect(doneMsg!.data).toEqual({ usage: { inputTokens: 10, outputTokens: 5 }, turnCount: 1 })
+
+      // 验证 usage:updated 事件
+      const usageMsg = msgs.find(m => m.event === 'usage:updated')
+      expect(usageMsg).toBeDefined()
+      expect((usageMsg!.data as { inputTokens: number }).inputTokens).toBe(10)
+      expect((usageMsg!.data as { outputTokens: number }).outputTokens).toBe(5)
     })
 
     it('agent:tool_call → stream:tool_call', async () => {
@@ -222,7 +228,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'read file' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 2)
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const toolMsg = msgs.find(m => m.event === 'stream:tool_call')
@@ -246,7 +252,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'read file' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 2)
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const resultMsg = msgs.find(m => m.event === 'stream:tool_result')
@@ -270,7 +276,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'error test' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 2)
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const errMsg = msgs.find(m => m.event === 'stream:error')
@@ -294,7 +300,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'think' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 2)
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const thinkMsg = msgs.find(m => m.event === 'stream:thinking')
@@ -318,7 +324,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'compact' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 2)
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
 
       const msgs = ws._getSentMessages()
       const compactMsg = msgs.find(m => m.event === 'stream:compacted')
@@ -511,7 +517,7 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'hi' },
       }))
 
-      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done') && ws._getSentMessages().some(m => m.event === 'usage:updated'))
 
       const runCall = mockLoop.run.mock.calls[0]
       expect(runCall![1].targetHandId).toBe('desktop-hand-1')
@@ -602,7 +608,8 @@ describe('ClientHandler', () => {
         data: { sessionId: 's1', message: 'second' },
       }))
 
-      await pollUntil(() => ws._sent.length >= 3)
+      // 等待第二个 loop 完成（stream:done 出现即可）
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:text' && (m.data as { delta: string }).delta === 'second'))
 
       expect(cancelFn).toHaveBeenCalled()
 
@@ -668,7 +675,8 @@ describe('ClientHandler', () => {
       handler.handleConnection(ws)
       ws._emit('message', JSON.stringify({ event: 'chat:send', data: { sessionId: 's1', message: 'new' } }))
 
-      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done'))
+      // 等待 stream:done + usage:updated（确保完整生命周期结束）
+      await pollUntil(() => ws._getSentMessages().some(m => m.event === 'stream:done') && ws._getSentMessages().some(m => m.event === 'usage:updated'))
 
       expect(sessionStore.appendMessage).toHaveBeenCalledTimes(2)
       expect(sessionStore.appendMessage).toHaveBeenNthCalledWith(1, 's1', { role: 'user', content: 'new' })
