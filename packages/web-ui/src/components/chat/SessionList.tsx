@@ -73,24 +73,24 @@ export default function SessionList({ store }: SessionListProps): React.ReactEle
   // 仅跟踪会话列表与激活会话，避免流式消息时整侧栏高频重渲染
   const [state, setState] = useState(() => {
     const current = store.getState()
-    return { sessions: current.sessions, conversationId: current.conversationId }
+    return { sessions: current.sessions, conversationId: current.conversationId, runningSessionIds: current.runningSessionIds }
   })
 
   useEffect(() => {
     const current = store.getState()
-    setState({ sessions: current.sessions, conversationId: current.conversationId })
+    setState({ sessions: current.sessions, conversationId: current.conversationId, runningSessionIds: current.runningSessionIds })
     return store.subscribe(() => {
       const next = store.getState()
       setState((prev) => {
-        if (prev.sessions === next.sessions && prev.conversationId === next.conversationId) {
+        if (prev.sessions === next.sessions && prev.conversationId === next.conversationId && prev.runningSessionIds === next.runningSessionIds) {
           return prev
         }
-        return { sessions: next.sessions, conversationId: next.conversationId }
+        return { sessions: next.sessions, conversationId: next.conversationId, runningSessionIds: next.runningSessionIds }
       })
     })
   }, [store])
 
-  const { sessions, conversationId } = state
+  const { sessions, conversationId, runningSessionIds } = state
   const switchSession = store.getState().switchSession
   const deleteSession = store.getState().deleteSession
   const renameSession = store.getState().renameSession
@@ -247,7 +247,23 @@ export default function SessionList({ store }: SessionListProps): React.ReactEle
                 handleStartRename(session.id, session.title)
               }}
               title="双击重命名"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
+              {/* 运行中脉冲指示器 */}
+              {runningSessionIds.has(session.id) && (
+                <span
+                  className="session-running-dot"
+                  style={{
+                    display: 'inline-block',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--status-connected, #4caf50)',
+                    flexShrink: 0,
+                    animation: 'session-pulse 1.5s ease-in-out infinite',
+                  }}
+                />
+              )}
               {session.title}
             </div>
           )}

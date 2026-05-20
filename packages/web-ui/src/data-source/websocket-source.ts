@@ -56,16 +56,16 @@ export class WebSocketDataSource implements DataSource {
     workspace: true,
     fs: true,
     terminal: true,
-    preview: false,
+    preview: false,      // Desktop-only via IPC
     tools: true,
-    permission: false,
-    mcp: false,
-    skills: false,
-    plugins: false,
-    hosts: false,
-    indexing: false,
-    insights: false,
-    browser: false,
+    permission: true,     // Server supports permission:get/set
+    mcp: true,           // Server supports mcp:list
+    skills: true,        // Server supports knowledge:get (returns skills)
+    plugins: true,       // Server supports plugin:list
+    hosts: true,         // Server supports host CRUD + operations
+    indexing: true,      // Server supports indexing:search
+    insights: false,     // Still stub
+    browser: false,      // Desktop-only
     notifications: false,
   }
 
@@ -628,6 +628,11 @@ export class WebSocketDataSource implements DataSource {
       'stream:compacted': 'compacted',
       'stream:turn_end': 'turn_end',
       'stream:tool_progress': 'tool_progress',
+      'usage:updated': 'usage_updated',
+      'session:running': 'session_running',
+      'stream:sub_tool_use_start': 'sub_tool_use_start',
+      'stream:sub_tool_use_end': 'sub_tool_use_end',
+      'stream:sub_text': 'sub_text',
     }
     return mapping[serverEvent] ?? null
   }

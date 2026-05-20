@@ -27,6 +27,11 @@ export type StreamEventType =
   | 'compacted'
   | 'tool_progress'
   | 'turn_end'
+  | 'usage_updated'
+  | 'session_running'
+  | 'sub_tool_use_start'
+  | 'sub_tool_use_end'
+  | 'sub_text'
 
 // ---- Stream 事件 Payload ----
 
@@ -88,6 +93,40 @@ export interface TurnEndStreamPayload {
   readonly sessionId: string
 }
 
+/** 用量/费用更新事件 */
+export interface UsageUpdatedStreamPayload {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalCostUSD: number
+}
+
+/** 会话运行状态变更事件 */
+export interface SessionRunningStreamPayload {
+  readonly sessionId: string
+  readonly status: 'running' | 'idle'
+}
+
+/** 子代理工具调用开始事件 */
+export interface SubToolUseStartStreamPayload {
+  readonly toolCallId: string
+  readonly name: string
+  readonly input: Record<string, unknown>
+  readonly parentToolCallId?: string
+}
+
+/** 子代理工具调用结束事件 */
+export interface SubToolUseEndStreamPayload {
+  readonly toolCallId: string
+  readonly output: string
+  readonly isError: boolean
+}
+
+/** 子代理文本增量事件 */
+export interface SubTextStreamPayload {
+  readonly delta: string
+  readonly parentToolCallId?: string
+}
+
 /** Stream 事件 Payload 联合类型（按 StreamEventType 映射） */
 export type StreamPayloadMap = {
   text: TextStreamPayload
@@ -99,6 +138,11 @@ export type StreamPayloadMap = {
   compacted: CompactedStreamPayload
   tool_progress: ToolProgressStreamPayload
   turn_end: TurnEndStreamPayload
+  usage_updated: UsageUpdatedStreamPayload
+  session_running: SessionRunningStreamPayload
+  sub_tool_use_start: SubToolUseStartStreamPayload
+  sub_tool_use_end: SubToolUseEndStreamPayload
+  sub_text: SubTextStreamPayload
 }
 
 /** Stream 事件回调函数类型 */

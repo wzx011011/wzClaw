@@ -243,4 +243,120 @@ describe('createChatStore', () => {
     expect(mock.stopGenerationSpy).toHaveBeenCalledTimes(1)
     expect(store.getState().isStreaming).toBe(false)
   })
+
+  // ---- 新增：usage_updated 事件累积 sessionCost ----
+
+  it('Test 7: usage_updated 事件累积 sessionCost', async () => {
+    const store = createChatStore(mock.dataSource)
+    const unsub = store.getState().init()
+
+    // 初始状态：sessionCost 为 null
+    expect(store.getState().sessionCost).toBeNull()
+
+    // 模拟第一次 usage_updated
+    mock.emitStream('usage_updated', { inputTokens: 100, outputTokens: 50, totalCostUSD: 0.002 })
+    expect(store.getState().sessionCost).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      totalCostUSD: 0.002,
+    })
+
+    // 模拟第二次 usage_updated（累积）
+    mock.emitStream('usage_updated', { inputTokens: 200, outputTokens: 100, totalCostUSD: 0.005 })
+    expect(store.getState().sessionCost).toEqual({
+      inputTokens: 300,
+      outputTokens: 150,
+      totalCostUSD: 0.007,
+    })
+
+    unsub()
+  })
+
+  // ---- 新增：session_running 事件更新 runningSessionIds ----
+
+  it('Test 8: session_running 事件更新 runningSessionIds 集合', async () => {
+    const store = createChatStore(mock.dataSource)
+    const unsub = store.getState().init()
+
+    // 初始状态：空集合
+    expect(store.getState().runningSessionIds.size).toBe(0)
+
+    // 模拟 running
+    mock.emitStream('session_running', { sessionId: 's-1', status: 'running' })
+    expect(store.getState().runningSessionIds.has('s-1')).toBe(true)
+
+    // 模拟另一个会话 running
+    mock.emitStream('session_running', { sessionId: 's-2', status: 'running' })
+    expect(store.getState().runningSessionIds.has('s-1')).toBe(true)
+    expect(store.getState().runningSessionIds.has('s-2')).toBe(true)
+
+    // 模拟 s-1 idle
+    mock.emitStream('session_running', { sessionId: 's-1', status: 'idle' })
+    expect(store.getState().runningSessionIds.has('s-1')).toBe(false)
+    expect(store.getState().runningSessionIds.has('s-2')).toBe(true)
+
+    unsub()
+  })
+
+  // ---- 新增：sub-stream 事件更新 subAgentData ----
+
+  it('Test 9: sub_tool_use_start/end 和 sub_text 事件更新 subAgentData', async () => {
+    const store = createChatStore(mock.dataSource)
+    const unsub = store.getState().init()
+
+    // 初始状态：空 Map
+    expect(store.getState().subAgentData.size).toBe(0)
+
+    // 模拟 sub_tool_use_start
+    mock.emitStream('sub_tool_use_start', {
+      toolCallId: 'tc-1',
+      name: 'FileRead',
+      input: { path: '/a.ts' },
+      parentToolCallId: 'parent-1',
+    })
+
+    const data1 = store.getState().subAgentData.get('parent-1')
+    expect(data1).toBeDefined()
+    expect(data1!.toolCalls).toHaveLength(1)
+    expect(data1!.toolCalls[0]!.name).toBe('FileRead')
+    expect(data1!.toolCalls[0]!.status).toBe('running')
+
+    // 模拟 sub_text
+    mock.emitStream('sub_text', { delta: 'reading...', parentToolCallId: 'parent-1' })
+    const data2 = store.getState().subAgentData.get('parent-1')
+    expect(data2!.text).toBe('reading...')
+
+    // 模拟 sub_tool_use_end
+    mock.emitStream('sub_tool_use_end', {
+      toolCallId: 'tc-1',
+      output: 'file content',
+      isError: false,
+    })
+    const data3 = store.getState().subAgentData.get('parent-1')
+    expect(data3!.toolCalls[0]!.status).toBe('completed')
+    expect(data3!.toolCalls[0]!.output).toBe('file content')
+
+    unsub()
+  })
+
+  // ---- 新增：clearConversation 重置 sessionCost 和 subAgentData ----
+
+  it('Test 10: clearConversation 重置 sessionCost 和 subAgentData', async () => {
+    const store = createChatStore(mock.dataSource)
+    const unsub = store.getState().init()
+
+    // 累积一些数据
+    mock.emitStream('usage_updated', { inputTokens: 100, outputTokens: 50, totalCostUSD: 0.002 })
+    mock.emitStream('sub_tool_use_start', { toolCallId: 'tc-1', name: 'Echo', input: {} })
+    expect(store.getState().sessionCost).not.toBeNull()
+    expect(store.getState().subAgentData.size).toBeGreaterThan(0)
+
+    // clearConversation
+    store.getState().clearConversation()
+
+    expect(store.getState().sessionCost).toBeNull()
+    expect(store.getState().subAgentData.size).toBe(0)
+
+    unsub()
+  })
 })

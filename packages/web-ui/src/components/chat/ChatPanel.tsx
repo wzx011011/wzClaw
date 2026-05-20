@@ -10,7 +10,7 @@
 // 移除：Settings / PluginManager 内嵌面板
 // ============================================================
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import MessageList from './MessageList'
 import MicButton from '../mobile/MicButton'
 import SlashCommandPicker from './SlashCommandPicker'
@@ -69,7 +69,7 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  const { isStreaming, error } = state
+  const { isStreaming, error, sessionCost } = state
   const inputValue = state._inputValue ?? ''
   const setInputValue = (val: string) => {
     store.setState({ _inputValue: val } as unknown as Partial<ChatStore>)
@@ -91,15 +91,17 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
   const inputAreaRef = useRef<HTMLDivElement>(null)
 
   // 生成提及候选项：Hand 列表
-  const mentionItems: MentionItem[] = useHandStore(
-    useCallback((s) => s.hands.map((h) => ({
-      id: h.id,
-      label: h.id,
-      value: `@${h.id}`,
-      type: 'hand' as const,
-      description: h.capabilities.slice(0, 3).join(', '),
-    })), [])
-  )
+  // 注意：必须先获取稳定的 hands 引用，再用 useMemo 转换
+  // 不能在 Zustand selector 内直接 .map()，否则每次都返回新数组引用
+  // 导致 useSyncExternalStore 的 tearing 检测触发无限重渲染（React Error #185）
+  const hands = useHandStore((s) => s.hands)
+  const mentionItems: MentionItem[] = useMemo(() => hands.map((h) => ({
+    id: h.id,
+    label: h.id,
+    value: `@${h.id}`,
+    type: 'hand' as const,
+    description: h.capabilities.slice(0, 3).join(', '),
+  })), [hands])
 
   // 自动调整 textarea 高度
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
@@ -243,6 +245,21 @@ export default function ChatPanel({ store, connected = false, modelName }: ChatP
             )}
           </div>
           <div className="chat-toolbar-right">
+            {/* 用量/费用指示器 */}
+            {sessionCost && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap',
+                }}
+                title={`输入: ${sessionCost.inputTokens.toLocaleString()} tokens · 输出: ${sessionCost.outputTokens.toLocaleString()} tokens`}
+              >
+                {sessionCost.totalCostUSD < 0.01
+                  ? `$${sessionCost.totalCostUSD.toFixed(4)}`
+                  : `$${sessionCost.totalCostUSD.toFixed(2)}`}
+              </span>
+            )}
             {/* 模型标签 */}
             {modelName && (
               <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>

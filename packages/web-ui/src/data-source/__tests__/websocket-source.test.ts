@@ -509,4 +509,105 @@ describe('WebSocketDataSource', () => {
       expect(onUrlChange).toHaveBeenCalledWith('http://localhost:3000')
     })
   })
+
+  // ---- 新增事件测试 ----
+
+  describe('usage:updated 事件', () => {
+    it('收到 usage:updated 后触发 usage_updated stream 监听器', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onUsage = vi.fn()
+      source.onStreamEvent('usage_updated', onUsage)
+
+      fakeWs.simulateMessage({
+        event: 'usage:updated',
+        data: { inputTokens: 1500, outputTokens: 300, totalCostUSD: 0.0035 },
+      })
+
+      expect(onUsage).toHaveBeenCalledTimes(1)
+      expect(onUsage).toHaveBeenCalledWith({
+        inputTokens: 1500,
+        outputTokens: 300,
+        totalCostUSD: 0.0035,
+      })
+    })
+  })
+
+  describe('session:running 事件', () => {
+    it('收到 session:running 后触发 session_running stream 监听器', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onRunning = vi.fn()
+      source.onStreamEvent('session_running', onRunning)
+
+      fakeWs.simulateMessage({
+        event: 'session:running',
+        data: { sessionId: 's-123', status: 'running' },
+      })
+
+      expect(onRunning).toHaveBeenCalledTimes(1)
+      expect(onRunning).toHaveBeenCalledWith({ sessionId: 's-123', status: 'running' })
+
+      // idle 状态
+      fakeWs.simulateMessage({
+        event: 'session:running',
+        data: { sessionId: 's-123', status: 'idle' },
+      })
+
+      expect(onRunning).toHaveBeenCalledTimes(2)
+      expect(onRunning).toHaveBeenLastCalledWith({ sessionId: 's-123', status: 'idle' })
+    })
+  })
+
+  describe('sub-stream 事件', () => {
+    it('收到 stream:sub_tool_use_start/end/sub_text 事件并分发', async () => {
+      const source = new WebSocketDataSource('ws://localhost:8082')
+      const connectPromise = source.connect()
+      fakeWs.simulateOpen()
+      await connectPromise
+
+      const onSubStart = vi.fn()
+      const onSubEnd = vi.fn()
+      const onSubText = vi.fn()
+      source.onStreamEvent('sub_tool_use_start', onSubStart)
+      source.onStreamEvent('sub_tool_use_end', onSubEnd)
+      source.onStreamEvent('sub_text', onSubText)
+
+      // sub_tool_use_start
+      fakeWs.simulateMessage({
+        event: 'stream:sub_tool_use_start',
+        data: { toolCallId: 'tc-sub-1', name: 'FileRead', input: { path: '/a.ts' }, parentToolCallId: 'tc-parent' },
+      })
+      expect(onSubStart).toHaveBeenCalledWith({
+        toolCallId: 'tc-sub-1',
+        name: 'FileRead',
+        input: { path: '/a.ts' },
+        parentToolCallId: 'tc-parent',
+      })
+
+      // sub_text
+      fakeWs.simulateMessage({
+        event: 'stream:sub_text',
+        data: { delta: 'reading file...', parentToolCallId: 'tc-parent' },
+      })
+      expect(onSubText).toHaveBeenCalledWith({ delta: 'reading file...', parentToolCallId: 'tc-parent' })
+
+      // sub_tool_use_end
+      fakeWs.simulateMessage({
+        event: 'stream:sub_tool_use_end',
+        data: { toolCallId: 'tc-sub-1', output: 'file content', isError: false },
+      })
+      expect(onSubEnd).toHaveBeenCalledWith({
+        toolCallId: 'tc-sub-1',
+        output: 'file content',
+        isError: false,
+      })
+    })
+  })
 })

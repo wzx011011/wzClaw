@@ -45,6 +45,12 @@ interface ChatState {
   sessions: SessionMeta[]
   /** 当前激活的会话 ID（用于 SessionList 高亮） */
   activeSessionId: string | null
+  /** 当前会话的用量/费用信息 */
+  sessionCost: { inputTokens: number; outputTokens: number; totalCostUSD: number } | null
+  /** 正在运行中的会话 ID 集合（用于 SessionList 显示运行指示器） */
+  runningSessionIds: Set<string>
+  /** 子代理嵌套工具调用数据（按 parentToolCallId 或 toolCallId 索引） */
+  subAgentData: Map<string, { toolCalls: Array<{ id: string; name: string; status: 'running' | 'completed' | 'error'; input?: Record<string, unknown>; output?: string; isError?: boolean }>; text: string }>
 }
 
 /** Chat store 操作 */
@@ -144,6 +150,9 @@ export function createChatStore(
       streamJustEnded: false,
       sessions: [],
       activeSessionId: null,
+      sessionCost: null,
+      runningSessionIds: new Set(),
+      subAgentData: new Map(),
 
       // ---- 操作 ----
 
@@ -338,6 +347,104 @@ export function createChatStore(
           })
         })
 
+        // 订阅 usage_updated 事件 — 用量/费用更新
+        const unsubUsageUpdated = dataSource.onStreamEvent('usage_updated', (payload) => {
+          const { inputTokens, outputTokens, totalCostUSD } = payload as {
+            inputTokens: number
+            outputTokens: number
+            totalCostUSD: number
+          }
+          set((state) => ({
+            sessionCost: {
+              inputTokens: (state.sessionCost?.inputTokens ?? 0) + inputTokens,
+              outputTokens: (state.sessionCost?.outputTokens ?? 0) + outputTokens,
+              totalCostUSD: (state.sessionCost?.totalCostUSD ?? 0) + totalCostUSD,
+            }
+          }))
+        })
+
+        // 订阅 session_running 事件 — 会话运行状态变更
+        const unsubSessionRunning = dataSource.onStreamEvent('session_running', (payload) => {
+          const { sessionId, status } = payload as {
+            sessionId: string
+            status: 'running' | 'idle'
+          }
+          set((state) => {
+            const next = new Set(state.runningSessionIds)
+            if (status === 'running') {
+              next.add(sessionId)
+            } else {
+              next.delete(sessionId)
+            }
+            // 返回新的 Set 引用以触发重渲染
+            return { runningSessionIds: next }
+          })
+        })
+
+        // 订阅 sub_tool_use_start 事件 — 子代理工具调用开始
+        const unsubSubToolUseStart = dataSource.onStreamEvent('sub_tool_use_start', (payload) => {
+          const { toolCallId, name, input, parentToolCallId } = payload as {
+            toolCallId: string
+            name: string
+            input: Record<string, unknown>
+            parentToolCallId?: string
+          }
+          set((state) => {
+            const key = parentToolCallId ?? toolCallId
+            const next = new Map(state.subAgentData)
+            const existing = next.get(key) ?? { toolCalls: [], text: '' }
+            next.set(key, {
+              ...existing,
+              toolCalls: [...existing.toolCalls, { id: toolCallId, name, status: 'running' as const, input }]
+            })
+            return { subAgentData: next }
+          })
+        })
+
+        // 订阅 sub_tool_use_end 事件 — 子代理工具调用结束
+        const unsubSubToolUseEnd = dataSource.onStreamEvent('sub_tool_use_end', (payload) => {
+          const { toolCallId, output, isError } = payload as {
+            toolCallId: string
+            output: string
+            isError: boolean
+          }
+          set((state) => {
+            const next = new Map(state.subAgentData)
+            // 查找包含此 toolCallId 的条目
+            for (const [key, entry] of next) {
+              const tcIdx = entry.toolCalls.findIndex(tc => tc.id === toolCallId)
+              if (tcIdx !== -1) {
+                const updated = { ...entry }
+                updated.toolCalls = [...updated.toolCalls]
+                updated.toolCalls[tcIdx] = {
+                  ...updated.toolCalls[tcIdx]!,
+                  output,
+                  isError,
+                  status: isError ? 'error' as const : 'completed' as const
+                }
+                next.set(key, updated)
+                break
+              }
+            }
+            return { subAgentData: next }
+          })
+        })
+
+        // 订阅 sub_text 事件 — 子代理文本增量
+        const unsubSubText = dataSource.onStreamEvent('sub_text', (payload) => {
+          const { delta, parentToolCallId } = payload as {
+            delta: string
+            parentToolCallId?: string
+          }
+          set((state) => {
+            const key = parentToolCallId ?? '__default__'
+            const next = new Map(state.subAgentData)
+            const existing = next.get(key) ?? { toolCalls: [], text: '' }
+            next.set(key, { ...existing, text: existing.text + delta })
+            return { subAgentData: next }
+          })
+        })
+
         // 返回取消订阅函数
         return () => {
           batcher.reset()
@@ -348,6 +455,11 @@ export function createChatStore(
           unsubError()
           unsubDone()
           unsubCompacted()
+          unsubUsageUpdated()
+          unsubSessionRunning()
+          unsubSubToolUseStart()
+          unsubSubToolUseEnd()
+          unsubSubText()
         }
       },
 
@@ -441,7 +553,9 @@ export function createChatStore(
             isWaitingForResponse: false,
             streamingMessageId: null,
             streamJustEnded: false,
-            error: null
+            error: null,
+            sessionCost: null,
+            subAgentData: new Map(),
           })
         } catch (err) {
           // 如果 DataSource 不支持 createSession（如 IPC 模式），使用客户端生成 ID
@@ -453,7 +567,9 @@ export function createChatStore(
             isWaitingForResponse: false,
             streamingMessageId: null,
             streamJustEnded: false,
-            error: null
+            error: null,
+            sessionCost: null,
+            subAgentData: new Map(),
           })
         }
       },
@@ -471,7 +587,9 @@ export function createChatStore(
           isWaitingForResponse: false,
           streamingMessageId: null,
           streamJustEnded: false,
-          error: null
+          error: null,
+          sessionCost: null,
+          subAgentData: new Map(),
         })
       },
 
@@ -506,7 +624,9 @@ export function createChatStore(
             isWaitingForResponse: false,
             streamingMessageId: null,
             streamJustEnded: false,
-            error: null
+            error: null,
+            sessionCost: null,
+            subAgentData: new Map(),
           })
         } catch (err) {
           console.error('加载会话失败:', err)
@@ -545,7 +665,9 @@ export function createChatStore(
             isWaitingForResponse: false,
             streamingMessageId: null,
             streamJustEnded: false,
-            error: null
+            error: null,
+            sessionCost: null,
+            subAgentData: new Map(),
           })
           return
         }
