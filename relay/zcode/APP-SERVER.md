@@ -211,3 +211,61 @@ state.updated          patch.status="idle"
 subscribe 参数枚举/events 归属/切换后可达性）、`probe-sync2.js`（subscribe
 `web-remote-replayable` + 真实最小回合推送帧抓取，`--session` 可复用会话）、
 报告 `probe-sync*-report.json`。
+
+## 空闲存活实测(2026-09-14,probe-idle.js)
+
+> probe 角色认证进房后**完全静默**(仅把收到的反向请求自动回绝),测量空闲连接
+> 被谁何时掐断。环境:本机 loopback 全真链路 `probe-idle.js → server.js(默认配置
+> authTimeoutMs 10000 / roomTtlMs 60000 / sweepIntervalMs 1000 / pingIntervalMs 30000)
+> ← companion.js`,companion spawn 真实 `zcode app-server`(R1 配对即拉起,全程零
+> appserver-* 异常事件)。relay 日志时间戳为 UTC(本地 UTC+8)。
+
+### 每轮结果
+
+| 轮次 | 时长 | 探针侧输出 | relay 侧 ws-close |
+| --- | --- | --- | --- |
+| R1 | 300s | `CONN#1 authed pair=matched`,无 closed 行,到点自退 | 16:20:20.867 probe 1006(探针 process.exit 裸断,非 relay 行为) |
+| R2 | 300s | 同上 | 16:27:17.173 probe 1006(自退;中途 16:25:44 有一次 device 1006,见下"插曲") |
+| R3 | 300s | 同上;全程 28s 间隔巡检:relay 零新事件、companion 恒 `state=paired`、TCP 连接数恒定 | 16:36:54.823 probe 1006(自退) |
+| R4 | 600s | 同上 | 17:00:23.625 probe 1006(自退) |
+
+3×300s + 1×600s,空闲连接 **100% 存活**;期间出现的 close 全部是探针自身到点
+`process.exit`(未发 close 帧,故 relay 记 1006)。同一 sid/hash 跨全部轮次复用,
+房间从未被清扫。
+
+### 负对照:不回 pong 的端(临时脚本,未入库)
+
+认证后暂停底层 socket(不再读 relay ping → 无 pong,双侧墙钟对齐):
+
+- 认证 16:46:40.196 → relay `ws-close role=probe code=1006` 于 16:47:32.276,
+  **+52.1s 被 terminate**——正是"第 1 个心跳周期置 alive=false、第 2 个周期
+  terminate"的代码路径,相位决定窗口 30–60s。
+- 被掐端因不再读 socket,客户端侧 150s 内毫无感知(**半开**)。
+
+### 归因结论
+
+1. **空闲连接不会被任何一方掐断。** relay 心跳是协议层 ping,ws 客户端库自动回
+   pong,应用层完全静默也满足;roomTtlMs(60s)只清**空置**房间(房内 device+probe
+   齐全时 inactiveAt=null);companion 无空闲清理逻辑(状态恒 paired);app-server
+   在 stdio 上同样静默。
+2. **心跳清扫器确实武装着**——空闲存活是自动 pong 的功劳,不是心跳没开。
+3. **半开是唯一真实风险**:真正失联的端 30–60s 内被 relay 清出房间,但失联端自己
+   要到下一次收发才发现;恢复路径即已实现的"重连 + 同角色接管"(fe22b20)。
+
+### 插曲:R2 中途的 device 1006(环境噪音,非本链路)
+
+16:25:44.576 relay 记录 `ws-close role=device code=1006`,但 companion 日志全程无
+`state=disconnected`,其 socket 未死(16:27:17 仍收到房间 pair 通知并记
+waiting-pairing);事后 `/health` 仍 `rooms:1, devices:1`;R3 全程监控未复现。证据
+指向本机残留的旧会话客户端重连 127.0.0.1:18884(自带房间,死后被 TTL 清扫)——
+对本测量零影响,非 relay bug。
+
+### 保活策略建议(仅建议,未改任何代码)
+
+- **手机 App 无需为 relay 增加应用层心跳**:协议层自动 pong 已满足 relay 30s 心跳;
+  公网路径(wss://zcode.5945.top 经 nginx)的空闲超时由 relay 每 30s 的 ping/pong
+  双向流量刷新(nginx proxy_read/send_timeout 默认 60s > 30s)。
+- **半开主动检测(可选)**:前台时低频发 `pair_status_query`(60–120s 一次足矣),
+  发送失败即触发重连→接管;间隔无需短于 relay 心跳周期。
+- **relay 配置不建议调整**:pingIntervalMs=30s 同时满足半开清理(30–60s)与中间
+  设备保活,缩短只增加移动端耗电;companion 无需改动。
