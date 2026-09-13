@@ -54,19 +54,19 @@ mid 持久化于 `~/.wzxclaw/zcode-companion/mid`。
 - companion 连接 `--relay wss://zcode.5945.top/ws`，配对 URL 为
   `https://zcode.5945.top/pair?...`。
 
-## 手机端（packages/web-ui + mobile/）
+## 手机端（wzxClaw_android / Flutter，进行中）
 
-- 协议客户端 `packages/web-ui/src/zcode/zcode-relay-client.ts`（probe 角色认证 +
-  ZCode Protocol v1 RPC，runtime preferences 自动代答，未知反向请求默认拒绝）。
-- 适配器 `packages/web-ui/src/zcode/zcode-data-source.ts`（实现 web-ui 的
-  DataSource 接口：session/list→listSessions、resume 的 parts→RawMessage、
-  send/懒建会话、运行中轮询 `session/events` 的 `text_delta`→'text' 事件、
-  `turn.terminal`→'done'）。
-- **聊天 UI 完全复用现有 ChatPanel / SessionList / chat-store**；
-  新增的只有配对入口 `packages/web-ui/src/pages/mobile/ZcodeRemotePage.tsx`
-  （MobileShell 新「ZCode」tab：扫码/粘贴配对 → 现有会话列表/聊天界面）。
-  扫码用 `@capacitor-community/barcode-scanner`（web 端自动回退粘贴）。
-- APK：`cd mobile && node scripts/build.js`。
+手机端集成在 **Flutter 原版 App**（master 主分支 `wzxClaw_android/`）中，作为与
+现有"桌面 wzxClaw IDE 控制"并存的第二个模式：
+
+- 协议层（Dart）：`lib/zcode/zcode_pairing.dart`（配对 URL 解析）+
+  `lib/zcode/zcode_relay_client.dart`（probe 角色认证 + ZCode Protocol v1 RPC，
+  runtime preferences 自动代答，未知反向请求默认拒绝）。
+- 状态层：`lib/zcode/zcode_chat_store.dart`（配对持久化、会话列表、
+  流式渲染 = 运行中轮询 `session/events` 的 `text_delta`，按 eventId 去重）。
+- UI：复用 Flutter 版现有聊天组件（气泡/Markdown/工具卡片/思考指示），
+  新增配对入口（复用 settings 页已有的 mobile_scanner 扫码）。
+- 构建：`cd wzxClaw_android && flutter build apk`。
 
 ## 配对协议（摘要）
 
