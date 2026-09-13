@@ -16,7 +16,7 @@
 //     {type:'auth_challenge', nonce}
 //     {type:'auth_ack'|'pair_status_ack', pair_status:'waiting'|'matched'}
 //     {type:'data', payload:<ZCode 帧>}
-//     {type:'error', code, message} → 视为认证/房间失效，关闭重连
+//     {type:'error', code, message} → 上浮 onRelayError 后关闭重连
 //
 // proof = base64url(HMAC-SHA256(hash 字符串作为密钥, "$nonce|probe|$sid"))
 //   注意：hash 本身是字符串密钥，不要 base64 解码（Dart: package:crypto 的 Hmac）
@@ -26,7 +26,8 @@
 //   通知 {method, params}（无 id）
 //   反向请求 {id: "server-N" 字符串, method, params}：
 //     session/requestRuntimePreferences → 自动代答 {id, result:{nativeSearchEnhancementsEnabled:false}}
-//     其他 → 默认回 {id, error:{code:-32000, message:'手机端未处理该请求'}}（安全拒绝）
+//     其他 → 交给 onRequest 钩子（宿主决定批准/拒绝，result 帧回传）；
+//           未设钩子 → 默认回 {id, error:{code:-32000, message:'手机端未处理该请求'}}（安全拒绝）
 // ============================================================
 
 import 'dart:async';
@@ -64,12 +65,16 @@ class ZcodeRelayClient {
     required ZcodePairingInfo pairing,
     void Function(ZcodeRelayState state, bool paired)? onStateChange,
     void Function(ZcodeFrame frame)? onNotify, // 通知帧回调（state.updated / v4/telemetry）
+    Future<dynamic> Function(ZcodeFrame frame)? onRequest, // 反向请求钩子（权限/AskUser 等）
+    void Function(String code, String message)? onRelayError, // relay 拒绝帧（认证失效等）
     Duration requestTimeout = const Duration(seconds: 30),
     Duration reconnectDelay = const Duration(seconds: 5),
     WebSocketChannel Function(Uri url)? socketFactory, // WebSocket 连接工厂（测试注入）
   })  : _pairing = pairing,
         _onStateChange = onStateChange,
         _onNotify = onNotify,
+        _onRequest = onRequest,
+        _onRelayError = onRelayError,
         _requestTimeout = requestTimeout,
         _reconnectDelay = reconnectDelay,
         _socketFactory = socketFactory;
@@ -77,6 +82,8 @@ class ZcodeRelayClient {
   final ZcodePairingInfo _pairing;
   final void Function(ZcodeRelayState state, bool paired)? _onStateChange;
   final void Function(ZcodeFrame frame)? _onNotify;
+  final Future<dynamic> Function(ZcodeFrame frame)? _onRequest;
+  final void Function(String code, String message)? _onRelayError;
   final Duration _requestTimeout;
   final Duration _reconnectDelay;
   final WebSocketChannel Function(Uri url)? _socketFactory;
@@ -217,11 +224,17 @@ class ZcodeRelayClient {
     if (msg is! Map) return;
     switch (msg['type']) {
       case 'error':
-        // relay 拒绝（认证失败/房间失效/未配对等）：关闭连接，交给重连流程
-        try {
-          _socket?.sink.close();
-        } catch (_) {/* onDone 兜底 */}
-        return;
+        {
+          // relay 拒绝（认证失败/房间失效/未配对等）：上浮原因后关闭，交给重连流程
+          _onRelayError?.call(
+            msg['code']?.toString() ?? 'UNKNOWN',
+            (msg['message'] ?? '请求被拒绝').toString(),
+          );
+          try {
+            _socket?.sink.close();
+          } catch (_) {/* onDone 兜底 */}
+          return;
+        }
       case 'auth_challenge':
         _setState(ZcodeRelayState.authenticating, false);
         _send({
@@ -252,7 +265,7 @@ class ZcodeRelayClient {
     final method = rawMethod is String ? rawMethod : null; // 容忍畸形帧
     // 反向请求：有 method 且有 id（"server-N" 字符串）
     if (method != null && id != null) {
-      _handleReverseRequest(id, method);
+      _handleReverseRequest(id, method, payload['params']);
       return;
     }
     // 本端请求的响应：id 为 int，按 id 匹配完成 pending
@@ -281,8 +294,10 @@ class ZcodeRelayClient {
     }
   }
 
-  /// 反向请求：runtime preferences 自动代答，其余默认安全拒绝
-  void _handleReverseRequest(dynamic id, String method) {
+  /// 反向请求：runtime preferences 自动代答；其余交给 onRequest 钩子（宿主决定
+  /// 批准/拒绝，完成后回传 result/error 帧）。未设钩子时默认安全拒绝，
+  /// 避免空 result 被对端解读为批准。
+  void _handleReverseRequest(dynamic id, String method, dynamic params) {
     if (method == 'session/requestRuntimePreferences') {
       _send({
         'type': 'data',
@@ -293,14 +308,34 @@ class ZcodeRelayClient {
       });
       return;
     }
-    // 未接管时默认拒绝，避免空 result 被对端解读为批准
-    _send({
-      'type': 'data',
-      'payload': {
-        'id': id,
-        'error': {'code': -32000, 'message': '手机端未处理该请求'},
-      },
-    });
+    final hook = _onRequest;
+    if (hook == null) {
+      _send({
+        'type': 'data',
+        'payload': {
+          'id': id,
+          'error': {'code': -32000, 'message': '手机端未处理该请求'},
+        },
+      });
+      return;
+    }
+    unawaited(() async {
+      try {
+        final result = await hook(ZcodeFrame(id: id, method: method, params: params));
+        _send({
+          'type': 'data',
+          'payload': {'id': id, 'result': result},
+        });
+      } catch (error) {
+        _send({
+          'type': 'data',
+          'payload': {
+            'id': id,
+            'error': {'code': -32000, 'message': error.toString()},
+          },
+        });
+      }
+    }());
   }
 
   /// 质询 proof：base64url 无 padding(HMAC-SHA256(hash 字符串 UTF8, "$nonce|probe|$sid" UTF8))

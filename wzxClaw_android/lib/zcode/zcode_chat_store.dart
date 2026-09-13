@@ -245,11 +245,13 @@ class ZcodeChatStore extends ChangeNotifier {
         pairing: info,
         onStateChange: _onRelayStateChange,
         onNotify: _handleNotifyFrame,
-        // TODO(契约缺口): zcode_relay_client 尚未暴露 onRequest 钩子
-        // （当前反向请求在客户端内部默认拒绝，且 params 未透出）。
-        // 客户端补上 `Future<dynamic> Function(ZcodeFrame)? onRequest` 后，
-        // 取消下一行注释即可接入权限/AskUser 流：
-        // onRequest: _handleReverseRequest,
+        // 反向请求（权限确认 / AskUser）交给 store 路由到对应 UI 流
+        onRequest: _handleReverseRequest,
+        // relay 拒绝（配对失效/被顶号等）上浮到错误横幅
+        onRelayError: (code, message) {
+          _error = '中继拒绝（$code）：$message；若持续出现请解除配对后重新扫码';
+          notifyListeners();
+        },
       )..connect();
       _connState = ZcodeConnState.connecting;
     }
@@ -265,6 +267,8 @@ class ZcodeChatStore extends ChangeNotifier {
       unawaited(refreshSessions());
     }
     if (!paired) {
+      // 重置一次性自动拉取标记：重连 matched 后重新自动刷新会话列表
+      _sessionsAutoLoaded = false;
       _stopPolling();
       _setStreaming(false);
     }
