@@ -131,8 +131,83 @@ state.updated          patch.status="idle"
 - 桥协议常量（若未来需要）：物理帧 1MiB、逻辑消息 16MiB、64 分片、30s 组装超时、
   id ≤256 字符 `^[A-Za-z0-9._~-]+$`；checksum `{algorithm:"crc32", value:/^[0-9a-f]{8}$/}`。
 
+## 同步层协议实测（第二轮，2026-09-13，probe-sync*.js）
+
+> 只读探测 + 一次最小真实回合（2 个测试会话，事后 `session/close` 关闭）。
+> 目标：回答同步层重构（PLAN-zcode-remote-v2 P1）的四个协议问题。
+
+### Q1 推送通道：`session/subscribe` 确认存在且带正文
+
+- 参数 `{sessionId, deliveryKind}`，`deliveryKind` 必填：
+  `"desktop-continuous" | "web-remote-replayable"`（zod 报错直接给出枚举）。
+  **`web-remote-replayable` 即官方网页远程使用的可回放事件流。**
+- 响应 `{eventSeq, events: [...], sessionId}` —— 从游标起的快照（新会话 eventSeq=0）。
+- 订阅后每个事件以 `session/event` 通知帧推送：
+
+```json
+{"method":"session/event","params":{
+  "deliveryKind":"web-remote-replayable","eventId":"<UUID>","seq":6,
+  "sessionId":"sess_…","timestamp":…,"traceId":"…","turnId":"turn_…",
+  "type":"model.streaming",
+  "payload":{"assistantMessageId":"msg_…","delta":"ok","done":false,"kind":"text_delta"}}}
+```
+
+- **`type: "model.streaming"` 的 `payload.delta` 就是流式正文**——正文内容直接推送，
+  不再需要轮询 `session/events` 拉 text_delta。`done:true` 表示本条消息流结束。
+- 实测一次最小回合推送的 type 序列（9 帧）：
+  `session.titleUpdated → turn.started → session.updated ×2 → session.titleUpdated →
+  model.streaming → session.updated → model.response → turn.completed`
+  - `model.response`：带 `content`（完整回复文本）、`usage`、`contextWindow: 1000000`、
+    `stopReason`、缓存命中统计。
+  - `turn.completed`：带 `response`、`tokenCount`、`duration`、`toolCallCount`、
+    `cacheStats` —— 纯文本回合可凭它本地收尾，免权威刷新。
+
+### Q2 帧归属：所有帧自带 sessionId
+
+`session/event`、`state.updated`、`v4/telemetry/event` 的 params 均含 `sessionId`
+（telemetry 另含 `eventSeq`、`turnId`、`assistantMessageId`）。
+**按帧严格路由可行，多会话订阅并存可行。**
+
+### Q3 去重与顺序
+
+- `eventId` 为 UUID（构造性全局唯一）——跨会话统一去重安全。
+- 每会话另有单调递增整数 `seq`（session/event）/`eventSeq`（telemetry）——
+  排序与断线补放游标用。重连后从 last-seq 重新 subscribe 即可补放（replayable 语义）。
+
+### Q4 非 active 会话可达性
+
+- `session/events`（拉）要求会话在本进程 materialize 过：从未 resume 的会话 →
+  `-32004`。resume 切走后，先前 materialize 过的会话事件**仍可读**（实测 ok）。
+- ⚠️ 跨进程观察受限：桌面正在 running 的会话，第二个进程 `session/list` 看到的
+  status 仍非 running（快照 stale）。“手机观察桌面自身进程跑的回合”可靠性存疑；
+  但主路径（手机发起的回合跑在 companion 的 app-server 内）不受影响。
+- 建议策略：进入会话即 subscribe（materialize 顺带完成），切换不移除订阅、
+  后台会话事件按帧归属写入各自缓存。
+
+### Q5 `session/read` 轻量 meta：确认
+
+- active 会话上 read ≈ 2–5 KB（keys：session/projection/runtime/settings/
+  slashCommands/todos/todoGroups/messages），对比 resume 全量 messages
+  （48 条 ≈ 414 KB）。非 active → `-32004`。
+
+### 边界与坑（本轮新增）
+
+- `session/create` 必须带 `workspace: {workspaceKey, workspacePath}`（zod 强校验）。
+- `session/send` 可能以**字符串 result**（非 error 帧）返回业务拒绝：
+  `"历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。"`
+  —— 新进程 resume 老会话、其存储模型解析失败时出现；需调 `session/setModel` 兜底。
+- `session/close` 返回 `{closed:true}` 但同进程 `session/list` 仍会列出该会话
+  （close ≠ delete，协议无 delete）。
+- resume 响应永远携带全量 messages——手机端应忽略该数组、自行分页
+  `session/messages`；companion 可选剥离该数组降低 relay 帧体积（优化项）。
+
 ## 实验脚本
 
 临时目录（会话级，不入库）：`appserver-probe.js`、`appserver-e2e.js`、`appserver-resume.js`。
 `appserver-e2e.js` 已含完整生命周期 + token env 注入，可作为 companion 桥的参考实现。
 核心逻辑已浓缩进本文档，正式实现进 `packages/agent-server` 或 companion 包。
+
+同步层第二轮探针（已入库 `relay/zcode/`）：`probe-sync.js`（只读：list/read/resume/
+subscribe 参数枚举/events 归属/切换后可达性）、`probe-sync2.js`（subscribe
+`web-remote-replayable` + 真实最小回合推送帧抓取，`--session` 可复用会话）、
+报告 `probe-sync*-report.json`。
