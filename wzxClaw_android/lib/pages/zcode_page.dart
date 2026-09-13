@@ -14,7 +14,6 @@
 // ============================================================
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +33,7 @@ import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
 import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_pairing.dart';
+import '../zcode/zcode_permission_widgets.dart';
 
 /// ZCode 远程控制页面
 class ZcodePage extends StatefulWidget {
@@ -865,6 +865,27 @@ class _ZcodePageState extends State<ZcodePage> {
           children: [
             _buildMarkdownBody(msg.content, isStreaming: msg.isStreaming),
             if (msg.isStreaming) const StreamingShimmer(),
+            // 工具调用卡片：assistant 消息附带的 toolCalls（含未知 tool.*
+            // kind）不丢弃——合成 tool 角色消息交给既有 ToolCallGroup
+            // 渲染，任意工具名都能看到 kind 名 + 入参/出参摘要（可展开）
+            if (msg.toolCalls != null && msg.toolCalls!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              ToolCallGroup(
+                tools: [
+                  for (final call in msg.toolCalls!)
+                    ChatMessage(
+                      role: MessageRole.tool,
+                      content: '',
+                      toolName: call.toolName,
+                      toolStatus: call.status,
+                      createdAt: msg.createdAt,
+                      toolCallId: call.toolCallId,
+                      toolInput: call.inputSummary,
+                      toolOutput: call.outputSummary,
+                    ),
+                ],
+              ),
+            ],
             if (msg.usage != null || msg.model != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -1043,10 +1064,12 @@ class _ZcodePageState extends State<ZcodePage> {
 
   /// 待处理请求条（输入框上方）：AskUser 优先，其次 Permission。
   /// 提交后本地立即收起（store 随后也会通过流发 null）。
+  /// key 绑定请求 id：换请求时重建组件，重置倒计时基准。
   Widget _buildPendingRequestBar(AppColors colors) {
     final ask = _askUserQuestion;
     if (ask != null) {
-      return _ZcodeAskUserBar(
+      return ZcodeAskUserBar(
+        key: ValueKey('zcode_ask_${ask.questionId}'),
         question: ask,
         onRespond: (answers, {customText}) {
           setState(() => _askUserQuestion = null);
@@ -1057,7 +1080,8 @@ class _ZcodePageState extends State<ZcodePage> {
     }
     final perm = _permissionRequest;
     if (perm != null) {
-      return _ZcodePermissionBar(
+      return ZcodePermissionBar(
+        key: ValueKey('zcode_perm_${perm.toolCallId}'),
         request: perm,
         onRespond: (approved) {
           setState(() => _permissionRequest = null);
@@ -1189,410 +1213,6 @@ class _ZcodeSessionTile extends StatelessWidget {
     if (diff.inHours < 24) return '${diff.inHours}小时前';
     if (diff.inDays < 7) return '${diff.inDays}天前';
     return '${dt.month}/${dt.day}';
-  }
-}
-
-// ── 权限确认条（复刻 widgets/permission_bar.dart 的视觉布局） ────────
-//
-// 原组件内部硬编码调用 ChatStore.instance.respondToPermission（桌面 IDE
-// 控制模式单例），ZCode 模式不能用——这里照抄样式、把回调参数化，
-// 由页面转发到 ZcodeChatStore.respondToPermission。
-
-class _ZcodePermissionBar extends StatelessWidget {
-  const _ZcodePermissionBar({required this.request, required this.onRespond});
-
-  final PermissionRequest request;
-
-  /// approved=true 批准 / false 拒绝
-  final void Function(bool approved) onRespond;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    String inputSummary = '';
-    if (request.input.isNotEmpty) {
-      final encoded = const JsonEncoder.withIndent('  ').convert(request.input);
-      inputSummary =
-          encoded.length > 300 ? '${encoded.substring(0, 300)}…' : encoded;
-    }
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.all(8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.bgPrimary,
-        border: Border.all(color: colors.toolRunning),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.security, size: 16, color: colors.toolRunning),
-              const SizedBox(width: 6),
-              Text(
-                'Permission Request',
-                style: TextStyle(
-                  color: colors.toolRunning,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '${request.toolName} wants to execute:',
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
-          ),
-          if (inputSummary.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 120),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: colors.bgSecondary,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: SingleChildScrollView(
-                child: Text(
-                  inputSummary,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    height: 1.4,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => onRespond(false),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.error,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: colors.error),
-                  ),
-                ),
-                child: const Text('Deny', style: TextStyle(fontSize: 12)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => onRespond(true),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.success,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: colors.success),
-                  ),
-                ),
-                child: const Text('Approve', style: TextStyle(fontSize: 12)),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── 问答条（复刻 widgets/ask_user_bar.dart 的视觉布局） ──────────────
-//
-// 同上：原组件硬编码 ChatStore.instance.respondToAskUser，
-// 这里回调参数化，由页面转发到 ZcodeChatStore.respondToAskUser。
-
-class _ZcodeAskUserBar extends StatefulWidget {
-  const _ZcodeAskUserBar({required this.question, required this.onRespond});
-
-  final AskUserQuestion question;
-
-  /// 提交答案：answers 为选项 label 列表；customText 为「补充回答」文本
-  final void Function(List<String> answers, {String? customText}) onRespond;
-
-  @override
-  State<_ZcodeAskUserBar> createState() => _ZcodeAskUserBarState();
-}
-
-class _ZcodeAskUserBarState extends State<_ZcodeAskUserBar> {
-  final Set<String> _selected = {};
-  bool _showOther = false;
-  final _otherController = TextEditingController();
-
-  @override
-  void dispose() {
-    _otherController.dispose();
-    super.dispose();
-  }
-
-  void _submitSelection() {
-    widget.onRespond(_selected.toList());
-  }
-
-  void _submitOther() {
-    final text = _otherController.text.trim();
-    if (text.isEmpty) return;
-    widget.onRespond([], customText: text);
-  }
-
-  void _onSingleSelect(String label) {
-    widget.onRespond([label]);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    final q = widget.question;
-    final hasOptions = q.options.isNotEmpty;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.all(8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.bgPrimary,
-        border: Border.all(color: colors.accent),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.help_outline, size: 16, color: colors.accent),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '需要你的确认',
-                  style: TextStyle(
-                    color: colors.accent,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              if (q.multiSelect)
-                Text(
-                  '可多选',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            q.question,
-            style: TextStyle(color: colors.textPrimary, fontSize: 13, height: 1.4),
-          ),
-          if (hasOptions) ...[
-            const SizedBox(height: 10),
-            ...q.options.map((opt) {
-              final label = opt['label'] ?? '';
-              final description = opt['description'] ?? '';
-              final isSelected = _selected.contains(label);
-              if (q.multiSelect) {
-                return _buildMultiSelectOption(colors, label, description, isSelected);
-              } else {
-                return _buildSingleSelectOption(colors, label, description);
-              }
-            }),
-          ],
-          const SizedBox(height: 8),
-          if (!_showOther)
-            GestureDetector(
-              onTap: () => setState(() => _showOther = true),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: colors.bgSecondary,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: colors.border),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, size: 14, color: colors.textMuted),
-                    const SizedBox(width: 8),
-                    Text(
-                      '补充回答...',
-                      style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (_showOther) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _otherController,
-                    autofocus: true,
-                    style: TextStyle(color: colors.textPrimary, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: '输入补充回答...',
-                      hintStyle: TextStyle(color: colors.textMuted),
-                      filled: true,
-                      fillColor: colors.bgInput,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(6),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                    onSubmitted: (_) => _submitOther(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _submitOther,
-                  icon: Icon(Icons.send, color: colors.accent, size: 20),
-                  tooltip: '提交回答',
-                ),
-                IconButton(
-                  onPressed: () => setState(() => _showOther = false),
-                  icon: Icon(Icons.close, color: colors.textMuted, size: 20),
-                  tooltip: '取消',
-                ),
-              ],
-            ),
-          ],
-          if (q.multiSelect && _selected.isNotEmpty && !_showOther) ...[
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _submitSelection,
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: colors.accent,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: Text(
-                  '提交 (${_selected.length})',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSingleSelectOption(AppColors colors, String label, String description) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        onTap: () => _onSingleSelect(label),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: colors.bgSecondary,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: colors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: colors.accent,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (description.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  description,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMultiSelectOption(
-      AppColors colors, String label, String description, bool isSelected,) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            if (isSelected) {
-              _selected.remove(label);
-            } else {
-              _selected.add(label);
-            }
-          });
-        },
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? colors.accent.withValues(alpha: 0.15) : colors.bgSecondary,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: isSelected ? colors.accent : colors.border),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                isSelected ? Icons.check_box : Icons.check_box_outline_blank,
-                size: 18,
-                color: isSelected ? colors.accent : colors.textMuted,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: isSelected ? colors.accent : colors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (description.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        description,
-                        style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
