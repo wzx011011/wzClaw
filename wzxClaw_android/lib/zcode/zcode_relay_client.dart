@@ -11,7 +11,7 @@
 //     {type:'auth_init', role:'probe', device_sid}
 //     {type:'auth_response', device_sid, proof}
 //     {type:'data', payload:<ZCode 帧>}
-//     {type:'pair_status_query', device_sid}（心跳查询，可选）
+//     {type:'pair_status_query', device_sid}（心跳查询，保活/死链检测）
 //   接收：
 //     {type:'auth_challenge', nonce}
 //     {type:'auth_ack'|'pair_status_ack', pair_status:'waiting'|'matched'}
@@ -28,15 +28,26 @@
 //     session/requestRuntimePreferences → 自动代答 {id, result:{nativeSearchEnhancementsEnabled:false}}
 //     其他 → 交给 onRequest 钩子（宿主决定批准/拒绝，result 帧回传）；
 //           未设钩子 → 默认回 {id, error:{code:-32000, message:'手机端未处理该请求'}}（安全拒绝）
+//
+// 保活与死链检测（P1.2）：认证成功后按 pingInterval 发
+// pair_status_query（relay 既有的应用层心跳），任何入站帧都会重置
+// 活性计时；连续 pingLossLimit 个周期无任何入站帧判定为半开/死链
+// （NAT 重绑、网络切换的典型症状），主动关闭走既有重连路径。
+// 重连采用指数退避 + 抖动（基数 reconnectDelay，上限 60s）。
 // ============================================================
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'zcode_pairing.dart';
+
+/// 重连延迟上限（指数退避封顶）
+const int _kMaxReconnectMs = 60 * 1000;
 
 /// 连接状态
 enum ZcodeRelayState { idle, connecting, authenticating, waiting, matched, closed }
@@ -64,12 +75,14 @@ class ZcodeRelayClient {
   ZcodeRelayClient({
     required ZcodePairingInfo pairing,
     void Function(ZcodeRelayState state, bool paired)? onStateChange,
-    void Function(ZcodeFrame frame)? onNotify, // 通知帧回调（state.updated / v4/telemetry）
+    void Function(ZcodeFrame frame)? onNotify, // 通知帧回调（state.updated / v4/telemetry / session/event）
     Future<dynamic> Function(ZcodeFrame frame)? onRequest, // 反向请求钩子（权限/AskUser 等）
     void Function(String code, String message)? onRelayError, // relay 拒绝帧（认证失效等）
     Duration requestTimeout = const Duration(seconds: 30),
-    Duration reconnectDelay = const Duration(seconds: 5),
+    Duration reconnectDelay = const Duration(seconds: 2), // 退避基数
     WebSocketChannel Function(Uri url)? socketFactory, // WebSocket 连接工厂（测试注入）
+    Duration pingInterval = const Duration(seconds: 15), // 保活/死链检测周期
+    int pingLossLimit = 2, // 连续无入站帧的周期数上限
   })  : _pairing = pairing,
         _onStateChange = onStateChange,
         _onNotify = onNotify,
@@ -77,7 +90,9 @@ class ZcodeRelayClient {
         _onRelayError = onRelayError,
         _requestTimeout = requestTimeout,
         _reconnectDelay = reconnectDelay,
-        _socketFactory = socketFactory;
+        _socketFactory = socketFactory,
+        _pingInterval = pingInterval,
+        _pingLossLimit = pingLossLimit;
 
   final ZcodePairingInfo _pairing;
   final void Function(ZcodeRelayState state, bool paired)? _onStateChange;
@@ -87,6 +102,8 @@ class ZcodeRelayClient {
   final Duration _requestTimeout;
   final Duration _reconnectDelay;
   final WebSocketChannel Function(Uri url)? _socketFactory;
+  final Duration _pingInterval;
+  final int _pingLossLimit;
 
   WebSocketChannel? _socket;
   StreamSubscription<dynamic>? _subscription;
@@ -95,6 +112,14 @@ class ZcodeRelayClient {
   Timer? _reconnectTimer;
   int _nextRequestId = 1;
   final Map<int, _PendingRequest> _pending = {};
+
+  // ---- 保活 / 死链检测 ----
+  Timer? _keepaliveTimer;
+  final Stopwatch _inboundWatch = Stopwatch();
+  final Random _random = Random();
+
+  // ---- 重连退避 ----
+  int _reconnectAttempts = 0;
 
   // ---------- 公共 API ----------
 
@@ -132,6 +157,7 @@ class ZcodeRelayClient {
     _closedByUser = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _stopKeepalive();
     _failAllPending('已关闭');
     final socket = _socket;
     _socket = null;
@@ -178,6 +204,16 @@ class ZcodeRelayClient {
     return completer.future;
   }
 
+  // ---------- 仅测试使用的注入入口 ----------
+
+  /// 仅测试使用：当前重连退避的尝试计数（认证成功后清零）
+  @visibleForTesting
+  int get debugReconnectAttempts => _reconnectAttempts;
+
+  /// 仅测试使用：按当前尝试计数计算的下一次重连延迟（含抖动）
+  @visibleForTesting
+  Duration debugNextReconnectDelay() => _nextReconnectDelay();
+
   // ---------- 内部实现 ----------
 
   /// 默认连接工厂（生产环境）
@@ -222,6 +258,8 @@ class ZcodeRelayClient {
       return; // 非 JSON 行直接忽略
     }
     if (msg is! Map) return;
+    // 任何入站信封都视为连接存活的证据（保活计时重置）
+    _inboundWatch.reset();
     switch (msg['type']) {
       case 'error':
         {
@@ -346,25 +384,77 @@ class ZcodeRelayClient {
     return base64Url.encode(digest.bytes).replaceAll('=', '');
   }
 
-  /// 断线统一处理（对端关闭 / 建连失败 / 流错误）
+  /// 断线统一处理（对端关闭 / 建连失败 / 流错误 / 死链主动关闭）
   void _onSocketClosed(WebSocketChannel socket) {
     if (_socket != socket) return; // 过期连接的事件，忽略
     _socket = null;
     _subscription?.cancel();
     _subscription = null;
+    _stopKeepalive();
     _failAllPending('连接已断开');
     _setState(ZcodeRelayState.closed, false);
     _scheduleReconnect();
   }
 
-  /// 安排重连；close() 手动关闭或延迟为 0 时不重连
+  /// 安排重连；close() 手动关闭或延迟为 0 时不重连。
+  /// 延迟 = 指数退避（基数 * 2^attempt，上限 60s）+ 抖动（±1/3），
+  /// 参考 services/connection_manager.dart 的既有实现。
   void _scheduleReconnect() {
     if (_closedByUser || _reconnectTimer != null) return;
     if (_reconnectDelay <= Duration.zero) return; // 0 = 不自动重连（与 TS 版一致）
-    _reconnectTimer = Timer(_reconnectDelay, () {
+    final delay = _nextReconnectDelay();
+    _reconnectAttempts++;
+    _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       connect();
     });
+  }
+
+  /// 计算下一次重连延迟：base * 2^attempt 封顶 60s，再减去 [0, 1/3) 抖动
+  Duration _nextReconnectDelay() {
+    final baseMs = _reconnectDelay.inMilliseconds;
+    final shift = _reconnectAttempts < 16 ? _reconnectAttempts : 16; // 防溢出
+    final expMs = baseMs * (1 << shift);
+    final cappedMs = expMs < baseMs
+        ? baseMs
+        : (expMs > _kMaxReconnectMs ? _kMaxReconnectMs : expMs);
+    final jitterMs = cappedMs ~/ 3;
+    if (jitterMs == 0) return Duration(milliseconds: cappedMs);
+    return Duration(milliseconds: cappedMs - _random.nextInt(jitterMs + 1));
+  }
+
+  // ---------- 保活 / 死链检测 ----------
+
+  /// 认证成功后启动保活：周期发 pair_status_query（relay 既有心跳），
+  /// 连续 pingLossLimit 个周期无任何入站帧 → 判定半开/死链，
+  /// 主动关闭触发既有重连路径
+  void _startKeepalive() {
+    if (_pingInterval <= Duration.zero || _keepaliveTimer != null) return;
+    _inboundWatch
+      ..reset()
+      ..start();
+    _keepaliveTimer = Timer.periodic(_pingInterval, (_) => _keepaliveTick());
+  }
+
+  void _stopKeepalive() {
+    _keepaliveTimer?.cancel();
+    _keepaliveTimer = null;
+    _inboundWatch.stop();
+  }
+
+  void _keepaliveTick() {
+    // 发心跳查询（relay 既有协议帧；应答 pair_status_ack 会重置活性计时）
+    _send({'type': 'pair_status_query', 'device_sid': _pairing.sid});
+    // 连续 pingLossLimit 个周期无任何入站帧 → 半开/死链：
+    // 主动关闭，走既有断线重连流程
+    if (_inboundWatch.elapsed < _pingInterval * _pingLossLimit) return;
+    final socket = _socket;
+    if (socket == null) return;
+    _stopKeepalive();
+    try {
+      socket.sink.close();
+    } catch (_) {/* 忽略关闭异常 */}
+    _onSocketClosed(socket);
   }
 
   /// 发送一条 relay 信封（连接已断开时静默丢弃，由断线流程统一善后）
@@ -387,9 +477,16 @@ class ZcodeRelayClient {
     _pending.clear();
   }
 
-  /// 更新状态并回调
+  /// 更新状态并回调；认证成功（waiting/matched）时启动保活并清零
+  /// 重连退避计数，其余状态停保活
   void _setState(ZcodeRelayState state, bool paired) {
     _state = state;
+    if (state == ZcodeRelayState.waiting || state == ZcodeRelayState.matched) {
+      _reconnectAttempts = 0; // 连接+认证成功：退避归零
+      _startKeepalive();
+    } else {
+      _stopKeepalive();
+    }
     _onStateChange?.call(state, paired);
   }
 }
