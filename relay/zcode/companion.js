@@ -353,17 +353,18 @@ if (require.main === module) {
     console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr]');
     process.exitCode = 1;
   } else {
-    let renderQr;
-    try { renderQr = require('qrcode-terminal').generate; } catch { renderQr = null; }
+    let qrTerminal;
+    try { qrTerminal = require('qrcode-terminal'); } catch { qrTerminal = null; }
     const companion = createCompanion({
       relayUrl: args[relayIdx + 1],
       cwd: cwdIdx !== -1 && args[cwdIdx + 1] ? args[cwdIdx + 1] : process.cwd(),
       logger: (event, detail) => console.error(`[companion] ${event}${detail ? ` ${detail}` : ''}`),
       onPairing: (url) => {
         console.log('配对 URL（扫码或粘贴到手机 App）:');
-        if (renderQr && noQrIdx === -1) {
+        if (qrTerminal && noQrIdx === -1) {
           console.log('');
-          renderQr(url, { small: true });
+          // 必须以方法形式调用（内部依赖 this.error 取纠错级别）
+          qrTerminal.generate(url, { small: true });
         }
         console.log(url);
       },
