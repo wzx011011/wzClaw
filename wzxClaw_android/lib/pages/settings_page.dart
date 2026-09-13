@@ -9,6 +9,7 @@ import '../services/connection_manager.dart';
 import '../services/push_wake_service.dart';
 import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
+import 'zcode_page.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -411,6 +412,43 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                     );
                   },
+                ),
+                const SizedBox(height: 24),
+
+                // -- ZCode remote control entry --
+                Text(
+                  '远程控制',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.bgSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListTile(
+                    leading: Icon(Icons.terminal, color: colors.accent),
+                    title: Text(
+                      'ZCode 远程控制',
+                      style: TextStyle(
+                        color: colors.textPrimary, fontSize: 14,),
+                    ),
+                    subtitle: Text(
+                      '扫码配对桌面 ZCode，远程浏览会话并继续对话',
+                      style: TextStyle(
+                        color: colors.textSecondary, fontSize: 12,),
+                    ),
+                    trailing: Icon(Icons.chevron_right,
+                        color: colors.textMuted, size: 20,),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const ZcodePage(),),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 24),
 

@@ -8,9 +8,14 @@ import 'pages/file_browser_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/zcode_page.dart';
 import 'services/file_sync_service.dart';
 import 'services/push_wake_service.dart';
 import 'services/session_sync_service.dart';
+import 'zcode/zcode_notifier.dart';
+
+/// 全局导航 key（ZCode 任务完成通知点击跳转用）
+final GlobalKey<NavigatorState> zcodeNavigatorKey = GlobalKey<NavigatorState>();
 
 /// Global theme mode notifier — allows settings page to switch theme at runtime.
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
@@ -37,6 +42,12 @@ void main() async {
   // PushWakeService init (notification channel setup, permission request) is not
   // needed before the first frame — defer so runApp() is called immediately.
   unawaited(PushWakeService.instance.initialize());
+  // ZCode 任务完成通知：点击跳转到 ZCode 远程控制页
+  ZcodeNotifier.instance.onTapPayload = (_) {
+    zcodeNavigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (_) => const ZcodePage()),
+    );
+  };
   runApp(const WzxClawApp());
 }
 
@@ -82,6 +93,7 @@ class WzxClawApp extends StatelessWidget {
           builder: (context, accent, _) {
             final isGreen = accent == 'green';
             return MaterialApp(
+              navigatorKey: zcodeNavigatorKey,
               title: 'wzxClaw',
               theme: _buildTheme(
                 isGreen ? AppColors.lightGreen : AppColors.light,

@@ -1,0 +1,370 @@
+// ============================================================
+// zcode_relay_client — ZCode 远程中继客户端（probe / 手机角色）
+//
+// 【契约文件】本文件的类签名是并行开发的公共契约，实现者补全方法体，
+// 可增补私有成员，公共 API 不得改动（除非同步通知 store/UI 适配）。
+//
+// 协议参考（实测验证）：relay/zcode/APP-SERVER.md、relay/zcode/companion.js
+//
+// relay 信封（NDJSON over WebSocket）：
+//   手机发送：
+//     {type:'auth_init', role:'probe', device_sid}
+//     {type:'auth_response', device_sid, proof}
+//     {type:'data', payload:<ZCode 帧>}
+//     {type:'pair_status_query', device_sid}（心跳查询，可选）
+//   接收：
+//     {type:'auth_challenge', nonce}
+//     {type:'auth_ack'|'pair_status_ack', pair_status:'waiting'|'matched'}
+//     {type:'data', payload:<ZCode 帧>}
+//     {type:'error', code, message} → 视为认证/房间失效，关闭重连
+//
+// proof = base64url(HMAC-SHA256(hash 字符串作为密钥, "$nonce|probe|$sid"))
+//   注意：hash 本身是字符串密钥，不要 base64 解码（Dart: package:crypto 的 Hmac）
+//
+// ZCode Protocol v1 帧（data.payload）：
+//   请求 {id: int 递增, method, params} → 响应 {id, result} 或 {id, error:{code,message}}
+//   通知 {method, params}（无 id）
+//   反向请求 {id: "server-N" 字符串, method, params}：
+//     session/requestRuntimePreferences → 自动代答 {id, result:{nativeSearchEnhancementsEnabled:false}}
+//     其他 → 默认回 {id, error:{code:-32000, message:'手机端未处理该请求'}}（安全拒绝）
+// ============================================================
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'zcode_pairing.dart';
+
+/// 连接状态
+enum ZcodeRelayState { idle, connecting, authenticating, waiting, matched, closed }
+
+/// ZCode 帧（data.payload 的 Dart 表示）
+class ZcodeFrame {
+  final dynamic id; // int（手机请求）/ String（服务端反向请求）/ null（通知）
+  final String? method;
+  final dynamic params;
+  final dynamic result;
+  final Map<String, dynamic>? error; // {code, message}
+
+  const ZcodeFrame({this.id, this.method, this.params, this.result, this.error});
+}
+
+/// 在途请求（request 的完成器与超时定时器）
+class _PendingRequest {
+  final Completer<dynamic> completer;
+  final Timer timer;
+  _PendingRequest(this.completer, this.timer);
+}
+
+/// relay 客户端（probe 角色）
+class ZcodeRelayClient {
+  ZcodeRelayClient({
+    required ZcodePairingInfo pairing,
+    void Function(ZcodeRelayState state, bool paired)? onStateChange,
+    void Function(ZcodeFrame frame)? onNotify, // 通知帧回调（state.updated / v4/telemetry）
+    Duration requestTimeout = const Duration(seconds: 30),
+    Duration reconnectDelay = const Duration(seconds: 5),
+    WebSocketChannel Function(Uri url)? socketFactory, // WebSocket 连接工厂（测试注入）
+  })  : _pairing = pairing,
+        _onStateChange = onStateChange,
+        _onNotify = onNotify,
+        _requestTimeout = requestTimeout,
+        _reconnectDelay = reconnectDelay,
+        _socketFactory = socketFactory;
+
+  final ZcodePairingInfo _pairing;
+  final void Function(ZcodeRelayState state, bool paired)? _onStateChange;
+  final void Function(ZcodeFrame frame)? _onNotify;
+  final Duration _requestTimeout;
+  final Duration _reconnectDelay;
+  final WebSocketChannel Function(Uri url)? _socketFactory;
+
+  WebSocketChannel? _socket;
+  StreamSubscription<dynamic>? _subscription;
+  ZcodeRelayState _state = ZcodeRelayState.idle;
+  bool _closedByUser = false;
+  Timer? _reconnectTimer;
+  int _nextRequestId = 1;
+  final Map<int, _PendingRequest> _pending = {};
+
+  // ---------- 公共 API ----------
+
+  /// 连接并完成配对认证（幂等）
+  void connect() {
+    // 已有连接或正在建连/认证时幂等返回（waiting/matched 状态下 _socket 非空，同样覆盖）
+    if (_socket != null ||
+        _state == ZcodeRelayState.connecting ||
+        _state == ZcodeRelayState.authenticating) {
+      return;
+    }
+    _closedByUser = false;
+    _setState(ZcodeRelayState.connecting, false);
+    final factory = _socketFactory ?? _defaultConnect;
+    final WebSocketChannel socket;
+    try {
+      socket = factory(Uri.parse(_pairing.relayWsUrl));
+    } catch (_) {
+      // 工厂同步抛错视作建连失败，走重连
+      _scheduleReconnect();
+      return;
+    }
+    _socket = socket;
+    _subscription = socket.stream.listen(
+      _onSocketData,
+      onError: (Object _) => _onSocketClosed(socket),
+      onDone: () => _onSocketClosed(socket),
+    );
+    // WebSocketChannel.connect 异步建连：就绪后再发 auth_init
+    unawaited(_authInitWhenReady(socket));
+  }
+
+  /// 主动关闭（不再重连）
+  void close() {
+    _closedByUser = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _failAllPending('已关闭');
+    final socket = _socket;
+    _socket = null;
+    _subscription?.cancel();
+    _subscription = null;
+    if (socket != null) {
+      try {
+        socket.sink.close();
+      } catch (_) {/* 忽略关闭异常 */}
+    }
+    _setState(ZcodeRelayState.closed, false);
+  }
+
+  /// 是否配对成功可收发
+  bool get paired => _state == ZcodeRelayState.matched;
+
+  /// 当前状态
+  ZcodeRelayState get currentState => _state;
+
+  /// 发起 ZCode Protocol 请求；未配对时抛 StateError；超时/错误帧抛 Exception
+  /// 返回 result（Map/List/其他），错误帧抛 ZcodeRequestException（含 code/message）
+  Future<dynamic> request(String method, [Map<String, dynamic>? params]) {
+    if (_socket == null || _state != ZcodeRelayState.matched) {
+      throw StateError('未连接到 ZCode（配对未完成）');
+    }
+    final id = _nextRequestId++;
+    final completer = Completer<dynamic>();
+    final timer = Timer(_requestTimeout, () {
+      _pending.remove(id);
+      if (!completer.isCompleted) {
+        completer.completeError(TimeoutException('请求超时: $method', _requestTimeout));
+      }
+    });
+    _pending[id] = _PendingRequest(completer, timer);
+    _send({
+      'type': 'data',
+      'payload': {
+        'id': id,
+        'method': method,
+        // params 为 null 时省略键（与 TS 版 undefined 序列化行为一致）
+        if (params != null) 'params': params,
+      },
+    });
+    return completer.future;
+  }
+
+  // ---------- 内部实现 ----------
+
+  /// 默认连接工厂（生产环境）
+  static WebSocketChannel _defaultConnect(Uri url) => WebSocketChannel.connect(url);
+
+  /// 建连就绪后发送 auth_init
+  Future<void> _authInitWhenReady(WebSocketChannel socket) async {
+    try {
+      await socket.ready;
+    } catch (_) {
+      _onSocketClosed(socket); // 建连失败，走断线流程
+      return;
+    }
+    if (_socket == socket) {
+      _send({'type': 'auth_init', 'role': 'probe', 'device_sid': _pairing.sid});
+    }
+  }
+
+  /// 套接字数据：NDJSON 行分帧（按 \n 切）。
+  /// relay 实际每条 WS 消息发一个 JSON（无尾部换行，server.js send()），
+  /// 因此切分后的最后一段也按完整行处理；一条消息内多行同样兼容。
+  void _onSocketData(dynamic data) {
+    final text = data is String
+        ? data
+        : data is List<int>
+            ? utf8.decode(data)
+            : null;
+    if (text == null || text.isEmpty) return;
+    for (final line in text.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      _handleRelayMessage(trimmed);
+    }
+  }
+
+  /// 处理一条 relay 信封
+  void _handleRelayMessage(String raw) {
+    final dynamic msg;
+    try {
+      msg = jsonDecode(raw);
+    } catch (_) {
+      return; // 非 JSON 行直接忽略
+    }
+    if (msg is! Map) return;
+    switch (msg['type']) {
+      case 'error':
+        // relay 拒绝（认证失败/房间失效/未配对等）：关闭连接，交给重连流程
+        try {
+          _socket?.sink.close();
+        } catch (_) {/* onDone 兜底 */}
+        return;
+      case 'auth_challenge':
+        _setState(ZcodeRelayState.authenticating, false);
+        _send({
+          'type': 'auth_response',
+          'device_sid': _pairing.sid,
+          'proof': _computeProof(msg['nonce']?.toString() ?? ''),
+        });
+        return;
+      case 'auth_ack':
+      case 'pair_status_ack':
+        final matched = msg['pair_status'] == 'matched';
+        _setState(
+          matched ? ZcodeRelayState.matched : ZcodeRelayState.waiting,
+          matched,
+        );
+        return;
+      case 'data':
+        final payload = msg['payload'];
+        if (payload is Map) _handleZcodeFrame(payload);
+        return;
+    }
+  }
+
+  /// 处理 ZCode Protocol 帧（data.payload）
+  void _handleZcodeFrame(Map<dynamic, dynamic> payload) {
+    final id = payload['id'];
+    final rawMethod = payload['method'];
+    final method = rawMethod is String ? rawMethod : null; // 容忍畸形帧
+    // 反向请求：有 method 且有 id（"server-N" 字符串）
+    if (method != null && id != null) {
+      _handleReverseRequest(id, method);
+      return;
+    }
+    // 本端请求的响应：id 为 int，按 id 匹配完成 pending
+    if (id is int) {
+      final entry = _pending.remove(id);
+      if (entry == null) return;
+      entry.timer.cancel();
+      final error = payload['error'];
+      if (error is Map) {
+        if (!entry.completer.isCompleted) {
+          entry.completer.completeError(
+            ZcodeRequestException(
+              (error['code'] as num?)?.toInt() ?? -32000,
+              (error['message'] ?? '未知错误').toString(),
+            ),
+          );
+        }
+      } else if (!entry.completer.isCompleted) {
+        entry.completer.complete(payload['result']);
+      }
+      return;
+    }
+    // 通知帧：有 method 无 id
+    if (method != null) {
+      _onNotify?.call(ZcodeFrame(method: method, params: payload['params']));
+    }
+  }
+
+  /// 反向请求：runtime preferences 自动代答，其余默认安全拒绝
+  void _handleReverseRequest(dynamic id, String method) {
+    if (method == 'session/requestRuntimePreferences') {
+      _send({
+        'type': 'data',
+        'payload': {
+          'id': id,
+          'result': {'nativeSearchEnhancementsEnabled': false},
+        },
+      });
+      return;
+    }
+    // 未接管时默认拒绝，避免空 result 被对端解读为批准
+    _send({
+      'type': 'data',
+      'payload': {
+        'id': id,
+        'error': {'code': -32000, 'message': '手机端未处理该请求'},
+      },
+    });
+  }
+
+  /// 质询 proof：base64url 无 padding(HMAC-SHA256(hash 字符串 UTF8, "$nonce|probe|$sid" UTF8))
+  String _computeProof(String nonce) {
+    final key = utf8.encode(_pairing.hash); // hash 是字符串密钥，不要 base64 解码
+    final data = utf8.encode('$nonce|probe|${_pairing.sid}');
+    final digest = Hmac(sha256, key).convert(data);
+    return base64Url.encode(digest.bytes).replaceAll('=', '');
+  }
+
+  /// 断线统一处理（对端关闭 / 建连失败 / 流错误）
+  void _onSocketClosed(WebSocketChannel socket) {
+    if (_socket != socket) return; // 过期连接的事件，忽略
+    _socket = null;
+    _subscription?.cancel();
+    _subscription = null;
+    _failAllPending('连接已断开');
+    _setState(ZcodeRelayState.closed, false);
+    _scheduleReconnect();
+  }
+
+  /// 安排重连；close() 手动关闭或延迟为 0 时不重连
+  void _scheduleReconnect() {
+    if (_closedByUser || _reconnectTimer != null) return;
+    if (_reconnectDelay <= Duration.zero) return; // 0 = 不自动重连（与 TS 版一致）
+    _reconnectTimer = Timer(_reconnectDelay, () {
+      _reconnectTimer = null;
+      connect();
+    });
+  }
+
+  /// 发送一条 relay 信封（连接已断开时静默丢弃，由断线流程统一善后）
+  void _send(Object value) {
+    final socket = _socket;
+    if (socket == null) return;
+    try {
+      socket.sink.add(jsonEncode(value));
+    } catch (_) {/* 忽略已关闭时的发送失败 */}
+  }
+
+  /// 全部在途请求立即失败
+  void _failAllPending(String message) {
+    for (final entry in _pending.values) {
+      entry.timer.cancel();
+      if (!entry.completer.isCompleted) {
+        entry.completer.completeError(Exception(message));
+      }
+    }
+    _pending.clear();
+  }
+
+  /// 更新状态并回调
+  void _setState(ZcodeRelayState state, bool paired) {
+    _state = state;
+    _onStateChange?.call(state, paired);
+  }
+}
+
+/// ZCode 请求错误（错误帧）
+class ZcodeRequestException implements Exception {
+  final int code;
+  final String message;
+  const ZcodeRequestException(this.code, this.message);
+
+  @override
+  String toString() => 'ZcodeRequestException($code): $message';
+}

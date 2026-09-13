@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   web_socket_channel: ^3.0.0
+  crypto: ^3.0.0
   shared_preferences: ^2.2.0
   flutter_secure_storage: ^9.2.2
   sqflite: ^2.3.0
@@ -32,6 +33,7 @@ dev_dependencies:
   shelf: ^1.4.0
   shelf_web_socket: ^2.0.0
 
+  stream_channel: any
 flutter:
   uses-material-design: true
 
