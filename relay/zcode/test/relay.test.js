@@ -76,11 +76,18 @@ test('malformed JSON, binary, oversize and authentication timeout clean sockets'
   await eventually(async () => (await f.health()).sockets === 0);
 });
 
-test('authenticated data requires a matched peer', async (t) => {
+test('unmatched data from an authenticated peer is dropped without kicking', async (t) => {
   const f = await fixture(t);
   const d = await device(t, f.url);
-  d.send({ type: 'data', payload: {} });
-  assert.equal((await d.next('error')).code, 'NOT_PAIRED');
+  d.send({ type: 'data', payload: { stray: true } });
+  // 不回 error、不断连；配对后链路照常可用。
+  await delay(100);
+  assert.equal(d.messages.some((m) => m.type === 'error'), false);
+  const p = await client(t, f.url);
+  assert.equal((await auth(p, d.sid, d.hash)).ack.pair_status, 'matched');
+  const msg = { type: 'data', payload: { after: 1 } };
+  d.send(msg);
+  assert.deepEqual(await p.next('data'), msg);
 });
 
 test('path and browser origins rejected before upgrade', async (t) => {
@@ -327,6 +334,40 @@ test('mock DESKTOP reconnects using same sid/hash and re-matches existing probe 
   assert.equal(reconnected.messages.some((m) => m.type === 'device_register_ack'), false);
   assert.equal(qr(d), originalQr);
   assert.deepEqual(await f.health(), { status: 'ok', sockets: 2, rooms: 1, devices: 1 });
+});
+
+test('half-open probe (missed heartbeat) is taken over by a reconnecting probe', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url);
+  assert.equal((await auth(p1, d.sid, d.hash)).ack.pair_status, 'matched');
+
+  // 模拟半开：socket 仍 OPEN 但已错过心跳（alive=false）——手机断网后立即重连的场景
+  // （sockets 表键为服务端 ws 对象，按 角色+房间 反查 state；close 先监听再触发，避免错过事件）
+  const p1Closed = once(p1.ws, 'close');
+  const p1State = [...f.relay._sockets.values()].find((s) => s.role === 'probe' && s.room?.sid === d.sid);
+  assert.ok(p1State, 'probe state not found');
+  p1State.alive = false;
+
+  const p2 = await client(t, f.url);
+  const nonce = await challenge(p2, d.sid);
+  p2.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor(d.hash, nonce, 'probe', d.sid) });
+  assert.equal((await p2.next('auth_ack')).pair_status, 'matched');
+  // 旧 socket 被清理，新端可正常收发
+  await p1Closed;
+  const msg = { type: 'data', payload: { takeover: 1 } };
+  p2.send(msg);
+  assert.deepEqual(await d.next('data'), msg);
+});
+
+test('healthy incumbent still gets PEER_EXISTS protection', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url);
+  assert.equal((await auth(p1, d.sid, d.hash)).ack.pair_status, 'matched');
+  const p2 = await client(t, f.url);
+  p2.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
+  assert.equal((await p2.next('error')).code, 'PEER_EXISTS');
 });
 
 test('preauth data, unknown room/role, wrong proof length/key, and replay rejected', async (t) => {

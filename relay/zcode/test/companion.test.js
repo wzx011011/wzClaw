@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { createHmac } = require('node:crypto');
@@ -12,6 +13,26 @@ const { createRelay } = require('../server');
 const { createCompanion } = require('../companion');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
+
+// 可断开的 TCP 代理：模拟 companion 与 relay 之间的网络闪断（半开连接之外的干净场景）。
+function tcpProxy(targetPort) {
+  const connections = new Set();
+  const server = net.createServer((socket) => {
+    const upstream = net.connect(targetPort);
+    connections.add(socket); connections.add(upstream);
+    // 任一侧关闭/出错都双向销毁，否则 server.close() 会因残留连接永远不回调。
+    const kill = () => { socket.destroy(); upstream.destroy(); };
+    socket.on('error', kill); socket.on('close', kill);
+    upstream.on('error', kill); upstream.on('close', kill);
+    socket.pipe(upstream).pipe(socket);
+  });
+  return {
+    listen: () => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)),
+    port: () => server.address().port,
+    dropAll: () => { for (const socket of connections) socket.destroy(); connections.clear(); },
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
 
 // 手机端模拟：probe 角色完成质询应答，收集 data 载荷。
 function phone(url) {
@@ -74,8 +95,8 @@ function waitFor(getValue, timeoutMs = 8000) {
   });
 }
 
-async function withRelay(t) {
-  const relay = createRelay();
+async function withRelay(t, relayOptions = {}) {
+  const relay = createRelay(relayOptions);
   const address = await relay.listen({ port: 0 });
   return { relay, url: `ws://127.0.0.1:${address.port}/ws` };
 }
@@ -196,6 +217,109 @@ test('mid 持久化：同一 midFile 跨实例复用，配对 URL 每次独立',
   await second.stop();
   assert.notEqual(first.pairingUrl, second.pairingUrl); // sid/口令轮换
   assert.equal(fs.readFileSync(path.join(dir, 'mid'), 'utf8').length > 0, true);
+});
+
+test('网络闪断重连后接管原房间：sid/hash 不变，手机用原配对码直接重连', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const proxy = tcpProxy(Number(new URL(relayUrl).port));
+  await proxy.listen();
+  const proxiedUrl = `ws://127.0.0.1:${proxy.port()}/ws`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-reattach-'));
+  let pairingCalls = 0;
+  const companion = createCompanion({
+    relayUrl: proxiedUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    reconnectDelayMs: 200,
+    logger: () => {},
+    onPairing: () => { pairingCalls += 1; },
+  });
+  const client = phone(relayUrl); // 手机直连 relay，不经代理
+  const extraPhones = [];
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); for (const p of extraPhones) p.close(); },
+    () => proxy.close(),
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const url1 = companion.pairingUrl;
+  const parsed = new URL(url1);
+  const sid = parsed.searchParams.get('sid');
+  const hash = parsed.searchParams.get('hash');
+  await client.pair(sid, hash);
+  await waitFor(() => companion.state === 'paired');
+
+  // 模拟闪断：companion 侧连接被掐断，同时手机离席（释放 probe 位）。
+  proxy.dropAll();
+  client.close();
+  await delay(1500); // 重连延迟 200ms + 接管握手余量
+
+  // 手机用原配对码重新入房，应立即 matched；配对 URL 不轮换、QR 不重印。
+  let reMatched = null;
+  for (let i = 0; i < 10 && reMatched === null; i++) {
+    await delay(300);
+    const retry = phone(relayUrl);
+    extraPhones.push(retry);
+    try {
+      await retry.pair(sid, hash);
+      reMatched = retry;
+    } catch { /* 接管尚未完成，换新连接重试 */ }
+  }
+  assert.notEqual(reMatched, null);
+  assert.equal(companion.pairingUrl, url1);
+  assert.equal(pairingCalls, 1);
+  await waitFor(() => companion.state === 'paired');
+  // 接管后链路完整可用：手机请求 → app-server 应答。
+  reMatched.send({ type: 'data', payload: { id: 21, method: 'session/list' } });
+  const reply = await reMatched.next((m) => m.type === 'data' && m.payload.id === 21);
+  assert.equal(reply.payload.result.sessions[0].sessionId, 'sess_mock');
+});
+
+test('房间过期后接管被拒：作废旧凭据，全新注册轮换出新配对码', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t, { roomTtlMs: 50, sweepIntervalMs: 10 });
+  const proxy = tcpProxy(Number(new URL(relayUrl).port));
+  await proxy.listen();
+  const proxiedUrl = `ws://127.0.0.1:${proxy.port()}/ws`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-expire-'));
+  const urls = [];
+  const companion = createCompanion({
+    relayUrl: proxiedUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    reconnectDelayMs: 100,
+    logger: () => {},
+    onPairing: (url) => { urls.push(url); },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => proxy.close(),
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const url1 = companion.pairingUrl;
+  const sid1 = new URL(url1).searchParams.get('sid');
+  await client.pair(sid1, new URL(url1).searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+  // 手机先离席，房间随之进入 TTL 过期；随后掐断 companion 连接。
+  client.close();
+  await waitFor(() => companion.state !== 'paired');
+  proxy.dropAll();
+  // 接管失败（AUTH_FAILED）→ 凭据作废 → 重连后全新注册 → 出新码。
+  await waitFor(() => urls.length >= 2, 10000);
+  const url2 = urls[1];
+  assert.notEqual(new URL(url2).searchParams.get('sid'), sid1);
+  assert.equal(companion.pairingUrl, url2);
 });
 
 test('大会话 resume 响应被截断到帧上限内且连接保持', async (t) => {

@@ -139,6 +139,12 @@ function createCompanion(options = {}) {
   let pairing = null; // { sid, passHash, url }
   let authStage = 'idle'; // idle → registered → challenged → authenticated
   let reconnectTimer = null;
+  // 进程内复用的注册口令：同进程多次注册不轮换 hash。
+  let processHash = null;
+  // 上次注册成功的凭据；重连时优先用它接管原房间（sid 不变，手机端配对不失效）。
+  let creds = null;
+  let reattaching = false;
+  let matchedUp = false; // 房间当前是否手机+设备齐全（决定 app-server 出站是否放行）
   const pending = new Map(); // 反向请求超时看护（不代答的转发给手机端）
 
   function log(event, detail) { logger(event, detail); }
@@ -179,7 +185,11 @@ function createCompanion(options = {}) {
     onStateChange('app-server-started');
   }
 
-  function sendToPhone(frame) { send({ type: 'data', payload: shrinkFrame(frame) }); }
+  function sendToPhone(frame) {
+    // 未配对（手机离席）时不出站：配合 relay 的静默丢弃语义，避免任何踢除路径。
+    if (!matchedUp) return;
+    send({ type: 'data', payload: shrinkFrame(frame) });
+  }
 
   // 大响应截断：session/resume 响应携带全量消息历史（实测可达 26MB），
   // 超 relay 1MiB 帧上限时对半收敛只保留尾部消息并打 messagesTruncated 标记。
@@ -239,9 +249,9 @@ function createCompanion(options = {}) {
 
   function register() {
     authStage = 'registering';
-    const passHash = randomBytes(32).toString('base64');
-    pairing = { sid: null, passHash, url: null };
-    send({ type: 'device_register_init', device_mid: mid, pass_hash: passHash });
+    if (!processHash) processHash = randomBytes(32).toString('base64');
+    pairing = { sid: null, passHash: processHash, url: null };
+    send({ type: 'device_register_init', device_mid: mid, pass_hash: processHash });
   }
 
   function connect() {
@@ -251,11 +261,25 @@ function createCompanion(options = {}) {
     ws = new WebSocket(url, { maxPayload: MAX_PAYLOAD, perMessageDeflate: false,
       headers: { 'x-device-id': mid }, handshakeTimeout: 15000 });
     let registered = false;
-    ws.on('open', () => { register(); });
+    ws.on('open', () => {
+      // 重连优先接管原房间（同 sid/hash 再认证，relay 原生支持）：配对码保持有效。
+      // 房间已失效时 relay 回 error，届时作废本地凭据，下次重连全新注册出新码。
+      if (creds) {
+        reattaching = true;
+        pairing = { sid: creds.sid, passHash: creds.passHash,
+          url: derivePairingUrl(relayUrl, creds.sid, creds.passHash) };
+        authStage = 'registered';
+        send({ type: 'auth_init', role: 'device', device_sid: creds.sid });
+        return;
+      }
+      register();
+    });
     ws.on('error', () => { /* close 兜底重连 */ });
     ws.on('close', () => {
       ws = null;
       authStage = 'idle';
+      matchedUp = false;
+      reattaching = false;
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
       onStateChange('disconnected');
@@ -267,12 +291,19 @@ function createCompanion(options = {}) {
       if (binary) return;
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!isObject(msg)) return;
-      if (msg.type === 'error') { log('relay-error', msg.code || ''); ws.close(); return; }
+      if (msg.type === 'error') {
+        // 接管尝试被拒（房间过期/被占等）：作废凭据，重连后走全新注册。
+        if (reattaching) creds = null;
+        log('relay-error', msg.code || '');
+        ws.close();
+        return;
+      }
       if (msg.type === 'device_register_ack') {
         if (authStage !== 'registering' || typeof msg.device_sid !== 'string' || !msg.device_sid) { ws.close(); return; }
         registered = true;
         pairing.sid = msg.device_sid;
         pairing.url = derivePairingUrl(relayUrl, pairing.sid, pairing.passHash);
+        creds = { sid: pairing.sid, passHash: pairing.passHash };
         authStage = 'registered';
         onPairing(pairing.url); // 配对 URL 一次性交给宿主（渲染 QR 用）
         onStateChange('waiting-pairing');
@@ -291,12 +322,14 @@ function createCompanion(options = {}) {
         if (authStage !== 'challenged' || !['matched', 'waiting'].includes(msg.pair_status)) return;
         // 设备端先于手机完成认证时收到 waiting：状态推进，等 pair_status_ack matched 再起桥。
         authStage = 'authenticated';
+        matchedUp = msg.pair_status === 'matched';
         if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
         else onStateChange('waiting-pairing');
         return;
       }
       if (msg.type === 'pair_status_ack') {
         if (authStage !== 'authenticated') return;
+        matchedUp = msg.pair_status === 'matched';
         if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
         else onStateChange('waiting-pairing');
         return;
@@ -317,6 +350,8 @@ function createCompanion(options = {}) {
     get state() {
       if (!ws) return 'disconnected';
       if (authStage !== 'authenticated') return 'connecting';
+      // 以房间实际配对状态为准：手机离席时如实报告 waiting-pairing 而非残留 paired。
+      if (!matchedUp) return 'waiting-pairing';
       return bridgeStarted && bridge ? 'paired' : 'paired-no-model';
     },
   stop() {

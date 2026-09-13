@@ -10,6 +10,8 @@ function createRelay(options = {}) {
   const config = { authTimeoutMs: 10000, roomTtlMs: 60000, sweepIntervalMs: 1000,
     pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16,
     rateLimit: 120, rateWindowMs: 10000, ...options };
+  const logger = typeof config.logger === 'function' ? config.logger : () => {};
+  delete config.logger;
   for (const value of Object.values(config)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid relay option');
   }
@@ -82,8 +84,10 @@ function createRelay(options = {}) {
     state.authTimer = setTimeout(() => fail(state, 'AUTH_TIMEOUT'), config.authTimeoutMs).unref();
     ws.on('pong', () => { state.alive = true; });
     ws.on('error', () => { ws.terminate(); });
-    ws.on('close', () => {
+    ws.on('close', (code) => {
       clearTimeout(state.closeTimer); detach(state); sockets.delete(ws);
+      // 只记角色与关闭码（1000 正常关 / 1006 网络中断 / 1008 被拒），不含任何标识值
+      logger('ws-close', `role=${state.role || 'unauth'} code=${code}`);
     });
     ws.on('message', (raw, binary) => {
       if (state.failed) return;
@@ -119,7 +123,16 @@ function createRelay(options = {}) {
       if (!room || (msg.role === 'device' && ((room.owner !== null && room.owner !== state)
         || (state.room !== null && state.room !== room)))
         || (msg.role === 'probe' && state.room)) return fail(state, 'AUTH_FAILED');
-      if (room[msg.role]) return fail(state, 'PEER_EXISTS');
+      if (room[msg.role]) {
+        // 旧端 socket 已断/失联（半开）时允许接管：新端仍要过 HMAC 质询，安全等价。
+        // 典型场景：手机网络闪断留下半开连接，旧端要等一个心跳周期才被清理，
+        // 期间手机重连会一直撞 PEER_EXISTS 表现为"频繁重连"。
+        const incumbent = room[msg.role];
+        if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) return fail(state, 'PEER_EXISTS');
+        room[msg.role] = null;
+        incumbent.ws.terminate();
+        logger('peer-takeover', `role=${msg.role} stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
+      }
       state.room = room; state.role = msg.role;
       state.nonce = randomBytes(32).toString('base64url');
       send(ws, { type: 'auth_challenge', nonce: state.nonce }); return;
@@ -147,7 +160,9 @@ function createRelay(options = {}) {
       send(ws, { type: 'pair_status_ack', pair_status: matched(state.room) ? 'matched' : 'waiting' });
     } else if (msg.type === 'data') {
       if (!isObject(msg.payload)) return fail(state);
-      if (!matched(state.room)) return fail(state, 'NOT_PAIRED');
+      // 未配对时外发数据静默丢弃：认证设备（companion）常在手机离开后仍有
+      // app-server 尾流数据，踢掉会迫使其重注册轮换 sid/hash，手机端配对全部失效。
+      if (!matched(state.room)) return;
       send(state.room[state.role === 'device' ? 'probe' : 'device'].ws, msg);
     } else fail(state);
   }
@@ -164,6 +179,8 @@ function createRelay(options = {}) {
     }
   }, config.pingIntervalMs).unref();
   return {
+    // 测试钩子：只读访问内部 socket 状态表（模拟错过心跳的半开连接）
+    get _sockets() { return sockets; },
     listen({ port = 18884, host = '127.0.0.1' } = {}) {
       if (closing || server.listening || !Number.isInteger(port) || port < 0 || port > 65535
         || typeof host !== 'string' || !host.length) return Promise.reject(new Error('Invalid listen state, port or host'));
@@ -198,7 +215,7 @@ if (require.main === module) {
   const port = portIdx !== -1 && /^\d+$/.test(args[portIdx + 1] || '') ? Number(args[portIdx + 1]) : 18884;
   // 容器/nginx 部署用 --host 0.0.0.0；默认仅回环。
   const host = hostIdx !== -1 && typeof args[hostIdx + 1] === 'string' && args[hostIdx + 1].length ? args[hostIdx + 1] : '127.0.0.1';
-  const relay = createRelay();
+  const relay = createRelay({ logger: (event, detail) => console.log(`[relay] ${new Date().toISOString()} ${event}${detail ? ` ${detail}` : ''}`) });
   relay.listen({ port, host }).then((address) => {
     console.log(`Relay listening at ws://${address.address}:${address.port}/ws`);
   }).catch(async () => { console.error('Relay startup failed'); await relay.close(); process.exitCode = 1; });
