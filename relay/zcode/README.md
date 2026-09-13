@@ -13,10 +13,12 @@
                     `zcode app-server`（ZCode Protocol v1）
 ```
 
-- **relay**（`server.js`）：房间 + HMAC 质询配对，已验证协议（28 tests）。
+- **relay**（`server.js`）：房间 + HMAC 质询配对，已验证协议（30 tests）。
 - **companion**（`companion.js`）：桌面侧 device 角色；QR 配对 URL 自管；
   spawn 本机 `zcode app-server`；`session/requestRuntimePreferences` 反向请求自动代答，
-  其余反向请求（权限确认等）转发给手机端应答；模型 token 从
+  其余反向请求（权限确认等）转发给手机端应答，超时看护按 method 分档：
+  权限/确认/AskUser 类（method 含 permission/confirm/approval/askUser/interaction）
+  放宽到 120s，其余 15s，超时一律代答 `-32022` 拒绝；模型 token 从
   `~/.zcode/v2/config.json` 读取后仅注入子进程环境变量（不落盘、不打印、不经过 relay）。
 - **probe**（`probe.js`）：早期对官方桌面远程控制协议的验证器，保留作 relay 回归测试用。
 
@@ -37,7 +39,7 @@ node server.js [--port 18884] [--host 127.0.0.1]
 # companion（桌面侧，另一终端）
 node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <ZCode 工作区>]
 
-# 测试（31 个：28 relay + 3 companion，含假 app-server 桥接全流程）
+# 测试（37 个：30 relay + 7 companion，含假 app-server 桥接全流程）
 node --test test/relay.test.js test/companion.test.js
 ```
 
@@ -89,3 +91,6 @@ mid 持久化于 `~/.wzxclaw/zcode-companion/mid`。
 `createCompanion(options)`：`start()` / `stop()`（Promise，等子进程退出）、
 `pairingUrl` / `state`；回调 `onPairing(url)`、`onStateChange(state)`、
 `logger(event, detail)`；可注入 `zcodeCommand`（测试用假进程）与 `v2ConfigPath`。
+反向请求超时看护分两档：`requestTimeoutMs`（默认 15000，普通反向请求）与
+`permissionRequestTimeoutMs`（默认 120000，权限/确认/AskUser 类，按 method 含
+permission/confirm/approval/askUser/interaction 判定），两档超时后代答 `-32022` 拒绝。

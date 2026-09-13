@@ -165,6 +165,95 @@ test('companion 配对 → 桥接 → 双向转发 + 反向请求代答/转发�
   assert.ok(states.includes('paired'));
 });
 
+// 反向请求超时分档（毫秒级注入验证）：权限/AskUser 类放宽档、非权限类短档；
+// 两档超时后代答行为一致（-32022 拒绝）；放宽档内人工应答不触发代答。
+// 内联假 app-server（node -e，不动共享 fixture）：收到 emit/reverse 指令即发
+// 一条指定 method 的反向请求。
+test('反向请求超时按 method 分档：权限/AskUser 放宽、非权限短超时，超时回 -32022', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-timeout-'));
+  const onDemandServer = `
+    'use strict';
+    let buf = '';
+    const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      let index;
+      while ((index = buf.indexOf('\\n')) !== -1) {
+        const line = buf.slice(0, index).trim();
+        buf = buf.slice(index + 1);
+        if (!line) continue;
+        let frame; try { frame = JSON.parse(line); } catch { continue; }
+        if (frame.method === 'emit/reverse' && frame.params) {
+          send({ id: frame.params.tag, method: frame.params.method, params: {} });
+        } else if (typeof frame.id === 'string' && frame.id.startsWith('srv-')
+          && (frame.result !== undefined || frame.error !== undefined)) {
+          // 应答（人工或超时代答）上报给手机侧观察：tag + error.code（无错误为 null）。
+          send({ method: 'fake/answered', params: { tag: frame.id, code: frame.error ? frame.error.code : null } });
+        }
+      }
+    });
+  `;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    requestTimeoutMs: 300,            // 非权限类：短档（对应线上 15s 档）
+    permissionRequestTimeoutMs: 2000, // 权限/AskUser 类：放宽档（对应线上 120s 档）
+    logger: () => {},
+    onPairing: () => {},
+  });
+  const client = phone(relayUrl);
+  // 超时代答回给 app-server（不经过手机），故由假 app-server 上报 fake/answered 观察判据。
+  const rejected = (tag) => client.messages.some(
+    (m) => m.type === 'data' && m.payload.method === 'fake/answered'
+      && m.payload.params.tag === tag && m.payload.params.code === -32022);
+  const emit = (tag, method) => client.send({
+    type: 'data', payload: { id: `emit-${tag}`, method: 'emit/reverse', params: { tag, method } },
+  });
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const parsed = new URL(companion.pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+
+  // 同挂一条权限类（session/requestPermission）与一条非权限类（workspace/open）。
+  emit('srv-perm', 'session/requestPermission');
+  emit('srv-plain', 'workspace/open');
+  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-perm');
+  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-plain');
+
+  // 短档（300ms）到期后：非权限类已被代答拒绝；权限类不受短档影响仍在等待。
+  await delay(900);
+  assert.equal(rejected('srv-plain'), true);
+  assert.equal(rejected('srv-perm'), false);
+
+  // 权限类在放宽档内从容应答（模拟人看手机后点确认）：不触发代答。
+  emit('srv-ask', 'interaction/askUser');
+  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-ask');
+  await delay(300);
+  client.send({ type: 'data', payload: { id: 'srv-ask', result: { selectedLabels: ['A'] } } });
+
+  // 超过放宽档（2000ms）仍未应答的权限类最终也被代答拒绝（-32022，与旧版一致）。
+  const late = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'fake/answered'
+      && m.payload.params.tag === 'srv-perm' && m.payload.params.code === -32022,
+    6000);
+  assert.ok(late, 'srv-perm 应在放宽档超时后被代答拒绝');
+
+  // 已人工应答的权限类不会再被代答（计时器在应答时已清理）。
+  await delay(1300); // 越过 srv-ask 若未应答的到期点（emit 后 2000ms）
+  assert.equal(rejected('srv-ask'), false);
+});
+
 test('未登录（无 token）时优雅降级：配对成功但不起桥，data 静默丢弃', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-'));
