@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
-const { WebSocket } = require('ws');
+const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
 const { createCompanion } = require('../companion');
 
@@ -491,4 +491,113 @@ test('大会话 resume 响应被截断到帧上限内且连接保持', async (t)
   client.send({ type: 'data', payload: { id: 10, method: 'session/list' } });
   const follow = await client.next((m) => m.type === 'data' && m.payload.id === 10);
   assert.equal(follow.payload.result.sessions[0].sessionId, 'sess_mock');
+});
+
+// —— 注册共享密钥（registrationSecret）——
+
+// 录制型假 relay：只收首条注册帧即断开，供直接断言注册帧形状。
+function recordingRelay() {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  const frames = [];
+  const listening = new Promise((resolve, reject) => {
+    wss.once('listening', resolve);
+    wss.once('error', reject);
+  });
+  wss.on('connection', (ws) => {
+    ws.on('message', (raw) => {
+      frames.push(JSON.parse(raw.toString()));
+      ws.close(); // 只需要首帧；companion 侧 reconnectDelayMs 拉长即不再重试
+    });
+    ws.on('error', () => { /* 关闭握手期间的意外错误忽略 */ });
+  });
+  return {
+    frames,
+    listening,
+    get url() { return `ws://127.0.0.1:${wss.address().port}/ws`; },
+    close: () => new Promise((resolve) => wss.close(resolve)),
+  };
+}
+
+test('registrationSecret 注入：注册帧带 register_proof；未注入时无该字段', async (t) => {
+  const secret = 'companion-register-secret';
+  const fake = recordingRelay();
+  await fake.listening; // 端口在 listen 完成后才可读
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-proof-'));
+  const base = {
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    reconnectDelayMs: 60000,
+    logger: () => {},
+    onPairing: () => {},
+  };
+  const withSecret = createCompanion({ ...base, relayUrl: fake.url,
+    midFile: path.join(dir, 'mid-secret'), registrationSecret: secret });
+  cleanup(t, [
+    () => withSecret.stop(),
+    () => fake.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  withSecret.start();
+  await waitFor(() => fake.frames.length >= 1);
+  const frame = fake.frames[0];
+  assert.equal(frame.type, 'device_register_init');
+  // proof 确为 HMAC-SHA256(secret, device_mid) 的 base64url（无 padding，43 字符）
+  assert.equal(frame.register_proof,
+    createHmac('sha256', secret).update(frame.device_mid).digest('base64url'));
+  assert.match(frame.register_proof, /^[A-Za-z0-9_-]{43}$/);
+  // device_mid 即持久化的 mid：proof 与设备身份绑定
+  assert.equal(frame.device_mid, fs.readFileSync(path.join(dir, 'mid-secret'), 'utf8').trim());
+
+  // 对照：未注入 secret 的注册帧不带 register_proof 字段（对开放 relay 零影响）
+  const withoutSecret = createCompanion({ ...base, relayUrl: fake.url,
+    midFile: path.join(dir, 'mid-plain') });
+  cleanup(t, [() => withoutSecret.stop()]);
+  withoutSecret.start();
+  await waitFor(() => fake.frames.length >= 2);
+  const plainFrame = fake.frames.find((m) => m.device_mid
+    === fs.readFileSync(path.join(dir, 'mid-plain'), 'utf8').trim());
+  assert.equal(plainFrame.type, 'device_register_init');
+  assert.equal('register_proof' in plainFrame, false);
+});
+
+test('带密钥 relay 端到端：同 secret 的 companion 注册并配对成功；无 secret 的被拒', async (t) => {
+  const secret = 'e2e-register-secret';
+  const { relay, url: relayUrl } = await withRelay(t, { registrationSecret: secret });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-secret-'));
+  const base = {
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    reconnectDelayMs: 60000, // 负例只打一轮，测试窗口内不重试
+    logger: () => {},
+    onPairing: () => {},
+  };
+  // 负例：不带 secret 的 companion 被 AUTH_FAILED 拒掉，拿不到配对 URL
+  const denied = createCompanion({ ...base, midFile: path.join(dir, 'mid-denied') });
+  // 正例：同 secret 注册成功
+  const companion = createCompanion({ ...base, midFile: path.join(dir, 'mid-ok'),
+    registrationSecret: secret });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => denied.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  denied.start();
+  await delay(600);
+  assert.equal(denied.pairingUrl, null); // 注册被拒：从未拿到 device_register_ack
+
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const parsed = new URL(companion.pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+  // 全链路可用：手机请求 → app-server 应答
+  client.send({ type: 'data', payload: { id: 31, method: 'session/list' } });
+  const reply = await client.next((m) => m.type === 'data' && m.payload.id === 31);
+  assert.equal(reply.payload.result.sessions[0].sessionId, 'sess_mock');
 });
