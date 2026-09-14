@@ -338,6 +338,43 @@ void main() {
       expect(fake.requests.map((e) => e.key), contains('session/list'));
     });
 
+    test('restore：已配对时触发显式重连（修复 #20，按钮不再无效）', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/list'] = (_) => {'sessions': []};
+      final store = _pairedStore(fake); // pair() 已 connect 一次
+      expect(fake.connectCount, 1);
+      final listCallsBefore =
+          fake.requests.where((e) => e.key == 'session/list').length;
+
+      // 已配对状态下的 restore（会话列表页"重连"按钮的入口）
+      await store.restore();
+      expect(store.pairing, isNotNull); // 配对不丢
+      expect(store.connState, ZcodeConnState.matched);
+      expect(fake.connectCount, 2); // 显式重连：重新挂载客户端
+      expect(
+        fake.requests.where((e) => e.key == 'session/list').length,
+        greaterThan(listCallsBefore), // 重连后刷新会话列表
+      );
+    });
+
+    test('reconnect：已配对重建连接；未配对 no-op', () async {
+      // 未配对：无事可做，不抛错不建连
+      final fakeBare = FakeZcodeRelayClient();
+      final storeBare = ZcodeChatStore(client: fakeBare);
+      await storeBare.reconnect();
+      expect(fakeBare.connectCount, 0);
+      expect(storeBare.connState, ZcodeConnState.idle);
+
+      // 已配对：重连 + 刷新列表
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/list'] = (_) => {'sessions': []};
+      final store = _pairedStore(fake);
+      await store.reconnect();
+      expect(fake.connectCount, 2);
+      expect(fake.requests.any((e) => e.key == 'session/list'), isTrue);
+      expect(store.connState, ZcodeConnState.matched);
+    });
+
     test('unpair：断开客户端、清状态与持久化', () async {
       final fake = FakeZcodeRelayClient();
       final store = _pairedStore(fake);
@@ -372,9 +409,11 @@ void main() {
               _msg('assistant', [
                 {'type': 'text', 'text': '回答'},
                 {'type': 'reasoning', 'text': '思考过程'},
-                {'type': 'tool', 'callId': 'tc-running', 'state': 'running', 'tool': {'name': 'FileRead'}},
-                {'type': 'tool', 'callId': 'tc-done', 'state': 'completed', 'tool': {'name': 'ShellExecute'}},
-                {'type': 'tool', 'callId': 'tc-failed', 'state': 'failed', 'tool': 'Echo'},
+                // 实测 tool part 形状：callID（大写 D）、tool 为字符串、
+                // input/output/error 嵌在 state 对象里
+                {'type': 'tool', 'callID': 'tc-running', 'tool': 'FileRead', 'state': {'status': 'running', 'input': {'path': 'a.txt'}}},
+                {'type': 'tool', 'callID': 'tc-done', 'tool': 'ShellExecute', 'state': {'status': 'completed', 'input': {'command': 'ls'}, 'output': '文件列表'}},
+                {'type': 'tool', 'callID': 'tc-failed', 'tool': 'Echo', 'state': {'status': 'error', 'input': {}, 'error': 'Permission request failed'}},
               ], id: 'm2', created: 2000, modelId: 'glm-5.3',),
               _msg('assistant', [], id: 'm3'), // 空 assistant → 过滤
             ],
@@ -393,19 +432,22 @@ void main() {
       expect(store.messages[1].role, MessageRole.user);
       expect(store.messages[1].content, '你好');
 
-      // assistant 消息：content 拼接 + toolCalls 状态映射
+      // assistant 消息：content 拼接 + toolCalls 状态映射（实测形状）
       final a = store.messages[2];
       expect(a.content, '回答');
       expect(a.model, 'glm-5.3');
       final calls = a.toolCalls!;
       expect(calls.length, 3);
       expect(calls[0].toolName, 'FileRead');
+      expect(calls[0].toolCallId, 'tc-running'); // callID（大写 D）
       expect(calls[0].status, ToolCallStatus.running);
       expect(calls[1].toolName, 'ShellExecute');
       expect(calls[1].status, ToolCallStatus.done);
+      expect(calls[1].outputSummary, '文件列表'); // state.output
       expect(calls[2].toolName, 'Echo'); // tool 为字符串的形态
       expect(calls[2].status, ToolCallStatus.error);
       expect(calls[2].isError, isTrue);
+      expect(calls[2].outputSummary, 'Permission request failed'); // state.error 优先展示
 
       expect(store.isStreaming, isFalse);
       final resume = fake.requests.firstWhere((e) => e.key == 'session/resume');
@@ -569,7 +611,7 @@ void main() {
         params: {'kind': 'usage.delta', 'inputTokens': 12, 'outputTokens': 34},
       ),);
 
-      // 权威消息（含工具调用结果，只有权威列表才有）
+      // 权威消息（含工具调用结果，只有权威列表才有；实测 tool part 形状）
       fake.handlers['session/messages'] = (_) => {
             'messages': [
               _msg('user', [
@@ -577,7 +619,7 @@ void main() {
               ], id: 'a1', created: 1,),
               _msg('assistant', [
                 {'type': 'text', 'text': '最终回答'},
-                {'type': 'tool', 'callId': 'tc9', 'state': 'completed', 'tool': {'name': 'FileWrite'}, 'output': '写入 3 行'},
+                {'type': 'tool', 'callID': 'tc9', 'tool': 'FileWrite', 'state': {'status': 'completed', 'input': {'path': 'x.txt'}, 'output': '写入 3 行'}},
               ], id: 'a2', created: 2,),
             ],
           };
@@ -733,51 +775,171 @@ void main() {
   });
 
   group('权限确认 / AskUser（反向请求）', () {
-    test('权限反向请求 → 流事件 + 应答回传结果（含 snake_case 兜底）', () async {
+    test('权限反向请求（实测形状）→ 流事件 + 应答回放 option response 原文', () async {
       final fake = FakeZcodeRelayClient();
       final store = _pairedStore(fake);
 
       final events = <PermissionRequest?>[];
       final sub = store.permissionStream.listen(events.add);
 
+      // 实测形状（probe-toolturn，APP-SERVER.md「工具回合实测」）：
+      // method=interaction/requestPermission；options 携带各选项的 response
       final future = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-1',
-        method: 'session/requestPermission',
-        params: {'toolCallId': 'tc-1', 'toolName': 'FileWrite', 'input': {'path': 'a.txt'}},
+        method: 'interaction/requestPermission',
+        params: {
+          'input': {
+            'command': "printf 'A' > probe-a.txt",
+            'description': 'Write A to probe-a.txt',
+          },
+          'reason': 'High risk tools require explicit approval',
+          'requestId': 'perm_04189f93-0000-0000-0000-000000000001',
+          'riskLevel': 'high',
+          'sessionId': 'sess-x',
+          'options': [
+            {
+              'kind': 'allow_once',
+              'optionId': 'allow_once',
+              'name': 'Allow once',
+              'response': {'decision': 'allow', 'reason': 'Approved once'},
+            },
+            {
+              'kind': 'allow_always',
+              'optionId': 'allow_project',
+              'name': 'Always allow in this project',
+              'response': {
+                'decision': 'allow',
+                'permissionUpdates': [
+                  {
+                    'behavior': 'allow',
+                    'rules': [
+                      {
+                        'ruleContent': "printf 'A' > probe-a.txt",
+                        'toolName': 'Bash',
+                      },
+                    ],
+                    'type': 'addRules',
+                  },
+                ],
+                'reason': 'Approved for this project',
+              },
+            },
+            {
+              'kind': 'deny',
+              'optionId': 'deny',
+              'name': 'Deny',
+              'response': {'decision': 'deny', 'reason': 'Denied'},
+            },
+          ],
+          'toolCallId': 'call_tc1',
+          'toolName': 'Bash',
+          'turnId': 'turn_1',
+        },
       ),);
       await Future<void>.delayed(Duration.zero);
-      expect(store.activePermission?.toolCallId, 'tc-1');
-      expect(store.activePermission?.toolName, 'FileWrite');
-      expect(store.activePermission?.input, {'path': 'a.txt'});
+      expect(store.activePermission?.toolCallId, 'call_tc1');
+      expect(store.activePermission?.toolName, 'Bash');
+      expect(store.activePermission?.input, {
+        'command': "printf 'A' > probe-a.txt",
+        'description': 'Write A to probe-a.txt',
+      });
       expect(events, hasLength(1));
-      expect(events.first?.toolCallId, 'tc-1');
+      expect(events.first?.toolCallId, 'call_tc1');
 
-      // 应答：结果作为反向请求响应回传（客户端带原请求 id 发送）
-      store.respondToPermission('tc-1', approved: true, remember: true);
+      // 批准 + remember：回放 allow_project 选项的 response 原文
+      // （含 permissionUpdates——只有请求方知道其内容）
+      store.respondToPermission('call_tc1', approved: true, remember: true);
       expect(await future, {
-        'toolCallId': 'tc-1',
-        'approved': true,
-        'remember': true,
+        'decision': 'allow',
+        'permissionUpdates': [
+          {
+            'behavior': 'allow',
+            'rules': [
+              {'ruleContent': "printf 'A' > probe-a.txt", 'toolName': 'Bash'},
+            ],
+            'type': 'addRules',
+          },
+        ],
+        'reason': 'Approved for this project',
       });
       expect(store.activePermission, isNull);
       await Future<void>.delayed(Duration.zero);
       expect(events, hasLength(2)); // 清空事件
       expect(events.last, isNull);
 
-      // snake_case 字段兜底
-      final future2 = store.debugHandleReverseRequest(const ZcodeFrame(
+      // 一次性批准：回放 allow_once 的 response 原文
+      final futureOnce = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-2',
+        method: 'interaction/requestPermission',
+        params: {
+          'input': {'command': 'echo hi'},
+          'toolCallId': 'call_tc2',
+          'toolName': 'Bash',
+          'options': [
+            {
+              'optionId': 'allow_once',
+              'response': {'decision': 'allow', 'reason': 'Approved once'},
+            },
+            {
+              'optionId': 'deny',
+              'response': {'decision': 'deny', 'reason': 'Denied'},
+            },
+          ],
+        },
+      ),);
+      await Future<void>.delayed(Duration.zero);
+      store.respondToPermission('call_tc2', approved: true);
+      expect(await futureOnce, {'decision': 'allow', 'reason': 'Approved once'});
+
+      // 拒绝：回放 deny 选项的 response 原文
+      final futureDeny = store.debugHandleReverseRequest(const ZcodeFrame(
+        id: 'server-3',
+        method: 'interaction/requestPermission',
+        params: {
+          'input': {'command': 'rm -rf /'},
+          'toolCallId': 'call_tc3',
+          'toolName': 'Bash',
+          'options': [
+            {
+              'optionId': 'deny',
+              'response': {'decision': 'deny', 'reason': 'Denied'},
+            },
+          ],
+        },
+      ),);
+      await Future<void>.delayed(Duration.zero);
+      store.respondToPermission('call_tc3', approved: false);
+      expect(await futureDeny, {'decision': 'deny', 'reason': 'Denied'});
+
+      // 无 options 暂存（协议漂移兜底）：按实测 schema 构造最小 result
+      final futureFallback = store.debugHandleReverseRequest(const ZcodeFrame(
+        id: 'server-4',
+        method: 'interaction/requestPermission',
+        params: {'toolCallId': 'call_tc4', 'toolName': 'FileWrite', 'input': {}},
+      ),);
+      await Future<void>.delayed(Duration.zero);
+      store.respondToPermission('call_tc4', approved: false);
+      expect(await futureFallback, {'decision': 'deny', 'reason': 'Denied'});
+
+      // 重复应答（已清除）静默忽略
+      store.respondToPermission('call_tc4', approved: true);
+      sub.cancel();
+    });
+
+    test('snake_case 字段兜底：旧形态仍可解析并按兜底 schema 应答', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = _pairedStore(fake);
+
+      final future = store.debugHandleReverseRequest(const ZcodeFrame(
+        id: 'server-5',
         method: 'session/requestPermission',
         params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
       ),);
       await Future<void>.delayed(Duration.zero);
+      expect(store.activePermission?.toolCallId, 'tc-2');
       expect(store.activePermission?.toolName, 'ShellExecute');
       store.respondToPermission('tc-2', approved: false);
-      expect(await future2, {'toolCallId': 'tc-2', 'approved': false});
-
-      // 重复应答（已清除）静默忽略
-      store.respondToPermission('tc-2', approved: true);
-      sub.cancel();
+      expect(await future, {'decision': 'deny', 'reason': 'Denied'});
     });
 
     test('AskUser 反向请求 → 流事件 + 应答回传选项', () async {
@@ -912,6 +1074,43 @@ void main() {
       expect(store.messages.single.content, '最新回答');
     });
 
+    test('分页方向（实测升序）：升序页直通；降序页被投票兜底翻转', () async {
+      // 实测（probe-sync3）：session/messages 一律升序（旧→新）返回，
+      // 正常路径直通；若服务端漂移返回降序页，投票兜底应翻转为升序展示。
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('sess-asc').messages.addAll([
+        _msg('user', [
+          {'type': 'text', 'text': '最早'},
+        ], id: 'p1', created: 1,),
+        _msg('assistant', [
+          {'type': 'text', 'text': '中间'},
+        ], id: 'p2', created: 2,),
+        _msg('assistant', [
+          {'type': 'text', 'text': '最新'},
+        ], id: 'p3', created: 3,),
+      ],);
+      final store = _pairedStore(fake);
+      await store.openSession('sess-asc');
+      // 升序服务端页：直通展示（旧→新）
+      expect(store.messages.map((m) => m.content), ['最早', '中间', '最新']);
+
+      // 降序服务端页（异常兜底）：翻转为旧→新
+      fake.handlers['session/messages'] = (_) => {
+            'messages': [
+              _msg('assistant', [
+                {'type': 'text', 'text': '新'},
+              ], id: 'q2', created: 20,),
+              _msg('user', [
+                {'type': 'text', 'text': '旧'},
+              ], id: 'q1', created: 10,),
+            ],
+          };
+      final store2 = _pairedStore(fake);
+      await store2.openSession('sess-desc');
+      expect(store2.messages.map((m) => m.content), ['旧', '新']);
+    });
+
     test('推送渲染：model.streaming 增量直渲染；turn.completed 纯文本本地收尾免权威刷新', () async {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
@@ -1022,10 +1221,9 @@ void main() {
         {'type': 'text', 'text': '写完了'},
         {
           'type': 'tool',
-          'callId': 'tc1',
-          'state': 'completed',
-          'tool': {'name': 'FileWrite'},
-          'output': '写入 3 行',
+          'callID': 'tc1',
+          'tool': 'FileWrite',
+          'state': {'status': 'completed', 'output': '写入 3 行'},
         },
       ], id: 'msg-a2', created: 2,),);
       _pushEvent(store,
@@ -1446,9 +1644,9 @@ void main() {
         _msg('assistant', [
           {
             'type': 'tool',
-            'callId': 'tc1',
-            'state': 'completed',
-            'tool': {'name': 'FileWrite'},
+            'callID': 'tc1',
+            'tool': 'FileWrite',
+            'state': {'status': 'completed'},
           },
         ], id: 'msg-tool', created: 3,),
         _msg('assistant', [

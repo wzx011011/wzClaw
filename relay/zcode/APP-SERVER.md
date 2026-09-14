@@ -201,6 +201,158 @@ state.updated          patch.status="idle"
 - resume 响应永远携带全量 messages——手机端应忽略该数组、自行分页
   `session/messages`；companion 可选剥离该数组降低 relay 帧体积（优化项）。
 
+## 分页契约实测（第三轮，2026-09-14，probe-sync3.js）
+
+> 新会话连发 3 个最小回合（"只回复数字 N"，6 条 user/assistant 消息），
+> 对 `session/messages` 做分页矩阵实测。结论供手机端同步层（Dart
+> `_fetchTailWindow`/`_pullIncremental`/`_normalizeChronological`）钉死契约。
+
+### 结论速查
+
+| 问题 | 实测结论 |
+| --- | --- |
+| `{limit:N}` 返回方向 | **最新 N 条（尾部窗口）**，页内**升序（旧→新）**。limit=2 返回的是最后 2 条，不是最旧 2 条 |
+| `{afterMessageId}` 窗口语义 | **cursor-forward**：返回游标之后**全部**消息（升序）；游标=最后一条 → 空 `messages:[]` |
+| `{afterMessageId, limit}` 混合 | 游标后缀中的**最新 N 条**（升序）——即 "后缀 ∩ newest-N"（后缀本身是尾部集合，两种解释等价） |
+| 未知 afterMessageId | **不报错**，退化为 newest-N（等同无游标）。水位失效时自然回退，无需专门兜底 |
+| `time.created` 粒度 | **毫秒**（13 位 epoch ms）；本样本 6/6 唯一（user→assistant 间隔实测 0.4–2.6s），同毫秒平局概率低 |
+| 响应形状 | 仅 `{messages:[...]}`，无 total/hasMore 字段；**收敛信号 = 返回条数 < limit** |
+
+### 对同步层的含义
+
+- 尾窗拉取 `{limit:40}` 一次即得最新 40 条、已按时间序排好——直通展示。
+- 增量刷新 `{afterMessageId:水位, limit:200}`：单页最多 200 条新增（升序），
+  合并后水位推进到返回页尾部，`不足一页` 即收敛。
+- ⚠️ 若游标后新增 **超过 limit**，返回的是最新的 limit 条（中间跳空、水位
+  直接推进到尾部）——正常回合（每回合几条）不会触发；极端补放场景可接受。
+- Dart `_normalizeChronological` 的降序投票从此只是协议漂移兜底，
+  主路径按升序直通（见 zcode_chat_store.dart 注释）。
+
+## 工具回合实测（2026-09-14，probe-toolturn.js）
+
+> 安全约束：cwd 为 mkdtemp 临时目录；权限请求先捕获完整 params 再拒绝；
+> 全程零真实工具落地（结束时 `tmpDirLeftovers: []` 自证）。
+> 直连真 app-server stdio（probe-sync2 模式），真模型 glm-5.3，4 轮会话。
+
+### 权限模式（session/setMode）
+
+- zod 全枚举：**`plan | build | edit | yolo | auto`**（发 `default` 被
+  -32602 ZodError 枚举拒绝）。
+- 响应携带类 projection 全量快照（activeToolCalls/backgroundJobs/
+  pendingPermissions/…）。设 `edit` 后响应快照 `projection.mode` 显示
+  `"build"`（快照口径差异），随后 `state.updated` 的 `patch.mode =
+  {"current":"edit"}` 为准。
+- 触发条件实测：**edit 模式下 `echo`（低风险）自动放行、直接执行**；
+  `printf 'X' > file`（高风险）触发权限确认反向请求。
+  不 setMode 的临时目录默认同样自动放行低风险命令。
+
+### 权限确认反向请求：`interaction/requestPermission`
+
+params 完整字段（实测原文）：
+
+| 字段 | 形状 | 说明 |
+| --- | --- | --- |
+| `input` | `{command, description, …}` | 工具入参（形状随工具而定） |
+| `reason` | string | 如 `"High risk tools require explicit approval"` |
+| `requestId` | `"perm_<uuid>"` | 权限请求自身 id |
+| `riskLevel` | `"high"` | 风险级别 |
+| `sessionId` / `turnId` | string | 归属 |
+| `toolCallId` | `"call_…"` | 对应工具调用（与 tool.updated/权威 part 一致） |
+| `toolName` | `"Bash"` | 工具名 |
+| `options` | 数组 ×3 | 见下 |
+
+options（应答的本质是"选一个 option，回放它的 response"）：
+
+```json
+[
+  {"kind":"allow_once","optionId":"allow_once","name":"Allow once",
+   "response":{"decision":"allow","reason":"Approved once"}},
+  {"kind":"allow_always","optionId":"allow_project",
+   "name":"Always allow in this project",
+   "description":"Do not ask again for matching requests in this project",
+   "response":{"decision":"allow",
+     "permissionUpdates":[{"behavior":"allow",
+       "rules":[{"ruleContent":"printf 'A' > probe-a.txt","toolName":"Bash"}],
+       "type":"addRules"}],
+     "reason":"Approved for this project"}},
+  {"kind":"deny","optionId":"deny","name":"Deny",
+   "response":{"decision":"deny","reason":"Denied"}}
+]
+```
+
+### 应答 result schema 与畸形应答实验（3 组）
+
+result = 所选 option 的 `response` 原文：`{decision:"allow"|"deny",
+reason:string, permissionUpdates?:[…]}`。
+
+| 应答 | 服务端行为（permission.resolved） |
+| --- | --- |
+| error 帧（-32000 拒绝） | `{"decision":"deny","reason":"Permission request failed"}` |
+| result `{}`（空对象） | 同上——静默 deny |
+| result `{"approved":"yes"}`（错类型） | 同上——静默 deny |
+| result `{"decision":"deny","reason":"probe denied on purpose"}`（合法） | `{"decision":"deny","reason":"probe denied on purpose"}`——**reason 原文回显，schema 证实** |
+
+畸形应答**没有任何 zod 回显**：无同 id 后续帧、无 stderr 输出——
+客户端读不到校验错误，只能靠回放 option response 原文保证合法。
+（`-32602` 的 zod schema 提示只在**请求**方向存在。）
+
+### 工具事件序列（session/event `tool.updated` 的 kind 轨迹）
+
+一次 Bash 调用：`scheduled → started → progress×N → result → batch`
+
+| kind | payload 形状（实测） |
+| --- | --- |
+| `scheduled` | `{toolCallId, assistantMessageId, toolName, dependencies:[], parallelGroupIndex, canRunParallel, schedule:{parallelGroups,executionOrder}, inputByteLength, inputOmitted:true, inputRef:"model_stream"}`（**input 不推送**，只有长度与引用） |
+| `started` | `{toolCallId, toolName, startedAt}` |
+| `progress` | `{toolCallId, toolName, elapsedMs, pid, stdoutBytes, stderrBytes, outputBytes}`（周期性） |
+| `result` | `{toolCallId, result:{success, content, perf:{totalMs,detail}, truncated, originalBytes, returnedBytes, budgetStrategy}, duration}` |
+| `batch` | `{toolCallIds:[…], successCount, errorCount}`（一批工具的汇总） |
+
+telemetry 侧 `v4/telemetry/event kind=tool.lifecycle` 的 phase 轨迹：
+`scheduled → started → progress×N → completed`（completed 带 `durationMs`、
+`performance{totalMs,commandRunMs,noOutputMs,exitCode,timedOut,…}`）。
+
+权限相关事件（session/event 推送，与反向请求并行）：
+
+- `permission.requested`：payload 与反向请求 params 同构 +
+  `suggestedPermissionUpdates`（即 allow_project 的 permissionUpdates）。
+- `permission.resolved`：`{requestId, toolCallId, decision, reason}`。
+
+### 拒绝后的回合行为
+
+- **一个回合可触发多次权限请求**（模型换路径重试：相对路径被拒 → 绝对
+  路径再请求，requestId/toolCallId 均新）——手机 UI 必须支持串行多请求。
+- 拒绝后回合**正常收尾**（`turn.completed` resultType=success），模型在
+  正文里报告失败原因；权威消息中该 tool part `state.status="error"`、
+  `state.error` = 拒绝 reason 原文（畸形应答时为 "Permission request failed"）。
+
+### 权威消息的 tool part 形状（session/messages）
+
+```json
+{"type":"tool",
+ "callID":"call_e6328b076bbe4177825025eb",   // 注意：大写 D
+ "tool":"Bash",                               // 字符串，不是 {name}
+ "state":{
+   "status":"completed",                      // completed | error | …
+   "input":{"command":"echo hello","description":"Print hello"},
+   "output":"…stdout 原文…",                  // 成功时
+   "error":"Permission request failed",       // 失败时（与 output 互斥）
+   "title":"Bash",
+   "metadata":{"schemaVersion":1,"serialization":{…}},
+   "time":{"start":1789348651854,"end":1789348665621}},
+ "id":"part_…","sessionID":"sess_…","messageID":"msg_…"}
+```
+
+assistant 消息可以只含工具 part（`step-start / tool / step-finish`，
+无 text part）——映射时不能按"无文本即丢弃"过滤工具消息。
+
+### 其他
+
+- 新事件类型：`streamRecovery.updated`、`turn.steerQueued`（载荷未展开，
+  未知类型透传忽略即可）。
+- **AskUser 类反向请求未能触发**（各轮均未出现）——其方法名/params/
+  应答 schema 仍未知，手机端解析维持兜底形状，待后续实测。
+
 ## 实验脚本
 
 临时目录（会话级，不入库）：`appserver-probe.js`、`appserver-e2e.js`、`appserver-resume.js`。
@@ -211,6 +363,10 @@ state.updated          patch.status="idle"
 subscribe 参数枚举/events 归属/切换后可达性）、`probe-sync2.js`（subscribe
 `web-remote-replayable` + 真实最小回合推送帧抓取，`--session` 可复用会话）、
 报告 `probe-sync*-report.json`。
+
+第三轮探针（U2，已入库）：`probe-sync3.js`（分页契约，见下节）、
+`probe-toolturn.js`（工具回合形状，见下节；`--mode`/`--only`/`--prompt`/`--no-stop`
+可单测某变体），报告 `probe-sync3-report.json`、`probe-toolturn-report*.json`。
 
 ## 空闲存活实测(2026-09-14,probe-idle.js)
 

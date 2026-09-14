@@ -28,7 +28,21 @@
 //   "模型已不可用"）时，用 state.updated 缓存的可用模型自动
 //   session/setModel 后重发一次，失败则提示。
 //
-// 权限确认 / AskUser 通过客户端 onRequest 钩子接入（实现不变）。
+// U2 协议实测轮（对照 relay/zcode/APP-SERVER.md「分页契约实测」「工具
+// 回合实测」，探针 probe-sync3.js / probe-toolturn.js）：
+// - session/messages 分页：{limit} 返回最新 N 条、升序；{afterMessageId,
+//   limit} 返回游标后缀的最新 N 条、升序；time.created 为毫秒。
+//   _normalizeChronological 按升序主路径处理（降序投票仅作异常兜底）。
+// - 权限确认反向请求：method=interaction/requestPermission，params 带
+//   input/reason/requestId/riskLevel/options/toolCallId/toolName/turnId；
+//   应答 result = 所选 option 的 response 原文（{decision, reason,
+//   permissionUpdates?}）——畸形 result 会被服务端静默判 deny。
+// - 权威消息 tool part：{callID（大写 D）, tool:字符串, state:{status,
+//   input, output|error, time}}。
+// - restore() 已配对时转发 reconnect()（会话列表页"重连"按钮修复 #20）。
+//
+// 权限确认 / AskUser 通过客户端 onRequest 钩子接入（实现不变；
+// AskUser 类反向请求实测未触发，解析/应答仍为兜底形状）。
 // ============================================================
 
 import 'dart:async';
@@ -195,6 +209,11 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 待应答反向请求：toolCallId / questionId → 挂起的 completer
   final Map<String, _PendingReverse> _pendingReverse = {};
 
+  /// 权限请求的原始 options（实测形状：应答需回所选 option 的 response
+  /// 原文，"记住"语义 = allow_project 选项的 response 携带 permissionUpdates，
+  /// 只有请求方才知道其内容——解析时按 toolCallId 暂存，应答后清除）
+  final Map<String, List<Map>> _permissionOptions = {};
+
   // ──────────────────────────────────────────────
   // 状态 getter（notifyListeners 驱动 UI）
   // ──────────────────────────────────────────────
@@ -301,9 +320,14 @@ class ZcodeChatStore extends ChangeNotifier {
     unawaited(_clearPersistedPairing());
   }
 
-  /// 启动时恢复已保存的配对（自动重连）
+  /// 启动时恢复已保存的配对（自动重连）；**已配对时不早退**——转发到
+  /// [reconnect] 显式重连（会话列表页"重连"按钮复用本入口；修复 #20：
+  /// 此前 `_pairing != null` 早退使已配对状态下按钮永远无效）
   Future<void> restore() async {
-    if (_pairing != null) return; // 已配对
+    if (_pairing != null) {
+      await reconnect();
+      return;
+    }
     final ZcodePairingInfo? saved;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -322,6 +346,21 @@ class ZcodeChatStore extends ChangeNotifier {
     notifyListeners();
     _attachClient();
     // 连接稳定后自动拉一次会话列表（注入替身时 paired 立即为真）
+    await refreshSessions();
+  }
+
+  /// 显式重连：丢弃旧客户端（连同其内部重连退避/半开连接）重建连接并
+  /// 刷新会话列表。未配对时为 no-op（保持 restore 启动恢复语义不变）。
+  /// 旧客户端关闭触发 `_onRelayStateChange(disconnected)`，新客户端
+  /// matched 后 `_resubscribeAll` 会为已物化会话重订阅补放。
+  Future<void> reconnect() async {
+    final info = _pairing;
+    if (info == null) return; // 未配对：无事可做
+    _stopFallbackPolling();
+    _rejectAllPendingReverse();
+    _connState = ZcodeConnState.connecting;
+    notifyListeners();
+    _attachClient(); // 内部关闭旧客户端（非注入替身）并重建
     await refreshSessions();
   }
 
@@ -449,8 +488,8 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 2. resume 激活（materialize）——**忽略其 messages 数组**
   ///    （实测 resume 响应携带全量消息，可达 26MB）；
   /// 3. session/read 轻量 meta（2–5KB）取运行状态；
-  /// 4. session/messages {limit} 拉尾部 + 前向收敛（limit 返回方向
-  ///    未实测确认，按 createdAt 归一后从水位前向翻页自愈）；
+  /// 4. session/messages {limit} 拉尾部——实测 {limit} 返回最新 N 条且
+  ///    升序（APP-SERVER.md「分页契约实测」），归一兜底保留；
   /// 5. 订阅推送（web-remote-replayable），切走不移除。
   Future<void> openSession(String sessionId) async {
     final client = _client;
@@ -754,26 +793,65 @@ class ZcodeChatStore extends ChangeNotifier {
   // 权限确认 / AskUser
   // ──────────────────────────────────────────────
 
-  /// 应答权限请求：结果由客户端作为反向请求响应帧回传（带原请求 id）
+  /// 应答权限请求：结果由客户端作为反向请求响应帧回传（带原请求 id）。
+  ///
+  /// 实测应答 schema（APP-SERVER.md「工具回合实测」）：result 即所选
+  /// option 的 response 原文——`{decision: "allow"|"deny", reason,
+  /// permissionUpdates?}`。实测畸形 result（空对象/错类型/error 帧）会被
+  /// 服务端静默判为 deny（reason="Permission request failed"），因此这里
+  /// 优先回放请求方给出的 option response 原文，无暂存时按同 schema 构造。
+  /// remember=true 且批准 = allow_project 选项（携带 permissionUpdates）。
   void respondToPermission(String toolCallId,
       {required bool approved, bool remember = false,}) {
     final pending = _pendingReverse.remove(toolCallId);
     if (pending == null) return; // 没有对应待处理请求（可能已应答/已断开）
+    final options = _permissionOptions.remove(toolCallId);
     if (_activePermission?.toolCallId == toolCallId) {
       _activePermission = null;
       if (!_permissionController.isClosed) {
         _permissionController.add(null); // 清除权限条
       }
     }
-    pending.completer.complete({
-      'toolCallId': toolCallId,
-      'approved': approved,
-      if (remember) 'remember': remember,
-    });
+    pending.completer.complete(_buildPermissionResult(
+      options: options,
+      approved: approved,
+      remember: remember,
+    ),);
     notifyListeners();
   }
 
-  /// 应答 AskUser 问题：结果由客户端作为反向请求响应帧回传（带原请求 id）
+  /// 构造权限应答 result：优先回放实测 option 的 response 原文
+  /// （schema 必然合法——服务端自己生成的）；无暂存时按实测 schema 兜底。
+  Map<String, dynamic> _buildPermissionResult({
+    required List<Map>? options,
+    required bool approved,
+    required bool remember,
+  }) {
+    // 找目标 option：批准且 remember → allow_project（allow_always）；
+    // 否则批准 → allow_once；拒绝 → deny。
+    if (options != null) {
+      final wanted = approved
+          ? (remember ? 'allow_project' : 'allow_once')
+          : 'deny';
+      for (final o in options) {
+        if (o['optionId']?.toString() == wanted) {
+          final response = o['response'];
+          if (response is Map) return Map<String, dynamic>.from(response);
+        }
+      }
+    }
+    // 兜底构造（实测 schema：decision + reason；remember 需要
+    // permissionUpdates，本地无法凭空构造——退化为一次性批准）
+    return {
+      'decision': approved ? 'allow' : 'deny',
+      'reason': approved ? 'Approved once' : 'Denied',
+    };
+  }
+
+  /// 应答 AskUser 问题：结果由客户端作为反向请求响应帧回传（带原请求 id）。
+  /// （AskUser 反向请求实测未触发，应答 payload 形状未实测——沿用旧猜测，
+  /// 待后续实测钉死后重写；参照权限请求的经验，畸形 result 大概率被服务端
+  /// 静默拒绝，届时应改为回放 option response 原文）
   void respondToAskUser(String questionId, List<String> answers,
       {String? customText,}) {
     final pending = _pendingReverse.remove(questionId);
@@ -854,21 +932,43 @@ class ZcodeChatStore extends ChangeNotifier {
     return completer.future;
   }
 
-  /// 解析权限请求（ZCode 侧字段未实测，按 wzxClaw 自家 ws 形状做最大兼容）：
-  /// toolCallId/tool_call_id/callId/requestId/id；
-  /// toolName/tool_name/tool/name；input/params/arguments
+  /// 解析权限请求（实测形状，APP-SERVER.md「工具回合实测」）：
+  ///
+  /// method = `interaction/requestPermission`，params = {
+  ///   input: {command/description/…}（工具入参，形状随工具而定）,
+  ///   reason: "High risk tools require explicit approval",
+  ///   requestId: "perm_<uuid>", riskLevel: "high",
+  ///   sessionId, turnId,
+  ///   toolCallId: "call_…", toolName: "Bash",
+  ///   options: [ {kind/optionId/name/response:{decision,reason,
+  ///              permissionUpdates?}} ×3 (allow_once/allow_project/deny) ] }
+  ///
+  /// 字段名变体（tool_call_id 等）仅作协议漂移兜底；options 原文按
+  /// toolCallId 暂存，供应答时回放所选 option 的 response。
   PermissionRequest? _parsePermissionRequest(Map params, {String? fallbackId}) {
-    final toolCallId =
-        _firstNonEmpty(params, ['toolCallId', 'tool_call_id', 'callId', 'requestId', 'id']) ??
-            fallbackId;
-    final toolName =
-        _firstNonEmpty(params, ['toolName', 'tool_name', 'tool', 'name']);
+    final toolCallId = _firstNonEmpty(
+          params,
+          ['toolCallId', 'tool_call_id', 'callId', 'requestId'],
+        ) ??
+        fallbackId;
+    final toolName = _firstNonEmpty(
+      params,
+      ['toolName', 'tool_name', 'tool', 'name'],
+    );
     if (toolCallId == null || toolCallId.isEmpty) return null;
     if (toolName == null || toolName.isEmpty) return null;
 
     dynamic input = params['input'];
     if (input is! Map) input = params['params'];
     if (input is! Map) input = params['arguments'];
+
+    // 暂存原始 options（应答回放用；非 List 或缺失时走兜底构造）
+    final rawOptions = params['options'];
+    if (rawOptions is List) {
+      _permissionOptions[toolCallId] =
+          rawOptions.whereType<Map>().toList(growable: false);
+    }
+
     return PermissionRequest(
       toolCallId: toolCallId,
       toolName: toolName,
@@ -876,7 +976,9 @@ class ZcodeChatStore extends ChangeNotifier {
     );
   }
 
-  /// 解析 AskUser 问题（同上，多字段名兜底）：
+  /// 解析 AskUser 问题（**实测未触发**——probe-toolturn 各轮均未出现
+  /// AskUser 类反向请求，方法名与字段形状仍未知；保留 wzxClaw 自家 ws
+  /// 形状的多字段名兜底，待后续实测钉死后重写）：
   /// questionId/question_id/callId/id；question/text/prompt；
   /// options/choices: [{label, description}]；multiSelect/multi_select
   AskUserQuestion? _parseAskUserQuestion(Map params, {String? fallbackId}) {
@@ -921,6 +1023,7 @@ class ZcodeChatStore extends ChangeNotifier {
     if (_pendingReverse.isEmpty) return;
     final entries = List.of(_pendingReverse.entries);
     _pendingReverse.clear();
+    _permissionOptions.clear();
     for (final e in entries) {
       if (!e.value.completer.isCompleted) {
         e.value.completer.completeError(
@@ -1312,7 +1415,9 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// 尾部拉取：有水位走增量（只拉新增），无水位先 {limit} 取一窗再
-  /// 前向收敛（limit 的返回方向未实测确认，收敛循环自愈方向歧义）
+  /// 前向收敛。实测（APP-SERVER.md「分页契约实测」）：{limit} 返回
+  /// **最新 N 条、升序**；{afterMessageId, limit} 返回游标后缀中的
+  /// 最新 N 条（同样升序）——水位每轮推进到合并后尾部，循环收敛。
   Future<void> _fetchTailWindow(ZcodeSessionState state) async {
     final client = _client;
     if (client == null || !client.paired) return;
@@ -1381,8 +1486,10 @@ class ZcodeChatStore extends ChangeNotifier {
     if (tail != null) state.watermark = tail;
   }
 
-  /// 时间序归一：session/messages 的 limit 返回方向未实测确认，
-  /// 页内 createdAt 多数呈降序时按逆序解释（保证合并方向一致）
+  /// 时间序归一：实测（probe-sync3，APP-SERVER.md「分页契约实测」）确认
+  /// `session/messages` 无论带不带 `afterMessageId` 一律**升序（旧→新）**
+  /// 返回——升序页直接通过；页内 createdAt 多数呈降序时按逆序解释，
+  /// 该投票仅作协议漂移/异常数据的兜底，正常路径不会再触发。
   void _normalizeChronological(List<ZcodeSessionItem> list) {
     if (list.length < 2) return;
     var ascending = 0;
@@ -1397,7 +1504,7 @@ class ZcodeChatStore extends ChangeNotifier {
       }
     }
     if (descending > ascending) {
-      // 逆序页：反转成就近在尾
+      // 逆序页（异常兜底）：反转成就近在尾
       final reversed = list.reversed.toList();
       list
         ..clear()
@@ -1664,7 +1771,17 @@ class ZcodeChatStore extends ChangeNotifier {
     );
   }
 
-  /// tool part → ToolCallInfo；工具结果（output/result）映射到 outputSummary
+  /// tool part → ToolCallInfo（实测形状，APP-SERVER.md「工具回合实测」）：
+  ///
+  /// `{type:'tool', callID:'call_…', tool:'Bash'（字符串）,
+  ///   state:{status:'completed'|'error'|…, input:{…}, output:'…'|error:'…',
+  ///          title, metadata, time:{start,end}},
+  ///   id:'part_…', sessionID, messageID}`
+  ///
+  /// 注意 id 键是 `callID`（大写 D）；input/output 嵌在 state 里；
+  /// 失败时 state.error 携带原因（如权限拒绝的 "Permission request failed"
+  /// 或我们应答的 reason 原文）。旧猜测形态（callId/顶层 input/output/
+  /// state 为字符串）保留为兜底。
   ToolCallInfo _mapToolPart(Map p) {
     final tool = p['tool'];
     final String name;
@@ -1676,26 +1793,45 @@ class ZcodeChatStore extends ChangeNotifier {
       name = 'tool';
     }
 
-    final state = p['state']?.toString() ?? '';
+    // 实测 state 为对象：{status, input, output|error, time, …}
+    final stateObj = p['state'];
+    final String statusStr;
+    dynamic input;
+    dynamic output;
+    String? errorText;
+    if (stateObj is Map) {
+      statusStr = stateObj['status']?.toString() ?? '';
+      input = stateObj['input'];
+      output = stateObj['output'];
+      final err = stateObj['error'];
+      if (err != null) errorText = err is String ? err : _summaryOf(err);
+    } else {
+      // 旧猜测形态兜底：state 为 'running'/'completed' 字符串
+      statusStr = stateObj?.toString() ?? '';
+      input = p['input'] ?? (tool is Map ? tool['input'] : null);
+      output = p['output'] ?? p['result'];
+    }
+
     final ToolCallStatus status;
-    switch (state) {
+    switch (statusStr) {
       case 'running':
         status = ToolCallStatus.running;
         break;
       case 'completed':
         status = ToolCallStatus.done;
         break;
-      default: // failed / errored / 其他一律视为 error
+      default: // error / failed / 其他一律视为 error
         status = ToolCallStatus.error;
     }
 
     return ToolCallInfo(
-      toolCallId: p['callId']?.toString() ?? '',
+      toolCallId: (p['callID'] ?? p['callId'])?.toString() ?? '',
       toolName: name,
-      inputSummary: _summaryOf(p['input'] ?? (tool is Map ? tool['input'] : null)),
-      outputSummary: _summaryOf(p['output'] ?? p['result']),
+      inputSummary: _summaryOf(input),
+      // 失败时优先展示错误原因（实测权限拒绝会落在 state.error）
+      outputSummary: errorText ?? _summaryOf(output),
       status: status,
-      isError: p['isError'] == true || status == ToolCallStatus.error,
+      isError: status == ToolCallStatus.error,
     );
   }
 
