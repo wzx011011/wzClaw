@@ -7,8 +7,9 @@
 // P1.2 同步层重构用例：推送渲染（subscribe + model.streaming +
 // turn.completed 本地收尾）、工具回合增量权威刷新、epoch 乱串杜绝
 // （A 流式中途切 B）、断线重订阅补放去重、SQLite 缓存重建恢复、
-// 多会话并发（后台收尾）、模型不可用 setModel 兜底、resume messages
-// 数组忽略。
+// 多会话并发（后台收尾）、模型不可用 setModel 兜底（字符串拒绝 +
+// 错误帧 -32031 + resume 播种可用模型 + 历史污染提示新建会话）、
+// resume messages 数组忽略。
 // ============================================================
 
 import 'dart:async';
@@ -1319,12 +1320,100 @@ void main() {
           fake.requests.firstWhere((e) => e.key == 'session/setModel');
       expect(setModel.value, {
         'sessionId': 'sess-m',
-        'model': 'builtin:bigmodel-coding-plan/glm-5.3',
+        // setModel 实测只接受对象格式（字符串 'p/m' 会被 -32602 拒绝）
+        'model': {
+          'providerId': 'builtin:bigmodel-coding-plan',
+          'modelId': 'glm-5.3',
+        },
       });
       expect(sendCalls, 2); // 拒绝后自动重发一次
       expect(store.error, isNull);
       expect(store.isStreaming, isTrue); // 重发被接受，回合在途
       expect(store.messages.where((m) => m.content == 'hi'), hasLength(1));
+    });
+
+    test('模型兜底：resume 播种可用模型 + 错误帧 -32031 走 setModel 重发', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      // resume 响应带 settings.model.available（实测形状）→ 播种可用模型缓存
+      fake.handlers['session/resume'] = (params) => {
+            'projection': {'status': 'idle'},
+            'messages': <Map<String, dynamic>>[],
+            'session': {'sessionId': params!['sessionId']},
+            'settings': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {
+                      'providerId': 'builtin:bigmodel-coding-plan',
+                      'modelId': 'glm-5.3',
+                    },
+                  },
+                ],
+              },
+            },
+          };
+      final store = pairedStore(fake);
+      await store.openSession('sess-e1');
+      var sendCalls = 0;
+      fake.handlers['session/send'] = (_) {
+        sendCalls++;
+        if (sendCalls == 1) {
+          // 真机实测形态：错误帧 -32031（非字符串 result）
+          throw const ZcodeRequestException(
+              -32031, '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',);
+        }
+        return {'accepted': true};
+      };
+      fake.handlers['session/setModel'] = (_) => {'ok': true};
+
+      await store.sendMessage('hi');
+      expect(fake.requests.any((e) => e.key == 'session/setModel'), isTrue);
+      final setModel =
+          fake.requests.firstWhere((e) => e.key == 'session/setModel');
+      expect(setModel.value, {
+        'sessionId': 'sess-e1',
+        'model': {
+          'providerId': 'builtin:bigmodel-coding-plan',
+          'modelId': 'glm-5.3',
+        },
+      });
+      expect(sendCalls, 2); // 错误帧被拒后自动重发一次
+      expect(store.error, isNull);
+      expect(store.isStreaming, isTrue); // 重发被接受，回合在途
+    });
+
+    test('模型兜底：setModel 后重发仍 -32031 → 提示新建会话（历史模型污染）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-e2');
+      store.debugHandleNotify(const ZcodeFrame(
+        method: 'state.updated',
+        params: {
+          'sessionId': 'sess-e2',
+          'patch': {
+            'model': {
+              'available': [
+                {
+                  'ref': {'providerId': 'p', 'modelId': 'm'},
+                },
+              ],
+            },
+          },
+        },
+      ),);
+      // 实测（probe-modelheal）：历史模型下线的旧会话 setModel 救不回，
+      // 重发仍以错误帧 -32031 被拒
+      fake.handlers['session/send'] = (_) => throw const ZcodeRequestException(
+          -32031, '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',);
+      fake.handlers['session/setModel'] = (_) => {'ok': true};
+
+      await store.sendMessage('hi');
+      expect(fake.requests.any((e) => e.key == 'session/setModel'), isTrue);
+      expect(store.error, contains('新建会话'));
+      expect(store.isStreaming, isFalse);
+      expect(store.messages.last.isStreaming, isFalse); // 占位已终结
     });
 
     test('模型兜底：无可用模型 → 提示原文拒绝', () async {

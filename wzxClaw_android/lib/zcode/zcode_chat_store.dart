@@ -24,9 +24,12 @@
 //   session/messages {limit} 拉尾部 → 上滑从缓存翻页；
 // - 增量权威刷新：turn 结束后 session/messages {afterMessageId:
 //   水位} 只拉新增合并，替代每次重建 200 条；
-// - 模型兜底：session/send 以字符串 result 返回业务拒绝（如
-//   "模型已不可用"）时，用 state.updated 缓存的可用模型自动
-//   session/setModel 后重发一次，失败则提示。
+// - 模型兜底：session/send 的「模型已不可用」拒绝有两种送达形态
+//   （真机实测）——字符串 result 与错误帧 -32031；可用模型缓存来自
+//   state.updated 补丁 + resume/read 的 settings.model.available；
+//   setModel 实测只接受对象 {providerId, modelId}（字符串被 -32602
+//   拒绝）；历史模型下线的旧会话 setModel 救不回（重发仍 -32031），
+//   兜底失败提示用户新建会话。
 //
 // U2 协议实测轮（对照 relay/zcode/APP-SERVER.md「分页契约实测」「工具
 // 回合实测」，探针 probe-sync3.js / probe-toolturn.js）：
@@ -787,6 +790,14 @@ class ZcodeChatStore extends ChangeNotifier {
         return;
       }
     } catch (e) {
+      // 「模型已不可用」有两种送达形态（真机实测）：字符串 result 与
+      // 错误帧 -32031（ZCODE_RUNTIME_MODEL_UNAVAILABLE）——两者都走
+      // setModel 兜底
+      if (e is ZcodeRequestException &&
+          (e.code == -32031 || e.message.contains('模型'))) {
+        await _handleSendRejection(state, text, e.message);
+        return;
+      }
       state.isWaitingForResponse = false;
       state.isStreaming = false;
       state.finalizeStreaming();
@@ -804,44 +815,59 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// session/send 字符串业务拒绝（如"模型已不可用"）：
-  /// 用 state.updated 缓存的可用模型 session/setModel 后重发一次，
-  /// 无可用模型或兜底失败则提示用户
+  /// session/send「模型已不可用」拒绝（字符串 result 或错误帧 -32031）：
+  /// 用缓存的可用模型 session/setModel 后重发一次；实测（APP-SERVER.md
+  /// 「模型不可用实测」）setModel 只接受对象 {providerId, modelId}，且历史
+  /// 模型下线的旧会话 setModel 救不回（重发仍 -32031）——兜底失败提示新建会话
   Future<void> _handleSendRejection(
       ZcodeSessionState state, String text, String reason,) async {
     final client = _client;
+    var attempted = false;
     if (client != null && client.paired && _availableModels.isNotEmpty) {
       final model = _availableModels.first;
-      try {
-        await client.request('session/setModel', {
-          'sessionId': state.sessionId,
-          'model': model,
-        });
-        final retry = await client.request(
-          'session/send',
-          {'sessionId': state.sessionId, 'content': text},
-        );
-        if (retry is! String) {
-          // 已恢复：继续走流式
-          _error = null;
-          await _ensureSubscribed(state);
-          if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
-            _startFallbackPollingFor(state.sessionId);
-          } else if (state.isStreaming) {
-            _armPushWatchdog(state);
+      final slash = model.indexOf('/');
+      if (slash > 0) {
+        attempted = true;
+        try {
+          // setModel 实测只接受对象 {providerId, modelId}——字符串 'p/m'
+          // 会被 -32602 拒绝（APP-SERVER.md「模型不可用实测」）
+          await client.request('session/setModel', {
+            'sessionId': state.sessionId,
+            'model': {
+              'providerId': model.substring(0, slash),
+              'modelId': model.substring(slash + 1),
+            },
+          });
+          final retry = await client.request(
+            'session/send',
+            {'sessionId': state.sessionId, 'content': text},
+          );
+          if (retry is! String) {
+            // 已恢复：继续走流式
+            _error = null;
+            await _ensureSubscribed(state);
+            if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
+              _startFallbackPollingFor(state.sessionId);
+            } else if (state.isStreaming) {
+              _armPushWatchdog(state);
+            }
+            notifyListeners();
+            return;
           }
-          notifyListeners();
-          return;
+        } catch (_) {
+          // 兜底失败（含重发仍 -32031 错误帧）→ 提示
         }
-      } catch (_) {
-        // 兜底失败 → 提示
       }
     }
     state.isStreaming = false;
     state.isWaitingForResponse = false;
     state.finalizeStreaming();
     _notifyIfActive(state);
-    _fail('发送失败：$reason');
+    _fail(
+      attempted
+          ? '发送失败：$reason。已自动切换可用模型仍被拒（历史模型已下线），请新建会话继续。'
+          : '发送失败：$reason',
+    );
   }
 
   /// 停止生成（session/stop + 增量权威刷新）
@@ -1431,6 +1457,10 @@ class ZcodeChatStore extends ChangeNotifier {
   /// resume 响应 meta：忽略 messages 数组，取 projection 状态与 workspace
   void _applyResumeMeta(ZcodeSessionState state, Map map) {
     state.materialized = true;
+    // settings.model.available 播种可用模型缓存（setModel 兜底数据源，
+    // 实测与 state.updated 的 model 补丁同形状）
+    final settings = map['settings'];
+    if (settings is Map) _cacheAvailableModels(settings['model']);
     // 快照该会话的标题与工作区（列表补条目用）+ 记住工作区（新建会话复用）
     final session = map['session'];
     if (session is Map) {
@@ -1461,6 +1491,9 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// session/read 轻量 meta（2–5KB）：运行状态 + eventSeq 水位种子
   void _applyReadMeta(ZcodeSessionState state, Map read) {
+    // settings.model.available 播种可用模型缓存（与 resume 同形状）
+    final settings = read['settings'];
+    if (settings is Map) _cacheAvailableModels(settings['model']);
     final projection = read['projection'];
     if (projection is Map) {
       final status = projection['status'];
