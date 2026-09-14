@@ -10,30 +10,20 @@
 //   不落盘、不打印、不经过 relay。
 
 const { spawn } = require('node:child_process');
-const { randomBytes, createHmac } = require('node:crypto');
+const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { WebSocket } = require('ws');
 const { MAX_PAYLOAD } = require('./server');
+const { deriveProof, deriveRegisterProof } = require('./lib/proof');
+const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, isPermissionLikeMethod } = require('./lib/protocol');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
 
 const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
 const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
-
-// 权限/确认/AskUser 类反向请求判定（决定超时看护档位）：
-// - 实名：session/requestPermission（权限确认）、interaction/askUser（提问），
-//   即手机端 UI 接入的两种形态（见 Flutter zcode_chat_store 的路由规则）；
-// - 模式：method 含 permission / confirm / approval / approve / askUser 变体 /
-//   interaction 的都视为需要人盯手机应答，放宽看护窗口。
-//   注意不能用裸 "ask"——会误伤 cancelBackgroundTask 里的 "task"。
-const PERMISSION_LIKE_METHOD_PATTERN = /permission|confirm|approval|approve|ask[-_]?user|interaction/i;
-
-function isPermissionLikeMethod(method) {
-  return typeof method === 'string' && PERMISSION_LIKE_METHOD_PATTERN.test(method);
-}
 
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
 function defaultZcodeCommand() {
@@ -157,11 +147,18 @@ function createCompanion(options = {}) {
     midFile = path.join(os.homedir(), '.wzxclaw', 'zcode-companion', 'mid'),
     logger = () => {}, onPairing = () => {}, onStateChange = () => {},
     reconnectDelayMs = 5000,
+    // 注册共享密钥：relay 设置 REGISTRATION_SECRET 后注册必须携带 proof
+    // （防公网注册 DoS）。仅当 secret 存在时才附 register_proof；
+    // 未提供时注册帧与旧版完全一致（对开放注册的 relay 零影响）。
+    registrationSecret,
     // 反向请求超时看护分两档：权限/确认/AskUser 类（isPermissionLikeMethod）
     // 等人在手机上应答，放宽到 120s；其余维持 15s。两档均可注入短值供测试。
     requestTimeoutMs = 15000, permissionRequestTimeoutMs = 120000,
   } = options;
   if (typeof relayUrl !== 'string' || !/^wss?:\/\/.+\/ws$/.test(relayUrl)) throw safeError('INVALID_RELAY_URL');
+  if (registrationSecret !== undefined && (typeof registrationSecret !== 'string' || !registrationSecret.length)) {
+    throw safeError('INVALID_REGISTRATION_SECRET');
+  }
 
   let stopped = false;
   let ws = null;
@@ -258,7 +255,7 @@ function createCompanion(options = {}) {
       }
       if (Buffer.byteLength(JSON.stringify(frame)) > MAX_PAYLOAD) {
         // 单条消息仍超限（极端情况）：回错误而不是断线
-        return { id: frame.id, error: { code: -32001, message: '响应过大：单条消息超出中继帧上限，请在桌面端处理该会话' } };
+        return { id: frame.id, error: { code: ERR_FRAME_TOO_LARGE, message: '响应过大：单条消息超出中继帧上限，请在桌面端处理该会话' } };
       }
       return frame;
     } catch { return frame; }
@@ -279,7 +276,7 @@ function createCompanion(options = {}) {
       if (stale) clearTimeout(stale); // 同 id 覆盖前先清旧定时器，防旧定时器误杀复用 id 的新请求
       const timer = setTimeout(() => {
         if (pending.delete(frame.id) && bridge) {
-          bridge.write({ id: frame.id, error: { code: -32022, message: 'Client request timed out' } });
+          bridge.write({ id: frame.id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
         }
       }, timeoutMs).unref();
       pending.set(frame.id, timer);
@@ -301,7 +298,7 @@ function createCompanion(options = {}) {
     if (!bridge) {
       // 桥不可用（未登录/spawn 失败/重启预算耗尽）：回明确错误而非静默挂起。
       if (frame.method && frame.id != null && matchedUp) {
-        send({ type: 'data', payload: { id: frame.id, error: { code: -32000, message: 'companion 桥不可用：app-server 未启动或桌面未登录 ZCode' } } });
+        send({ type: 'data', payload: { id: frame.id, error: { code: ERR_UNHANDLED, message: 'companion 桥不可用：app-server 未启动或桌面未登录 ZCode' } } });
       }
       return;
     }
@@ -312,7 +309,8 @@ function createCompanion(options = {}) {
     authStage = 'registering';
     if (!processHash) processHash = randomBytes(32).toString('base64');
     pairing = { sid: null, passHash: processHash, url: null };
-    send({ type: 'device_register_init', device_mid: mid, pass_hash: processHash });
+    send({ type: 'device_register_init', device_mid: mid, pass_hash: processHash,
+      ...(registrationSecret ? { register_proof: deriveRegisterProof({ secret: registrationSecret, mid }) } : {}) });
   }
 
   function connect() {
@@ -348,7 +346,7 @@ function createCompanion(options = {}) {
       // 维持"每个转发的反向请求最终必有应答"的不变量，避免桌面回合中途无限挂起。
       for (const [id, timer] of pending) {
         clearTimeout(timer);
-        if (bridge) bridge.write({ id, error: { code: -32022, message: 'Client request timed out' } });
+        if (bridge) bridge.write({ id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
       }
       pending.clear();
       onStateChange('disconnected');
@@ -384,8 +382,7 @@ function createCompanion(options = {}) {
       if (msg.type === 'auth_challenge') {
         if (authStage !== 'registered' || typeof msg.nonce !== 'string' || !msg.nonce) { conn.close(); return; }
         authStage = 'challenged';
-        const proof = createHmac('sha256', pairing.passHash)
-          .update(`${msg.nonce}|device|${pairing.sid}`).digest('base64url');
+        const proof = deriveProof({ passHash: pairing.passHash, nonce: msg.nonce, role: 'device', sid: pairing.sid });
         send({ type: 'auth_response', device_sid: pairing.sid, proof });
         return;
       }
@@ -457,14 +454,20 @@ if (require.main === module) {
   const relayIdx = args.indexOf('--relay');
   const cwdIdx = args.indexOf('--cwd');
   const noQrIdx = args.indexOf('--no-qr');
+  const secretIdx = args.indexOf('--register-secret');
+  // 注册共享密钥：CLI 参数优先，其次环境变量 REGISTRATION_SECRET；
+  // 都未提供时不附 register_proof（对开放注册的 relay 零影响）。
+  const registrationSecret = secretIdx !== -1 && args[secretIdx + 1]
+    ? args[secretIdx + 1] : process.env.REGISTRATION_SECRET;
   if (relayIdx === -1 || !args[relayIdx + 1]) {
-    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr]');
+    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>]');
     process.exitCode = 1;
   } else {
     let qrTerminal;
     try { qrTerminal = require('qrcode-terminal'); } catch { qrTerminal = null; }
     const companion = createCompanion({
       relayUrl: args[relayIdx + 1],
+      ...(registrationSecret ? { registrationSecret } : {}),
       cwd: cwdIdx !== -1 && args[cwdIdx + 1] ? args[cwdIdx + 1] : process.cwd(),
       logger: (event, detail) => console.error(`[companion] ${event}${detail ? ` ${detail}` : ''}`),
       onPairing: (url) => {

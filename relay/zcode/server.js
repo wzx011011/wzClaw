@@ -1,15 +1,26 @@
 'use strict';
 
 const http = require('node:http');
-const { randomBytes, randomUUID, createHmac, timingSafeEqual } = require('node:crypto');
+const { randomBytes, randomUUID } = require('node:crypto');
 const { WebSocketServer, WebSocket } = require('ws');
+const { verifyProof, verifyRegisterProof } = require('./lib/proof');
 const MAX_PAYLOAD = 1024 * 1024;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function createRelay(options = {}) {
+  // 注册共享密钥：字符串型开关量，须在数值配置校验前单独提取。
+  // 设置后 device_register_init 必须携带 register_proof（防公网自助注册占满
+  // maxRooms/maxDevices 的注册 DoS）；未设置（undefined/null）时行为完全不变，
+  // 本地开发/测试零摩擦。
+  const registrationSecret = options.registrationSecret === undefined || options.registrationSecret === null
+    ? null : options.registrationSecret;
+  if (registrationSecret !== null && (typeof registrationSecret !== 'string' || !registrationSecret.length)) {
+    throw new Error('Invalid registration secret');
+  }
   const config = { authTimeoutMs: 10000, roomTtlMs: 60000, sweepIntervalMs: 1000,
     pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16, maxProbes: 3,
     rateLimit: 120, rateWindowMs: 10000, ...options };
+  delete config.registrationSecret;
   const logger = typeof config.logger === 'function' ? config.logger : () => {};
   delete config.logger;
   for (const value of Object.values(config)) {
@@ -123,6 +134,13 @@ function createRelay(options = {}) {
         || msg.device_mid !== state.mid || msg.device_mid !== state.headerMid
         || typeof msg.pass_hash !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(msg.pass_hash)
         || Buffer.from(msg.pass_hash, 'base64').toString('base64') !== msg.pass_hash) return fail(state, 'AUTH_FAILED');
+      // 注册 proof 先于容量检查：不持密钥的注册请求连 CAPACITY 探测都摸不到，
+      // 公网攻击者无法借此测绘房间水位。校验含形状检查（base64url 定长 43，
+      // hex 不认）与 timingSafeEqual 常量时间比较。
+      if (registrationSecret !== null
+        && !verifyRegisterProof({ proof: msg.register_proof, secret: registrationSecret, mid: msg.device_mid })) {
+        return fail(state, 'AUTH_FAILED');
+      }
       if (rooms.size >= config.maxRooms
         || [...rooms.values()].filter((room) => room.device || room.owner).length >= config.maxDevices) return fail(state, 'CAPACITY');
       const sid = randomUUID();
@@ -158,12 +176,12 @@ function createRelay(options = {}) {
       const nonce = state.nonce; state.nonce = null;
       const room = state.room;
       if (!nonce || !room || msg.device_sid !== room.sid || state.authenticated) return fail(state, 'AUTH_FAILED');
-      // pass_hash 本身作为字符串密钥，不能先进行 base64 解码。
-      const expected = createHmac('sha256', room.secret).update(`${nonce}|${state.role}|${room.sid}`).digest();
-      const proof = typeof msg.proof === 'string' && /^[A-Za-z0-9_-]{43}$/.test(msg.proof)
-        ? Buffer.from(msg.proof, 'base64url') : Buffer.alloc(0);
-      if (proof.length !== expected.length || proof.toString('base64url') !== msg.proof
-        || !timingSafeEqual(proof, expected)) return fail(state, 'AUTH_FAILED');
+      // pass_hash 本身作为字符串密钥，不能先进行 base64 解码。形状检查（base64url
+      // 定长 43，hex 不认）与 timingSafeEqual 常量时间比较收口在共享 lib/proof.js
+      // （companion 侧推导/Dart 侧等价实现语义一致）。
+      if (!verifyProof({ proof: msg.proof, passHash: room.secret, nonce, role: state.role, sid: room.sid })) {
+        return fail(state, 'AUTH_FAILED');
+      }
       if (state.role === 'probe') {
         if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
         // 已验证持有 pass_hash 才允许清场：逐槽回收陈旧连接（半开接管），
@@ -267,7 +285,10 @@ if (require.main === module) {
   const port = portIdx !== -1 && /^\d+$/.test(args[portIdx + 1] || '') ? Number(args[portIdx + 1]) : 18884;
   // 容器/nginx 部署用 --host 0.0.0.0；默认仅回环。
   const host = hostIdx !== -1 && typeof args[hostIdx + 1] === 'string' && args[hostIdx + 1].length ? args[hostIdx + 1] : '127.0.0.1';
-  const relay = createRelay({ logger: (event, detail) => console.log(`[relay] ${new Date().toISOString()} ${event}${detail ? ` ${detail}` : ''}`) });
+  const relay = createRelay({ logger: (event, detail) => console.log(`[relay] ${new Date().toISOString()} ${event}${detail ? ` ${detail}` : ''}`),
+    // 注册共享密钥经环境变量注入（Docker -e REGISTRATION_SECRET=...）；
+    // 未设置时开放注册，行为与旧版一致。
+    registrationSecret: process.env.REGISTRATION_SECRET });
   relay.listen({ port, host }).then((address) => {
     console.log(`Relay listening at ws://${address.address}:${address.port}/ws`);
   }).catch(async () => { console.error('Relay startup failed'); await relay.close(); process.exitCode = 1; });

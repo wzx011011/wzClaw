@@ -36,8 +36,8 @@
 # relay（默认 127.0.0.1:18884；--host 0.0.0.0 供容器/nginx 使用）
 node server.js [--port 18884] [--host 127.0.0.1]
 
-# companion（桌面侧，另一终端）
-node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <ZCode 工作区>]
+# companion（桌面侧，另一终端；relay 设了注册密钥时加 --register-secret）
+node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <ZCode 工作区>] [--register-secret <注册密钥>]
 
 # 测试（37 个：30 relay + 7 companion，含假 app-server 桥接全流程）
 node --test test/relay.test.js test/companion.test.js
@@ -55,6 +55,26 @@ mid 持久化于 `~/.wzxclaw/zcode-companion/mid`。
   Origin 剥离，`/health` 健康检查）。
 - companion 连接 `--relay wss://zcode.5945.top/ws`，配对 URL 为
   `https://zcode.5945.top/pair?...`。
+
+### 注册密钥（REGISTRATION_SECRET，防公网注册 DoS）
+
+relay 的注册（`device_register_init`）默认无门槛：公网上任何人都能开连接自助
+注册，占满 maxRooms=16/maxDevices=16 后真 companion 永远 CAPACITY。设置注册
+共享密钥后，注册帧必须携带 `register_proof = base64url(HMAC-SHA256(secret,
+device_mid))`（hex 不认），校验失败一律 AUTH_FAILED；未设置时行为不变，本地
+开发/测试零摩擦。
+
+- relay 侧：`createRelay({ registrationSecret })`，CLI/容器经环境变量
+  `REGISTRATION_SECRET` 注入（比较用 `timingSafeEqual`，常量时间）。
+- 生成建议：`openssl rand -base64 32`。
+- NAS 部署：`deploy-nas-zcode.sh` 自动读取 `~/.wzxclaw/zcode-companion/relay-secret`
+  （仅含 secret 一行，勿进 git/日志），存在时注入 `-e REGISTRATION_SECRET`；
+  文件缺失时打印「未设置注册密钥，relay 将开放注册」并跳过该 -e；文件存在但
+  为空时终止部署（避免误部署开放注册的 relay）。
+- companion 侧：`--register-secret <值>` 或环境变量 `REGISTRATION_SECRET`
+  （CLI 参数优先）；均未提供时注册帧不带 proof，可正常注册到开放 relay。
+  Windows 常驻（scripts/ 自启）如需密钥，编辑 `companion-autostart.vbs` 的
+  启动参数追加 `--register-secret <值>`。
 
 ## Windows 常驻（开机自启）
 
@@ -98,7 +118,8 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
 ## 配对协议（摘要）
 
 - device 连接 `/ws?mid=...`（头 `X-Device-ID` 同值），`device_register_init`
-  {device_mid, pass_hash} → relay 派发新 `device_sid`；
+  {device_mid, pass_hash} → relay 派发新 `device_sid`；relay 设有注册密钥时
+  必须同时携带 `register_proof = base64url(HMAC-SHA256(secret, device_mid))`；
 - 双方 `auth_init`{role: device|probe, device_sid} → `auth_challenge`{nonce} →
   `auth_response`{proof}，`proof = base64url(HMAC-SHA256(pass_hash 字符串, nonce|role|sid))`；
 - `auth_ack` / `pair_status_ack` 携带 pair_status waiting|matched；
@@ -112,10 +133,14 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
 ## API
 
 `createRelay(options)`：`listen({port, host})` / 幂等 `close()`。
-默认选项与上限同旧版（maxSockets=32、authTimeoutMs=10000、roomTtlMs=60000 等）。
+默认选项与上限同旧版（maxSockets=32、authTimeoutMs=10000、roomTtlMs=60000 等）；
+另支持 `registrationSecret`（可选字符串，CLI 读 `REGISTRATION_SECRET` 环境变量，
+设置后注册必须携带 register_proof，见上文注册密钥节）。
 `createCompanion(options)`：`start()` / `stop()`（Promise，等子进程退出）、
 `pairingUrl` / `state`；回调 `onPairing(url)`、`onStateChange(state)`、
-`logger(event, detail)`；可注入 `zcodeCommand`（测试用假进程）与 `v2ConfigPath`。
+`logger(event, detail)`；可注入 `zcodeCommand`（测试用假进程）与 `v2ConfigPath`；
+`registrationSecret`（可选，设置后注册帧附 register_proof，CLI 对应
+`--register-secret` 或环境变量 `REGISTRATION_SECRET`）。
 反向请求超时看护分两档：`requestTimeoutMs`（默认 15000，普通反向请求）与
 `permissionRequestTimeoutMs`（默认 120000，权限/确认/AskUser 类，按 method 含
 permission/confirm/approval/askUser/interaction 判定），两档超时后代答 `-32022` 拒绝。

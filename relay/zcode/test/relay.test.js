@@ -7,6 +7,9 @@ const { randomUUID, randomBytes, createHash, createHmac } = require('node:crypto
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket } = require('ws');
 const { createRelay, MAX_PAYLOAD } = require('../server');
+const { deriveProof, deriveRegisterProof, verifyProof } = require('../lib/proof');
+const { classifyFrame, ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
+  isPermissionLikeMethod } = require('../lib/protocol');
 const { runProbe } = require('../probe');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
@@ -620,4 +623,116 @@ test('registration generates unique sid and forwarding cannot cross rooms', asyn
   await a.next('data'); await delay(30);
   assert.equal(b.messages.filter((m) => m.type === 'data').length, 0);
   assert.equal(pb.messages.filter((m) => m.type === 'data').length, 0);
+});
+
+// —— 注册共享密钥（registrationSecret，防公网注册 DoS）——
+
+// 带 mid 的裸客户端：只连不发注册帧，供各注册变体自行拼帧。
+async function registerClient(t, url) {
+  const mid = randomUUID();
+  const c = await client(t, `${url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  return Object.assign(c, { mid });
+}
+
+test('registrationSecret 设置后：无 proof/错 secret/hex 编码注册被拒，正确 proof 成功', async (t) => {
+  const secret = 'relay-test-registration-secret';
+  const f = await fixture(t, { registrationSecret: secret });
+  const hash = createHash('sha256').update(randomBytes(32)).digest('base64');
+
+  // 无 register_proof：拒绝
+  const bare = await registerClient(t, f.url);
+  bare.send({ type: 'device_register_init', device_mid: bare.mid, pass_hash: hash });
+  assert.equal((await bare.next('error')).code, 'AUTH_FAILED');
+  await closeClient(bare);
+
+  // 错误 secret 推导的 proof：拒绝
+  const wrong = await registerClient(t, f.url);
+  wrong.send({ type: 'device_register_init', device_mid: wrong.mid, pass_hash: hash,
+    register_proof: deriveRegisterProof({ secret: 'not-the-secret', mid: wrong.mid }) });
+  assert.equal((await wrong.next('error')).code, 'AUTH_FAILED');
+  await closeClient(wrong);
+
+  // hex 编码的正确 HMAC：形状不符（非 base64url 定长 43），拒绝
+  const hexish = await registerClient(t, f.url);
+  hexish.send({ type: 'device_register_init', device_mid: hexish.mid, pass_hash: hash,
+    register_proof: createHmac('sha256', secret).update(hexish.mid).digest('hex') });
+  assert.equal((await hexish.next('error')).code, 'AUTH_FAILED');
+  await closeClient(hexish);
+
+  // 正确 base64url proof：注册成功，后续质询配对流程照常可用
+  const ok = await registerClient(t, f.url);
+  ok.send({ type: 'device_register_init', device_mid: ok.mid, pass_hash: hash,
+    register_proof: deriveRegisterProof({ secret, mid: ok.mid }) });
+  const sid = (await ok.next('device_register_ack')).device_sid;
+  assert.equal((await auth(ok, sid, hash, 'device')).ack.pair_status, 'waiting');
+
+  // 拒绝路径零残留：被拒注册不占房间/设备槽（等被拒 socket 完成关闭）
+  await eventually(async () => (await f.health()).sockets === 1);
+  assert.deepEqual(await f.health(), { status: 'ok', sockets: 1, rooms: 1, devices: 1 });
+});
+
+test('registrationSecret 未设置时无 proof 注册照常成功（兼容）', async (t) => {
+  const f = await fixture(t);
+  const plain = await registerClient(t, f.url);
+  const hash = createHash('sha256').update(randomBytes(32)).digest('base64');
+  plain.send({ type: 'device_register_init', device_mid: plain.mid, pass_hash: hash });
+  // 旧客户端形状（无 register_proof 字段）必须继续可用，本地开发/测试零摩擦
+  assert.equal(typeof (await plain.next('device_register_ack')).device_sid, 'string');
+});
+
+test('registrationSecret 选项校验：非法值抛错，null/undefined 视为未设置', async (t) => {
+  for (const value of ['', 123, {}]) {
+    assert.throws(() => createRelay({ registrationSecret: value }), /Invalid registration secret/);
+  }
+  for (const value of [undefined, null]) {
+    const relay = createRelay({ registrationSecret: value });
+    t.after(() => relay.close());
+  }
+});
+
+// —— 共享模块单测（lib/proof 与 lib/protocol）——
+
+test('lib/proof：deriveProof 与独立实现逐字节一致，verifyProof 严格拒不符', () => {
+  const nonce = randomBytes(32).toString('base64url');
+  const role = 'probe';
+  const sid = randomUUID();
+  const hash = createHash('sha256').update(randomBytes(32)).digest('base64');
+  const proof = deriveProof({ passHash: hash, nonce, role, sid });
+  // proofFor 是测试侧的独立 HMAC 实现：两侧语义漂移会在此暴露
+  assert.equal(proof, proofFor(hash, nonce, role, sid));
+  assert.match(proof, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(verifyProof({ proof, passHash: hash, nonce, role, sid }), true);
+  assert.equal(verifyProof({ proof, passHash: 'wrong-key', nonce, role, sid }), false);
+  assert.equal(verifyProof({ proof, passHash: hash, nonce, role: 'device', sid }), false);
+  assert.equal(verifyProof({ proof, passHash: hash, nonce: 'other', role, sid }), false);
+  assert.equal(verifyProof({ proof, passHash: hash, nonce, role, sid: randomUUID() }), false);
+  // hex/短串/非字符串形状一律拒绝
+  assert.equal(verifyProof({ proof: Buffer.from(proof, 'base64url').toString('hex'), passHash: hash, nonce, role, sid }), false);
+  assert.equal(verifyProof({ proof: 'short', passHash: hash, nonce, role, sid }), false);
+  assert.equal(verifyProof({ proof: null, passHash: hash, nonce, role, sid }), false);
+});
+
+test('lib/protocol：classifyFrame 帧分类与错误码常量', () => {
+  assert.equal(classifyFrame({ id: 1, method: 'session/list', params: {} }), 'request');
+  assert.equal(classifyFrame({ id: 'server-1', method: 'session/requestPermission', params: {} }), 'reverse-request');
+  assert.equal(classifyFrame({ method: 'session/event', params: {} }), 'notification');
+  assert.equal(classifyFrame({ id: 1, result: { ok: true } }), 'response');
+  assert.equal(classifyFrame({ id: 'server-1', error: { code: -32022, message: 'x' } }), 'response');
+  assert.equal(classifyFrame({ id: 1 }), null);
+  assert.equal(classifyFrame({}), null);
+  assert.equal(classifyFrame(null), null);
+  assert.equal(classifyFrame('frame'), null);
+  // 错误码常量与线上已用值锁死（companion 代答/自造码，改值即破坏手机端兼容）
+  assert.deepEqual([ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT], [-32000, -32001, -32022]);
+});
+
+test('lib/protocol：isPermissionLikeMethod 分档判定', () => {
+  assert.equal(isPermissionLikeMethod('session/requestPermission'), true);
+  assert.equal(isPermissionLikeMethod('interaction/askUser'), true);
+  assert.equal(isPermissionLikeMethod('workspace/confirmOverwrite'), true);
+  // 裸 "ask" 不得误伤 cancelBackgroundTask 里的 "task"
+  assert.equal(isPermissionLikeMethod('session/cancelBackgroundTask'), false);
+  assert.equal(isPermissionLikeMethod('session/list'), false);
+  assert.equal(isPermissionLikeMethod(123), false);
+  assert.equal(isPermissionLikeMethod(undefined), false);
 });
