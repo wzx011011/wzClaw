@@ -1,488 +1,160 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
-import '../models/connection_state.dart';
-import '../models/session_meta.dart';
-import '../services/chat_store.dart';
-import '../services/connection_manager.dart';
-import '../services/session_sync_service.dart';
+import '../pages/files_placeholder_page.dart';
+import '../zcode/zcode_chat_store.dart';
 import 'session_list_tile.dart';
-import 'workspace_picker_card.dart';
 
-/// Drawer widget displaying the current desktop workspace and its sessions.
+/// 路径分隔符（末级目录名提取用；预编译避免每次重建重复构造）
+final RegExp _trailingPathSep = RegExp(r'[/\\]+$');
+final RegExp _pathSep = RegExp(r'[/\\]');
+
+/// 抽屉：桌面 ZCode 会话列表（zcode 换芯版）。
+///
+/// 数据源从旧 relay 协议栈（ConnectionManager / SessionSyncService /
+/// ChatStore / WorkspacePickerCard）整体改绑 ZcodeChatStore：
+/// - AnimatedBuilder(store) 单一驱动，替代原先多个 StreamBuilder 订阅；
+/// - 头部连接状态点映射 ZcodeConnState（配色对齐 zcode_page 的
+///   _buildConnBadge：matched 绿 / waiting 橙 / connecting accent / idle 灰），
+///   副标题 = 当前活动会话 workspacePath 的末级目录名；
+/// - 会话区块 = store.sessions → SessionListTile，tap 即 store.openSession
+///   并收起抽屉（聊天页由外层响应 store 的视口变化）；store.error 非空时
+///   在区块顶部显示一行错误提示（点击重试 = refreshSessions）；
+/// - 「浏览文件」入口保留位置但置灰：zcode app-server 暂无文件树 API，
+///   点击进入 FilesPlaceholderPage 占位页。
 class ProjectDrawer extends StatefulWidget {
-  const ProjectDrawer({super.key});
+  const ProjectDrawer({super.key, this.store});
+
+  /// 测试注入替身用；null 时使用全局单例
+  /// （home_page 的 `const ProjectDrawer()` 形态保持兼容）
+  final ZcodeChatStore? store;
 
   @override
   State<ProjectDrawer> createState() => _ProjectDrawerState();
 }
 
 class _ProjectDrawerState extends State<ProjectDrawer> {
+  /// 新建会话 in-flight 闩：防连点重复发 session/create（完成后释放）
+  bool _creating = false;
+
+  ZcodeChatStore get _store => widget.store ?? ZcodeChatStore.instance;
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    final store = _store;
     return Drawer(
       backgroundColor: colors.bgPrimary,
       width: 304,
+      child: AnimatedBuilder(
+        animation: store,
+        builder: (context, _) {
+          return Column(
+            children: [
+              _buildHeader(colors, store),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    _buildSessionSection(context, colors, store),
+                    Divider(color: colors.border, height: 1),
+                    _buildFileBrowseEntry(context, colors),
+                  ],
+                ),
+              ),
+              _buildFooter(colors, store),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// 头部：连接状态点 + 标题 + 活动会话的工作区名
+  Widget _buildHeader(AppColors colors, ZcodeChatStore store) {
+    final dotColor = _connColor(colors, store.connState);
+    final activeId = store.activeSessionId;
+    final activeWs = _activeMeta(store)?.workspacePath;
+
+    // 副标题三态：无活动会话 / 活动会话带工作区 / 视口已打开但列表快照
+    // 缺该会话（列表刷新失败或尚未包含）——最后一态用中性占位，不误报
+    final String subtitle;
+    final Color subtitleColor;
+    if (activeId == null) {
+      subtitle = '未选择会话';
+      subtitleColor = colors.textMuted;
+    } else if (activeWs != null && activeWs.isNotEmpty) {
+      subtitle = _workspaceLabel(activeWs);
+      subtitleColor = colors.textSecondary;
+    } else {
+      subtitle = '会话已打开';
+      subtitleColor = colors.textSecondary;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        color: colors.bgSecondary,
+        border: Border(
+          bottom: BorderSide(color: colors.accent, width: 3),
+        ),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _buildHeader(colors),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _buildWorkspaceSection(context, colors),
-                Divider(color: colors.border, height: 1),
-                _buildSessionSection(context, colors),
-                Divider(color: colors.border, height: 1),
-                _buildFileBrowseEntry(context, colors),
-              ],
-            ),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '桌面 ZCode',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
-          _buildFooter(colors),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 13,
+              color: subtitleColor,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildHeader(AppColors colors) {
-    return StreamBuilder<WsConnectionState>(
-      stream: ConnectionManager.instance.stateStream,
-      initialData: ConnectionManager.instance.state,
-      builder: (context, connSnap) {
-        final connState = connSnap.data ?? WsConnectionState.disconnected;
-        return StreamBuilder<String?>(
-          stream: ConnectionManager.instance.selectedDesktopIdStream,
-          initialData: ConnectionManager.instance.selectedDesktopId,
-          builder: (context, selectedSnap) {
-            return StreamBuilder<String?>(
-              stream: ConnectionManager.instance.desktopIdentityStream,
-              initialData: ConnectionManager.instance.desktopIdentity,
-              builder: (context, identitySnap) {
-                final identity = identitySnap.data;
-                final selectedId = selectedSnap.data;
-                final desktops = ConnectionManager.instance.desktops;
-                final desktop = selectedId != null
-                    ? desktops.where((d) => d.desktopId == selectedId).firstOrNull
-                    : null;
-                final connected = connState == WsConnectionState.connected;
-
-                // Build subtitle with workspace name integrated
-                String subtitle;
-                if (connected && desktop?.platform != null) {
-                  subtitle = desktop!.platform!;
-                } else if (connected) {
-                  subtitle = '已连接';
-                } else {
-                  subtitle = '未连接';
-                }
-
-                String title;
-                if (connected && identity != null) {
-                  title = identity;
-                } else {
-                  title = 'wzxClaw';
-                }
-
-                return GestureDetector(
-                  onTap: connected ? () => _showDesktopSwitcher(colors) : null,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    decoration: BoxDecoration(
-                      color: colors.bgSecondary,
-                      border: Border(
-                        bottom: BorderSide(color: colors.accent, width: 3),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: connected ? colors.success : colors.error,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                title,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: colors.textPrimary,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (connected)
-                              Icon(
-                                Icons.swap_horiz,
-                                size: 16,
-                                color: colors.textMuted,
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        _buildWorkspaceSubtitle(colors, subtitle, connected),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-
-  /// Subtitle line: platform · workspaceName (integrated, not separate row)
-  Widget _buildWorkspaceSubtitle(AppColors colors, String platformInfo, bool connected) {
-    if (!connected) {
-      return Text(
-        platformInfo,
-        style: TextStyle(fontSize: 13, color: colors.textSecondary),
-        overflow: TextOverflow.ellipsis,
-      );
-    }
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
-        final display = wsName.isNotEmpty
-            ? '$platformInfo · $wsName'
-            : platformInfo;
-        return Text(
-          display,
-          style: TextStyle(
-            fontSize: 13,
-            color: wsName.isNotEmpty ? colors.textSecondary : colors.textMuted,
-          ),
-          overflow: TextOverflow.ellipsis,
-        );
-      },
-    );
-  }
-
-  /// 弹出桌面端选择器
-  void _showDesktopSwitcher(AppColors colors) {
-    final desktops = ConnectionManager.instance.desktops;
-    if (desktops.isEmpty) return;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        final selectedId = ConnectionManager.instance.selectedDesktopId;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Row(
-                  children: [
-                    Text('选择桌面端',
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),),
-                    const Spacer(),
-                    IconButton(
-                      icon: Icon(Icons.close, color: colors.textMuted),
-                      onPressed: () => Navigator.pop(ctx),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
-                ),
-              ),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(ctx).size.height * 0.45,
-                ),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  itemCount: desktops.length,
-                  itemBuilder: (ctx, i) {
-                    final d = desktops[i];
-                    final isSelected = d.desktopId == selectedId;
-                    return ListTile(
-                      leading: Icon(
-                        isSelected ? Icons.computer : Icons.computer_outlined,
-                        color: isSelected ? colors.accent : colors.textSecondary,
-                      ),
-                      title: Text(
-                        d.displayLabel,
-                        style: TextStyle(
-                          color: isSelected ? colors.accent : colors.textPrimary,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                      subtitle: d.platform != null
-                          ? Text(d.platform!,
-                              style: TextStyle(
-                            color: colors.textMuted, fontSize: 12,),)
-                          : null,
-                      trailing: isSelected
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2,),
-                              decoration: BoxDecoration(
-                                color: colors.accent.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text('当前',
-                                  style: TextStyle(
-                                      color: colors.accent, fontSize: 12,),),
-                            )
-                          : null,
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        ConnectionManager.instance.selectDesktop(d.desktopId);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// 弹出工作区切换选择器
-  void _showWorkspaceSwitcher(AppColors colors) {
-    SessionSyncService.instance.fetchWorkspaces();
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                    Text('切换工作区',
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(ctx),
-                    child: Text('关闭',
-                    style: TextStyle(color: colors.textMuted, fontSize: 13,),),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            StreamBuilder<List<WorkspaceItem>>(
-              stream: SessionSyncService.instance.workspacesStream,
-              initialData: SessionSyncService.instance.workspaces,
-              builder: (context, snapshot) {
-                final workspaces = snapshot.data ?? [];
-                if (workspaces.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Text('暂无工作区',
-                    style: TextStyle(color: colors.textMuted, fontSize: 14,),),
-                  );
-                }
-                return ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(ctx).size.height * 0.55,
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: workspaces.length,
-                    itemBuilder: (ctx, i) {
-                      final ws = workspaces[i];
-                      return WorkspacePickerCard(
-                        workspace: ws,
-                        colors: colors,
-                        onWorkspaceTap: () {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                        },
-                        onSessionTap: (sessionId) {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                          SessionSyncService.instance.setActiveSession(sessionId);
-                        },
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Workspace section — 显示当前工作区及切换按钮。
-  Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Section header row
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 12, 6),
-              child: Row(
-                children: [
-                  Icon(Icons.folder_outlined, size: 15, color: colors.textSecondary),
-                  const SizedBox(width: 8),
-                  Text(
-                    '工作区',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colors.textSecondary,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => _showWorkspaceSwitcher(colors),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.swap_horiz_rounded,
-                        size: 17,
-                        color: colors.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Workspace card or empty state
-            if (wsName.isNotEmpty)
-              Container(
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                decoration: BoxDecoration(
-                  color: colors.accent.withValues(alpha: 0.07),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: colors.accent.withValues(alpha: 0.22)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.folder_open, size: 14, color: colors.accent),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        wsName,
-                        style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.radio_button_unchecked,
-                      size: 13,
-                      color: colors.textMuted,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '未选择工作区',
-                      style:
-                          TextStyle(color: colors.textMuted, fontSize: 13),
-                    ),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => _showWorkspaceSwitcher(colors),
-                      child: Text(
-                        '选择',
-                        style:
-                            TextStyle(color: colors.accent, fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
-    return ListTile(
-      leading: Icon(Icons.folder_open, color: colors.textSecondary, size: 20),
-      title: Text(
-        '浏览文件',
-        style: TextStyle(color: colors.textSecondary, fontSize: 14),
-      ),
-      dense: true,
-      onTap: () {
-        Navigator.pop(context);
-        Navigator.pushNamed(context, '/files');
-      },
-    );
-  }
-
-  Widget _buildSessionSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final hasWorkspace = wsSnap.data != null;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
+  /// 会话区块：错误提示 / 新建刷新按钮 / 加载占位 / 会话瓦片列表
+  Widget _buildSessionSection(
+    BuildContext context,
+    AppColors colors,
+    ZcodeChatStore store,
+  ) {
+    final sessions = store.sessions;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Row(
@@ -498,128 +170,140 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 ),
               ),
               const Spacer(),
-              Builder(
-                builder: (context) => GestureDetector(
-                  onTap: () async {
-                    final result =
-                        await SessionSyncService.instance.createSession();
-                    if (result != null) {
-                      final sessionId = result['id'] as String?;
-                      if (sessionId != null) {
-                        SessionSyncService.instance.setActiveSession(sessionId);
-                        ChatStore.instance.switchToSession(sessionId, userInitiated: true);
-                        if (context.mounted) Navigator.pop(context);
-                      }
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child:
-                        Icon(Icons.add, size: 16, color: colors.textMuted),
-                  ),
-                ),
-              ),
-              StreamBuilder<bool>(
-                stream: SessionSyncService.instance.loadingStream,
-                initialData: SessionSyncService.instance.isLoading,
-                builder: (context, snapshot) {
-                  final isLoading = snapshot.data ?? false;
-                  return GestureDetector(
-                    onTap: isLoading
-                        ? null
-                        : () =>
-                            SessionSyncService.instance.fetchSessions(),
-                    child: isLoading
-                        ? SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: colors.textMuted,
-                            ),
-                          )
-                        : Icon(
-                            Icons.refresh,
-                            size: 16,
+              GestureDetector(
+                onTap: _creating ? null : _onNewSession,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _creating
+                      ? SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
                             color: colors.textMuted,
                           ),
-                  );
-                },
+                        )
+                      : Icon(Icons.add, size: 16, color: colors.textMuted),
+                ),
+              ),
+              GestureDetector(
+                onTap: store.sessionsLoading
+                    ? null
+                    : () => unawaited(store.refreshSessions()),
+                child: store.sessionsLoading
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          color: colors.textMuted,
+                        ),
+                      )
+                    : Icon(
+                        Icons.refresh,
+                        size: 16,
+                        color: colors.textMuted,
+                      ),
               ),
             ],
           ),
         ),
-        if (!hasWorkspace)
+        // 错误面：store 的失败文案（新建/打开/刷新失败等），点击重试刷新
+        if (store.error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: GestureDetector(
+              onTap: () => unawaited(store.refreshSessions()),
+              child: Text(
+                store.error!,
+                style: TextStyle(color: colors.error, fontSize: 12),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        // 首次加载中先出加载占位，避免空态闪现
+        if (store.sessionsLoading)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Text(
-              '请先选择工作区',
+              '会话加载中…',
+              style: TextStyle(color: colors.textMuted, fontSize: 13),
+            ),
+          )
+        else if (sessions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Text(
+              '暂无会话记录',
               style: TextStyle(color: colors.textMuted, fontSize: 13),
             ),
           )
         else
-        StreamBuilder<List<SessionMeta>>(
-          stream: SessionSyncService.instance.sessionsStream,
-          initialData: SessionSyncService.instance.sessions,
-          builder: (context, snapshot) {
-            final sessions = snapshot.data ?? [];
-
-            if (sessions.isEmpty) {
-              return Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Text(
-                  '暂无会话记录',
-                  style: TextStyle(color: colors.textMuted, fontSize: 13),
-                ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: sessions.map((session) {
+              final isActive = session.sessionId == store.activeSessionId;
+              return SessionListTile(
+                session: session,
+                isActive: isActive,
+                onTap: () => _onSessionTap(context, store, session.sessionId),
               );
-            }
+            }).toList(),
+          ),
+      ],
+    );
+  }
 
-            return StreamBuilder<String?>(
-              stream: SessionSyncService.instance.activeSessionStream,
-              initialData: SessionSyncService.instance.activeSessionId,
-              builder: (context, activeSnapshot) {
-                final activeId = activeSnapshot.data;
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: sessions.map((session) {
-                    final isActive = session.id == activeId;
-                    return SessionListTile(
-                      session: session,
-                      isActive: isActive,
-                      onTap: () => _onSessionTap(context, session),
-                    );
-                  }).toList(),
-                );
-              },
-            );
-          },
-        ),
-          ],
+  /// 新建会话：in-flight 期间禁用「+」，完成后收起抽屉（新会话已由
+  /// store.newSession 内部打开，聊天页由外层响应 store）
+  Future<void> _onNewSession() async {
+    if (_creating) return;
+    setState(() => _creating = true);
+    try {
+      await _store.newSession();
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+    if (mounted) Navigator.pop(context);
+  }
+
+  /// 打开会话并收起抽屉（聊天页由外层响应 store 的视口变化）
+  void _onSessionTap(
+    BuildContext context,
+    ZcodeChatStore store,
+    String sessionId,
+  ) {
+    unawaited(store.openSession(sessionId));
+    Navigator.pop(context);
+  }
+
+  /// 「浏览文件」入口：zcode 协议暂无文件树 API，置灰占位（可点进占位页）
+  Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
+    return ListTile(
+      leading: Icon(Icons.folder_open, color: colors.textMuted, size: 20),
+      title: Text(
+        '浏览文件',
+        style: TextStyle(color: colors.textMuted, fontSize: 14),
+      ),
+      subtitle: Text(
+        '等待 v3 workspace 支持',
+        style: TextStyle(color: colors.textMuted, fontSize: 11),
+      ),
+      dense: true,
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const FilesPlaceholderPage()),
         );
       },
     );
   }
 
-  Future<void> _onSessionTap(BuildContext context, SessionMeta session) async {
-    SessionSyncService.instance.setActiveSession(session.id);
-    // 先切换（立即显示骨架屏），再异步拉取消息，避免切换后 loading 永远不关闭
-    ChatStore.instance.switchToSession(session.id, userInitiated: true);
-
-    if (context.mounted) Navigator.pop(context);
-
-    try {
-      // 修复：长会话超过 50 条时只取首页会丢消息；改用全量分页拉取
-      final messages = await SessionSyncService.instance
-          .loadAllSessionMessages(session.id, forceRefresh: true);
-      ChatStore.instance.loadFetchedMessages(session.id, messages);
-    } catch (_) {
-      // 拉取失败也要关闭 loading，避免骨架屏永久显示
-      ChatStore.instance.loadFetchedMessages(session.id, []);
-    }
-  }
-
-  Widget _buildFooter(AppColors colors) {
+  Widget _buildFooter(AppColors colors, ZcodeChatStore store) {
+    final state = store.connState;
+    final dotColor = _connColor(colors, state);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
@@ -627,47 +311,70 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
           top: BorderSide(color: colors.border, width: 0.5),
         ),
       ),
-      child: StreamBuilder<WsConnectionState>(
-        stream: ConnectionManager.instance.stateStream,
-        initialData: ConnectionManager.instance.state,
-        builder: (context, snapshot) {
-          final state = snapshot.data ?? WsConnectionState.disconnected;
-          final dotColor = _statusColor(state);
-          return Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: dotColor,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                state.label,
-                style: TextStyle(
-                  color: dotColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          );
-        },
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dotColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _connLabel(state),
+            style: TextStyle(
+              color: dotColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Color _statusColor(WsConnectionState state) {
+  /// 当前活动会话的 meta（从 session/list 快照中按视口 id 查找）
+  ZcodeSessionMeta? _activeMeta(ZcodeChatStore store) {
+    final id = store.activeSessionId;
+    if (id == null) return null;
+    return store.sessions.where((s) => s.sessionId == id).firstOrNull;
+  }
+
+  /// 工作区路径只显示最后一级目录名（与 zcode_page._workspaceLabel 同逻辑；
+  /// 先去掉结尾分隔符，'C:\repo\' → 'repo'）
+  String _workspaceLabel(String path) {
+    final trimmed = path.replaceAll(_trailingPathSep, '');
+    final parts = trimmed.split(_pathSep);
+    return parts.isEmpty || parts.last.isEmpty ? path : parts.last;
+  }
+
+  /// 连接状态点配色（对齐 zcode_page._buildConnBadge）
+  Color _connColor(AppColors colors, ZcodeConnState state) {
     switch (state) {
-      case WsConnectionState.connected:
-        return Colors.green;
-      case WsConnectionState.connecting:
-      case WsConnectionState.reconnecting:
-        return Colors.orange;
-      case WsConnectionState.disconnected:
-        return Colors.red;
+      case ZcodeConnState.matched:
+        return colors.success;
+      case ZcodeConnState.waiting:
+        return colors.warning;
+      case ZcodeConnState.connecting:
+        return colors.accent;
+      case ZcodeConnState.idle:
+        return colors.textMuted;
+    }
+  }
+
+  /// 连接状态文案（对齐 zcode_page._buildConnBadge）
+  String _connLabel(ZcodeConnState state) {
+    switch (state) {
+      case ZcodeConnState.matched:
+        return '已连接';
+      case ZcodeConnState.waiting:
+        return '等待桌面端';
+      case ZcodeConnState.connecting:
+        return '连接中';
+      case ZcodeConnState.idle:
+        return '未连接';
     }
   }
 }

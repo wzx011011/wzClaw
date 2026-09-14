@@ -95,9 +95,17 @@ Map<String, dynamic> fakeMsg(
   };
 }
 
-/// 构造已配对的 store（注入替身）
-ZcodeChatStore pairedStore(FakeZcodeRelayClient fake) {
-  final store = ZcodeChatStore(client: fake);
+/// 构造已配对的 store（注入替身）。cache 默认内存缓存替身：
+/// store / widget 测试都不应触碰真 SQLite（缺插件环境只会吞错），
+/// 需要回放持久化行为的用例自行构造 FakeZcodeSessionCache 传入。
+ZcodeChatStore pairedStore(
+  FakeZcodeRelayClient fake, {
+  ZcodeSessionCache? cache,
+}) {
+  final store = ZcodeChatStore(
+    client: fake,
+    cache: cache ?? FakeZcodeSessionCache(),
+  );
   expect(store.pair(pairingUrl), isTrue);
   return store;
 }
