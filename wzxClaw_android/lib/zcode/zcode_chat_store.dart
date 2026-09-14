@@ -493,6 +493,12 @@ class ZcodeChatStore extends ChangeNotifier {
   String? _defaultWorkspaceKey;
   String? _defaultWorkspacePath;
 
+  /// 当前 openSession 的 resume 快照（session.title / workspace），
+  /// 供打开成功后补齐会话列表缺失条目用（见 _upsertOpenedListing）
+  String? _resumeTitle;
+  String? _resumeWsKey;
+  String? _resumeWsPath;
+
   /// 打开会话（视口切换），加载顺序：
   /// 1. 缓存秒开（SQLite 尾窗，0ms）；
   /// 2. resume 激活（materialize）——**忽略其 messages 数组**
@@ -511,6 +517,7 @@ class ZcodeChatStore extends ChangeNotifier {
     final epoch = _epoch;
     _stopFallbackPolling();
     _rejectAllPendingReverse();
+    _resumeTitle = _resumeWsKey = _resumeWsPath = null;
     _activeSessionId = sessionId;
     final state = _stateFor(sessionId)..epoch = epoch;
     notifyListeners();
@@ -586,6 +593,7 @@ class ZcodeChatStore extends ChangeNotifier {
     } else if (state.isStreaming) {
       _armPushWatchdog(state);
     }
+    _upsertOpenedListing(state);
     unawaited(_persistSession(state));
     if (_viewportValid(sessionId, epoch)) notifyListeners();
   }
@@ -1416,13 +1424,16 @@ class ZcodeChatStore extends ChangeNotifier {
   /// resume 响应 meta：忽略 messages 数组，取 projection 状态与 workspace
   void _applyResumeMeta(ZcodeSessionState state, Map map) {
     state.materialized = true;
-    // 记住该会话的工作区（新建会话复用）
+    // 快照该会话的标题与工作区（列表补条目用）+ 记住工作区（新建会话复用）
     final session = map['session'];
     if (session is Map) {
+      _resumeTitle = _nonEmpty(session['title']);
       final ws = session['workspace'];
       if (ws is Map) {
         final key = _nonEmpty(ws['workspaceKey']);
         final path = _nonEmpty(ws['workspacePath']);
+        _resumeWsKey = key;
+        _resumeWsPath = path;
         if (key != null && path != null) {
           _defaultWorkspaceKey = key;
           _defaultWorkspacePath = path;
@@ -1645,6 +1656,25 @@ class ZcodeChatStore extends ChangeNotifier {
         ..clear()
         ..addAll(models);
     }
+  }
+
+  /// openSession 成功后把缺失的会话补进列表快照（新会话置顶）：
+  /// newSession 的 refreshSessions 可能失败（内部吞错）或服务端列表
+  /// 尚未包含刚创建的会话——视口已打开而列表缺失会让抽屉头部误显示
+  /// 「未选择会话」。已有条目以 session/list 权威快照为准，不覆盖。
+  void _upsertOpenedListing(ZcodeSessionState state) {
+    if (_sessions.any((s) => s.sessionId == state.sessionId)) return;
+    _sessions.insert(
+      0,
+      ZcodeSessionMeta(
+        sessionId: state.sessionId,
+        title: _resumeTitle ?? '（无标题会话）',
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+        workspaceKey: _resumeWsKey ?? _defaultWorkspaceKey,
+        workspacePath: _resumeWsPath ?? _defaultWorkspacePath,
+        status: state.isStreaming ? 'running' : 'idle',
+      ),
+    );
   }
 
   /// 更新会话列表徽标（state.updated 的 status）
