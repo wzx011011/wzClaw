@@ -16,6 +16,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -57,6 +58,8 @@ class _ZcodePageState extends State<ZcodePage> {
   String? _lastSessionId; // 检测会话切换，重置输入与动画状态
   int _previousGroupCount = 0; // AnimatedMessageItem 只动画新增项
   bool _scrollPending = false;
+  bool _loadingOlder = false; // 上滑翻页在途防抖
+  bool _noMoreOlder = false; // 当前会话缓存已翻尽（切换会话时重置）
 
   // 待处理的权限请求 / 问答（同一时间最多显示一条，AskUser 优先）
   StreamSubscription<PermissionRequest?>? _permissionSub;
@@ -81,6 +84,8 @@ class _ZcodePageState extends State<ZcodePage> {
     _askUserSub = _store.askUserStream.listen((q) {
       if (mounted) setState(() => _askUserQuestion = q);
     });
+    // 上滑近顶自动从缓存翻页加载更早消息
+    _scrollController.addListener(_onScroll);
   }
 
   @override
@@ -112,6 +117,7 @@ class _ZcodePageState extends State<ZcodePage> {
       _lastSessionId = _store.activeSessionId;
       _previousGroupCount = 0;
       _inputController.clear();
+      _noMoreOlder = false; // 新会话的缓存翻页状态重新开始
       // 离开聊天视图时清掉残留的待处理条（流未发 null 的兜底）
       if (_store.activeSessionId == null) {
         _permissionRequest = null;
@@ -122,6 +128,42 @@ class _ZcodePageState extends State<ZcodePage> {
     if (_store.activeSessionId != null &&
         (_store.isStreaming || _store.isWaitingForResponse)) {
       _scrollToBottom();
+    }
+  }
+
+  // ── 上滑翻页（历史从本地缓存加载）────────────────────────────────
+
+  /// 近顶触发：视口顶部 200px 逻辑像素内即预取一页更早消息
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels <= 200) {
+      unawaited(_loadOlder());
+    }
+  }
+
+  Future<void> _loadOlder() async {
+    if (_loadingOlder || _noMoreOlder) return;
+    if (_store.activeSessionId == null) return;
+    _loadingOlder = true;
+    final beforeExtent =
+        _scrollController.hasClients ? _scrollController.position.maxScrollExtent : 0.0;
+    try {
+      final added = await _store.loadOlderMessages();
+      if (added == 0) {
+        _noMoreOlder = true; // 缓存翻尽，本次会话内不再触发
+        return;
+      }
+      // 顶部插入会把现有内容整体下推：按新增内容高度补偿滚动偏移，
+      // 保持用户正在看的位置不动（否则每次翻页都会"跳"一下）。
+      if (_scrollController.hasClients) {
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scrollController.hasClients) return;
+          final delta = _scrollController.position.maxScrollExtent - beforeExtent;
+          if (delta > 0) _scrollController.position.correctBy(delta);
+        });
+      }
+    } finally {
+      _loadingOlder = false;
     }
   }
 

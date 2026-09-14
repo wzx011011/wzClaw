@@ -42,10 +42,13 @@ const List<String> _kDeadlineKeys = [
 const int _kInputSummaryMaxChars = 120;
 
 /// companion 对反向请求（权限/AskUser）的应答看护窗口：
-/// 超过该时长未应答，桌面端会以 -32022 自动拒绝且不通知手机
-/// （relay/zcode/companion.js 的 requestTimeoutMs 默认 15000）。
+/// 超过该时长未应答，桌面端会以 -32022 自动拒绝且不通知手机。
+/// 能弹到 UI 的请求（permission / interaction / askUser）全部落在
+/// companion 的权限类档位 permissionRequestTimeoutMs（默认 120s，
+/// 见 relay/zcode/companion.js isPermissionLikeMethod）；
+/// 非权限类反向请求在 store 层即被默认拒绝，不会显示本卡。
 /// 到点后本卡禁用按钮并提示，避免「点了批准其实已被拒」的假象。
-const Duration _kCompanionWatchdog = Duration(seconds: 15);
+const Duration _kCompanionWatchdog = Duration(seconds: 120);
 
 /// 宽松数值解析（int/num/数字字符串）
 int? _toInt(dynamic v) {

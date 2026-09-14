@@ -211,7 +211,10 @@ class ZcodeSessionCache {
       dirty: false, // 已持久化，无需重写
       message: ChatMessage(
         id: row['id'] as int?,
-        role: MessageRole.values.byName(row['role'] as String? ?? 'user'),
+        // 未知/历史 role 值容错回退 user：byName 会抛 ArgumentError，
+        // 一行坏数据会把整页加载/翻页全部炸成静默失败（与 ChatMessage.fromDbMap
+        // 的 _parseRole 容错语义一致）。
+        role: _parseRole(row['role'] as String?),
         content: row['content'] as String? ?? '',
         createdAt: DateTime.fromMillisecondsSinceEpoch(
             row['created_at'] as int? ?? 0,),
@@ -222,5 +225,17 @@ class ZcodeSessionCache {
         model: row['model'] as String?,
       ),
     );
+  }
+
+  /// role 列容错解析：未知值回退 user 而非抛错
+  static MessageRole _parseRole(String? raw) {
+    switch (raw) {
+      case 'assistant':
+        return MessageRole.assistant;
+      case 'tool':
+        return MessageRole.tool;
+      default:
+        return MessageRole.user;
+    }
   }
 }
