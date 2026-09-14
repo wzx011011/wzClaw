@@ -113,11 +113,20 @@ class FakeRelayServer {
   /// 客户端是否已关闭连接（服务端视角收到 done）
   bool clientClosed = false;
 
+  /// 是否自动应答 pair_status_query（模拟健康 relay；false 模拟静默死链）
+  bool autoReplyQueries = true;
+
   void start() {
-    channel.serverSide.stream.listen(
-      (raw) => messages.add(jsonDecode(raw as String) as Map<String, dynamic>),
-      onDone: () => clientClosed = true,
-    );
+    channel.serverSide.stream.listen((raw) {
+      final msg = jsonDecode(raw as String) as Map<String, dynamic>;
+      messages.add(msg);
+      if (autoReplyQueries && msg['type'] == 'pair_status_query') {
+        channel.serverSide.sink.add(jsonEncode({
+          'type': 'pair_status_ack',
+          'pair_status': 'matched',
+        }),);
+      }
+    }, onDone: () => clientClosed = true,);
   }
 
   /// 下发一条信封（单条 WS 消息、无换行 —— 与 relay server.js 的 send() 一致）
@@ -139,15 +148,19 @@ class FakeRelayServer {
 
 // ---------- 测试夹具 ----------
 
-/// 每个用例一套：注入连接工厂、记录状态/通知、可配置超时与重连延迟
+/// 每个用例一套：注入连接工厂、记录状态/通知、可配置超时/重连/保活
 class RelayHarness {
   RelayHarness({
     this.requestTimeout = const Duration(seconds: 30),
     this.reconnectDelay = const Duration(seconds: 5),
+    this.pingInterval = const Duration(seconds: 15),
+    this.onRequest,
   });
 
   final Duration requestTimeout;
   final Duration reconnectDelay;
+  final Duration pingInterval;
+  final Future<dynamic> Function(ZcodeFrame frame)? onRequest;
 
   final pairing = const ZcodePairingInfo(
     relayWsUrl: 'wss://zcode.5945.top/ws',
@@ -167,8 +180,10 @@ class RelayHarness {
       pairing: pairing,
       onStateChange: (state, paired) => states.add((state, paired)),
       onNotify: notifies.add,
+      onRequest: onRequest,
       requestTimeout: requestTimeout,
       reconnectDelay: reconnectDelay,
+      pingInterval: pingInterval,
       socketFactory: (url) {
         expect(url.toString(), pairing.relayWsUrl);
         final channel = FakeWebSocketChannel();
@@ -507,6 +522,145 @@ void main() {
       client.connect();
       await settle();
       expect(h.channels, hasLength(1));
+    });
+  });
+
+  group('保活与死链检测', () {
+    test('认证成功后周期发 pair_status_query，健康应答不断线', () async {
+      final h = RelayHarness(pingInterval: const Duration(milliseconds: 50));
+      final client = await h.connectMatched();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      // 心跳查询已发出且形状正确
+      final queries =
+          h.server.messages.where((m) => m['type'] == 'pair_status_query');
+      expect(queries, isNotEmpty);
+      expect(queries.first['device_sid'], _testSid);
+      // 连接保持：无重连，仍配对
+      expect(h.channels, hasLength(1));
+      expect(client.paired, isTrue);
+    });
+
+    test('连续两个周期无入站帧 → 判定死链，主动断开并走既有重连', () async {
+      final h = RelayHarness(
+        reconnectDelay: const Duration(milliseconds: 30),
+        pingInterval: const Duration(milliseconds: 50),
+      );
+      final client = await h.connectMatched();
+      h.server.autoReplyQueries = false; // relay 静默（半开/死链）
+
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      // 死链被主动关闭（半开连接的 _onSocketClosed 永不触发的场景）
+      expect(h.states, contains((ZcodeRelayState.closed, false)));
+      expect(h.channels.length, greaterThanOrEqualTo(2));
+      expect(client.paired, isFalse); // 新连接未完成认证
+    });
+
+    test('close() 手动关闭：保活停止，不再发心跳', () async {
+      final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
+      final client = await h.connectMatched();
+      client.close();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(
+        h.server.messages.where((m) => m['type'] == 'pair_status_query'),
+        isEmpty,
+      );
+    });
+  });
+
+  group('重连退避', () {
+    test('延迟 = 指数(基数*2^n) - 1/3 抖动；认证成功后计数归零', () async {
+      final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 90));
+      final client = h.newClient();
+
+      // 尝试 0：延迟 ∈ [60, 90]ms（基数 - 1/3 抖动）
+      for (var i = 0; i < 10; i++) {
+        final d = client.debugNextReconnectDelay().inMilliseconds;
+        expect(d, greaterThanOrEqualTo(60));
+        expect(d, lessThanOrEqualTo(90));
+      }
+
+      client.connect();
+      await settle();
+      await h.auth();
+      expect(client.debugReconnectAttempts, 0); // 认证成功归零
+
+      // 断线一次：计数 +1，下一次延迟翻倍区间 [120, 180]
+      await h.server.close();
+      await settle();
+      expect(client.debugReconnectAttempts, 1);
+      final d = client.debugNextReconnectDelay().inMilliseconds;
+      expect(d, greaterThanOrEqualTo(120));
+      expect(d, lessThanOrEqualTo(180));
+    });
+  });
+
+  group('推送帧与拒绝帧', () {
+    test('session/event 推送帧透传 onNotify（params 完整）；重连后新连接仍可达', () async {
+      final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
+      final client = await h.connectMatched();
+
+      void pushEvent(String eventId) {
+        h.server.send({
+          'type': 'data',
+          'payload': {
+            'method': 'session/event',
+            'params': {
+              'deliveryKind': 'web-remote-replayable',
+              'eventId': eventId,
+              'seq': 1,
+              'sessionId': 'sess-1',
+              'turnId': 'turn-1',
+              'type': 'model.streaming',
+              'payload': {'delta': 'hi', 'kind': 'text_delta'},
+            },
+          },
+        },);
+      }
+
+      pushEvent('e1');
+      await settle();
+      expect(h.notifies, hasLength(1));
+      expect(h.notifies.single.method, 'session/event');
+      expect((h.notifies.single.params as Map)['sessionId'], 'sess-1');
+      expect(
+        ((h.notifies.single.params as Map)['payload'] as Map)['delta'],
+        'hi',
+      );
+
+      // 断线重连后，新连接上的推送帧仍到达
+      await h.server.close();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(h.channels, hasLength(2));
+      await h.auth();
+      pushEvent('e2');
+      await settle();
+      expect(h.notifies, hasLength(2));
+      expect(client.paired, isTrue);
+    });
+
+    test('onRequest 钩子抛错 → 回传 error 帧（-32000），而非 result', () async {
+      final h = RelayHarness(
+        onRequest: (frame) async =>
+            throw Exception('会话已切换，请求被拒绝'),
+      );
+      await h.connectMatched();
+
+      h.server.send({
+        'type': 'data',
+        'payload': {
+          'id': 'server-9',
+          'method': 'session/requestPermission',
+          'params': {'toolCallId': 'tc-1', 'toolName': 'FileWrite'},
+        },
+      });
+      await settle();
+
+      final reply = h.server.dataPayloads.single;
+      expect(reply['id'], 'server-9');
+      expect((reply['error'] as Map)['code'], -32000);
+      expect((reply['error'] as Map)['message'], contains('会话已切换'));
+      expect(reply.containsKey('result'), isFalse);
     });
   });
 }

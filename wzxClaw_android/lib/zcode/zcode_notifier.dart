@@ -54,34 +54,38 @@ class ZcodeNotifier {
     _initialized = true;
     if (!Platform.isAndroid) return;
 
-    final plugin = FlutterLocalNotificationsPlugin();
-    _plugin = plugin;
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      _plugin = plugin;
+      const settings = InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/launcher_icon'),
+      );
+      await plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _onNotificationResponse,
+      );
 
-    const settings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/launcher_icon'),
-    );
-    await plugin.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onNotificationResponse,
-    );
+      // 创建通知渠道
+      const channel = AndroidNotificationChannel(
+        _channelId,
+        _channelName,
+        description: 'ZCode 远程任务完成/失败提醒',
+        importance: Importance.high,
+      );
+      await plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
 
-    // 创建通知渠道
-    const channel = AndroidNotificationChannel(
-      _channelId,
-      _channelName,
-      description: 'ZCode 远程任务完成/失败提醒',
-      importance: Importance.high,
-    );
-    await plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-
-    // Android 13+ 申请通知权限
-    await plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+      // Android 13+ 申请通知权限
+      await plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+    } catch (_) {
+      // 插件不可用（测试环境/权限缺失）：保持 _plugin 为 null，
+      // showTaskDone 静默跳过——通知是尽力而为的能力，不阻断主流程
+    }
   }
 
   /// 任务完成/失败通知
