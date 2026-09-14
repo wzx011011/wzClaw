@@ -32,9 +32,20 @@ process.stdin.on('data', (chunk) => {
       send({ id: frame.id, result: { messages: big, session: {} } });
     } else if (frame.method === 'session/list') {
       send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
+    } else if (frame.method === 'session/subscribe') {
+      send({ id: frame.id, result: { ok: true } });
+    } else if (frame.method === 'session/messages') {
+      send({
+        id: frame.id,
+        result: { messages: [{ info: { role: 'assistant', id: 'm1', time: { created: 123 } }, parts: [{ type: 'text', text: 'mock answer' }] }] },
+      });
     } else if (frame.method === 'session/send') {
       send({ id: frame.id, result: { accepted: true, sessionId: 'sess_mock', stateRevision: 1 } });
       send({ method: 'v4/telemetry/event', params: { kind: 'stream.chunk', channel: 'text', chunkLength: 2 } });
+      send({ method: 'session/event', params: { sessionId: 'sess_mock', events: [
+        { payload: { kind: 'text_delta', delta: 'mock answer' } },
+        { payload: { kind: 'turn.terminal', status: 'completed' } },
+      ] } });
     }
   }
 });

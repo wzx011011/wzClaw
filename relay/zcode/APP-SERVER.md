@@ -178,11 +178,29 @@ state.updated          patch.status="idle"
 
 - `session/events`（拉）要求会话在本进程 materialize 过：从未 resume 的会话 →
   `-32004`。resume 切走后，先前 materialize 过的会话事件**仍可读**（实测 ok）。
-- ⚠️ 跨进程观察受限：桌面正在 running 的会话，第二个进程 `session/list` 看到的
-  status 仍非 running（快照 stale）。“手机观察桌面自身进程跑的回合”可靠性存疑；
-  但主路径（手机发起的回合跑在 companion 的 app-server 内）不受影响。
-- 建议策略：进入会话即 subscribe（materialize 顺带完成），切换不移除订阅、
-  后台会话事件按帧归属写入各自缓存。
+
+### 跨进程实时性：桌面自身回合的流式正文不可达（probe-live2.js 定论）
+
+对"桌面进程正在驱动的会话"（真实现场：探针观察自己所在的活跃会话，期间该会话
+持续产出数千 token），第二个 app-server 进程三种通道全部收不到流式增量：
+
+- `session/subscribe` 推送（`web-remote-replayable` 与 `desktop-continuous`
+  两种 deliveryKind 均建立成功）：**0 帧**；
+- `session/events` 周期拉取：事件游标 40s 纹丝不动（回合进行中连生命周期事件
+  都不落可回放日志）；
+- `v4/telemetry` 通知：不跨进程（进程内总线）。
+
+跨进程**可见**的只有：完成后的消息全量（resume 拉到 99 条/665KB）、回合边界的
+生命周期事件（`checkpoint.created`/`session.titleUpdated`/`session.resumed`）、
+`session/list` 的 stale 元数据（running 显示为 idle）。可回放日志本会话总计仅
+28 个序号——几万字流式输出不留任何逐块 text_delta 记录，"replayable"回放的是
+回合级事件而非 token 流。
+
+**推论**：`text_delta` 只在运行回合的那个进程的事件总线上存在。手机经 companion
+发起的回合跑在 companion 的 app-server 进程内，实时流完整可用（主路径，已实测）；
+"手机围观桌面自己跑的回合"经 app-server attach 不可实现——官方远程能做到是因为
+它隧道的是桌面 UI 进程本身。若确需此能力，只能走会话存储文件级观察
+（文件是否逐块落盘未验证）或官方远程。
 
 ### Q5 `session/read` 轻量 meta：确认
 
@@ -367,6 +385,10 @@ subscribe 参数枚举/events 归属/切换后可达性）、`probe-sync2.js`（
 第三轮探针（U2，已入库）：`probe-sync3.js`（分页契约，见下节）、
 `probe-toolturn.js`（工具回合形状，见下节；`--mode`/`--only`/`--prompt`/`--no-stop`
 可单测某变体），报告 `probe-sync3-report.json`、`probe-toolturn-report*.json`。
+
+第四轮探针（跨进程实时性，已入库）：`probe-live.js`/`probe-live2.js`
+（第二个 app-server 进程对桌面正在驱动的活跃会话做双 deliveryKind 订阅 +
+周期拉取观察，结论见"跨进程实时性"节；同步写 `probe-live2.log` 防管道缓冲丢日志）。
 
 ## 空闲存活实测(2026-09-14,probe-idle.js)
 

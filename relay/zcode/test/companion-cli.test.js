@@ -27,6 +27,8 @@ test('companion CLI 启动渲染二维码且不崩溃（本地 relay，假 app-s
     path.join(__dirname, '..', 'companion.js'),
     '--relay', relayUrl,
     '--cwd', dir,
+    // 隔离数据目录（mid/passhash/单实例锁），不污染真实 ~/.wzxclaw
+    '--mid-file', path.join(dir, 'mid'),
   ], {
     cwd: dir,
     env: {

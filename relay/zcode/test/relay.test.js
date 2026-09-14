@@ -393,6 +393,38 @@ test('healthy probe incumbents protected: extra probe rejected at capacity', asy
   });
 });
 
+test('deterministic sid: re-register and relay restart keep the same room identity', async (t) => {
+  const mid = randomUUID();
+  const hash = createHash('sha256').update(randomBytes(32)).digest('base64');
+  const f = await fixture(t);
+  const d1 = await client(t, `${f.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d1.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash });
+  const sid1 = (await d1.next('device_register_ack')).device_sid;
+  await closeClient(d1);
+
+  // 同 mid+hash 重注册（模拟 companion 进程重启）：同 sid、房间可继续配对
+  const d2 = await client(t, `${f.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d2.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash });
+  assert.equal((await d2.next('device_register_ack')).device_sid, sid1);
+  const p = await client(t, f.url);
+  assert.equal((await auth(p, sid1, hash)).ack.pair_status, 'waiting');
+  await closeClient(d2); await closeClient(p);
+
+  // 换 hash（口令轮换）→ 不同 sid，旧房间自然过期
+  const hash2 = createHash('sha256').update(randomBytes(32)).digest('base64');
+  const d3 = await client(t, `${f.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d3.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash2 });
+  assert.notEqual((await d3.next('device_register_ack')).device_sid, sid1);
+  await closeClient(d3);
+
+  // 跨 relay 实例（容器重启）：同 mid+hash 仍得到同一 sid
+  await f.relay.close();
+  const f2 = await fixture(t);
+  const d4 = await client(t, `${f2.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d4.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash });
+  assert.equal((await d4.next('device_register_ack')).device_sid, sid1);
+});
+
 test('preauth data, unknown room/role, wrong proof length/key, and replay rejected', async (t) => {
   const f = await fixture(t);
   const d = await device(t, f.url);

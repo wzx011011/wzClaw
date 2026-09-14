@@ -1,7 +1,7 @@
 'use strict';
 
 const http = require('node:http');
-const { randomBytes, randomUUID } = require('node:crypto');
+const { createHmac, randomBytes, randomUUID } = require('node:crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const { verifyProof, verifyRegisterProof } = require('./lib/proof');
 const MAX_PAYLOAD = 1024 * 1024;
@@ -141,9 +141,23 @@ function createRelay(options = {}) {
         && !verifyRegisterProof({ proof: msg.register_proof, secret: registrationSecret, mid: msg.device_mid })) {
         return fail(state, 'AUTH_FAILED');
       }
+      // 确定性 sid：由 (pass_hash, mid) HMAC 派生。companion 把注册口令落盘后，
+      // 进程重启/自启动/换机重连都会得到同一房间号——手机端配对一次长期有效，
+      // relay 容器重启后重新注册也恢复同一 sid（房间在内存，凭据关系可再生）。
+      // sid 本就印在配对 URL 里，可由 URL 信息推出，不降低安全性。
+      const sid = createHmac('sha256', msg.pass_hash).update(`zcode-relay-sid:${msg.device_mid}`)
+        .digest('base64url').slice(0, 24);
+      const existing = rooms.get(sid);
+      if (existing) {
+        // 幂等重注册（同 mid+同 hash）：接管 owner 复用原房间与在房 probe，
+        // 解决"companion 掉线重注册 → 手机配对全失效"的换码风暴。
+        if (existing.owner && existing.owner !== state) existing.owner.ws.terminate();
+        existing.owner = state; existing.inactiveAt = null;
+        state.room = existing;
+        send(ws, { type: 'device_register_ack', device_sid: sid }); return;
+      }
       if (rooms.size >= config.maxRooms
         || [...rooms.values()].filter((room) => room.device || room.owner).length >= config.maxDevices) return fail(state, 'CAPACITY');
-      const sid = randomUUID();
       const room = { sid, secret: msg.pass_hash, owner: state, device: null, probes: new Map(), inactiveAt: null };
       rooms.set(sid, room); state.room = room;
       send(ws, { type: 'device_register_ack', device_sid: sid }); return;

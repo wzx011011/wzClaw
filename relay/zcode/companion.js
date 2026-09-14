@@ -49,7 +49,10 @@ function derivePairingUrl(relayUrl, sid, hash) {
   const relay = new URL(relayUrl);
   const origin = `${relay.protocol === 'wss:' ? 'https:' : 'http:'}//${relay.host}`;
   const base = `${origin}${relay.pathname.replace(/\/ws\/?$/, '')}/pair`;
-  return `${base}?sid=${encodeURIComponent(sid)}&hash=${encodeURIComponent(hash)}`;
+  // name=主机名：手机端多桌面列表的默认显示名（App 端可选参数，旧版忽略）
+  const host = os.hostname().slice(0, 64);
+  return `${base}?sid=${encodeURIComponent(sid)}&hash=${encodeURIComponent(hash)}`
+    + `&name=${encodeURIComponent(host)}`;
 }
 
 // app-server stdio 桥：按行分帧，崩溃自动重启（上限 + 退避）。
@@ -168,8 +171,6 @@ function createCompanion(options = {}) {
   let pairing = null; // { sid, passHash, url }
   let authStage = 'idle'; // idle → registered → challenged → authenticated
   let reconnectTimer = null;
-  // 进程内复用的注册口令：同进程多次注册不轮换 hash。
-  let processHash = null;
   // 上次注册成功的凭据；重连时优先用它接管原房间（sid 不变，手机端配对不失效）。
   let creds = null;
   let reattaching = false;
@@ -186,6 +187,37 @@ function createCompanion(options = {}) {
     return mid;
   }
   const mid = ensureMid();
+
+  // 注册口令持久化（与 mid 同目录）：配合 relay 的确定性 sid（由 pass_hash+mid 派生），
+  // 进程重启/开机自启动/掉线重连都得到同一配对码，手机端无需重扫。
+  function ensurePassHash() {
+    const passHashFile = path.join(path.dirname(midFile), 'passhash');
+    fs.mkdirSync(path.dirname(passHashFile), { recursive: true });
+    try {
+      const saved = fs.readFileSync(passHashFile, 'utf8').trim();
+      if (/^[A-Za-z0-9+/]{43}=$/.test(saved)) return saved;
+    } catch { /* 首次运行 */ }
+    const generated = randomBytes(32).toString('base64');
+    fs.writeFileSync(passHashFile, generated, { mode: 0o600 });
+    return generated;
+  }
+  const passHash = ensurePassHash();
+
+  // 单实例锁（与 mid 同目录）：自启动实例与手动实例并存会互踢（同 mid+口令
+  // 派生同一房间，注册互为 owner 接管）。持锁进程死亡后锁可被新实例接管。
+  const lockFile = path.join(path.dirname(midFile), 'companion.lock');
+  const isPidAlive = (pid) => {
+    try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+  };
+  (function acquireInstanceLock() {
+    let pid = NaN;
+    try { pid = parseInt(fs.readFileSync(lockFile, 'utf8'), 10); } catch { /* 首次运行 */ }
+    // 同进程的第二个实例 pid 相同，同样视为已持有锁（stop() 会删锁，正常重取不受影响）
+    if (Number.isInteger(pid) && pid > 0 && isPidAlive(pid)) {
+      throw safeError('ALREADY_RUNNING');
+    }
+    fs.writeFileSync(lockFile, String(process.pid), { mode: 0o600 });
+  })();
 
   function send(value) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -307,9 +339,8 @@ function createCompanion(options = {}) {
 
   function register() {
     authStage = 'registering';
-    if (!processHash) processHash = randomBytes(32).toString('base64');
-    pairing = { sid: null, passHash: processHash, url: null };
-    send({ type: 'device_register_init', device_mid: mid, pass_hash: processHash,
+    pairing = { sid: null, passHash, url: null };
+    send({ type: 'device_register_init', device_mid: mid, pass_hash: passHash,
       ...(registrationSecret ? { register_proof: deriveRegisterProof({ secret: registrationSecret, mid }) } : {}) });
   }
 
@@ -428,6 +459,9 @@ function createCompanion(options = {}) {
     if (stopped) return Promise.resolve();
     stopped = true;
     clearTimeout(reconnectTimer);
+    try {
+      if (parseInt(fs.readFileSync(lockFile, 'utf8'), 10) === process.pid) fs.unlinkSync(lockFile);
+    } catch { /* 锁已被接管或不存在 */ }
     const parts = [];
     if (bridge) {
       parts.push(bridge.stop());
@@ -464,12 +498,35 @@ function readRegistrationSecretFile(homeDir = os.homedir()) {
 }
 
 module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand, readRegistrationSecretFile };
+// 把配对二维码渲染成 PNG + 纯文本链接，写到固定位置（数据目录 + 可选额外路径）。
+// 口令/房间号均持久化且确定性派生：二维码内容几乎永不变化——
+// 用户永远去同一个固定路径取最新码，无需每次找。
+async function writePairingArtifacts(url, midFile, extraPngPath) {
+  const dataDir = path.dirname(path.resolve(midFile));
+  fs.mkdirSync(dataDir, { recursive: true });
+  const pngTargets = [path.join(dataDir, 'pair-qr.png')];
+  if (extraPngPath) pngTargets.push(extraPngPath);
+  fs.writeFileSync(path.join(dataDir, 'pair-url.txt'), url, { mode: 0o600 });
+  let qrcodeLib = null;
+  try { qrcodeLib = require('qrcode'); } catch { /* 未安装则只写文本 */ }
+  if (qrcodeLib) {
+    for (const target of pngTargets) {
+      try { await qrcodeLib.toFile(target, url, { width: 600, margin: 2 }); } catch { /* 尽力而为 */ }
+    }
+  }
+  console.error(`[companion] 配对码已更新：${pngTargets[0]}（文本链接 ${dataDir}${path.sep}pair-url.txt）`);
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2);
   const relayIdx = args.indexOf('--relay');
   const cwdIdx = args.indexOf('--cwd');
   const noQrIdx = args.indexOf('--no-qr');
   const secretIdx = args.indexOf('--register-secret');
+  const midFileIdx = args.indexOf('--mid-file');
+  const qrPngIdx = args.indexOf('--qr-png');
+  const midFile = midFileIdx !== -1 && args[midFileIdx + 1] ? args[midFileIdx + 1] : undefined;
+  const qrPngPath = qrPngIdx !== -1 && args[qrPngIdx + 1] ? args[qrPngIdx + 1] : undefined;
   // 注册共享密钥三级回退：CLI 参数 > 环境变量 REGISTRATION_SECRET >
   // ~/.wzxclaw/zcode-companion/relay-secret 文件；都未提供时不附
   // register_proof（对开放注册的 relay 零影响）。
@@ -477,28 +534,63 @@ if (require.main === module) {
     ? args[secretIdx + 1]
     : process.env.REGISTRATION_SECRET || readRegistrationSecretFile();
   if (relayIdx === -1 || !args[relayIdx + 1]) {
-    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>]');
+    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>] [--mid-file <路径>] [--qr-png <路径>]');
     process.exitCode = 1;
   } else {
     let qrTerminal;
     try { qrTerminal = require('qrcode-terminal'); } catch { qrTerminal = null; }
-    const companion = createCompanion({
-      relayUrl: args[relayIdx + 1],
-      ...(registrationSecret ? { registrationSecret } : {}),
-      cwd: cwdIdx !== -1 && args[cwdIdx + 1] ? args[cwdIdx + 1] : process.cwd(),
-      logger: (event, detail) => console.error(`[companion] ${event}${detail ? ` ${detail}` : ''}`),
-      onPairing: (url) => {
-        console.log('配对 URL（扫码或粘贴到手机 App）:');
-        if (qrTerminal && noQrIdx === -1) {
-          console.log('');
-          // 必须以方法形式调用（内部依赖 this.error 取纠错级别）
-          qrTerminal.generate(url, { small: true });
-        }
-        console.log(url);
-      },
-      onStateChange: (state) => console.error(`[companion] state=${state}`),
-    });
-    companion.start();
-    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { companion.stop(); process.exit(0); });
+    let companion;
+    try {
+      companion = createCompanion({
+        relayUrl: args[relayIdx + 1],
+        ...(registrationSecret ? { registrationSecret } : {}),
+        cwd: cwdIdx !== -1 && args[cwdIdx + 1] ? args[cwdIdx + 1] : process.cwd(),
+        ...(midFileIdx !== -1 && args[midFileIdx + 1] ? { midFile: args[midFileIdx + 1] } : {}),
+        logger: (event, detail) => console.error(`[companion] ${event}${detail ? ` ${detail}` : ''}`),
+        onPairing: (url) => {
+          console.log('配对 URL（扫码或粘贴到手机 App）:');
+          if (qrTerminal && noQrIdx === -1) {
+            console.log('');
+            // 必须以方法形式调用（内部依赖 this.error 取纠错级别）
+            qrTerminal.generate(url, { small: true });
+          }
+          console.log(url);
+          // 二维码 PNG/文本链接写到固定位置：口令与房间号确定性派生，
+          // 内容几乎永不变化——用户始终去同一路径取码。
+          writePairingArtifacts(
+            url,
+            midFile || path.join(os.homedir(), '.wzxclaw', 'zcode-companion', 'mid'),
+            qrPngPath,
+          ).catch(() => {});
+        },
+        onStateChange: (state) => console.error(`[companion] state=${state}`),
+      });
+    } catch (error) {
+      if (error && error.code === 'ALREADY_RUNNING') {
+        console.error('[companion] 已有实例正在运行（同一数据目录），本实例退出。');
+        process.exitCode = 1;
+      } else {
+        throw error;
+      }
+    }
+    if (companion) {
+      companion.start();
+      // 断线重连定时器是 unref 的：CLI 模式必须持有事件循环，
+      // 否则掉线瞬间进程静默退出（测试/库模式不受影响）。
+      const keepalive = setInterval(() => {}, 1 << 30);
+      // 静默死亡取证：未捕获异常/拒绝必须留下堆栈再退（曾出现无日志 exit 1）
+      process.on('uncaughtException', (error) => {
+        console.error(`[companion] uncaughtException: ${error && error.stack || error}`);
+        clearInterval(keepalive);
+        companion.stop();
+        process.exit(1);
+      });
+      process.on('unhandledRejection', (reason) => {
+        console.error(`[companion] unhandledRejection: ${reason && reason.stack || reason}`);
+      });
+      for (const signal of ['SIGINT', 'SIGTERM']) {
+        process.once(signal, () => { clearInterval(keepalive); companion.stop(); process.exit(0); });
+      }
+    }
   }
 }

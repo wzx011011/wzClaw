@@ -330,7 +330,33 @@ test('会话中途 relay 错误帧不烧凭据：重连接管原房间，配对�
   await client.next((m) => m.type === 'pair_status_ack' && m.pair_status === 'matched', 5000);
 });
 
-test('mid 持久化：同一 midFile 跨实例复用，配对 URL 每次独立', async (t) => {
+test('单实例锁：同数据目录第二个实例拒绝启动，stop 后可重新获取', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-lock-'));
+  const options = {
+    relayUrl, cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: () => {}, onPairing: () => {},
+  };
+  cleanup(t, [
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  const first = createCompanion(options);
+  first.start();
+  // 同目录第二实例必须被拒（自启动实例与手动实例并存会互踢同一房间）
+  assert.throws(() => createCompanion(options), (e) => e.code === 'ALREADY_RUNNING');
+  // 第一实例停止释放锁后，新实例可正常获取
+  await first.stop();
+  const second = createCompanion(options);
+  second.start();
+  await waitFor(() => second.pairingUrl);
+  await second.stop();
+});
+
+test('mid+注册口令持久化：同目录跨实例复用，配对 URL 稳定不换码', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-'));
   const options = {
@@ -351,8 +377,18 @@ test('mid 持久化：同一 midFile 跨实例复用，配对 URL 每次独立',
   second.start();
   await waitFor(() => second.pairingUrl);
   await second.stop();
-  assert.notEqual(first.pairingUrl, second.pairingUrl); // sid/口令轮换
+  // 口令落盘 + relay 确定性 sid：跨实例配对 URL 完全一致（手机无需重扫）
+  assert.equal(second.pairingUrl, first.pairingUrl);
   assert.equal(fs.readFileSync(path.join(dir, 'mid'), 'utf8').length > 0, true);
+  assert.match(fs.readFileSync(path.join(dir, 'passhash'), 'utf8'), /^[A-Za-z0-9+/]{43}=$/);
+  // 不同目录（不同安装身份）→ 不同配对 URL
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-b-'));
+  cleanup(t, [() => { fs.rmSync(dir2, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }]);
+  const third = createCompanion({ ...options, midFile: path.join(dir2, 'mid') });
+  third.start();
+  await waitFor(() => third.pairingUrl);
+  await third.stop();
+  assert.notEqual(third.pairingUrl, first.pairingUrl);
 });
 
 test('网络闪断重连后接管原房间：sid/hash 不变，手机用原配对码直接重连', async (t) => {
@@ -416,7 +452,7 @@ test('网络闪断重连后接管原房间：sid/hash 不变，手机用原配�
   assert.equal(reply.payload.result.sessions[0].sessionId, 'sess_mock');
 });
 
-test('房间过期后接管被拒：作废旧凭据，全新注册轮换出新配对码', async (t) => {
+test('房间过期后接管被拒：重新注册恢复同一配对码（手机无需重扫）', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t, { roomTtlMs: 50, sweepIntervalMs: 10 });
   const proxy = tcpProxy(Number(new URL(relayUrl).port));
   await proxy.listen();
@@ -451,11 +487,11 @@ test('房间过期后接管被拒：作废旧凭据，全新注册轮换出新�
   client.close();
   await waitFor(() => companion.state !== 'paired');
   proxy.dropAll();
-  // 接管失败（AUTH_FAILED）→ 凭据作废 → 重连后全新注册 → 出新码。
+  // 接管失败（AUTH_FAILED）→ 凭据作废 → 重连后重新注册。
+  // 口令已落盘 + 确定性 sid：重新注册恢复同一配对码，手机端依然可用。
   await waitFor(() => urls.length >= 2, 10000);
-  const url2 = urls[1];
-  assert.notEqual(new URL(url2).searchParams.get('sid'), sid1);
-  assert.equal(companion.pairingUrl, url2);
+  assert.equal(urls[1], url1);
+  assert.equal(companion.pairingUrl, url1);
 });
 
 test('大会话 resume 响应被截断到帧上限内且连接保持', async (t) => {
@@ -549,14 +585,16 @@ test('registrationSecret 注入：注册帧带 register_proof；未注入时无�
   // device_mid 即持久化的 mid：proof 与设备身份绑定
   assert.equal(frame.device_mid, fs.readFileSync(path.join(dir, 'mid-secret'), 'utf8').trim());
 
-  // 对照：未注入 secret 的注册帧不带 register_proof 字段（对开放 relay 零影响）
+  // 对照：未注入 secret 的注册帧不带 register_proof 字段（对开放 relay 零影响）。
+  // 独立子目录：单实例锁按数据目录仲裁，双实例必须各占一目录。
+  const plainDir = path.join(dir, 'plain');
   const withoutSecret = createCompanion({ ...base, relayUrl: fake.url,
-    midFile: path.join(dir, 'mid-plain') });
+    midFile: path.join(plainDir, 'mid') });
   cleanup(t, [() => withoutSecret.stop()]);
   withoutSecret.start();
   await waitFor(() => fake.frames.length >= 2);
   const plainFrame = fake.frames.find((m) => m.device_mid
-    === fs.readFileSync(path.join(dir, 'mid-plain'), 'utf8').trim());
+    === fs.readFileSync(path.join(plainDir, 'mid'), 'utf8').trim());
   assert.equal(plainFrame.type, 'device_register_init');
   assert.equal('register_proof' in plainFrame, false);
 });
@@ -574,10 +612,11 @@ test('带密钥 relay 端到端：同 secret 的 companion 注册并配对成功
     logger: () => {},
     onPairing: () => {},
   };
-  // 负例：不带 secret 的 companion 被 AUTH_FAILED 拒掉，拿不到配对 URL
-  const denied = createCompanion({ ...base, midFile: path.join(dir, 'mid-denied') });
+  // 负例：不带 secret 的 companion 被 AUTH_FAILED 拒掉，拿不到配对 URL。
+  // 独立子目录：单实例锁按数据目录仲裁，双实例必须各占一目录。
+  const denied = createCompanion({ ...base, midFile: path.join(dir, 'denied', 'mid') });
   // 正例：同 secret 注册成功
-  const companion = createCompanion({ ...base, midFile: path.join(dir, 'mid-ok'),
+  const companion = createCompanion({ ...base, midFile: path.join(dir, 'ok', 'mid'),
     registrationSecret: secret });
   const client = phone(relayUrl);
   cleanup(t, [

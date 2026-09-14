@@ -1,0 +1,32 @@
+# 大脑节点（无头）镜像：zcode 引擎 + 大脑适配器
+# 构建后经 NAS relay 注册为"桌面"，手机 App 自动发现并可遥控。
+#
+# 需要挂载/注入：
+#   1. zcode CLI 本体（zcode.cjs + 依赖）→ /opt/zcode
+#   2. 工作区目录 → /workspace
+#   3. 编码计划凭据：ANTHROPIC_API_KEY 环境变量（或挂载 ~/.zcode 配置）
+#   4. RELAY_URL / RELAY_TOKEN / ENGINE_ARGS（见下方示例）
+#
+# 示例：
+#   docker run -d --name wzxclaw-brain-nas \
+#     -e RELAY_URL=wss://5945.top/relay \
+#     -e RELAY_TOKEN=<房间token> \
+#     -e BRAIN_NAME=NAS \
+#     -e ZCODE_BIN=node \
+#     -e ENGINE_ARGS=/opt/zcode/zcode.cjs \
+#     -e ANTHROPIC_API_KEY=<编码计划key> \
+#     -v /volume1/projects:/workspace:rw \
+#     -v /volume1/docker/zcode-cli:/opt/zcode:ro \
+#     wzxclaw-brain
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
+
+COPY brain-adapter.js server.js ./
+
+ENV ROLE=desktop
+CMD ["node", "brain-adapter.js"]
