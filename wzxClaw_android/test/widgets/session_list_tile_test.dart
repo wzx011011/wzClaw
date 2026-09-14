@@ -3,10 +3,12 @@
 //
 // 数据源从旧 SessionMeta 改为 ZcodeSessionMeta；删除 messageCount /
 // 缓存徽标 / 重命名删除用例（zcode 协议无对应能力），新增运行点
-// （status == 'running'）、workspacePath 末级目录名与 updatedAt 缺失用例。
+// （status == 'running'）与 updatedAt 缺失用例——工作区名移至抽屉
+// 分组头显示，瓦片不再渲染。
 // 附带 ProjectDrawer 冒烟用例：注入 paired store 替身 + 预置会话，
-// 验证标题 / 文件入口 / 加载占位 / 错误面 / tap 打开会话并收起抽屉；
-// 以及 store openSession 列表补齐（_upsertOpenedListing）配套用例。
+// 验证标题 / 工作区分组（组名 + 折叠）/ 文件入口 / 加载占位 / 错误面 /
+// tap 打开会话并收起抽屉；以及 store openSession 列表补齐
+// （_upsertOpenedListing）配套用例。
 // ============================================================
 
 import 'dart:async';
@@ -115,7 +117,7 @@ void main() {
       expect(find.textContaining('分钟前'), findsOneWidget);
     });
 
-    testWidgets('omits time row prefix when updatedAt is 0', (tester) async {
+    testWidgets('omits time row when updatedAt is 0', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
         SessionListTile(
           session: makeMeta(updatedAt: 0),
@@ -124,46 +126,9 @@ void main() {
         ),
       ),);
 
-      // 不渲染空时间占位（'刚刚'），工作区名独占第二行
+      // 不渲染空时间占位（'刚刚'）——工作区名已移至抽屉分组头，
+      // 瓦片第二行整体省略
       expect(find.text('刚刚'), findsNothing);
-      expect(find.text('project'), findsOneWidget);
-    });
-
-    testWidgets('shows workspace last segment when workspacePath present',
-        (tester) async {
-      await tester.pumpWidget(wrapWithTheme(
-        SessionListTile(
-          session: makeMeta(workspacePath: '/home/user/my-project'),
-          isActive: false,
-          onTap: () {},
-        ),
-      ),);
-
-      expect(find.text('my-project'), findsOneWidget);
-    });
-
-    testWidgets('strips trailing separator in workspacePath', (tester) async {
-      await tester.pumpWidget(wrapWithTheme(
-        SessionListTile(
-          session: makeMeta(workspacePath: 'C:\\repo\\'),
-          isActive: false,
-          onTap: () {},
-        ),
-      ),);
-
-      expect(find.text('repo'), findsOneWidget);
-    });
-
-    testWidgets('omits workspace label when workspacePath is null',
-        (tester) async {
-      await tester.pumpWidget(wrapWithTheme(
-        SessionListTile(
-          session: makeMeta(workspacePath: null),
-          isActive: false,
-          onTap: () {},
-        ),
-      ),);
-
       expect(find.text('project'), findsNothing);
     });
 
@@ -247,16 +212,27 @@ void main() {
 
   group('ProjectDrawer（zcode 换芯冒烟）', () {
     FakeZcodeRelayClient makeFakeWithSessions() {
+      final now = DateTime.now().millisecondsSinceEpoch;
       final fake = FakeZcodeRelayClient();
       fake.handlers['session/list'] = (_) => {
             'sessions': [
               {
                 'sessionId': 'sess-1',
                 'title': '抽屉冒烟会话',
-                'updatedAt': DateTime.now().millisecondsSinceEpoch,
+                'updatedAt': now,
                 'workspace': {
                   'workspaceKey': 'ws-key-1',
                   'workspacePath': '/home/user/proj-x',
+                },
+                'status': 'idle',
+              },
+              {
+                'sessionId': 'sess-2',
+                'title': '另一工作区会话',
+                'updatedAt': now - 1000,
+                'workspace': {
+                  'workspaceKey': 'ws-key-2',
+                  'workspacePath': 'C:\\repo\\other',
                 },
                 'status': 'idle',
               },
@@ -266,7 +242,7 @@ void main() {
       return fake;
     }
 
-    testWidgets('预置会话标题可见 + 文件入口置灰文案存在 + 未选会话副标题', (tester) async {
+    testWidgets('预置会话标题可见 + 分组头显示工作区末级 + 文件入口置灰', (tester) async {
       final store = pairedStore(makeFakeWithSessions());
       await store.refreshSessions();
 
@@ -277,7 +253,28 @@ void main() {
       expect(find.text('桌面 ZCode'), findsOneWidget);
       expect(find.text('未选择会话'), findsOneWidget);
       expect(find.text('抽屉冒烟会话'), findsOneWidget);
+      // 分组头 = workspacePath 末级目录名（含结尾分隔符剥离）
+      expect(find.text('proj-x'), findsOneWidget);
+      expect(find.text('other'), findsOneWidget);
       expect(find.text('等待 v3 workspace 支持'), findsOneWidget);
+    });
+
+    testWidgets('分组头可折叠：点组头隐藏该组瓦片，其他组不受影响', (tester) async {
+      final store = pairedStore(makeFakeWithSessions());
+      await store.refreshSessions();
+
+      await tester.pumpWidget(wrapWithDrawer(ProjectDrawer(store: store)));
+      await tester.tap(find.text('open-drawer'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('抽屉冒烟会话'), findsOneWidget);
+      expect(find.text('另一工作区会话'), findsOneWidget);
+
+      await tester.tap(find.text('proj-x'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('抽屉冒烟会话'), findsNothing);
+      expect(find.text('另一工作区会话'), findsOneWidget);
     });
 
     testWidgets('tap 会话 → openSession 并收起抽屉', (tester) async {

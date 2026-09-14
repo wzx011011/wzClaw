@@ -3,17 +3,14 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../zcode/zcode_chat_store.dart';
 
-/// 路径分隔符（末级目录名提取用；预编译避免每行瓦片每次重建重复构造）
-final RegExp _trailingPathSep = RegExp(r'[/\\]+$');
-final RegExp _pathSep = RegExp(r'[/\\]');
-
 /// 抽屉会话列表的单行瓦片（zcode 换芯版）。
 ///
 /// 数据源从旧 relay 协议栈的 SessionMeta 改为 ZcodeSessionMeta
 /// （lib/zcode/zcode_chat_store.dart）：
 /// - 运行中判定 = status == 'running'（session/list 的状态徽标），
 ///   显示绿色脉冲圆点；
-/// - 第二行小字 = updatedAt 相对时间 + workspacePath 末级目录名；
+/// - 第二行小字 = updatedAt 相对时间（工作区名由抽屉的分组头显示，
+///   瓦片不再重复）；
 /// - isActive 由调用方传入（ZcodeSessionMeta 本身无活动标记，是否
 ///   活动是 store 的视口状态 activeSessionId，调用方比对即可）；
 /// - 旧版的 messageCount / isSynced 缓存徽标 / 长按重命名与删除
@@ -34,9 +31,6 @@ class SessionListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final running = session.status == 'running';
-    final wsPath = session.workspacePath;
-    final wsLabel =
-        wsPath == null || wsPath.isEmpty ? null : _workspaceLabel(wsPath);
     final timeLabel = _formatTime(session.updatedAt);
     return InkWell(
       onTap: onTap,
@@ -79,33 +73,17 @@ class SessionListTile extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      // updatedAt 缺失（0）时不渲染空 Text 与间隙
-                      if (timeLabel.isNotEmpty)
-                        Text(
-                          timeLabel,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.textMuted,
-                          ),
-                        ),
-                      if (wsLabel != null) ...[
-                        if (timeLabel.isNotEmpty) const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            wsLabel,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.textMuted,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+                  // updatedAt 缺失（0）时不渲染空 Text 与占位高度
+                  if (timeLabel.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      timeLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textMuted,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -119,14 +97,6 @@ class SessionListTile extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  /// 工作区路径只显示最后一级目录名（与 zcode_page._workspaceLabel 同逻辑；
-  /// 先去掉结尾分隔符，'C:\repo\' → 'repo'）
-  String _workspaceLabel(String path) {
-    final trimmed = path.replaceAll(_trailingPathSep, '');
-    final parts = trimmed.split(_pathSep);
-    return parts.isEmpty || parts.last.isEmpty ? path : parts.last;
   }
 
   String _formatTime(int epochMs) {
