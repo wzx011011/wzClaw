@@ -54,6 +54,31 @@ mid 持久化于 `~/.wzxclaw/zcode-companion/mid`。
 - companion 连接 `--relay wss://zcode.5945.top/ws`，配对 URL 为
   `https://zcode.5945.top/pair?...`。
 
+## Windows 常驻（开机自启）
+
+companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运行。零产品代码改动，
+只有 `scripts/` 下的启动脚本：
+
+1. **安装**：双击或终端运行 `scripts\install-autostart.bat`。它注册计划任务
+   `wzxClawZcodeCompanion`（登录时触发 `wscript.exe` 隐藏执行
+   `companion-autostart.vbs`，内部再起 node 跑 `scripts\..\companion.js`）。
+   注册登录任务需要管理员权限，脚本会自动弹 UAC 自提权重跑一次。
+   重复运行幂等：先删旧任务再重建，改完 VBS 重跑即可。
+2. **验证**：注销重登，或立即手动触发 `schtasks /run /tn wzxClawZcodeCompanion`，
+   然后 `tasklist | findstr node.exe` 看进程、看日志确认已连上 relay。
+3. **配对**：日志里最新的 `配对 URL`（`https://zcode.5945.top/pair?...`）复制到
+   手机 App 粘贴（或自行生成二维码）完成扫码配对。
+
+- 日志：`%USERPROFILE%\.wzxclaw\zcode-companion\autostart.log`（追加式，VBS 自动
+  建目录；清理日志前先结束 companion 进程）。
+- 内置参数：relay `wss://zcode.5945.top/ws`，node 固定路径
+  `C:\Program Files\nodejs\node.exe`（缺失时回退 PATH）；companion.js 与日志路径
+  相对 VBS 自身解析，仓库移动无需改脚本。需要指定 app-server 工作目录时，编辑
+  VBS 启动参数追加 `--cwd <目录>`。
+- 卸载：运行 `scripts\uninstall-autostart.bat`（仅移除自启，不停已在运行的进程）。
+- **安全**：`autostart.log` 含配对 URL（sid + hash，持有者凭据），勿外传、勿进
+  聊天/日志截图/git，参见上文安全边界。
+
 ## 手机端（wzxClaw_android / Flutter，进行中）
 
 手机端集成在 **Flutter 原版 App**（master 主分支 `wzxClaw_android/`）中，作为与
