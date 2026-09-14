@@ -462,3 +462,17 @@ waiting-pairing);事后 `/health` 仍 `rooms:1, devices:1`;R3 全程监控未复
   实现解析在 linux 容器内尚未打通（遗留，见 PLAN-brain-network-v3 M2 验证节）。
 - 节点注册/发现本身已验证：Room [wzxclaw-brain] desktop joined +
   identity name=NAS（relay 日志），手机端 desktop_list 可见性待旧 UI APK 验证。
+
+### 引擎 cwd 依赖（NAS 容器部署发现，2026-09-15）
+
+`zcode.cjs app-server --cwd <ws>` 的进程 cwd 影响内部模块解析：
+- cwd = 工作区目录（Windows PC 实测）：正常启动 ✓
+- cwd = bundle 目录本身（容器 `/opt/zcode`）：启动即
+  `Cannot find module '<cwd>/app-server'` 崩溃（crash 循环，restart 无法恢复）
+- 容器内 node:20 不可用（缺内置 `node:sqlite`），须 node ≥22.5（实测 node:24-alpine 可解析启动）
+- 工作区含 `.zcode/` 标记目录不影响崩溃与否（已排除）
+
+推论：CLI 以 `path.join(process.cwd(), 'app-server')` 之类的动态解析加载
+app-server 实现；无头容器部署需让引擎 cwd 指向一个含 `app-server` 模块的
+目录（例如把 CLI 包目录整体挂载后从其父级启动，或确认官方 Linux 发行包）。
+待专项：美化 zcode.cjs 定位该 require 调用点后给出容器化标准方案。
