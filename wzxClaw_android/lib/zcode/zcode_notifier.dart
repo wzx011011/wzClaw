@@ -13,6 +13,7 @@
 // 仅以 Android 为主（现有 App 就是 Android）。
 // ============================================================
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
@@ -111,23 +112,33 @@ class ZcodeNotifier with WidgetsBindingObserver {
   /// [status] turn.terminal 的 status（success → 完成，其他 → 失败）
   /// [tokens] 本回合 token 数（展示用，可空）
   /// [sessionId] 点击通知时回传的 payload（可空）
+  /// [desktopId]/[desktopName] 多桌面：payload 变为 JSON（含桌面 id 供路由
+  /// 切换），标题带桌面名区分来源
   void showTaskDone({
     required String status,
     int? tokens,
     String? sessionId,
+    String? desktopId,
+    String? desktopName,
   }) {
     // 懒挂生命周期观察者：首次真正需要判断前后台时才注册（幂等）
     _ensureObserverAttached();
     if (_lifecycleState == AppLifecycleState.resumed) return; // 前台跳过
 
     final ok = status == 'success';
-    final title = ok ? 'ZCode 任务完成' : 'ZCode 任务失败';
+    final title = desktopName == null || desktopName.isEmpty
+        ? (ok ? 'ZCode 任务完成' : 'ZCode 任务失败')
+        : (ok ? '$desktopName · 任务完成' : '$desktopName · 任务失败');
     final body = StringBuffer('状态: $status');
     if (tokens != null) body.write(' · $tokens tokens');
+    // 多桌面 payload：JSON{桌面id, 会话id}；单桌面/旧路径保持纯 sessionId
+    final payload = desktopId == null
+        ? sessionId
+        : jsonEncode({'d': desktopId, if (sessionId != null) 's': sessionId});
     showSystemNotification(
       title: title,
       body: body.toString(),
-      payload: sessionId,
+      payload: payload,
     );
   }
 

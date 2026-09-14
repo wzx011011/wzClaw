@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../pages/files_placeholder_page.dart';
 import '../zcode/zcode_chat_store.dart';
+import '../zcode/zcode_desktop_registry.dart';
+import '../zcode/zcode_pair_scanner.dart';
 import 'session_list_tile.dart';
 
 /// 路径分隔符（末级目录名提取用；预编译避免每次重建重复构造）
@@ -62,6 +64,8 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
+                    _buildBrainNetworkEntry(context, colors),
+                    Divider(color: colors.border, height: 1),
                     _buildSessionSection(context, colors, store),
                     Divider(color: colors.border, height: 1),
                     _buildFileBrowseEntry(context, colors),
@@ -76,7 +80,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  /// 头部：连接状态点 + 标题 + 活动会话的工作区名
+  /// 头部：连接状态点 + 标题 + 活动会话的工作区名；点击弹出桌面切换器
   Widget _buildHeader(AppColors colors, ZcodeChatStore store) {
     final dotColor = _connColor(colors, store.connState);
     final activeId = store.activeSessionId;
@@ -97,54 +101,190 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
       subtitleColor = colors.textSecondary;
     }
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: colors.bgSecondary,
-        border: Border(
-          bottom: BorderSide(color: colors.accent, width: 3),
+    return GestureDetector(
+      onTap: () => _showDesktopSwitcher(context),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        decoration: BoxDecoration(
+          color: colors.bgSecondary,
+          border: Border(
+            bottom: BorderSide(color: colors.accent, width: 3),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '桌面 ZCode',
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                // 多桌面切换入口提示
+                Icon(Icons.swap_horiz, size: 16, color: colors.textMuted),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 13,
+                color: subtitleColor,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: dotColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '桌面 ZCode',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: colors.textPrimary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 13,
-              color: subtitleColor,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+    );
+  }
+
+  /// 桌面切换器：列出全部已配对桌面（名称 + 连接状态点 + 活动标记 + 删除），
+  /// 底部「扫描添加新桌面」。切换 = 换注册表活动指针（页面零重建成本）。
+  Future<void> _showDesktopSwitcher(BuildContext context) async {
+    final registry = ZcodeDesktopRegistry.instance;
+    final colors = AppColors.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.bgPrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (sheetContext) => AnimatedBuilder(
+        animation: registry,
+        builder: (context, _) {
+          final entries = registry.entries;
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '已配对桌面（${entries.length}）',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+                if (entries.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12,),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '暂无已配对桌面，扫码添加第一台',
+                        style: TextStyle(
+                            fontSize: 13, color: colors.textMuted,),
+                      ),
+                    ),
+                  )
+                else
+                  for (final entry in entries)
+                    ListTile(
+                      leading: Icon(
+                        Icons.desktop_windows_outlined,
+                        size: 20,
+                        color: registry.activeId == entry.id
+                            ? colors.accent
+                            : colors.textMuted,
+                      ),
+                      title: Text(
+                        entry.name,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: registry.activeId == entry.id
+                              ? colors.textPrimary
+                              : colors.textSecondary,
+                          fontWeight: registry.activeId == entry.id
+                              ? FontWeight.w500
+                              : FontWeight.w400,
+                        ),
+                      ),
+                      subtitle: _connSubtitle(registry, entry, colors),
+                      trailing: IconButton(
+                        icon: Icon(Icons.delete_outline,
+                            size: 18, color: colors.textMuted,),
+                        tooltip: '解除配对',
+                        onPressed: () {
+                          registry.remove(entry.id);
+                        },
+                      ),
+                      onTap: () {
+                        registry.setActive(entry.id);
+                        Navigator.pop(sheetContext);
+                      },
+                    ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: Icon(Icons.qr_code_scanner,
+                      size: 20, color: colors.accent,),
+                  title: Text(
+                    '扫描添加新桌面',
+                    style: TextStyle(fontSize: 14, color: colors.textPrimary),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final scanned = await Navigator.push<String>(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const ZcodePairScannerPage(),),
+                    );
+                    if (scanned == null || scanned.isEmpty) return;
+                    final ok =
+                        await registry.addFromPairingUrl(scanned);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(ok ? '桌面已添加并切换' : '配对链接无效'),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 切换器条目副标题：该桌面的连接状态文案
+  Widget? _connSubtitle(
+    ZcodeDesktopRegistry registry,
+    ZcodeDesktopEntry entry,
+    AppColors colors,
+  ) {
+    final store = registry.storeOf(entry.id);
+    if (store == null) return null;
+    return Text(
+      _connLabel(store.connState),
+      style: TextStyle(fontSize: 12, color: colors.textMuted),
     );
   }
 
@@ -288,7 +428,8 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     return key.isEmpty ? '未分组' : key;
   }
 
-  /// 单个工作区分组：可折叠组头（chevron + folder + 组名 + 计数）+ 组内瓦片
+  /// 单个工作区分组：可折叠组头（chevron + folder + 组名 + 任务数 + 组内新建）
+  /// + 组内瓦片，对齐官方 web 的"工作区卡片"形态
   Widget _buildGroup(
     BuildContext context,
     AppColors colors,
@@ -296,6 +437,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     MapEntry<String, List<ZcodeSessionMeta>> group,
   ) {
     final collapsed = _collapsedGroups.contains(group.key);
+    final ws = _groupWorkspace(group.value);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -335,8 +477,35 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                   ),
                 ),
                 Text(
-                  '${group.value.length}',
+                  '${group.value.length} 个任务',
                   style: TextStyle(fontSize: 11, color: colors.textMuted),
+                ),
+                const SizedBox(width: 10),
+                // 组内新建：在该工作区下创建会话（session/create 带 workspace）
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: (_creating || ws == null)
+                      ? null
+                      : () => unawaited(_onNewSessionIn(ws.$1, ws.$2)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: _creating
+                        ? SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              color: colors.textMuted,
+                            ),
+                          )
+                        : Icon(
+                            Icons.add,
+                            size: 15,
+                            color: ws == null
+                                ? colors.textMuted.withValues(alpha: 0.4)
+                                : colors.textMuted,
+                          ),
+                  ),
                 ),
               ],
             ),
@@ -356,6 +525,35 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
           ),
       ],
     );
+  }
+
+  /// 组内可用的工作区 (key, path)：取组内首个 key+path 齐全的会话；
+  /// 全组缺失（仅 path 聚合的旧数据）→ null，"+"置灰
+  (String, String)? _groupWorkspace(List<ZcodeSessionMeta> group) {
+    for (final s in group) {
+      final k = s.workspaceKey;
+      final p = s.workspacePath;
+      if (k != null && k.isNotEmpty && p != null && p.isNotEmpty) {
+        return (k, p);
+      }
+    }
+    return null;
+  }
+
+  /// 新建会话 in-flight 期间禁用「+」，完成后收起抽屉（新会话已由
+  /// store.newSession 内部打开，聊天页由外层响应 store）
+  Future<void> _onNewSessionIn(String workspaceKey, String workspacePath) async {
+    if (_creating) return;
+    setState(() => _creating = true);
+    try {
+      await _store.newSession(
+        workspaceKey: workspaceKey,
+        workspacePath: workspacePath,
+      );
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+    if (mounted) Navigator.pop(context);
   }
 
   /// 新建会话：in-flight 期间禁用「+」，完成后收起抽屉（新会话已由
@@ -379,6 +577,26 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
   ) {
     unawaited(store.openSession(sessionId));
     Navigator.pop(context);
+  }
+
+  /// 「大脑网络」入口：经 NAS relay 遥控任意大脑节点（v3 P1，旧协议栈复用）
+  Widget _buildBrainNetworkEntry(BuildContext context, AppColors colors) {
+    return ListTile(
+      leading: Icon(Icons.hub_outlined, color: colors.accent, size: 20),
+      title: Text(
+        '大脑网络',
+        style: TextStyle(color: colors.textPrimary, fontSize: 14),
+      ),
+      subtitle: Text(
+        '经 NAS relay 遥控任意环境的节点',
+        style: TextStyle(color: colors.textMuted, fontSize: 11),
+      ),
+      dense: true,
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.pushNamed(context, '/remote');
+      },
+    );
   }
 
   /// 「浏览文件」入口：zcode 协议暂无文件树 API，置灰占位（可点进占位页）

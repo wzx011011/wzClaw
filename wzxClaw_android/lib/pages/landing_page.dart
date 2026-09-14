@@ -181,7 +181,7 @@ class _LandingPageState extends State<LandingPage>
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text('wzxClaw',
-            style: TextStyle(color: colors.textPrimary, fontSize: 18)),
+            style: TextStyle(color: colors.textPrimary, fontSize: 18),),
         actions: [
           IconButton(
             icon: Icon(Icons.settings_outlined, color: colors.textSecondary),
@@ -246,11 +246,11 @@ class _LandingPageState extends State<LandingPage>
             style: TextStyle(
                 color: colors.textPrimary,
                 fontSize: 28,
-                fontWeight: FontWeight.bold)),
+                fontWeight: FontWeight.bold,),),
         const SizedBox(height: 6),
         Text('配对桌面端 ZCode 后远程对话',
             textAlign: TextAlign.center,
-            style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+            style: TextStyle(color: colors.textSecondary, fontSize: 14),),
         const SizedBox(height: 32),
         SizedBox(
           width: double.infinity,
@@ -263,14 +263,14 @@ class _LandingPageState extends State<LandingPage>
               backgroundColor: colors.accent,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
+                  borderRadius: BorderRadius.circular(16),),
             ),
           ),
         ),
         const SizedBox(height: 16),
         Text('或粘贴配对链接',
             textAlign: TextAlign.center,
-            style: TextStyle(color: colors.textMuted, fontSize: 12)),
+            style: TextStyle(color: colors.textMuted, fontSize: 12),),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -308,7 +308,7 @@ class _LandingPageState extends State<LandingPage>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+                    borderRadius: BorderRadius.circular(8),),
               ),
               child: const Text('配对', style: TextStyle(fontSize: 13)),
             ),
@@ -389,7 +389,7 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(height: 24),
           Text(waiting ? '等待桌面端上线' : '正在连接 ZCode',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
           const SizedBox(height: 6),
           Text(
             waiting ? '请确认桌面端 companion 已运行' : '正在与中继服务器握手',
@@ -401,7 +401,7 @@ class _LandingPageState extends State<LandingPage>
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(_store.error!,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: colors.error, fontSize: 12)),
+                  style: TextStyle(color: colors.error, fontSize: 12),),
             ),
           ],
           const SizedBox(height: 32),
@@ -425,14 +425,14 @@ class _LandingPageState extends State<LandingPage>
           Icon(Icons.link_off, size: 56, color: colors.textMuted),
           const SizedBox(height: 16),
           Text('连接已断开',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
           const SizedBox(height: 6),
           if (_store.error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(_store.error!,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: colors.error, fontSize: 12)),
+                  style: TextStyle(color: colors.error, fontSize: 12),),
             ),
           const SizedBox(height: 24),
           SizedBox(
@@ -446,7 +446,7 @@ class _LandingPageState extends State<LandingPage>
                 backgroundColor: colors.accent,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(12),),
               ),
             ),
           ),
@@ -478,7 +478,7 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(height: 24),
           Text('已连接桌面 ZCode',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
           const SizedBox(height: 24),
           TextButton(
             // 自动导航被跳过（如从聊天页返回）时的手动入口

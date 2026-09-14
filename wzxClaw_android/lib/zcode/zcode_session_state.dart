@@ -79,6 +79,10 @@ class ZcodeSessionState {
   /// 本连接生命周期内是否 materialize（resume/create）过
   bool materialized = false;
 
+  /// 该会话当前正被桌面端应用运行（resume 报 -32004）：手机端无法实时
+  /// 查看其流式过程，也无法读取服务端消息（运行时单归属设计）
+  bool remoteActiveElsewhere = false;
+
   /// 订阅是否已建立（materialize 时建立，切走不移除；重连后重置）
   bool subscribed = false;
 

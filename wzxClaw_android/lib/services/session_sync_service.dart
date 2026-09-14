@@ -382,7 +382,7 @@ class SessionSyncService {
     if (requestId != _currentListRequestId) {
       // ignore: avoid_print
       print(
-          '[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection');
+          '[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection',);
       _completePending(requestId, sessions);
       return;
     }
@@ -690,7 +690,7 @@ class SessionSyncService {
                   id: p['id'] as String? ?? '',
                   path: p['path'] as String? ?? '',
                   name: p['name'] as String? ?? '',
-                ))
+                ),)
             .toList();
         return WorkspaceItem(
           id: w['id'] as String? ?? '',
@@ -731,7 +731,7 @@ class SessionSyncService {
                 WorkspaceProject(
                     id: '',
                     path: w['path'] as String,
-                    name: w['name'] as String? ?? '')
+                    name: w['name'] as String? ?? '',),
               ]
             : [],
         updatedAt: 0,
@@ -1267,7 +1267,7 @@ class SessionSyncService {
 
     // ignore: avoid_print
     print(
-        '[SyncDiag] applySessionSelection start session=$sessionId gen=$generation');
+        '[SyncDiag] applySessionSelection start session=$sessionId gen=$generation',);
     final allMessages = await loadAllSessionMessages(
       sessionId,
       forceRefresh: true,
@@ -1277,7 +1277,7 @@ class SessionSyncService {
 
     // ignore: avoid_print
     print(
-        '[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}');
+        '[SyncDiag] applySessionSelection done session=$sessionId loaded=${allMessages.length}',);
     ChatStore.instance.loadFetchedMessages(sessionId, allMessages);
   }
 

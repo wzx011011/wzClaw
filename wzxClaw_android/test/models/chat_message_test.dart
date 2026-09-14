@@ -78,7 +78,7 @@ void main() {
         };
         final info = ToolCallInfo.fromJson(json);
         expect(info.status, equals(status),
-            reason: 'Failed for status: ${status.name}');
+            reason: 'Failed for status: ${status.name}',);
       }
     });
 
@@ -300,7 +300,7 @@ void main() {
         };
         final msg = ChatMessage.fromDbMap(map);
         expect(msg.role, equals(MessageRole.values[i]),
-            reason: 'Failed for role index: $i');
+            reason: 'Failed for role index: $i',);
       }
     });
 
@@ -509,7 +509,7 @@ void main() {
       expect(restored.toolName, equals(original.toolName));
       expect(restored.toolStatus, equals(original.toolStatus));
       expect(restored.createdAt.millisecondsSinceEpoch,
-          equals(original.createdAt.millisecondsSinceEpoch));
+          equals(original.createdAt.millisecondsSinceEpoch),);
       expect(restored.toolCallId, equals(original.toolCallId));
       expect(restored.toolInput, equals(original.toolInput));
       expect(restored.toolOutput, equals(original.toolOutput));
@@ -589,7 +589,7 @@ void main() {
           const ToolCallInfo(
               toolCallId: 'tc-1',
               toolName: 'Read',
-              status: ToolCallStatus.done),
+              status: ToolCallStatus.done,),
         ],
         usage: const TokenUsage(inputTokens: 10, outputTokens: 5),
       );

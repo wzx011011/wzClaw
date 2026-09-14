@@ -527,6 +527,41 @@ void main() {
       expect(store.error, contains('工作区'));
       expect(store.activeSessionId, isNull);
     });
+
+    test('显式指定 workspace（抽屉分组头"+"）优先于复用默认', () async {
+      final fake = FakeZcodeRelayClient();
+      final sessions = <Map<String, dynamic>>[
+        {
+          'sessionId': 's1',
+          'title': '最近的会话',
+          'updatedAt': 5,
+          'workspace': {'workspaceKey': 'wk1', 'workspacePath': 'E:/ai/wzxClaw'},
+        },
+      ];
+      fake.handlers['session/list'] = (_) => {'sessions': sessions};
+      fake.handlers['session/create'] = (_) {
+        sessions.insert(0, {
+          'sessionId': 's-ws2',
+          'title': '',
+          'updatedAt': 100,
+          'workspace': {'workspaceKey': 'wk2', 'workspacePath': 'D:/duanju'},
+        });
+        return {
+          'session': {'sessionId': 's-ws2'},
+        };
+      };
+      stubResumeEmpty(fake);
+      final store = pairedStore(fake);
+
+      await store.refreshSessions();
+      // 列表里最近的是 wk1，但显式指定 wk2 必须优先生效
+      await store.newSession(workspaceKey: 'wk2', workspacePath: 'D:/duanju');
+      final create = fake.requests.firstWhere((e) => e.key == 'session/create');
+      expect(create.value, {
+        'workspace': {'workspaceKey': 'wk2', 'workspacePath': 'D:/duanju'},
+      });
+      expect(store.activeSessionId, 's-ws2');
+    });
   });
 
   group('权限确认 / AskUser（反向请求）', () {
@@ -791,6 +826,94 @@ void main() {
       store.unpair();
       await done;
       expect(store.activePermission, isNull);
+    });
+  });
+
+  group('模型选择器（settings.model 快照目录 + setModel）', () {
+    test('resume 快照播种模型目录与当前模型；setModel 走对象参数', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/resume'] = (_) => {
+            'projection': {'status': 'idle'},
+            'messages': [],
+            'settings': {
+              'model': {
+                'current': {
+                  'providerId': 'builtin:bigmodel-coding-plan',
+                  'modelId': 'glm-5.3',
+                },
+                'available': [
+                  {
+                    'ref': {
+                      'providerId': 'builtin:bigmodel-coding-plan',
+                      'modelId': 'glm-5.3',
+                    },
+                    'label': 'GLM-5.3',
+                    'contextWindow': 200000,
+                    'maxOutputTokens': 128000,
+                    'reasoning': true,
+                    'providerLabel': 'BigModel',
+                  },
+                  {
+                    'ref': {
+                      'providerId': 'builtin:bigmodel-coding-plan',
+                      'modelId': 'glm-5.3-flash',
+                    },
+                    'label': 'GLM-5.3-Flash',
+                  },
+                ],
+              },
+            },
+          };
+      final setModelParams = <Map<String, dynamic>?>[];
+      fake.handlers['session/setModel'] = (params) {
+        setModelParams.add(params);
+        return {'ok': true};
+      };
+      final store = pairedStore(fake);
+
+      await store.openSession('sess-m');
+      expect(store.modelCatalog.length, 2);
+      expect(store.modelCatalog.first.displayName, 'GLM-5.3');
+      expect(store.modelCatalog.first.reasoning, isTrue);
+      expect(store.modelCatalog.first.contextWindow, 200000);
+      expect(store.modelCatalog.first.ref,
+          'builtin:bigmodel-coding-plan/glm-5.3',);
+      expect(store.currentModelRef, 'builtin:bigmodel-coding-plan/glm-5.3');
+
+      final ok = await store.setModel(
+          'builtin:bigmodel-coding-plan', 'glm-5.3-flash',);
+      expect(ok, isTrue);
+      expect(setModelParams.single, {
+        'sessionId': 'sess-m',
+        'model': {
+          'providerId': 'builtin:bigmodel-coding-plan',
+          'modelId': 'glm-5.3-flash',
+        },
+      });
+      // 乐观回填当前模型
+      expect(store.currentModelRef, 'builtin:bigmodel-coding-plan/glm-5.3-flash');
+    });
+
+    test('未打开会话时 setModel 失败并置 error', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = pairedStore(fake);
+      final ok = await store.setModel('p', 'm');
+      expect(ok, isFalse);
+      expect(store.error, isNotNull);
+    });
+  });
+
+  group('桌面端占用中的会话（-32004）', () {
+    test('resume -32004：保留视口、置 remoteActiveElsewhere、错误文案明确', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/resume'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'Session is not active');
+      final store = pairedStore(fake);
+
+      await store.openSession('sess-live');
+      expect(store.remoteActiveElsewhere, isTrue);
+      expect(store.activeSessionId, 'sess-live'); // 视口保留，不回列表
+      expect(store.error, contains('桌面端运行'));
     });
   });
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,8 +8,10 @@ import 'config/app_colors.dart';
 import 'pages/files_placeholder_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
+import 'pages/remote_control_page.dart';
 import 'pages/settings_page.dart';
 import 'zcode/zcode_chat_store.dart';
+import 'zcode/zcode_desktop_registry.dart';
 import 'zcode/zcode_keepalive_controller.dart';
 import 'zcode/zcode_notifier.dart';
 
@@ -23,9 +26,9 @@ final ValueNotifier<String> accentNotifier = ValueNotifier('green');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 恢复 Zcode 会话持久化状态（本地缓存 + 最近会话），并启动保活控制器
-  // （均异步执行，不阻塞首帧）
-  unawaited(ZcodeChatStore.instance.restore());
+  // 恢复多桌面注册表（每桌面 store + 配对；含旧版单配对迁移），并启动保活
+  // 控制器（均异步执行，不阻塞首帧）
+  unawaited(ZcodeDesktopRegistry.instance.restore());
   unawaited(ZcodeKeepAliveController.instance.initialize());
   // Load persisted theme mode
   final prefs = await SharedPreferences.getInstance();
@@ -38,9 +41,29 @@ void main() async {
   // Load persisted accent color
   final savedAccent = prefs.getString('accent_color') ?? 'green';
   accentNotifier.value = savedAccent;
-  // ZCode 任务完成通知：点击跳转到聊天页
-  ZcodeNotifier.instance.onTapPayload = (sessionId) {
-    // 通知 payload 携带会话 id 时，先让聊天 store 切到该会话再进页面
+  // ZCode 任务完成通知：点击切到对应桌面/会话再进聊天页
+  ZcodeNotifier.instance.onTapPayload = (payload) {
+    String? sessionId;
+    String? desktopId;
+    if (payload != null && payload.isNotEmpty) {
+      // 多桌面 payload 为 JSON{d,s}；旧版为纯 sessionId
+      if (payload.startsWith('{')) {
+        try {
+          final decoded = jsonDecode(payload);
+          if (decoded is Map) {
+            desktopId = decoded['d']?.toString();
+            sessionId = decoded['s']?.toString();
+          }
+        } catch (_) {
+          sessionId = payload;
+        }
+      } else {
+        sessionId = payload;
+      }
+    }
+    if (desktopId != null && desktopId.isNotEmpty) {
+      ZcodeDesktopRegistry.instance.setActive(desktopId);
+    }
     if (sessionId != null && sessionId.isNotEmpty) {
       unawaited(ZcodeChatStore.instance.openSession(sessionId));
     }
@@ -149,6 +172,8 @@ class WzxClawApp extends StatelessWidget {
                 '/settings': (context) => const SettingsPage(),
                 // zcode app-server 协议暂无文件树 API，保留占位页防旧深链落空
                 '/files': (context) => const FilesPlaceholderPage(),
+                // v3 大脑网络：经 NAS relay 遥控任意大脑节点（旧协议栈复用）
+                '/remote': (context) => const RemoteControlPage(),
               },
             );
           },

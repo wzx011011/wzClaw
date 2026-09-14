@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/android_foreground_keepalive.dart';
 import 'zcode_chat_store.dart';
+import 'zcode_desktop_registry.dart';
 
 class ZcodeKeepAliveController with WidgetsBindingObserver {
   ZcodeKeepAliveController._();
@@ -29,14 +30,15 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
   bool _enabled = false;
   bool _initialized = false;
 
-  ZcodeChatStore get _store => ZcodeChatStore.instance;
+  /// 全部桌面 store（多桌面：每个桌面独立连接与状态）
+  Iterable<ZcodeChatStore> get _stores => ZcodeDesktopRegistry.instance.stores;
 
-  /// 是否应运行前台服务：Android + 开关开 + 已配对 + 连接未彻底 idle
+  /// 是否应运行前台服务：Android + 开关开 + 任一桌面已配对且连接未彻底 idle
   bool get _shouldRun =>
       Platform.isAndroid &&
       _enabled &&
-      _store.pairing != null &&
-      _store.connState != ZcodeConnState.idle;
+      _stores.any((s) =>
+          s.pairing != null && s.connState != ZcodeConnState.idle,);
 
   /// 读 pref 并注册生命周期观察（幂等；App 启动时调用一次）
   Future<void> initialize() async {
@@ -73,10 +75,12 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
         break;
       case AppLifecycleState.resumed:
         unawaited(AndroidForegroundKeepAlive.instance.stop());
-        // 已配对但连接不健康 → 立即重连（不等退避计时器）
-        if (_store.pairing != null &&
-            _store.connState != ZcodeConnState.matched) {
-          unawaited(_store.reconnect());
+        // 任一桌面已配对但连接不健康 → 立即重连（不等退避计时器）
+        for (final store in _stores) {
+          if (store.pairing != null &&
+              store.connState != ZcodeConnState.matched) {
+            unawaited(store.reconnect());
+          }
         }
         break;
       default:

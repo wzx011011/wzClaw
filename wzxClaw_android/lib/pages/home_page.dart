@@ -33,6 +33,7 @@ import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
 import '../zcode/zcode_chat_store.dart';
+import '../zcode/zcode_relay_client.dart';
 import '../zcode/zcode_permission_widgets.dart';
 
 class ChatPage extends StatefulWidget {
@@ -450,6 +451,7 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ),
+              _buildRemoteActiveStrip(colors),
               _buildPendingRequestBar(),
               _buildErrorBar(colors),
               _buildSlashSuggestions(),
@@ -499,6 +501,12 @@ class _ChatPageState extends State<ChatPage> {
             _inputFocusNode.unfocus();
             unawaited(_store.newSession());
           },
+        ),
+        // 会话操作菜单（用量/压缩/分叉/子代理/目标/远程关闭）
+        IconButton(
+          icon: const Icon(Icons.more_vert),
+          tooltip: '会话操作',
+          onPressed: _canSessionOps ? _showSessionOpsMenu : null,
         ),
         IconButton(
           icon: const Icon(Icons.settings),
@@ -593,6 +601,50 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   // ── 错误横幅 ──────────────────────────────────────────────────────
+
+  /// 桌面端占用状态条（-32004）：琥珀色常驻提示（不是错误，是运行时边界）
+  Widget _buildRemoteActiveStrip(AppColors colors) {
+    if (!_store.remoteActiveElsewhere) return const SizedBox.shrink();
+    return GestureDetector(
+      onTap: () => unawaited(_refreshRemoteActiveSession()),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.warning.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colors.warning.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.desktop_windows, size: 14, color: colors.warning),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '该会话正在桌面端运行——手机端无法实时查看流式过程；'
+                '桌面端回合结束后点此刷新查看结果',
+                style: TextStyle(color: colors.warning, fontSize: 11, height: 1.4),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(2),
+              child: Icon(Icons.refresh, size: 16, color: colors.warning),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 刷新桌面端已结束会话的结果（重开视口拉取最新消息）
+  Future<void> _refreshRemoteActiveSession() async {
+    final id = _store.activeSessionId;
+    if (id == null) return;
+    // 强制重新 materialize：清标记 + 重开会话
+    _store.clearError();
+    await _store.openSession(id);
+  }
 
   /// 底部错误条（store.error），带关闭按钮（store.clearError）
   Widget _buildErrorBar(AppColors colors) {
@@ -1159,6 +1211,540 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  // ── 模型选择器（settings.model.available 快照目录 → session/setModel）──
+
+  /// 模型按钮显示条件：会话已打开、连接正常、目录已播种（resume/快照后非空）
+  bool get _canPickModel =>
+      _canPickMode && _store.modelCatalog.isNotEmpty;
+
+  /// 当前模型显示名（目录匹配取 label；未知显示引用尾部）
+  String get _currentModelLabel {
+    final ref = _store.currentModelRef;
+    if (ref == null) return '模型';
+    for (final m in _store.modelCatalog) {
+      if (m.ref == ref) return m.displayName;
+    }
+    final slash = ref.indexOf('/');
+    return slash > 0 ? ref.substring(slash + 1) : ref;
+  }
+
+  /// 模型选择底部弹层：按 provider 分组（对齐官方选择器），当前模型打勾
+  void _showModelSheet() {
+    final colors = AppColors.of(context);
+    final catalog = _store.modelCatalog;
+    final current = _store.currentModelRef;
+    // providerId → 组内模型（保持快照顺序）
+    final groups = <String, List<dynamic>>{};
+    for (final m in catalog) {
+      groups.putIfAbsent(m.providerId, () => []).add(m);
+    }
+    unawaited(showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.bgPrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 8),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Text(
+                '选择模型',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ),
+            for (final entry in groups.entries) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 2),
+                child: Text(
+                  entry.key,
+                  style: TextStyle(fontSize: 12, color: colors.textMuted),
+                ),
+              ),
+              for (final m in entry.value)
+                ListTile(
+                  dense: true,
+                  leading: SizedBox(
+                    width: 20,
+                    child: m.ref == current
+                        ? Icon(Icons.check, size: 16, color: colors.accent)
+                        : null,
+                  ),
+                  title: Text(
+                    m.displayName,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: m.ref == current ? colors.accent : colors.textPrimary,
+                      fontWeight: m.ref == current ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                  subtitle: Row(
+                    children: [
+                      if (m.reasoning)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Text(
+                            '推理',
+                            style: TextStyle(fontSize: 11, color: colors.textMuted),
+                          ),
+                        ),
+                      if (m.contextWindow != null)
+                        Text(
+                          '${(m.contextWindow! / 1000).round()}K',
+                          style: TextStyle(fontSize: 11, color: colors.textMuted),
+                        ),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _inputFocusNode.unfocus();
+                    final messenger = ScaffoldMessenger.of(context);
+                    unawaited(_store.setModel(m.providerId, m.modelId).then((ok) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(ok ? '已切换到 ${m.displayName}' : '切换模型失败'),
+                        ),
+                      );
+                    }),);
+                  },
+                ),
+            ],
+          ],
+        ),
+      ),
+    ),);
+  }
+
+  // ── 会话操作（官方 web 对齐：用量/压缩/分叉/子代理/目标/远程关闭）──────
+
+  bool get _canSessionOps => _canPickMode;
+
+  /// AppBar「⋯」菜单
+  void _showSessionOpsMenu() {
+    final colors = AppColors.of(context);
+    _inputFocusNode.unfocus();
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        MediaQuery.of(context).size.width - 8,
+        kToolbarHeight + 8,
+        8,
+        0,
+      ),
+      items: [
+        _opsItem('usage', Icons.leak_add, '会话用量'),
+        _opsItem('compact', Icons.compress, '压缩上下文'),
+        _opsItem('fork', Icons.call_split, '分叉副本'),
+        _opsItem('subagents', Icons.account_tree_outlined, '子代理'),
+        _opsItem('goal', Icons.track_changes, '会话目标'),
+        _opsItem('close', Icons.power_settings_new, '关闭会话（远程）'),
+      ].map((e) => PopupMenuItem<String>(
+            value: e.value,
+            child: Row(children: [
+              Icon(e.icon, size: 16, color: colors.textSecondary),
+              const SizedBox(width: 10),
+              Text(e.label,
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),),
+            ],),
+          ),).toList(),
+    ).then((value) {
+      switch (value) {
+        case 'usage':
+          _showUsageSheet();
+        case 'compact':
+          _confirmCompact();
+        case 'fork':
+          _confirmFork();
+        case 'subagents':
+          _showSubagentsSheet();
+        case 'goal':
+          _showGoalSheet();
+        case 'close':
+          _confirmCloseRemote();
+      }
+    });
+  }
+
+  ({String value, IconData icon, String label}) _opsItem(
+          String value, IconData icon, String label,) =>
+      (value: value, icon: icon, label: label);
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// 会话用量：先取数再弹层（8 项计数网格）
+  Future<void> _showUsageSheet() async {
+    final colors = AppColors.of(context);
+    final Map<String, dynamic> usage;
+    try {
+      usage = await _store.fetchUsage();
+    } catch (e) {
+      _toast('获取用量失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    String k(num? v) => v == null
+        ? '-'
+        : v >= 1000
+            ? '${(v / 1000).toStringAsFixed(1)}K'
+            : '$v';
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.bgPrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('会话用量',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textSecondary,),),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _usageCell(colors, '总 tokens', k(usage['totalTokens'] as num?)),
+                  _usageCell(colors, '输入', k(usage['inputTokens'] as num?)),
+                  _usageCell(colors, '输出', k(usage['outputTokens'] as num?)),
+                  _usageCell(colors, '推理', k(usage['reasoningTokens'] as num?)),
+                  _usageCell(colors, '缓存写', k(usage['cacheCreationTokens'] as num?)),
+                  _usageCell(colors, '缓存读', k(usage['cacheReadTokens'] as num?)),
+                  _usageCell(colors, '模型请求', '${usage['modelRequestCount'] ?? '-'}'),
+                  _usageCell(colors, '模型错误', '${usage['modelErrorCount'] ?? '-'}'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _usageCell(AppColors colors, String label, String value) {
+    return Container(
+      width: 152,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.bgSecondary,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: colors.textMuted)),
+          const SizedBox(height: 4),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 16,
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w600,),),
+        ],
+      ),
+    );
+  }
+
+  /// 压缩上下文：确认 → session/compact → 刷新
+  Future<void> _confirmCompact() async {
+    final colors = AppColors.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgPrimary,
+        title: Text('压缩上下文',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),),
+        content: Text('将压缩当前会话的上下文历史以释放窗口空间，继续？',
+            style: TextStyle(color: colors.textSecondary, fontSize: 13),),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text('取消', style: TextStyle(color: colors.textSecondary)),),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text('压缩', style: TextStyle(color: colors.accent)),),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _store.compactSession();
+    _toast(_store.error ?? '已发起上下文压缩');
+  }
+
+  /// 分叉副本：确认 → session/fork → 打开副本
+  Future<void> _confirmFork() async {
+    final colors = AppColors.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgPrimary,
+        title: Text('分叉副本',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),),
+        content: Text('从当前会话复制出一个独立副本进行试验，原会话不受影响。继续？',
+            style: TextStyle(color: colors.textSecondary, fontSize: 13),),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text('取消', style: TextStyle(color: colors.textSecondary)),),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text('分叉', style: TextStyle(color: colors.accent)),),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await _store.forkSession();
+    _toast(ok ? '已分叉并打开副本' : (_store.error ?? '分叉失败'));
+  }
+
+  /// 子代理列表：childSessionIds → 点击打开对应会话
+  Future<void> _showSubagentsSheet() async {
+    final colors = AppColors.of(context);
+    final List<String> ids;
+    try {
+      ids = await _store.loadSubagents();
+    } catch (e) {
+      _toast('获取子代理失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.bgPrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 8),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Text('子代理（${ids.length}）',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textSecondary,),),
+            ),
+            if (ids.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 12,),
+                child: Text('当前会话没有子代理记录',
+                    style: TextStyle(
+                        fontSize: 13, color: colors.textMuted,),),
+              )
+            else
+              for (final id in ids)
+                ListTile(
+                  dense: true,
+                  leading: Icon(Icons.account_tree_outlined,
+                      size: 18, color: colors.textMuted,),
+                  title: Text(id,
+                      style: TextStyle(
+                          fontSize: 12, color: colors.textPrimary,),
+                      overflow: TextOverflow.ellipsis,),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    unawaited(_store.openSession(id));
+                  },
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 会话目标：展示（容错 -32001 超大响应）+ 编辑（set 追加）
+  Future<void> _showGoalSheet() async {
+    final colors = AppColors.of(context);
+    String currentText = '';
+    String? errorText;
+    try {
+      final goal = await _store.goalShow();
+      // 响应形状未完全钉死（大响应会被中继拦截）：尽力提取常见字段
+      final dynamic goalNode = goal['goal'] ?? goal;
+      if (goalNode is Map) {
+        currentText = (goalNode['objective'] ??
+                goalNode['text'] ??
+                goalNode['value'] ??
+                '')
+            .toString();
+      }
+    } on ZcodeRequestException catch (e) {
+      if (e.code == -32001) {
+        errorText = '目标数据超出中继帧上限，请在桌面端查看/编辑';
+      } else {
+        errorText = '读取目标失败：${e.message}';
+      }
+    } catch (e) {
+      errorText = '读取目标失败：$e';
+    }
+    if (!mounted) return;
+    final controller = TextEditingController(text: currentText);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: colors.bgPrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 16, 20, 16 + MediaQuery.viewInsetsOf(sheetContext).bottom,),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('会话目标',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: colors.textSecondary,),),
+            const SizedBox(height: 10),
+            if (errorText != null)
+              Text(errorText,
+                  style: TextStyle(fontSize: 12, color: colors.error),)
+            else ...[
+              TextField(
+                controller: controller,
+                maxLines: 4,
+                style: TextStyle(fontSize: 13, color: colors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: '写下这个会话要达成的目标…',
+                  hintStyle: TextStyle(color: colors.textMuted, fontSize: 13),
+                  filled: true,
+                  fillColor: colors.bgSecondary,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      final ok = await _store.setGoal(controller.text,
+                          replace: true,);
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      _toast(ok ? '目标已替换' : (_store.error ?? '设置失败'));
+                    },
+                    child: Text('替换目标',
+                        style: TextStyle(color: colors.textSecondary),),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () async {
+                      final ok =
+                          await _store.setGoal(controller.text, replace: false);
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      _toast(ok ? '目标已追加' : (_store.error ?? '设置失败'));
+                    },
+                    child: Text('追加目标',
+                        style: TextStyle(color: colors.accent),),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 远程关闭会话：确认 → session/close → 回列表
+  Future<void> _confirmCloseRemote() async {
+    final colors = AppColors.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgPrimary,
+        title: Text('关闭会话',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),),
+        content: Text('将在桌面端释放该会话的运行时资源（历史保留），继续？',
+            style: TextStyle(color: colors.textSecondary, fontSize: 13),),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text('取消', style: TextStyle(color: colors.textSecondary)),),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text('关闭',
+                  style: TextStyle(color: colors.error),),),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await _store.closeSessionRemote();
+    _toast(ok ? '会话已在桌面端关闭' : (_store.error ?? '关闭失败'));
+  }
+
+  /// 思考强度菜单（low|medium|high → session/setThoughtLevel）
+  void _showThoughtLevelMenu(BuildContext anchorContext) {
+    const levels = ['low', 'medium', 'high'];
+    const labels = ['低', '中', '高'];
+    final colors = AppColors.of(context);
+    final current = _store.thoughtLevel;
+    final renderBox = anchorContext.findRenderObject() as RenderBox;
+    final size = MediaQuery.of(anchorContext).size;
+    final position = RelativeRect.fromLTRB(
+      0,
+      renderBox.localToGlobal(Offset.zero).dy - 180,
+      size.width - renderBox.localToGlobal(Offset.zero).dx - renderBox.size.width,
+      0,
+    );
+    showMenu<String>(
+      context: context,
+      position: position,
+      items: List.generate(levels.length, (i) {
+        final selected = levels[i] == current;
+        return PopupMenuItem<String>(
+          value: levels[i],
+          child: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                child: selected
+                    ? Icon(Icons.check, size: 16, color: colors.accent)
+                    : null,
+              ),
+              const SizedBox(width: 4),
+              Text(labels[i],
+                  style: TextStyle(
+                    color: selected ? colors.accent : colors.textPrimary,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  ),),
+            ],
+          ),
+        );
+      }),
+    ).then((value) {
+      _inputFocusNode.unfocus();
+      if (value != null) {
+        unawaited(_store.setThoughtLevel(value));
+      }
+    });
+  }
+
   // ── Input bar ──────────────────────────────────────────────────────
 
   Widget _buildInputBar(AppColors colors) {
@@ -1183,6 +1769,44 @@ class _ChatPageState extends State<ChatPage> {
       ),
       child: Row(
           children: [
+            // 思考强度（session/setThoughtLevel：low|medium|high）
+            if (_canPickMode)
+              SizedBox(
+                width: 36,
+                height: 36,
+                child: Builder(
+                  builder: (anchorContext) => IconButton(
+                    onPressed: () => _showThoughtLevelMenu(anchorContext),
+                    icon: Icon(
+                      Icons.psychology_outlined,
+                      color: _store.thoughtLevel == 'high'
+                          ? colors.accent
+                          : colors.textSecondary,
+                      size: 20,
+                    ),
+                    padding: EdgeInsets.zero,
+                    tooltip: '思考强度',
+                  ),
+                ),
+              ),
+            if (_canPickMode) const SizedBox(width: 2),
+            // 模型选择器（快照目录 + session/setModel）
+            if (_canPickModel)
+              SizedBox(
+                width: 36,
+                height: 36,
+                child: IconButton(
+                  onPressed: _showModelSheet,
+                  icon: Icon(
+                    Icons.memory_outlined,
+                    color: colors.textSecondary,
+                    size: 20,
+                  ),
+                  padding: EdgeInsets.zero,
+                  tooltip: _currentModelLabel,
+                ),
+              ),
+            if (_canPickModel) const SizedBox(width: 2),
             // Session mode dropdown（zcode 五档；yolo 红色警示）
             if (_canPickMode)
               SizedBox(
@@ -1228,7 +1852,11 @@ class _ChatPageState extends State<ChatPage> {
                 enabled: matched,
                 style: TextStyle(color: colors.textPrimary, fontSize: 14),
                 decoration: InputDecoration(
-                  hintText: matched ? '输入指令...' : '未连接',
+                  hintText: !matched
+                      ? '未连接'
+                      : _store.isStreaming
+                          ? '继续输入以排队后续修改…'
+                          : '输入指令...',
                   hintStyle: TextStyle(color: colors.textMuted),
                   filled: true,
                   fillColor:

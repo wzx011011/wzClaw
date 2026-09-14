@@ -12,9 +12,22 @@ class ZcodePairingInfo {
   final String sid;
   final String hash;
 
-  const ZcodePairingInfo({required this.relayWsUrl, required this.sid, required this.hash});
+  /// 桌面显示名（companion 在配对 URL 附带主机名；可空）
+  final String? desktopName;
 
-  Map<String, dynamic> toJson() => {'relayWsUrl': relayWsUrl, 'sid': sid, 'hash': hash};
+  const ZcodePairingInfo({
+    required this.relayWsUrl,
+    required this.sid,
+    required this.hash,
+    this.desktopName,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'relayWsUrl': relayWsUrl,
+        'sid': sid,
+        'hash': hash,
+        if (desktopName != null) 'desktopName': desktopName,
+      };
 
   static ZcodePairingInfo? fromJson(Map<String, dynamic>? json) {
     if (json == null) return null;
@@ -22,6 +35,7 @@ class ZcodePairingInfo {
       relayWsUrl: json['relayWsUrl'] as String? ?? '',
       sid: json['sid'] as String? ?? '',
       hash: json['hash'] as String? ?? '',
+      desktopName: (json['desktopName'] as String?)?.trim(),
     );
     return _isValidHash(info.hash) && info.sid.isNotEmpty && info.relayWsUrl.isNotEmpty ? info : null;
   }
@@ -40,10 +54,13 @@ ZcodePairingInfo? parsePairingUrl(String url) {
     final hash = uri.queryParameters['hash'] ?? '';
     if (sid.isEmpty || sid.length > 256 || !_isValidHash(hash)) return null;
     final wsScheme = uri.isScheme('https') ? 'wss' : 'ws';
+    // name 参数（companion 附带主机名）：截断到 64 字符，仅作展示名
+    final name = (uri.queryParameters['name'] ?? '').trim();
     return ZcodePairingInfo(
       relayWsUrl: '$wsScheme://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}/ws',
       sid: sid,
       hash: hash,
+      desktopName: name.isEmpty ? null : (name.length > 64 ? name.substring(0, 64) : name),
     );
   } catch (_) {
     return null;

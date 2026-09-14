@@ -55,6 +55,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
+import 'zcode_desktop_registry.dart';
 import 'zcode_notifier.dart';
 import 'zcode_pairing.dart';
 import 'zcode_relay_client.dart';
@@ -104,6 +105,35 @@ class ZcodeSessionMeta {
   });
 }
 
+/// 可用模型条目（resume/subscribe/state.updated 快照 settings.model.available）
+/// 实测条目形状：{ref:{providerId,modelId}, label, contextWindow,
+/// maxOutputTokens, reasoning, providerLabel}
+class ZcodeModelInfo {
+  final String providerId;
+  final String modelId;
+  final String? label;
+  final String? providerLabel;
+  final int? contextWindow;
+  final int? maxOutputTokens;
+  final bool reasoning;
+
+  const ZcodeModelInfo({
+    required this.providerId,
+    required this.modelId,
+    this.label,
+    this.providerLabel,
+    this.contextWindow,
+    this.maxOutputTokens,
+    this.reasoning = false,
+  });
+
+  /// 'providerId/modelId' 引用形态（setModel 兜底同款）
+  String get ref => '$providerId/$modelId';
+
+  /// UI 显示名：优先 label，退回 modelId
+  String get displayName => (label != null && label!.isNotEmpty) ? label! : modelId;
+}
+
 /// 会话切换/关闭/解除配同时对挂起反向请求的代答拒绝：
 /// 客户端据此回传 **error 帧**（而非 result 帧），与无钩子路径的
 /// 安全拒绝一致，避免"存在 result"被对端解读为批准
@@ -128,17 +158,13 @@ class _PendingReverse {
 
 /// ZCode 远程控制 store
 class ZcodeChatStore extends ChangeNotifier {
-  /// 全局单例（app 作用域）：后台轮询/重连/通知的生命周期不依赖
-  /// "页面曾被打开过"。无注入参数的构造（页面的既有调用形态）返回
-  /// 同一实例，页面零改动即消费单例。创建时顺带初始化本地通知
-  /// （后台任务完成提醒此前从未被接线，属 app 作用域职责）。
-  static final ZcodeChatStore instance = _createAppInstance();
+  /// 全局单例（app 作用域）：多桌面模式下指向注册表的活动实例
+  /// （ZcodeDesktopRegistry 切换桌面即换指针，页面零改动）。
+  /// 本地通知初始化由注册表构造统一完成。
+  static ZcodeChatStore get instance => ZcodeDesktopRegistry.instance.activeStore;
 
-  static ZcodeChatStore _createAppInstance() {
-    final store = ZcodeChatStore._raw(null, null);
-    unawaited(store._notifier.initialize());
-    return store;
-  }
+  /// 注册表专用：构造独立实例（非全局单例）
+  factory ZcodeChatStore.detached() => ZcodeChatStore._raw(null, null);
 
   /// 无注入参数时返回全局单例；注入测试替身时构造全新实例
   factory ZcodeChatStore({
@@ -170,6 +196,21 @@ class ZcodeChatStore extends ChangeNotifier {
   ZcodePairingInfo? _pairing;
   ZcodeConnState _connState = ZcodeConnState.idle;
   String? _error;
+
+  // ---- 多桌面身份（由 ZcodeDesktopRegistry 维护）----
+
+  /// 本 store 归属的桌面 id（= 配对 sid；轮换换码时由注册表迁移）
+  String? desktopId;
+
+  /// 桌面显示名（通知标题、切换器展示用）
+  String desktopName = '桌面';
+
+  /// 配对成功回调（注册表同步条目：sid 轮换迁移 / 临时实例转正）
+  void Function(String pairingUrl)? onPaired;
+
+  /// 解绑回调（绕过注册表的 unpair 同步删条目）
+  void Function()? onUnpaired;
+
   List<ZcodeSessionMeta> _sessions = [];
   bool _sessionsLoading = false;
   bool _sessionsAutoLoaded = false;
@@ -187,6 +228,15 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 已知可用模型（state.updated 全量快照缓存；setModel 兜底用）
   final List<String> _availableModels = [];
+
+  /// 结构化模型目录（settings.model.available 全元数据；模型选择器数据源）
+  final List<ZcodeModelInfo> _modelCatalog = [];
+
+  /// 当前会话选中模型（settings.model.current，'providerId/modelId'）
+  String? _currentModelRef;
+
+  /// 当前思考强度（乐观值；setThoughtLevel 设置，快照回填覆盖）
+  String? thoughtLevel;
 
   /// 降级轮询（仅视口会话；推送不可用时启用）
   Timer? _fallbackPollTimer;
@@ -229,6 +279,12 @@ class ZcodeChatStore extends ChangeNotifier {
 
   List<ZcodeSessionMeta> get sessions => _sessions;
 
+  /// 结构化模型目录（模型选择器数据源；快照播种，可能为空）
+  List<ZcodeModelInfo> get modelCatalog => List.unmodifiable(_modelCatalog);
+
+  /// 当前会话选中模型（'providerId/modelId'；未知为 null）
+  String? get currentModelRef => _currentModelRef;
+
   bool get sessionsLoading => _sessionsLoading;
 
   String? get activeSessionId => _activeSessionId;
@@ -238,6 +294,10 @@ class ZcodeChatStore extends ChangeNotifier {
       _activeState?.chatMessages ?? const <ChatMessage>[];
 
   bool get isStreaming => _activeState?.isStreaming ?? false;
+
+  /// 当前视口会话是否正被桌面端应用运行（-32004；ChatPage 显示状态条用）
+  bool get remoteActiveElsewhere =>
+      _activeState?.remoteActiveElsewhere ?? false;
 
   bool get isWaitingForResponse => _activeState?.isWaitingForResponse ?? false;
 
@@ -310,6 +370,8 @@ class ZcodeChatStore extends ChangeNotifier {
     notifyListeners();
     unawaited(_persistPairing(info));
     _attachClient();
+    // 通知注册表（sid 轮换迁移 / 临时实例转正）
+    onPaired?.call(pairingUrl);
     return true;
   }
 
@@ -328,9 +390,13 @@ class ZcodeChatStore extends ChangeNotifier {
     _activeSessionId = null;
     _states.clear();
     _availableModels.clear();
+    _modelCatalog.clear();
+    _currentModelRef = null;
     _error = null;
     notifyListeners();
     unawaited(_clearPersistedPairing());
+    // 通知注册表同步删条目（registry.remove 路径会先置空本回调防重入）
+    onUnpaired?.call();
   }
 
   /// 启动时恢复已保存的配对（自动重连）；**已配对时不早退**——转发到
@@ -541,8 +607,20 @@ class ZcodeChatStore extends ChangeNotifier {
         if (state.epoch != epoch) return; // 旧纪元：丢弃
         resumeResult = result is Map ? result : null;
         _applyResumeMeta(state, resumeResult ?? const {});
+        state.remoteActiveElsewhere = false; // 成功激活：清除桌面占用标记
       } catch (e) {
         if (!_viewportValid(sessionId, epoch)) return; // 已切走：不惊动视口
+        // 桌面端正在运行该会话（-32004，运行时单归属）：保留空视口 +
+        // 明确状态条，而不是报错回列表
+        if (e is ZcodeRequestException && e.code == -32004) {
+          state.remoteActiveElsewhere = true;
+          state.isStreaming = false;
+          state.isWaitingForResponse = false;
+          _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
+              '桌面端回合结束后点"刷新"查看结果';
+          notifyListeners();
+          return;
+        }
         if (state.items.isEmpty) {
           _activeSessionId = null; // 打开失败：回到列表（旧行为）
           _fail('打开会话失败：$e');
@@ -620,21 +698,25 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 新建会话（复用最近会话的 workspace；无可用工作区则报错提示）
-  Future<void> newSession() async {
+  /// 新建会话：显式指定 workspace（抽屉分组头"+"）或复用最近会话的
+  /// workspace；两者皆无则报错提示
+  Future<void> newSession({String? workspaceKey, String? workspacePath}) async {
     final client = _client;
     if (client == null || !client.paired) {
       _fail('尚未连接 ZCode，无法新建会话');
       return;
     }
-    // 复用最近会话的 workspace（手机端不知道桌面路径）
-    if (_defaultWorkspaceKey == null || _defaultWorkspacePath == null) {
+    final hasExplicit = (workspaceKey?.isNotEmpty ?? false)
+        && (workspacePath?.isNotEmpty ?? false);
+    // 未显式指定时复用最近会话的 workspace（手机端不知道桌面路径）
+    if (!hasExplicit
+        && (_defaultWorkspaceKey == null || _defaultWorkspacePath == null)) {
       await refreshSessions(); // 刷一次列表以获得可复用工作区
     }
-    final wsKey = _defaultWorkspaceKey;
-    final wsPath = _defaultWorkspacePath;
-    if (wsKey == null || wsPath == null) {
-      _fail('没有可复用的工作区，请先在桌面端创建一个会话');
+    final wsKey = hasExplicit ? workspaceKey : _defaultWorkspaceKey;
+    final wsPath = hasExplicit ? workspacePath : _defaultWorkspacePath;
+    if (wsKey == null || wsKey.isEmpty || wsPath == null || wsPath.isEmpty) {
+      _fail('没有可用的工作区，请先在桌面端创建一个会话');
       return;
     }
     try {
@@ -1369,6 +1451,8 @@ class ZcodeChatStore extends ChangeNotifier {
       tokens:
           tokenCount ?? (state.lastInputTokens + state.lastOutputTokens),
       sessionId: state.sessionId,
+      desktopId: desktopId,
+      desktopName: desktopName,
     );
     if (!_isActive(state)) {
       unawaited(refreshSessions()); // 后台徽标靠 session/list 刷新
@@ -1678,9 +1762,17 @@ class ZcodeChatStore extends ChangeNotifier {
   /// state.updated 的 model 补丁 → 可用模型列表缓存（setModel 兜底用）
   void _cacheAvailableModels(dynamic modelPatch) {
     if (modelPatch is! Map) return;
+    // 当前选中模型（settings.model.current，实测 {providerId, modelId}）
+    final current = modelPatch['current'];
+    if (current is Map) {
+      final pid = _nonEmpty(current['providerId']);
+      final mid = _nonEmpty(current['modelId']);
+      if (pid != null && mid != null) _currentModelRef = '$pid/$mid';
+    }
     final available = modelPatch['available'];
     if (available is! List) return;
     final models = <String>[];
+    final catalog = <ZcodeModelInfo>[];
     for (final m in available) {
       if (m is Map) {
         final ref = m['ref'];
@@ -1688,6 +1780,15 @@ class ZcodeChatStore extends ChangeNotifier {
         final modelId = _nonEmpty(ref is Map ? ref['modelId'] : null);
         if (providerId != null && modelId != null) {
           models.add('$providerId/$modelId');
+          catalog.add(ZcodeModelInfo(
+            providerId: providerId,
+            modelId: modelId,
+            label: _nonEmpty(m['label']),
+            providerLabel: _nonEmpty(m['providerLabel']),
+            contextWindow: m['contextWindow'] is num ? (m['contextWindow'] as num).toInt() : null,
+            maxOutputTokens: m['maxOutputTokens'] is num ? (m['maxOutputTokens'] as num).toInt() : null,
+            reasoning: m['reasoning'] == true,
+          ),);
         }
       }
     }
@@ -1695,6 +1796,234 @@ class ZcodeChatStore extends ChangeNotifier {
       _availableModels
         ..clear()
         ..addAll(models);
+    }
+    if (catalog.isNotEmpty) {
+      _modelCatalog
+        ..clear()
+        ..addAll(catalog);
+    }
+  }
+
+  /// 设置会话模型（session/setModel；实测只接受对象 {providerId, modelId}）。
+  /// 乐观更新 currentModelRef；权威值以随后的 state.updated 快照回填为准。
+  /// 返回是否成功（失败时 error 已置位）。
+  Future<bool> setModel(String providerId, String modelId) async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    if (providerId.isEmpty || modelId.isEmpty) {
+      _fail('模型引用不完整');
+      return false;
+    }
+    try {
+      await client.request('session/setModel', {
+        'sessionId': sessionId,
+        'model': {'providerId': providerId, 'modelId': modelId},
+      });
+      _currentModelRef = '$providerId/$modelId';
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _fail('切换模型失败：$e');
+      return false;
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // 会话高级操作（官方 web 对齐；schema 均经 probe-methods 实测）
+  // ──────────────────────────────────────────────
+
+  /// 思考强度（session/setThoughtLevel；实测字段 thoughtLevel: string，
+  /// 业务枚举 low|medium|high）。乐观更新，权威值以快照回填为准。
+  Future<bool> setThoughtLevel(String level) async {
+    const allowed = ['low', 'medium', 'high'];
+    if (!allowed.contains(level)) {
+      _fail('未知思考强度：$level');
+      return false;
+    }
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      await client.request('session/setThoughtLevel', {
+        'sessionId': sessionId,
+        'thoughtLevel': level,
+      });
+      thoughtLevel = level;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _fail('设置思考强度失败：$e');
+      return false;
+    }
+  }
+
+  /// 会话用量统计（session/usage；实测响应含 8 项计数）。
+  /// 返回原始 Map 供 UI 渲染；失败抛出。
+  Future<Map<String, dynamic>> fetchUsage() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      throw Exception('未连接 ZCode 或未打开会话');
+    }
+    final result = await client.request('session/usage', {'sessionId': sessionId});
+    return result is Map ? Map<String, dynamic>.from(result) : const {};
+  }
+
+  /// 手动压缩上下文（session/compact）。成功后刷新会话列表；
+  /// 返回原始响应（形状通用处理）。
+  Future<void> compactSession() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return;
+    }
+    try {
+      await client.request('session/compact', {'sessionId': sessionId});
+      unawaited(refreshSessions());
+    } catch (e) {
+      _fail('压缩上下文失败：$e');
+    }
+  }
+
+  /// 分叉当前会话（session/fork；要求会话已有 workspace 检查点，
+  /// 否则 -32603 INVALID_STATE_TRANSITION）。成功后刷新列表并打开副本。
+  Future<bool> forkSession() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      final result = await client.request('session/fork', {'sessionId': sessionId});
+      String? newId;
+      if (result is Map) {
+        // 响应形状未单测（业务上仅 checkpoint 齐全的会话可 fork）：兼容两种常见形态
+        newId = _nonEmpty(result['sessionId']) ??
+            ((result['session'] is Map)
+                ? _nonEmpty((result['session'] as Map)['sessionId'])
+                : null);
+      }
+      await refreshSessions();
+      if (newId != null) {
+        await openSession(newId);
+        return true;
+      }
+      _fail('分叉完成但未返回新会话，请在会话列表中查看');
+      return false;
+    } catch (e) {
+      final message = e.toString();
+      if (message.contains('checkpoint') || message.contains('INVALID_STATE_TRANSITION')) {
+        _fail('该会话还没有可用的工作区检查点（需先产生过文件修改）');
+      } else {
+        _fail('分叉失败：$e');
+      }
+      return false;
+    }
+  }
+
+  /// 取消后台任务（session/cancelBackgroundTask；实测响应
+  /// {cancelled, reason, status, taskId}）。返回响应 Map。
+  Future<Map<String, dynamic>> cancelBackgroundTask(String taskId) async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      throw Exception('未连接 ZCode 或未打开会话');
+    }
+    final result = await client.request('session/cancelBackgroundTask', {
+      'sessionId': sessionId,
+      'taskId': taskId,
+    });
+    return result is Map ? Map<String, dynamic>.from(result) : const {};
+  }
+
+  /// 读取会话目标（session/goal action=show）。注意：目标状态大的会话
+  /// 可能触发 -32001（响应超中继帧上限），调用方需容错展示。
+  Future<Map<String, dynamic>> goalShow() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      throw Exception('未连接 ZCode 或未打开会话');
+    }
+    final result = await client.request('session/goal', {
+      'sessionId': sessionId,
+      'action': 'show',
+    });
+    return result is Map ? Map<String, dynamic>.from(result) : const {};
+  }
+
+  /// 设置/替换会话目标（session/goal action=set|replace；字段 objective，
+  /// 可选 expectedRevision 乐观锁）。action=set 追加、replace 整体替换。
+  Future<bool> setGoal(String objective, {required bool replace}) async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    if (objective.trim().isEmpty) {
+      _fail('目标内容为空');
+      return false;
+    }
+    try {
+      await client.request('session/goal', {
+        'sessionId': sessionId,
+        'action': replace ? 'replace' : 'set',
+        'objective': objective.trim(),
+      });
+      return true;
+    } catch (e) {
+      if (e is ZcodeRequestException && e.code == -32001) {
+        _fail('目标数据过大，请在桌面端处理该会话目标');
+      } else {
+        _fail('设置目标失败：$e');
+      }
+      return false;
+    }
+  }
+
+  /// 子代理列表（session/subagents；实测响应 {revision, childSessionIds[]}）
+  Future<List<String>> loadSubagents() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      throw Exception('未连接 ZCode 或未打开会话');
+    }
+    final result = await client.request('session/subagents', {'sessionId': sessionId});
+    if (result is Map && result['childSessionIds'] is List) {
+      return (result['childSessionIds'] as List)
+          .map((e) => e?.toString() ?? '')
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return const [];
+  }
+
+  /// 关闭会话运行时（session/close；桌面端释放该会话资源）。
+  /// 成功后回到会话列表并刷新。
+  Future<bool> closeSessionRemote() async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      await client.request('session/close', {'sessionId': sessionId});
+      closeSessionView();
+      unawaited(refreshSessions());
+      return true;
+    } catch (e) {
+      _fail('关闭会话失败：$e');
+      return false;
     }
   }
 
