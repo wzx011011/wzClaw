@@ -18,260 +18,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wzxclaw_android/models/chat_message.dart';
-import 'package:wzxclaw_android/services/chat_store.dart'
-    show AskUserQuestion, PermissionRequest;
+import 'package:wzxclaw_android/zcode/zcode_reverse_models.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
 import 'package:wzxclaw_android/zcode/zcode_pairing.dart';
 import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
-import 'package:wzxclaw_android/zcode/zcode_session_cache.dart';
 import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
+import 'zcode_test_fakes.dart';
 
-/// 合法 hash：43 字符 base64 + '='
-final String _fakeHash = '${'A' * 43}=';
-
-/// 合法配对 URL
-String get _pairingUrl =>
-    'https://zcode.5945.top/pair?sid=device-sid-1&hash=$_fakeHash';
-
-/// relay 客户端替身：同公共 API，request 走注册的 handler
-class FakeZcodeRelayClient implements ZcodeRelayClient {
-  FakeZcodeRelayClient({this.initiallyPaired = true});
-
-  /// 是否模拟已配对
-  bool initiallyPaired;
-
-  bool closed = false;
-  int connectCount = 0;
-
-  @override
-  bool get paired => initiallyPaired && !closed;
-
-  @override
-  ZcodeRelayState get currentState =>
-      closed ? ZcodeRelayState.closed : ZcodeRelayState.matched;
-
-  /// 请求记录（method, params）
-  final List<MapEntry<String, Map<String, dynamic>?>> requests = [];
-
-  /// method → 响应产生器（返回值即 request 的 result；抛错即请求失败）
-  final Map<String, dynamic Function(Map<String, dynamic>?)> handlers = {};
-
-  @override
-  void connect() => connectCount++;
-
-  @override
-  void close() => closed = true;
-
-  @override
-  Future<dynamic> request(String method, [Map<String, dynamic>? params]) async {
-    requests.add(MapEntry(method, params));
-    final handler = handlers[method];
-    if (handler == null) throw Exception('测试未注册 $method 的处理器');
-    return handler(params);
-  }
-
-  /// 契约后续新增成员的兜底（测试不触达）
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-/// 通知器替身：记录 showTaskDone 调用
-class FakeZcodeNotifier extends ZcodeNotifier {
-  final List<Map<String, dynamic>> shown = [];
-
-  @override
-  void showTaskDone({
-    required String status,
-    int? tokens,
-    String? sessionId,
-  }) {
-    shown.add({'status': status, 'tokens': tokens, 'sessionId': sessionId});
-  }
-}
-
-/// 构造 app-server 消息（info + parts）
-Map<String, dynamic> _msg(
-  String role,
-  List<Map<String, dynamic>> parts, {
-  String? id,
-  int created = 0,
-  String? modelId,
-}) {
-  return {
-    'info': {
-      'role': role,
-      if (id != null) 'id': id,
-      'time': {'created': created},
-      if (modelId != null) 'modelID': modelId,
-    },
-    'parts': parts,
-  };
-}
-
-/// 构造已配对的 store（注入替身）
-ZcodeChatStore _pairedStore(FakeZcodeRelayClient fake) {
-  final store = ZcodeChatStore(client: fake);
-  expect(store.pair(_pairingUrl), isTrue);
-  return store;
-}
-
-/// 给 fake 注册空会话 resume（idle + 无消息）
-void _stubResumeEmpty(FakeZcodeRelayClient fake) {
-  fake.handlers['session/resume'] = (_) => {
-        'projection': {'status': 'idle'},
-        'messages': [],
-      };
-}
-
-/// 状态化 app-server 会话替身（多会话）：维护服务端消息列表，
-/// messages 按 afterMessageId 增量返回（真实分页语义）
-class FakeServerSession {
-  FakeServerSession(this.id);
-
-  final String id;
-  String status = 'idle';
-  int subscribeCalls = 0;
-  final List<Map<String, dynamic>> messages = [];
-
-  /// send 落库 user 消息（返回分配的消息 id）
-  String addSend(Map<String, dynamic>? params) {
-    final id = 'srv-u-${messages.length}';
-    messages.add(_msg('user', [
-      {'type': 'text', 'text': params?['content']?.toString() ?? ''},
-    ], id: id, created: 100 + messages.length,),);
-    return id;
-  }
-
-  List<Map<String, dynamic>> messagesAfter(String? afterId) {
-    if (afterId == null) return List.of(messages);
-    final idx = messages.indexWhere((m) => m['info']['id'] == afterId);
-    return idx < 0 ? List.of(messages) : messages.sublist(idx + 1);
-  }
-}
-
-/// 状态化 app-server 替身：把 resume/subscribe/read/messages/send/list
-/// 注册到 fake 客户端（按 params.sessionId 分发到各会话）
-class FakeSessionServer {
-  final Map<String, FakeServerSession> sessions = {};
-
-  FakeServerSession session(String id) =>
-      sessions.putIfAbsent(id, () => FakeServerSession(id));
-
-  void bind(FakeZcodeRelayClient fake) {
-    fake.handlers['session/resume'] = (params) {
-      final s = session(params!['sessionId'] as String);
-      return {
-        'projection': {'status': s.status},
-        // 新路径应忽略 resume 的 messages 数组（实测全量可达 26MB）
-        'messages': List.of(s.messages),
-        'session': {'sessionId': s.id},
-      };
-    };
-    fake.handlers['session/subscribe'] = (params) {
-      final s = session(params!['sessionId'] as String);
-      s.subscribeCalls++;
-      return {'eventSeq': 0, 'events': [], 'sessionId': s.id};
-    };
-    fake.handlers['session/read'] = (params) {
-      final s = session(params!['sessionId'] as String);
-      return {
-        'projection': {'status': s.status},
-      };
-    };
-    fake.handlers['session/messages'] = (params) {
-      final s = session(params!['sessionId'] as String);
-      return {
-        'messages': s.messagesAfter(params['afterMessageId'] as String?),
-      };
-    };
-    fake.handlers['session/send'] = (params) {
-      session(params!['sessionId'] as String).addSend(params);
-      return {'accepted': true};
-    };
-    fake.handlers['session/list'] = (_) => {'sessions': []};
-  }
-}
-
-/// 缓存替身：内存实现（与真实实现同 API 语义）
-class FakeZcodeSessionCache extends ZcodeSessionCache {
-  FakeZcodeSessionCache() : super.forTest();
-
-  final Map<String, List<ZcodeSessionItem>> messages = {};
-  final Map<String, ZcodeSessionCursor> cursors = {};
-  int upsertCalls = 0;
-
-  @override
-  Future<void> upsertMessages(
-      String sessionId, Iterable<ZcodeSessionItem> items,) async {
-    upsertCalls++;
-    final list = messages.putIfAbsent(sessionId, () => <ZcodeSessionItem>[]);
-    for (final it in items) {
-      if (it.protoId == null) continue;
-      final i = list.indexWhere((e) => e.protoId == it.protoId);
-      if (i >= 0) {
-        list[i] = it;
-      } else {
-        list.add(it);
-      }
-    }
-  }
-
-  @override
-  Future<List<ZcodeSessionItem>> loadTail(String sessionId,
-      {int limit = 80,}) async {
-    final list = messages[sessionId];
-    if (list == null) return const <ZcodeSessionItem>[];
-    if (list.length <= limit) return List.of(list);
-    return List.of(list.sublist(list.length - limit));
-  }
-
-  @override
-  Future<ZcodeSessionCursor?> loadCursor(String sessionId) async =>
-      cursors[sessionId];
-
-  @override
-  Future<void> saveCursor(String sessionId,
-      {required int lastSeq, String? watermark,}) async {
-    cursors[sessionId] =
-        ZcodeSessionCursor(lastSeq: lastSeq, watermark: watermark);
-  }
-
-  @override
-  Future<void> deleteSession(String sessionId) async {
-    messages.remove(sessionId);
-    cursors.remove(sessionId);
-  }
-
-  @override
-  Future<void> clearAll() async {
-    messages.clear();
-    cursors.clear();
-  }
-}
-
-/// 注入一条 session/event 推送帧（等价 relay 推送到客户端 onNotify）
-void _pushEvent(
-  ZcodeChatStore store, {
-  required String sessionId,
-  required String type,
-  required int seq,
-  Map<String, dynamic> payload = const {},
-  String? turnId,
-}) {
-  store.debugHandleNotify(ZcodeFrame(
-    method: 'session/event',
-    params: {
-      'deliveryKind': 'web-remote-replayable',
-      'eventId': 'ev-$sessionId-$seq',
-      'seq': seq,
-      'sessionId': sessionId,
-      if (turnId != null) 'turnId': turnId,
-      'type': type,
-      'payload': payload,
-    },
-  ),);
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -300,7 +54,7 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final store = ZcodeChatStore(client: fake);
 
-      expect(store.pair(_pairingUrl), isTrue);
+      expect(store.pair(pairingUrl), isTrue);
       expect(store.pairing?.sid, 'device-sid-1');
       expect(store.pairing?.relayWsUrl, 'wss://zcode.5945.top/ws');
       expect(store.error, isNull);
@@ -325,7 +79,7 @@ void main() {
         jsonEncode({
           'relayWsUrl': 'wss://zcode.5945.top/ws',
           'sid': 'sid-9',
-          'hash': _fakeHash,
+          'hash': fakeHash,
         }),
       );
       final fake = FakeZcodeRelayClient();
@@ -341,7 +95,7 @@ void main() {
     test('restore：已配对时触发显式重连（修复 #20，按钮不再无效）', () async {
       final fake = FakeZcodeRelayClient();
       fake.handlers['session/list'] = (_) => {'sessions': []};
-      final store = _pairedStore(fake); // pair() 已 connect 一次
+      final store = pairedStore(fake); // pair() 已 connect 一次
       expect(fake.connectCount, 1);
       final listCallsBefore =
           fake.requests.where((e) => e.key == 'session/list').length;
@@ -368,7 +122,7 @@ void main() {
       // 已配对：重连 + 刷新列表
       final fake = FakeZcodeRelayClient();
       fake.handlers['session/list'] = (_) => {'sessions': []};
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.reconnect();
       expect(fake.connectCount, 2);
       expect(fake.requests.any((e) => e.key == 'session/list'), isTrue);
@@ -377,7 +131,7 @@ void main() {
 
     test('unpair：断开客户端、清状态与持久化', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await Future<void>.delayed(Duration.zero);
 
       store.unpair();
@@ -403,10 +157,10 @@ void main() {
             'projection': {'status': 'idle'},
             'messagesTruncated': true,
             'messages': [
-              _msg('user', [
+              fakeMsg('user', [
                 {'type': 'text', 'text': '你好'},
               ], id: 'm1', created: 1000,),
-              _msg('assistant', [
+              fakeMsg('assistant', [
                 {'type': 'text', 'text': '回答'},
                 {'type': 'reasoning', 'text': '思考过程'},
                 // 实测 tool part 形状：callID（大写 D）、tool 为字符串、
@@ -415,10 +169,10 @@ void main() {
                 {'type': 'tool', 'callID': 'tc-done', 'tool': 'ShellExecute', 'state': {'status': 'completed', 'input': {'command': 'ls'}, 'output': '文件列表'}},
                 {'type': 'tool', 'callID': 'tc-failed', 'tool': 'Echo', 'state': {'status': 'error', 'input': {}, 'error': 'Permission request failed'}},
               ], id: 'm2', created: 2000, modelId: 'glm-5.3',),
-              _msg('assistant', [], id: 'm3'), // 空 assistant → 过滤
+              fakeMsg('assistant', [], id: 'm3'), // 空 assistant → 过滤
             ],
           };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       await store.openSession('sess-1');
       expect(store.activeSessionId, 'sess-1');
@@ -461,7 +215,7 @@ void main() {
             'messages': [],
           };
       fake.handlers['session/events'] = (_) => {'events': []};
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       await store.openSession('sess-r');
       expect(store.isStreaming, isTrue);
@@ -476,10 +230,10 @@ void main() {
   group('聊天', () {
     test('sendMessage：本地 user 消息 + 流式 assistant 占位 + 请求参数', () async {
       final fake = FakeZcodeRelayClient();
-      _stubResumeEmpty(fake);
+      stubResumeEmpty(fake);
       fake.handlers['session/send'] = (_) => {'accepted': true};
       fake.handlers['session/events'] = (_) => {'events': []};
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-1');
 
       await store.sendMessage('你好，帮我看看');
@@ -501,10 +255,10 @@ void main() {
 
     test('sendMessage：请求异常 → error 状态且不启动轮询', () async {
       final fake = FakeZcodeRelayClient();
-      _stubResumeEmpty(fake);
+      stubResumeEmpty(fake);
       fake.handlers['session/send'] = (_) =>
           throw const ZcodeRequestException(-32004, 'Session is not active');
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-1');
 
       await store.sendMessage('hi');
@@ -519,7 +273,7 @@ void main() {
 
     test('流式轮询：text_delta/reasoning_delta 追加，按 eventId 去重', () async {
       final fake = FakeZcodeRelayClient();
-      _stubResumeEmpty(fake);
+      stubResumeEmpty(fake);
       fake.handlers['session/send'] = (_) => {'accepted': true};
       fake.handlers['session/events'] = (_) => {
             'events': [
@@ -533,7 +287,7 @@ void main() {
               },
             ],
           };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-s');
 
       await store.sendMessage('hi');
@@ -567,8 +321,8 @@ void main() {
 
     test('state.updated：running/idle 切换 isStreaming', () async {
       final fake = FakeZcodeRelayClient();
-      _stubResumeEmpty(fake);
-      final store = _pairedStore(fake);
+      stubResumeEmpty(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-1');
 
       store.debugHandleNotify(const ZcodeFrame(
@@ -588,7 +342,7 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final notifier = FakeZcodeNotifier();
       ZcodeNotifier.setInstanceForTest(notifier);
-      _stubResumeEmpty(fake);
+      stubResumeEmpty(fake);
       fake.handlers['session/send'] = (_) => {'accepted': true};
       fake.handlers['session/events'] = (_) => {
             'events': [
@@ -598,7 +352,7 @@ void main() {
               },
             ],
           };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-t');
       await store.sendMessage('go');
       await Future<void>.delayed(Duration.zero);
@@ -614,10 +368,10 @@ void main() {
       // 权威消息（含工具调用结果，只有权威列表才有；实测 tool part 形状）
       fake.handlers['session/messages'] = (_) => {
             'messages': [
-              _msg('user', [
+              fakeMsg('user', [
                 {'type': 'text', 'text': 'go'},
               ], id: 'a1', created: 1,),
-              _msg('assistant', [
+              fakeMsg('assistant', [
                 {'type': 'text', 'text': '最终回答'},
                 {'type': 'tool', 'callID': 'tc9', 'tool': 'FileWrite', 'state': {'status': 'completed', 'input': {'path': 'x.txt'}, 'output': '写入 3 行'}},
               ], id: 'a2', created: 2,),
@@ -659,26 +413,26 @@ void main() {
 
     test('stopGeneration：session/stop + 增量权威刷新', () async {
       final fake = FakeZcodeRelayClient();
-      _stubResumeEmpty(fake);
+      stubResumeEmpty(fake);
       fake.handlers['session/events'] = (_) => {'events': []};
       // 状态化服务端：send 落库新消息；messages 按 afterMessageId 增量返回
       final serverMessages = <Map<String, dynamic>>[
-        _msg('user', [
+        fakeMsg('user', [
           {'type': 'text', 'text': '旧问题'},
         ], id: 'b0', created: 1,),
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {'type': 'text', 'text': '旧回答'},
         ], id: 'b1', created: 2,),
       ];
       fake.handlers['session/send'] = (_) {
-        serverMessages.add(_msg('user', [
+        serverMessages.add(fakeMsg('user', [
           {'type': 'text', 'text': 'go'},
         ], id: 'u1', created: 3,),);
         return {'accepted': true};
       };
       fake.handlers['session/stop'] = (_) {
         // 停止时服务端持久化被中止的 assistant 回复
-        serverMessages.add(_msg('assistant', [
+        serverMessages.add(fakeMsg('assistant', [
           {'type': 'text', 'text': '被中止的回答'},
         ], id: 'a1', created: 4,),);
         return {};
@@ -693,7 +447,7 @@ void main() {
               idx < 0 ? List.of(serverMessages) : serverMessages.sublist(idx + 1),
         };
       };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-stop');
       expect(store.messages.length, 2); // 打开时拉到最近窗口
       await store.sendMessage('go');
@@ -738,8 +492,8 @@ void main() {
           'session': {'sessionId': 's-new'},
         };
       };
-      _stubResumeEmpty(fake);
-      final store = _pairedStore(fake);
+      stubResumeEmpty(fake);
+      final store = pairedStore(fake);
 
       await store.refreshSessions();
       expect(store.sessions.length, 2);
@@ -766,7 +520,7 @@ void main() {
               {'sessionId': 's0', 'title': 'x', 'updatedAt': 1},
             ],
           };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       await store.newSession();
       expect(store.error, contains('工作区'));
@@ -777,7 +531,7 @@ void main() {
   group('权限确认 / AskUser（反向请求）', () {
     test('权限反向请求（实测形状）→ 流事件 + 应答回放 option response 原文', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       final events = <PermissionRequest?>[];
       final sub = store.permissionStream.listen(events.add);
@@ -928,7 +682,7 @@ void main() {
 
     test('snake_case 字段兜底：旧形态仍可解析并按兜底 schema 应答', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       final future = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-5',
@@ -944,7 +698,7 @@ void main() {
 
     test('AskUser 反向请求 → 流事件 + 应答回传选项', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       final events = <AskUserQuestion?>[];
       final sub = store.askUserStream.listen(events.add);
@@ -983,7 +737,7 @@ void main() {
 
     test('解析失败 / 未知 method → 抛错（默认安全拒绝）', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       // method 含 interaction 但形状不符（缺 question/options）
       expect(
@@ -1018,7 +772,7 @@ void main() {
 
     test('unpair：挂起的反向请求以 error 帧拒绝收尾（安全拒绝）', () async {
       final fake = FakeZcodeRelayClient();
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       final future = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-7',
@@ -1059,15 +813,15 @@ void main() {
       fake.handlers['session/resume'] = (_) => {
             'projection': {'status': 'idle'},
             'messages': [
-              _msg('user', [
+              fakeMsg('user', [
                 {'type': 'text', 'text': '陈旧消息'},
               ], id: 'stale-1', created: 1,),
             ],
           };
-      server.session('sess-v').messages.add(_msg('assistant', [
+      server.session('sess-v').messages.add(fakeMsg('assistant', [
         {'type': 'text', 'text': '最新回答'},
       ], id: 'fresh-1', created: 2,),);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       await store.openSession('sess-v');
       expect(store.messages.map((m) => m.content), isNot(contains('陈旧消息')));
@@ -1080,17 +834,17 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
       server.session('sess-asc').messages.addAll([
-        _msg('user', [
+        fakeMsg('user', [
           {'type': 'text', 'text': '最早'},
         ], id: 'p1', created: 1,),
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {'type': 'text', 'text': '中间'},
         ], id: 'p2', created: 2,),
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {'type': 'text', 'text': '最新'},
         ], id: 'p3', created: 3,),
       ],);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-asc');
       // 升序服务端页：直通展示（旧→新）
       expect(store.messages.map((m) => m.content), ['最早', '中间', '最新']);
@@ -1098,15 +852,15 @@ void main() {
       // 降序服务端页（异常兜底）：翻转为旧→新
       fake.handlers['session/messages'] = (_) => {
             'messages': [
-              _msg('assistant', [
+              fakeMsg('assistant', [
                 {'type': 'text', 'text': '新'},
               ], id: 'q2', created: 20,),
-              _msg('user', [
+              fakeMsg('user', [
                 {'type': 'text', 'text': '旧'},
               ], id: 'q1', created: 10,),
             ],
           };
-      final store2 = _pairedStore(fake);
+      final store2 = pairedStore(fake);
       await store2.openSession('sess-desc');
       expect(store2.messages.map((m) => m.content), ['旧', '新']);
     });
@@ -1116,7 +870,7 @@ void main() {
       final server = FakeSessionServer()..bind(fake);
       final notifier = FakeZcodeNotifier();
       ZcodeNotifier.setInstanceForTest(notifier);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-p');
 
       // 订阅在 materialize 时建立（web-remote-replayable）
@@ -1131,7 +885,7 @@ void main() {
       var seq = 0;
       void push(String type, Map<String, dynamic> payload) {
         seq++;
-        _pushEvent(store,
+        pushEvent(store,
             sessionId: 'sess-p',
             type: type,
             seq: seq,
@@ -1198,15 +952,15 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
       // 预置历史形成水位
-      server.session('sess-t').messages.add(_msg('user', [
+      server.session('sess-t').messages.add(fakeMsg('user', [
         {'type': 'text', 'text': '旧问题'},
       ], id: 'h1', created: 1,),);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-t');
       expect(store.messages, hasLength(1)); // 打开时拉到尾窗
 
       await store.sendMessage('写文件');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-t',
           type: 'model.streaming',
           seq: 1,
@@ -1217,7 +971,7 @@ void main() {
             'kind': 'text_delta',
           },);
       // 服务端回合落库（user 已由 send 落库；assistant 带工具结果）
-      server.session('sess-t').messages.add(_msg('assistant', [
+      server.session('sess-t').messages.add(fakeMsg('assistant', [
         {'type': 'text', 'text': '写完了'},
         {
           'type': 'tool',
@@ -1226,7 +980,7 @@ void main() {
           'state': {'status': 'completed', 'output': '写入 3 行'},
         },
       ], id: 'msg-a2', created: 2,),);
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-t',
           type: 'turn.completed',
           seq: 2,
@@ -1256,10 +1010,10 @@ void main() {
     test('乱串杜绝：会话 A 流式中途切到 B——A 增量零泄漏进 B，切回 A 完整', () async {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-A');
       await store.sendMessage('A 任务');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-A',
           type: 'model.streaming',
           seq: 1,
@@ -1275,7 +1029,7 @@ void main() {
       await store.openSession('sess-B');
       expect(store.activeSessionId, 'sess-B');
       // A 的增量继续到达（后台）：不得进入 B 视口
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-A',
           type: 'model.streaming',
           seq: 2,
@@ -1285,7 +1039,7 @@ void main() {
             'delta': '更多A',
             'kind': 'text_delta',
           },);
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-B',
           type: 'model.streaming',
           seq: 1,
@@ -1306,7 +1060,7 @@ void main() {
       expect(store.messages.last.content, '部分A更多A');
       expect(store.isStreaming, isTrue);
       // B 的后续增量不泄漏进 A
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-B',
           type: 'model.streaming',
           seq: 2,
@@ -1335,7 +1089,7 @@ void main() {
         }
         return originalResume!(params);
       };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
 
       final openingA = store.openSession('sess-A'); // 不等待：A 的 resume 在途
       await Future<void>.delayed(Duration.zero);
@@ -1357,10 +1111,10 @@ void main() {
     test('断线补放：重连后重订阅 + 按 lastSeq 补齐去重', () async {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-r');
       await store.sendMessage('hi');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-r',
           type: 'model.streaming',
           seq: 1,
@@ -1370,7 +1124,7 @@ void main() {
             'delta': 'A',
             'kind': 'text_delta',
           },);
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-r',
           type: 'model.streaming',
           seq: 2,
@@ -1421,14 +1175,14 @@ void main() {
       final cache = FakeZcodeSessionCache();
       final fake1 = FakeZcodeRelayClient();
       final server1 = FakeSessionServer()..bind(fake1);
-      server1.session('sess-c').messages.add(_msg('user', [
+      server1.session('sess-c').messages.add(fakeMsg('user', [
         {'type': 'text', 'text': '历史问题'},
       ], id: 'h1', created: 1,),);
-      server1.session('sess-c').messages.add(_msg('assistant', [
+      server1.session('sess-c').messages.add(fakeMsg('assistant', [
         {'type': 'text', 'text': '历史回答'},
       ], id: 'h2', created: 2,),);
       final store1 = ZcodeChatStore(client: fake1, cache: cache);
-      expect(store1.pair(_pairingUrl), isTrue);
+      expect(store1.pair(pairingUrl), isTrue);
       await store1.openSession('sess-c');
       expect(store1.messages, hasLength(2));
       await Future<void>.delayed(Duration.zero); // persistSession 为 unawaited
@@ -1440,7 +1194,7 @@ void main() {
       final fake2 = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake2); // 服务端视角该会话为空
       final store2 = ZcodeChatStore(client: fake2, cache: cache);
-      expect(store2.pair(_pairingUrl), isTrue);
+      expect(store2.pair(pairingUrl), isTrue);
       await store2.openSession('sess-c');
       expect(store2.messages.map((m) => m.content), contains('历史回答'));
       expect(
@@ -1466,7 +1220,7 @@ void main() {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
       final store = ZcodeChatStore(client: fake, cache: cache);
-      expect(store.pair(_pairingUrl), isTrue);
+      expect(store.pair(pairingUrl), isTrue);
       await store.openSession('sess-o');
       expect(store.messages, hasLength(80)); // 缓存尾窗
 
@@ -1482,10 +1236,10 @@ void main() {
       FakeSessionServer().bind(fake);
       final notifier = FakeZcodeNotifier();
       ZcodeNotifier.setInstanceForTest(notifier);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-A');
       await store.sendMessage('A 任务');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-A',
           type: 'model.streaming',
           seq: 1,
@@ -1498,7 +1252,7 @@ void main() {
       await store.openSession('sess-B');
 
       // A 的回合在后台结束（纯文本 → 本地收尾）
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-A',
           type: 'turn.completed',
           seq: 2,
@@ -1529,7 +1283,7 @@ void main() {
     test('模型兜底：send 字符串拒绝 → setModel 自动切换后重发成功', () async {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-m');
       // 注入可用模型列表（state.updated 全量快照）
       store.debugHandleNotify(const ZcodeFrame(
@@ -1576,7 +1330,7 @@ void main() {
     test('模型兜底：无可用模型 → 提示原文拒绝', () async {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-m2');
       fake.handlers['session/send'] = (_) => '历史任务使用的模型已不可用，请重新选择模型';
 
@@ -1590,7 +1344,7 @@ void main() {
     test('模型兜底：非模型类字符串拒绝不触发 setModel（避免擅改会话配置）', () async {
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-m3');
       store.debugHandleNotify(const ZcodeFrame(
         method: 'state.updated',
@@ -1619,13 +1373,13 @@ void main() {
     test('权威合并：含多条未匹配 assistant 的工具回合消息不丢失', () async {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
-      server.session('sess-mm').messages.add(_msg('user', [
+      server.session('sess-mm').messages.add(fakeMsg('user', [
         {'type': 'text', 'text': '旧问题'},
       ], id: 'h1', created: 1,),);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-mm');
       await store.sendMessage('执行任务');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-mm',
           type: 'model.streaming',
           seq: 1,
@@ -1638,10 +1392,10 @@ void main() {
       // 服务端回合：user + 文本 assistant + 工具 assistant + 结果文本
       // （典型 agent 回合：text → tool → text 多条 assistant 消息）
       server.session('sess-mm').messages.addAll([
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {'type': 'text', 'text': '我先看看'},
         ], id: 'msg-am', created: 2,),
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {
             'type': 'tool',
             'callID': 'tc1',
@@ -1649,11 +1403,11 @@ void main() {
             'state': {'status': 'completed'},
           },
         ], id: 'msg-tool', created: 3,),
-        _msg('assistant', [
+        fakeMsg('assistant', [
           {'type': 'text', 'text': '写完了'},
         ], id: 'msg-final', created: 4,),
       ],);
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-mm',
           type: 'turn.completed',
           seq: 2,
@@ -1675,10 +1429,10 @@ void main() {
       FakeSessionServer().bind(fake);
       final notifier = FakeZcodeNotifier();
       ZcodeNotifier.setInstanceForTest(notifier);
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       await store.openSession('sess-dup');
       await store.sendMessage('hi');
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-dup',
           type: 'model.streaming',
           seq: 1,
@@ -1701,7 +1455,7 @@ void main() {
       expect(notifier.shown, hasLength(1));
 
       // turn.completed(turnId) 后到：不重复通知/刷新
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-dup',
           type: 'turn.completed',
           seq: 2,
@@ -1730,7 +1484,7 @@ void main() {
               },
             ],
           };
-      final store = _pairedStore(fake);
+      final store = pairedStore(fake);
       store.pushWatchdogDelay = const Duration(milliseconds: 60);
       await store.openSession('sess-wd');
       await store.sendMessage('hi');
@@ -1742,7 +1496,7 @@ void main() {
       expect(store.messages.last.content, '轮询增量');
 
       // 推送恢复：降级轮询停止（不再产生新的 session/events 请求）
-      _pushEvent(store,
+      pushEvent(store,
           sessionId: 'sess-wd',
           type: 'model.streaming',
           seq: 2,
@@ -1761,6 +1515,91 @@ void main() {
       );
       expect(store.messages.last.content, '轮询增量推送增量');
       store.unpair(); // 清理计时器
+    });
+  });
+
+  group('权限模式 / 错误横幅 / 本地缓存（UI 换芯补充能力）', () {
+    test('setMode：合法枚举发送 session/setMode 并乐观更新 sessionMode', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      fake.handlers['session/setMode'] = (params) => {
+            'projection': {'mode': 'build', 'status': 'idle'},
+          };
+      final store = pairedStore(fake);
+      await store.openSession('sess-mode');
+      expect(store.sessionMode, isNull);
+
+      expect(await store.setMode('yolo'), isTrue);
+      expect(
+        fake.requests.last,
+        isA<MapEntry<String, Map<String, dynamic>?>>()
+            .having((e) => e.key, 'method', 'session/setMode')
+            .having(
+              (e) => e.value,
+              'params',
+              {'sessionId': 'sess-mode', 'mode': 'yolo'},
+            ),
+      );
+      // 乐观更新（不采纳响应快照的 build 口径）
+      expect(store.sessionMode, 'yolo');
+    });
+
+    test('setMode：非法枚举 / 未打开会话 → false + error', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+
+      expect(await store.setMode('bypass'), isFalse);
+      expect(store.error, contains('未知权限模式'));
+      store.clearError();
+      expect(store.error, isNull);
+
+      expect(await store.setMode('plan'), isFalse);
+      expect(store.error, isNotNull);
+    });
+
+    test('mode 权威回填：state.updated 的 patch.mode.current 覆盖本地值', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      fake.handlers['session/setMode'] = (_) => {};
+      final store = pairedStore(fake);
+      await store.openSession('sess-mode2');
+      await store.setMode('edit');
+
+      store.debugHandleNotify(const ZcodeFrame(
+        method: 'state.updated',
+        params: {
+          'sessionId': 'sess-mode2',
+          'patch': {
+            'mode': {'current': 'auto'},
+          },
+        },
+      ),);
+      expect(store.sessionMode, 'auto');
+    });
+
+    test('sessionOpening：打开中（未 materialize 且无缓存）为真，完成后为假', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      expect(store.sessionOpening, isFalse); // 无活动会话
+
+      final opening = store.openSession('sess-open');
+      // resume 尚未完成：视口容器已建立且无内容 → 骨架屏
+      expect(store.sessionOpening, isTrue);
+      await opening;
+      expect(store.sessionOpening, isFalse);
+    });
+
+    test('clearLocalCache：委托缓存清空', () async {
+      final cache = FakeZcodeSessionCache();
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = ZcodeChatStore(client: fake, cache: cache);
+      expect(store.pair(pairingUrl), isTrue);
+
+      await store.clearLocalCache();
+      expect(cache.clearAllCalls, 1);
     });
   });
 }

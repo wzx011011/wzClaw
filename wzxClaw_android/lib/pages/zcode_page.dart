@@ -26,8 +26,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../config/app_colors.dart';
 import '../models/chat_message.dart';
-import '../services/chat_store.dart'
-    show PermissionRequest, AskUserQuestion;
+import '../zcode/zcode_reverse_models.dart';
 import 'settings_page.dart';
 import '../widgets/animated_message_item.dart';
 import '../widgets/streaming_shimmer.dart';

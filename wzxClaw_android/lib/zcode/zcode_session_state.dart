@@ -119,6 +119,11 @@ class ZcodeSessionState {
   /// 降级轮询的拉取结果不计入——只有真实推送能证明通道活着）
   DateTime? lastPushAt;
 
+  /// 会话权限模式（session/setMode；plan|build|edit|yolo|auto）。
+  /// null = 未知（未设置、或尚未收到 state.updated 的 mode patch）。
+  /// 由 setMode 乐观更新，权威值以 patch.mode.current 回填为准。
+  String? mode;
+
   /// 视口渲染用消息快照（每次访问生成新列表，页面零改动兼容）
   List<ChatMessage> get chatMessages =>
       items.map((e) => e.message).toList(growable: false);
