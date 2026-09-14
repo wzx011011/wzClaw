@@ -72,9 +72,9 @@ device_mid))`（hex 不认），校验失败一律 AUTH_FAILED；未设置时行
   文件缺失时打印「未设置注册密钥，relay 将开放注册」并跳过该 -e；文件存在但
   为空时终止部署（避免误部署开放注册的 relay）。
 - companion 侧：`--register-secret <值>` 或环境变量 `REGISTRATION_SECRET`
-  （CLI 参数优先）；均未提供时注册帧不带 proof，可正常注册到开放 relay。
-  Windows 常驻（scripts/ 自启）如需密钥，编辑 `companion-autostart.vbs` 的
-  启动参数追加 `--register-secret <值>`。
+  （CLI 参数优先），或密钥文件 `~/.wzxclaw/zcode-companion/relay-secret`
+  （首行，与 NAS 部署脚本同名同语义；密钥不进 git、不进进程参数，无需改
+  自启 VBS）；均未提供时注册帧不带 proof，可正常注册到开放 relay。
 
 ## Windows 常驻（开机自启）
 

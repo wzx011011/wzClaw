@@ -10,7 +10,7 @@ const { createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
-const { createCompanion } = require('../companion');
+const { createCompanion, readRegistrationSecretFile } = require('../companion');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -600,4 +600,25 @@ test('带密钥 relay 端到端：同 secret 的 companion 注册并配对成功
   client.send({ type: 'data', payload: { id: 31, method: 'session/list' } });
   const reply = await client.next((m) => m.type === 'data' && m.payload.id === 31);
   assert.equal(reply.payload.result.sessions[0].sessionId, 'sess_mock');
+});
+
+// 注册密钥文件回退：~/.wzxclaw/zcode-companion/relay-secret 首行（去 CRLF）。
+// 缺失/为空返回 ''（开放注册模式），文件内容不匹配路径约定时同样安静回退。
+test('readRegistrationSecretFile：文件首行去 CRLF；缺失/为空返回空串', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-secret-test-'));
+  const secretPath = path.join(home, '.wzxclaw', 'zcode-companion', 'relay-secret');
+  fs.mkdirSync(path.dirname(secretPath), { recursive: true });
+
+  // 缺失 → ''
+  assert.equal(readRegistrationSecretFile(home), '');
+
+  // 首行 + CRLF + 换行后多余行 → 只取首行并去掉 CR
+  fs.writeFileSync(secretPath, 'abc123+/def==\r\nsecond-line\n', 'utf8');
+  assert.equal(readRegistrationSecretFile(home), 'abc123+/def==');
+
+  // 空文件（含空白）→ ''
+  fs.writeFileSync(secretPath, '\r\n', 'utf8');
+  assert.equal(readRegistrationSecretFile(home), '');
+
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10 });
 });

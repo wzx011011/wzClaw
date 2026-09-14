@@ -448,17 +448,34 @@ function createCompanion(options = {}) {
   };
 }
 
-module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand };
+// 读取注册共享密钥文件 ~/.wzxclaw/zcode-companion/relay-secret（首行，去 CRLF）。
+// 与 NAS 部署脚本 deploy-nas-zcode.sh 读取的路径同名同语义——两端各自持有同一行
+// 密钥，不进 git、不进进程参数。文件缺失或为空返回 ''（开放注册模式，不附 proof）。
+function readRegistrationSecretFile(homeDir = os.homedir()) {
+  try {
+    const firstLine = fs.readFileSync(
+      path.join(homeDir, '.wzxclaw', 'zcode-companion', 'relay-secret'),
+      'utf8',
+    ).split(/\r?\n/, 1)[0].trim();
+    return firstLine || '';
+  } catch {
+    return '';
+  }
+}
+
+module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand, readRegistrationSecretFile };
 if (require.main === module) {
   const args = process.argv.slice(2);
   const relayIdx = args.indexOf('--relay');
   const cwdIdx = args.indexOf('--cwd');
   const noQrIdx = args.indexOf('--no-qr');
   const secretIdx = args.indexOf('--register-secret');
-  // 注册共享密钥：CLI 参数优先，其次环境变量 REGISTRATION_SECRET；
-  // 都未提供时不附 register_proof（对开放注册的 relay 零影响）。
+  // 注册共享密钥三级回退：CLI 参数 > 环境变量 REGISTRATION_SECRET >
+  // ~/.wzxclaw/zcode-companion/relay-secret 文件；都未提供时不附
+  // register_proof（对开放注册的 relay 零影响）。
   const registrationSecret = secretIdx !== -1 && args[secretIdx + 1]
-    ? args[secretIdx + 1] : process.env.REGISTRATION_SECRET;
+    ? args[secretIdx + 1]
+    : process.env.REGISTRATION_SECRET || readRegistrationSecretFile();
   if (relayIdx === -1 || !args[relayIdx + 1]) {
     console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>]');
     process.exitCode = 1;
