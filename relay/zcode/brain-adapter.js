@@ -161,6 +161,8 @@ class BrainAdapter {
     this.workspace = workspace;
     this.brainName = brainName || 'brain';
     this.platform = platform || process.platform;
+    // 引擎进程 cwd 与 --cwd（代理工作区）分离：CLI 需从其包目录解析内部模块
+    this.engineCwd = (process.env.ENGINE_CWD || '').trim() || this.workspace;
     this.engineEnv = engineEnv || { ...process.env };
     this.logger = logger || (() => {});
     const command = engineCommand || process.env.ZCODE_BIN;
@@ -168,7 +170,7 @@ class BrainAdapter {
     this.engine = new AppServerEngine({
       command,
       args: (engineArgs || []).slice(),
-      cwd: this.workspace,
+      cwd: this.engineCwd,
       env: this.engineEnv,
       logger: this.logger,
     });

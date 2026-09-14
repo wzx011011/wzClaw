@@ -19,14 +19,14 @@
 #     -v /volume1/docker/zcode-cli:/opt/zcode:ro \
 #     wzxclaw-brain
 
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-COPY brain-adapter.js server.js ./
+COPY brain-adapter.js ./
 
 ENV ROLE=desktop
 CMD ["node", "brain-adapter.js"]

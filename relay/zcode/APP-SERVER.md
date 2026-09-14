@@ -447,3 +447,18 @@ waiting-pairing);事后 `/health` 仍 `rooms:1, devices:1`;R3 全程监控未复
   发送失败即触发重连→接管;间隔无需短于 relay 心跳周期。
 - **relay 配置不建议调整**:pingIntervalMs=30s 同时满足半开清理(30–60s)与中间
   设备保活,缩短只增加移动端耗电;companion 无需改动。
+
+## NAS Docker 节点部署实测（2026-09-15）
+
+- 镜像 node:20 不可用：zcode.cjs 依赖内置 `node:sqlite`（需 node ≥22.5），
+  改用 `node:24-alpine` 后引擎可启动。
+- 引擎 cwd 必须与 `--cwd`（代理工作区）分离：CLI 从 `<引擎cwd>/app-server`
+  解析内部实现；cwd 指向挂载工作区时报 `Cannot find module '/workspace/app-server'`。
+  brain-adapter 以 `ENGINE_CWD` 环境变量显式指定（默认 = WORKSPACE）。
+- 连接 relay 必须请求 `wzxclaw-<token>` 子协议（与旧桌面客户端一致），
+  否则 ws 客户端报 "Server sent a subprotocol but none was requested" 后 1006 断开。
+- PC（node 24 win32）同 bundle + 同参数直接可用；容器内 engine 启动后
+  `require('/opt/zcode/app-server')` 仍失败——CLI 0.16.5 的 app-server
+  实现解析在 linux 容器内尚未打通（遗留，见 PLAN-brain-network-v3 M2 验证节）。
+- 节点注册/发现本身已验证：Room [wzxclaw-brain] desktop joined +
+  identity name=NAS（relay 日志），手机端 desktop_list 可见性待旧 UI APK 验证。
