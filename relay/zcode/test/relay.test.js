@@ -347,7 +347,7 @@ test('half-open probe (missed heartbeat) is taken over by a reconnecting probe',
   const p1Closed = once(p1.ws, 'close');
   const p1State = [...f.relay._sockets.values()].find((s) => s.role === 'probe' && s.room?.sid === d.sid);
   assert.ok(p1State, 'probe state not found');
-  p1State.alive = false;
+  p1State.lastPongAt = 0;
 
   const p2 = await client(t, f.url);
   const nonce = await challenge(p2, d.sid);
@@ -430,7 +430,8 @@ test('probe beyond capacity rejected while existing pair survives, including aut
   assert.equal((await fourth.next('error')).code, 'CAPACITY');
   const fakeDevice = await client(t, f.url);
   fakeDevice.send({ type: 'auth_init', role: 'device', device_sid: d.sid });
-  assert.equal((await fakeDevice.next('error')).code, 'AUTH_FAILED');
+  // owner 保护：健康在位的注册者挡下陌生端（PEER_EXISTS 而非 AUTH_FAILED）
+  assert.equal((await fakeDevice.next('error')).code, 'PEER_EXISTS');
   p1.send({ type: 'data', payload: { alive: true } });
   assert.deepEqual((await d.next('data')).payload, { alive: true });
   assert.equal(p1.ws.readyState, WebSocket.OPEN);
@@ -518,6 +519,21 @@ test('device broadcast reaches every probe while probe upstream goes to device o
   assert.equal(p1.messages.some((m) => m.type === 'data' && m.payload.from === 'p2'), false);
 });
 
+test('matched data frames are exempt from the per-socket rate limit', async (t) => {
+  const f = await fixture(t, { rateLimit: 20, rateWindowMs: 10000 });
+  const d = await device(t, f.url);
+  const p = await client(t, f.url); await auth(p, d.sid, d.hash);
+  // 流式回合的真实形状：配对成员的 data 帧密度远超控制帧限流阈值。
+  // 50 帧（> rateLimit=20）在 10s 窗口内连发，连接不得被 RATE_LIMITED 掐断。
+  for (let i = 0; i < 50; i += 1) d.send({ type: 'data', payload: { seq: i } });
+  for (let i = 0; i < 50; i += 1) assert.deepEqual((await p.next('data')).payload, { seq: i });
+  assert.equal(d.ws.readyState, WebSocket.OPEN);
+  assert.equal(p.ws.readyState, WebSocket.OPEN);
+  // 控制帧仍受限流约束：超发 pair_status_query 应被 RATE_LIMITED 拒绝
+  for (let i = 0; i < 30; i += 1) p.send({ type: 'pair_status_query', device_sid: d.sid });
+  assert.equal((await p.next('error')).code, 'RATE_LIMITED');
+});
+
 test('stale probe slot is reclaimed individually while healthy probes stay connected', async (t) => {
   const f = await fixture(t);
   const d = await device(t, f.url);
@@ -528,7 +544,7 @@ test('stale probe slot is reclaimed individually while healthy probes stay conne
   // _sockets 按连接顺序插入，同房间 probe 过滤后的第 3 个即 p3 的服务端状态。
   const probeStates = [...f.relay._sockets.values()].filter((s) => s.role === 'probe' && s.room?.sid === d.sid);
   assert.equal(probeStates.length, 3);
-  probeStates[2].alive = false;
+  probeStates[2].lastPongAt = 0;
   const p3Closed = once(p3.ws, 'close');
   const p4 = await client(t, f.url);
   assert.equal((await auth(p4, d.sid, d.hash)).ack.pair_status, 'matched');
@@ -551,8 +567,9 @@ test('unverified takeover attempts cause no side effects on room members', async
   assert.equal((await attacker.next('error')).code, 'AUTH_FAILED');
   const fakeDevice = await client(t, f.url);
   fakeDevice.send({ type: 'auth_init', role: 'device', device_sid: d.sid });
-  // owner 归属校验先于槽位检查：未注册端直接 AUTH_FAILED，同样零副作用
-  assert.equal((await fakeDevice.next('error')).code, 'AUTH_FAILED');
+  // owner 保护：健康在位的注册者挡下陌生端（PEER_EXISTS），同样零副作用；
+  // owner 陈旧时陌生端可拿到质询，但不持正确密钥仍在 auth_response 被拒。
+  assert.equal((await fakeDevice.next('error')).code, 'PEER_EXISTS');
   await delay(30);
   assert.equal(p1.ws.readyState, WebSocket.OPEN);
   assert.equal(d.ws.readyState, WebSocket.OPEN);
@@ -560,7 +577,7 @@ test('unverified takeover attempts cause no side effects on room members', async
   p1.send(keep); assert.deepEqual(await d.next('data'), keep);
   // probe 半开槽位同样只对验证通过的端开放：错误 proof 不清场，正主才能接管
   const p1State = [...f.relay._sockets.values()].find((s) => s.role === 'probe' && s.room?.sid === d.sid);
-  p1State.alive = false;
+  p1State.lastPongAt = 0;
   const attacker2 = await client(t, f.url);
   const nonce2 = await challenge(attacker2, d.sid);
   attacker2.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce2, 'probe', d.sid) });
@@ -577,7 +594,7 @@ test('unverified takeover attempts cause no side effects on room members', async
   const d2 = await client(t, f.url);
   assert.equal((await auth(d2, d.sid, d.hash, 'device')).ack.pair_status, 'matched');
   const d2State = [...f.relay._sockets.values()].find((s) => s.role === 'device' && s.room?.sid === d.sid);
-  d2State.alive = false;
+  d2State.lastPongAt = 0;
   const attacker3 = await client(t, f.url);
   const nonce3 = await challenge(attacker3, d.sid, 'device');
   attacker3.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce3, 'device', d.sid) });

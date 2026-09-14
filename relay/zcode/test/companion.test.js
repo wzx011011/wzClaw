@@ -254,7 +254,7 @@ test('反向请求超时按 method 分档：权限/AskUser 放宽、非权限短
   assert.equal(rejected('srv-ask'), false);
 });
 
-test('未登录（无 token）时优雅降级：配对成功但不起桥，data 静默丢弃', async (t) => {
+test('未登录（无 token）时优雅降级：配对成功但不起桥，手机请求收到明确错误帧', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-'));
   const companion = createCompanion({
@@ -279,8 +279,55 @@ test('未登录（无 token）时优雅降级：配对成功但不起桥，data 
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
   client.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
   await delay(300);
-  assert.equal(client.messages.filter((m) => m.type === 'data').length, 0);
+  // 桥不可用时不再静默丢弃：回 -32000 错误帧，手机端 30s 内得到明确反馈
+  const replies = client.messages.filter((m) => m.type === 'data');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].payload.id, 1);
+  assert.equal(replies[0].payload.error.code, -32000);
   assert.equal(companion.state, 'paired-no-model');
+});
+
+test('会话中途 relay 错误帧不烧凭据：重连接管原房间，配对码保持有效', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-errmid-'));
+  let pairingCalls = 0;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    reconnectDelayMs: 200,
+    logger: () => {},
+    onPairing: () => { pairingCalls += 1; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const url1 = companion.pairingUrl;
+  const parsed = new URL(url1);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+
+  // 从服务端向 companion 的 socket 注入一帧 relay 错误（模拟中途被拒，
+  // 如限流/内部错误）。接管早已完成——该错误帧不得触发"作废凭据全新注册"，
+  // 否则手机端已保存的配对会静默失效。
+  const deviceState = [...relay._sockets.values()]
+    .find((s) => s.role === 'device' && s.room?.sid === parsed.searchParams.get('sid'));
+  assert.notEqual(deviceState, undefined);
+  deviceState.ws.send(JSON.stringify({ type: 'error', code: 'INJECTED_TEST_ERROR' }));
+
+  await waitFor(() => companion.state === 'paired', 5000); // 重连 + 同 sid 再接管
+  assert.equal(companion.pairingUrl, url1); // 凭据未轮换
+  assert.equal(pairingCalls, 1); // 未触发全新注册（QR 不重印）
+  // 同一手机连接无感恢复：房间重新回到 matched
+  await client.next((m) => m.type === 'pair_status_ack' && m.pair_status === 'matched', 5000);
 });
 
 test('mid 持久化：同一 midFile 跨实例复用，配对 URL 每次独立', async (t) => {

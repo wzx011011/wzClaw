@@ -69,7 +69,7 @@ class AppServerBridge {
     this.logger = logger || (() => {});
     this.maxRestarts = maxRestarts; this.restartDelayMs = restartDelayMs;
     this.child = null; this.buffer = ''; this.restarts = 0;
-    this.onFrame = null; this.onDead = null; this.stopped = false;
+    this.onFrame = null; this.onDead = null; this.onRespawn = null; this.stopped = false;
   }
   start() {
     this.stopped = false;
@@ -80,10 +80,26 @@ class AppServerBridge {
       cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: this.env,
     });
     this.child = child; this.buffer = '';
-    child.stdout.on('data', (chunk) => this.feed(chunk.toString()));
-    child.stderr.on('data', (chunk) => this.logger('appserver-stderr', chunk.toString().slice(0, 2000)));
-    child.on('error', (error) => { this.logger('appserver-spawn-error', error.code || String(error)); this.scheduleRestart(); });
-    child.on('exit', (code, signal) => { this.child = null; this.scheduleRestart(code, signal); });
+    // setEncoding 让 Node 在流层面按 UTF-8 边界解码：多字节中文跨 chunk 时
+    // 不会各译各的产生 U+FFFD（坏行被静默丢弃或乱码透传到手机）。
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => this.feed(chunk));
+    child.stderr.on('data', (chunk) => this.logger('appserver-stderr', chunk.slice(0, 2000)));
+    // spawn 失败（ENOENT/EINVAL）只发 'error' 不发 'exit'：必须在此置空 this.child，
+    // 否则 scheduleRestart 的 child!==null 守卫直接返回，桥变僵尸（永不重启也不报死）。
+    child.on('error', (error) => {
+      this.logger('appserver-spawn-error', error.code || String(error));
+      if (this.child === child) this.child = null;
+      this.scheduleRestart('spawn-error');
+    });
+    child.on('exit', (code, signal) => {
+      if (this.child === child) this.child = null;
+      this.scheduleRestart(code, signal);
+    });
+    // 新进程的 server-N 反向请求 id 从头计数：通知宿主作废旧 pending 看护，
+    // 防止旧定时器误杀复用了同 id 的新请求。
+    if (this.onRespawn) this.onRespawn();
   }
   scheduleRestart(code, signal) {
     if (this.stopped) return;
@@ -151,6 +167,7 @@ function createCompanion(options = {}) {
   let ws = null;
   let bridge = null;
   let bridgeStarted = false;
+  let bridgeDead = false; // 重启预算耗尽后为真,直到下一次成功起桥
   let pairing = null; // { sid, passHash, url }
   let authStage = 'idle'; // idle → registered → challenged → authenticated
   let reconnectTimer = null;
@@ -183,18 +200,34 @@ function createCompanion(options = {}) {
 
   function startBridge() {
     if (bridgeStarted) return;
-    bridgeStarted = true;
     let token;
     try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
-    catch (error) { log('model-auth-missing', error.code); return; }
+    catch (error) {
+      // 不置位 bridgeStarted：token 读取失败可能是瞬时的（桌面正在重写 config /
+      // 用户尚未登录），下一次手机帧自然重试，而非永久禁用直到进程重启。
+      log('model-auth-missing', error.code);
+      return;
+    }
+    bridgeStarted = true;
+    bridgeDead = false;
     const resolved = zcodeCommand || defaultZcodeCommand();
     bridge = new AppServerBridge({
       command: resolved.command, args: resolved.args, cwd,
       env: { ...process.env, ANTHROPIC_API_KEY: token },
       logger: (event, detail) => log(event, detail),
-      onDead: () => { log('bridge-dead', ''); onStateChange('app-server-dead'); },
+      onDead: () => {
+        // 重启预算耗尽：重置标志让下一次手机帧触发整体重试，并如实上报状态。
+        bridge = null; bridgeStarted = false; bridgeDead = true;
+        log('bridge-dead', ''); onStateChange('app-server-dead');
+      },
     });
     bridge.onFrame = handleAppServerFrame;
+    // 新 app-server 进程的 server-N id 从头计数：作废旧 pending（只清定时器，
+    // 不代答——旧进程已不在，写了也无人认领）。
+    bridge.onRespawn = () => {
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+    };
     bridge.start();
     log('bridge-started', '');
     onStateChange('app-server-started');
@@ -242,6 +275,8 @@ function createCompanion(options = {}) {
         return;
       }
       const timeoutMs = isPermissionLikeMethod(frame.method) ? permissionRequestTimeoutMs : requestTimeoutMs;
+      const stale = pending.get(frame.id);
+      if (stale) clearTimeout(stale); // 同 id 覆盖前先清旧定时器，防旧定时器误杀复用 id 的新请求
       const timer = setTimeout(() => {
         if (pending.delete(frame.id) && bridge) {
           bridge.write({ id: frame.id, error: { code: -32022, message: 'Client request timed out' } });
@@ -255,13 +290,21 @@ function createCompanion(options = {}) {
   // 手机 → app-server。
   function handlePhoneFrame(frame) {
     if (!isObject(frame)) return;
-    // 手机端对反向请求的应答：清理看护计时器。
+    // 手机端对反向请求的应答：无对应看护条目（已超时代答/进程重启作废/迟到）
+    // 则静默丢弃，不向 app-server 转发重复响应（重复应答是协议错误源）。
     if (frame.id != null && (frame.result !== undefined || frame.error !== undefined) && !frame.method) {
       const timer = pending.get(frame.id);
-      if (timer) { clearTimeout(timer); pending.delete(frame.id); }
+      if (!timer) return;
+      clearTimeout(timer); pending.delete(frame.id);
     }
     startBridge();
-    if (!bridge) return;
+    if (!bridge) {
+      // 桥不可用（未登录/spawn 失败/重启预算耗尽）：回明确错误而非静默挂起。
+      if (frame.method && frame.id != null && matchedUp) {
+        send({ type: 'data', payload: { id: frame.id, error: { code: -32000, message: 'companion 桥不可用：app-server 未启动或桌面未登录 ZCode' } } });
+      }
+      return;
+    }
     if (bridge.write(frame)) bridge.resetRestartBudget();
   }
 
@@ -278,7 +321,9 @@ function createCompanion(options = {}) {
     url.searchParams.set('mid', mid);
     ws = new WebSocket(url, { maxPayload: MAX_PAYLOAD, perMessageDeflate: false,
       headers: { 'x-device-id': mid }, handshakeTimeout: 15000 });
-    let registered = false;
+    // 本连接的本地引用：stop() 置空外层 ws 后，关闭握手期间迟到的消息帧
+    // 不会解引用 null（TypeError 杀进程），也不会误碰新连接。
+    const conn = ws;
     ws.on('open', () => {
       // 重连优先接管原房间（同 sid/hash 再认证，relay 原生支持）：配对码保持有效。
       // 房间已失效时 relay 回 error，届时作废本地凭据，下次重连全新注册出新码。
@@ -294,11 +339,17 @@ function createCompanion(options = {}) {
     });
     ws.on('error', () => { /* close 兜底重连 */ });
     ws.on('close', () => {
+      if (ws !== conn) return; // 陈旧连接的迟到 close：不动当前状态
       ws = null;
       authStage = 'idle';
       matchedUp = false;
       reattaching = false;
-      for (const timer of pending.values()) clearTimeout(timer);
+      // relay 断开（重部署/闪断）时桥通常仍在：对未应答的反向请求立即代答 -32022，
+      // 维持"每个转发的反向请求最终必有应答"的不变量，避免桌面回合中途无限挂起。
+      for (const [id, timer] of pending) {
+        clearTimeout(timer);
+        if (bridge) bridge.write({ id, error: { code: -32022, message: 'Client request timed out' } });
+      }
       pending.clear();
       onStateChange('disconnected');
       if (!stopped) {
@@ -306,19 +357,21 @@ function createCompanion(options = {}) {
       }
     });
     ws.on('message', (raw, binary) => {
+      if (ws !== conn) return; // 关闭握手期间或已换代：丢弃迟到帧
       if (binary) return;
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!isObject(msg)) return;
       if (msg.type === 'error') {
         // 接管尝试被拒（房间过期/被占等）：作废凭据，重连后走全新注册。
+        // 注意 reattaching 只在接管握手期间为真（auth_ack 处清零），
+        // 会话中途的错误帧（如限流）不会误烧凭据导致手机配对失效。
         if (reattaching) creds = null;
         log('relay-error', msg.code || '');
-        ws.close();
+        conn.close();
         return;
       }
       if (msg.type === 'device_register_ack') {
-        if (authStage !== 'registering' || typeof msg.device_sid !== 'string' || !msg.device_sid) { ws.close(); return; }
-        registered = true;
+        if (authStage !== 'registering' || typeof msg.device_sid !== 'string' || !msg.device_sid) { conn.close(); return; }
         pairing.sid = msg.device_sid;
         pairing.url = derivePairingUrl(relayUrl, pairing.sid, pairing.passHash);
         creds = { sid: pairing.sid, passHash: pairing.passHash };
@@ -329,7 +382,7 @@ function createCompanion(options = {}) {
         return;
       }
       if (msg.type === 'auth_challenge') {
-        if (authStage !== 'registered' || typeof msg.nonce !== 'string' || !msg.nonce) { ws.close(); return; }
+        if (authStage !== 'registered' || typeof msg.nonce !== 'string' || !msg.nonce) { conn.close(); return; }
         authStage = 'challenged';
         const proof = createHmac('sha256', pairing.passHash)
           .update(`${msg.nonce}|device|${pairing.sid}`).digest('base64url');
@@ -340,6 +393,7 @@ function createCompanion(options = {}) {
         if (authStage !== 'challenged' || !['matched', 'waiting'].includes(msg.pair_status)) return;
         // 设备端先于手机完成认证时收到 waiting：状态推进，等 pair_status_ack matched 再起桥。
         authStage = 'authenticated';
+        reattaching = false; // 接管握手完成：后续错误帧不再按"接管被拒"烧凭据
         matchedUp = msg.pair_status === 'matched';
         if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
         else onStateChange('waiting-pairing');
@@ -370,6 +424,7 @@ function createCompanion(options = {}) {
       if (authStage !== 'authenticated') return 'connecting';
       // 以房间实际配对状态为准：手机离席时如实报告 waiting-pairing 而非残留 paired。
       if (!matchedUp) return 'waiting-pairing';
+      if (bridgeDead) return 'app-server-dead';
       return bridgeStarted && bridge ? 'paired' : 'paired-no-model';
     },
   stop() {

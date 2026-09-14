@@ -4,6 +4,7 @@
   "private": true,
   "description": "zcode pairing relay for wzxClaw mobile (device/probe WebSocket rooms)",
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }

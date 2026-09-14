@@ -40,6 +40,12 @@ function createRelay(options = {}) {
   // 配对语义：device 在房且至少一个 probe 在房。同一房间支持多台手机（上限 maxProbes），
   // relay 对 device 侧广播，companion 无感知。
   const matched = (room) => Boolean(room.device && room.probes.size > 0);
+  // 槽位陈旧判定：以最近 pong 时间戳为准（而非 ping 前置置位的 alive 标志——
+  // pong 在途的一个 RTT 窗口内健康端会被误判 stale，被挑战者清场误杀）。
+  // 阈值 1.5 倍心跳周期：错过完整一个周期以上才视为失联，远大于移动端 RTT。
+  const staleAfterMs = Math.ceil(config.pingIntervalMs * 1.5);
+  const isStale = (state) => state.ws.readyState !== WebSocket.OPEN
+    || Date.now() - state.lastPongAt > staleAfterMs;
   function notify(room) {
     const pair_status = matched(room) ? 'matched' : 'waiting';
     if (room.device) send(room.device.ws, { type: 'pair_status_ack', pair_status });
@@ -82,10 +88,10 @@ function createRelay(options = {}) {
   wss.on('connection', (ws, req, url) => {
     const state = { ws, mid: url.searchParams.get('mid'), headerMid: req.headers['x-device-id'],
       role: null, room: null, nonce: null, authenticated: false, failed: false,
-      alive: true, rateStart: Date.now(), rateCount: 0 };
+      lastPongAt: Date.now(), rateStart: Date.now(), rateCount: 0 };
     sockets.set(ws, state);
     state.authTimer = setTimeout(() => fail(state, 'AUTH_TIMEOUT'), config.authTimeoutMs).unref();
-    ws.on('pong', () => { state.alive = true; });
+    ws.on('pong', () => { state.lastPongAt = Date.now(); });
     ws.on('error', () => { ws.terminate(); });
     ws.on('close', (code) => {
       clearTimeout(state.closeTimer); detach(state); sockets.delete(ws);
@@ -97,11 +103,15 @@ function createRelay(options = {}) {
       if (Date.now() - state.rateStart >= config.rateWindowMs) {
         state.rateStart = Date.now(); state.rateCount = 0;
       }
-      if (++state.rateCount > config.rateLimit) return fail(state, 'RATE_LIMITED');
       if (binary || raw.length > MAX_PAYLOAD) return fail(state);
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return fail(state); }
       if (!isObject(msg)) return fail(state);
+      // 限流只计认证/控制类消息：已配对成员的 data 帧是流式负载（app-server 每个
+      // NDJSON 行一帧，实测每个输出字符可达 2 帧），计入会掐断正常回合。
+      // 滥用防护由认证、帧大小上限与坏帧 fail 承担。
+      const exempt = state.authenticated && msg.type === 'data' && state.room && matched(state.room);
+      if (!exempt && ++state.rateCount > config.rateLimit) return fail(state, 'RATE_LIMITED');
       handleMessage(state, msg);
     });
   });
@@ -123,20 +133,21 @@ function createRelay(options = {}) {
     if (msg.type === 'auth_init') {
       if (state.authenticated || state.nonce || !['device', 'probe'].includes(msg.role)) return fail(state, 'AUTH_FAILED');
       const room = findRoom(msg.device_sid);
-      if (!room || (msg.role === 'device' && ((room.owner !== null && room.owner !== state)
-        || (state.room !== null && state.room !== room)))
-        || (msg.role === 'probe' && state.room)) return fail(state, 'AUTH_FAILED');
+      if (!room || (state.room !== null && state.room !== room)) return fail(state, 'AUTH_FAILED');
       if (msg.role === 'device') {
-        // 纯检查、零副作用：健康在位端直接拒绝；陈旧（半开）槽位不在此时清场，
-        // 留到 auth_response 验证通过后接管——仅持 sid 的未认证端不能触发任何清场。
-        if (room.device && room.device.ws.readyState === WebSocket.OPEN && room.device.alive) {
+        // owner 保护：房间注册者未认证前，其他 socket 不得抢占 device 槽
+        // （凭据同源——配对 URL 持有者也能过 HMAC，防手机端冒充 device）。
+        // 半开 owner 例外：重连的 companion 正是要收回自己的房间。
+        if (room.owner && room.owner !== state && !isStale(room.owner)) return fail(state, 'PEER_EXISTS');
+        // 纯检查、零副作用：健康在位 device 直接拒绝；陈旧（半开）槽位不在此时
+        // 清场，留到 auth_response 验证通过后接管——仅持 sid 的未认证端不能触发任何清场。
+        if (room.device && room.device !== state && !isStale(room.device)) {
           return fail(state, 'PEER_EXISTS');
         }
       } else {
         // probe 容量预检（纯检查、零副作用）：健康在位数已达上限直接拒绝；
         // 陈旧槽位不计入占用，可在 auth_response 验证通过后被接管回收。
-        const healthy = [...room.probes.values()]
-          .filter((s) => s.ws.readyState === WebSocket.OPEN && s.alive).length;
+        const healthy = [...room.probes.values()].filter((s) => !isStale(s)).length;
         if (healthy >= config.maxProbes) return fail(state, 'CAPACITY');
       }
       state.room = room; state.role = msg.role;
@@ -155,10 +166,10 @@ function createRelay(options = {}) {
         || !timingSafeEqual(proof, expected)) return fail(state, 'AUTH_FAILED');
       if (state.role === 'probe') {
         if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
-        // 已验证持有 pass_hash 才允许清场：逐槽回收陈旧连接（半开接管，判定为
-        // 非 OPEN 或错过心跳），重连端可立即收回旧槽而不必等心跳周期。
+        // 已验证持有 pass_hash 才允许清场：逐槽回收陈旧连接（半开接管），
+        // 重连端可立即收回旧槽而不必等心跳周期。
         for (const incumbent of [...room.probes.values()]) {
-          if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) continue;
+          if (!isStale(incumbent)) continue;
           room.probes.delete(incumbent.ws);
           incumbent.ws.terminate();
           logger('peer-takeover', `role=probe stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
@@ -167,12 +178,13 @@ function createRelay(options = {}) {
         if (room.probes.size >= config.maxProbes) return fail(state, 'CAPACITY');
         room.probes.set(state.ws, state);
       } else {
-        if (room.device) {
-          const incumbent = room.device;
-          // 健康在位端拒绝；陈旧（半开）槽位在验证通过后接管：新端已过 HMAC
-          // 质询，安全等价。典型场景：device 断网留下半开连接，重连时立即收回。
-          if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) return fail(state, 'PEER_EXISTS');
-          room.device = null;
+        // 已验证持有 pass_hash 才允许清场：owner 与 device 槽的陈旧在位者
+        // （半开）在验证通过后一并收回。典型场景：companion 断网留下半开连接
+        // （owner/device 槽还挂着旧 socket），重连时立即收回房间，手机配对不失效。
+        for (const incumbent of [room.owner, room.device]) {
+          if (!incumbent || incumbent === state) continue;
+          if (!isStale(incumbent)) return fail(state, 'PEER_EXISTS'); // 健康在位者受保护
+          if (room.owner === incumbent) room.owner = null; else room.device = null;
           incumbent.ws.terminate();
           logger('peer-takeover', `role=device stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
         }
@@ -212,8 +224,9 @@ function createRelay(options = {}) {
   }, config.sweepIntervalMs).unref();
   const pingTimer = setInterval(() => {
     for (const state of sockets.values()) {
-      if (!state.alive) { state.ws.terminate(); continue; }
-      state.alive = false;
+      // 连续两个心跳周期无 pong 才判死（留足在途余量），比旧 alive 标志
+      // （ping 前置置位、pong 复位）更不容易在 RTT 窗口内误杀健康端。
+      if (Date.now() - state.lastPongAt > config.pingIntervalMs * 2) { state.ws.terminate(); continue; }
       if (state.ws.readyState === WebSocket.OPEN) state.ws.ping();
     }
   }, config.pingIntervalMs).unref();
