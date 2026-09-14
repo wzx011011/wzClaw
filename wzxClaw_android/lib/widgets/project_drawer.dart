@@ -19,9 +19,10 @@ final RegExp _pathSep = RegExp(r'[/\\]');
 /// - 头部连接状态点映射 ZcodeConnState（配色对齐 zcode_page 的
 ///   _buildConnBadge：matched 绿 / waiting 橙 / connecting accent / idle 灰），
 ///   副标题 = 当前活动会话 workspacePath 的末级目录名；
-/// - 会话区块 = store.sessions → SessionListTile，tap 即 store.openSession
-///   并收起抽屉（聊天页由外层响应 store 的视口变化）；store.error 非空时
-///   在区块顶部显示一行错误提示（点击重试 = refreshSessions）；
+/// - 会话区块 = store.sessions → 按工作区分组（zcode 桌面端同款）→
+///   SessionListTile，tap 即 store.openSession 并收起抽屉（聊天页由
+///   外层响应 store 的视口变化）；分组可折叠（默认展开）；store.error
+///   非空时在区块顶部显示一行错误提示（点击重试 = refreshSessions）；
 /// - 「浏览文件」入口保留位置但置灰：zcode app-server 暂无文件树 API，
 ///   点击进入 FilesPlaceholderPage 占位页。
 class ProjectDrawer extends StatefulWidget {
@@ -38,6 +39,9 @@ class ProjectDrawer extends StatefulWidget {
 class _ProjectDrawerState extends State<ProjectDrawer> {
   /// 新建会话 in-flight 闩：防连点重复发 session/create（完成后释放）
   bool _creating = false;
+
+  /// 折叠中的工作区分组 key（workspaceKey ?? workspacePath；默认全展开）
+  final Set<String> _collapsedGroups = {};
 
   ZcodeChatStore get _store => widget.store ?? ZcodeChatStore.instance;
 
@@ -242,7 +246,106 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         else
           Column(
             mainAxisSize: MainAxisSize.min,
-            children: sessions.map((session) {
+            children: [
+              for (final group in _groupSessions(sessions))
+                _buildGroup(context, colors, store, group),
+            ],
+          ),
+      ],
+    );
+  }
+
+  /// 会话按工作区分组（zcode 桌面端同款）：workspaceKey ?? workspacePath
+  /// 聚合；组内 updatedAt 降序，组间按组内最新降序。探针实测（probe-
+  /// workspaces.js）：session/list 全量条目带 workspace（key+path），
+  /// 组名 = 路径末级目录名，与桌面端分组完全吻合
+  List<MapEntry<String, List<ZcodeSessionMeta>>> _groupSessions(
+    List<ZcodeSessionMeta> sessions,
+  ) {
+    final byKey = <String, List<ZcodeSessionMeta>>{};
+    for (final s in sessions) {
+      final key = s.workspaceKey ?? s.workspacePath ?? '';
+      byKey.putIfAbsent(key, () => []).add(s);
+    }
+    final groups = byKey.entries.map((e) {
+      final list = e.value
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return MapEntry(e.key, list);
+    }).toList();
+    groups.sort(
+      (a, b) => b.value.first.updatedAt.compareTo(a.value.first.updatedAt),
+    );
+    return groups;
+  }
+
+  /// 分组显示名：组内首个带路径会话的末级目录名；无路径退回 key
+  /// （default 工作区即此形态）；key 也为空 → 未分组
+  String _groupLabel(String key, List<ZcodeSessionMeta> group) {
+    for (final s in group) {
+      final p = s.workspacePath;
+      if (p != null && p.isNotEmpty) return _workspaceLabel(p);
+    }
+    return key.isEmpty ? '未分组' : key;
+  }
+
+  /// 单个工作区分组：可折叠组头（chevron + folder + 组名 + 计数）+ 组内瓦片
+  Widget _buildGroup(
+    BuildContext context,
+    AppColors colors,
+    ZcodeChatStore store,
+    MapEntry<String, List<ZcodeSessionMeta>> group,
+  ) {
+    final collapsed = _collapsedGroups.contains(group.key);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: () => setState(() {
+            collapsed
+                ? _collapsedGroups.remove(group.key)
+                : _collapsedGroups.add(group.key);
+          }),
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(
+              children: [
+                AnimatedRotation(
+                  turns: collapsed ? -0.25 : 0,
+                  duration: const Duration(milliseconds: 150),
+                  child: Icon(
+                    Icons.expand_more,
+                    size: 16,
+                    color: colors.textMuted,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.folder_outlined, size: 14, color: colors.textMuted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _groupLabel(group.key, group.value),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '${group.value.length}',
+                  style: TextStyle(fontSize: 11, color: colors.textMuted),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (!collapsed)
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: group.value.map((session) {
               final isActive = session.sessionId == store.activeSessionId;
               return SessionListTile(
                 session: session,
