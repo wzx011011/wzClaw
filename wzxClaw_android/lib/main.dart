@@ -44,7 +44,13 @@ void main() async {
   unawaited(PushWakeService.instance.initialize());
   // ZCode 任务完成通知：点击跳转到 ZCode 远程控制页
   ZcodeNotifier.instance.onTapPayload = (_) {
-    zcodeNavigatorKey.currentState?.push(
+    final navigator = zcodeNavigatorKey.currentState;
+    if (navigator == null) return; // 导航器未就绪（首帧前）时忽略本次点击
+    // 路由守卫：当前可见层已是 ZcodePage（含其上方仅盖着对话框/权限弹层）
+    // 时不再重复 push——避免重复点击通知堆叠多个 ZcodePage，
+    // 也不会把待答的权限对话框埋进隐藏页面
+    if (_isZcodePageVisible(navigator)) return;
+    navigator.push(
       MaterialPageRoute(builder: (_) => const ZcodePage()),
     );
   };
@@ -77,6 +83,35 @@ ThemeData _buildTheme(AppColors colors, Brightness brightness) {
     dividerColor: colors.border,
     useMaterial3: true,
   );
+}
+
+/// 判断导航栈当前“可见层”是否已有 [ZcodePage]（通知点击的路由守卫）。
+///
+/// 实现方式：从 Navigator 的元素树向下遍历查找已挂载的 ZcodePage，
+/// 并用 [TickerMode.valuesOf] 过滤被不透明页面完全盖住的实例——
+/// 盖住后 Overlay 仍会保持其元素挂载（offstage，仅停止布局/绘制），
+/// 但会同时关闭该子树的 Ticker，据此区分“真正在可见层”与“被埋住”：
+/// - ZcodePage 位于栈顶，或其上仅有对话框等非全屏路由（如待答权限弹层）
+///   → 在可见层 → 命中 → 跳过 push（避免堆叠页面、埋掉待答对话框）；
+/// - ZcodePage 被不透明页面（如配对扫码页）完全盖住 → 不在可见层
+///   → 正常 push（保留“从其他页面点通知跳转 ZcodePage”的能力）。
+/// 通知点击是低频事件，一次元素树遍历的开销可忽略。
+bool _isZcodePageVisible(NavigatorState navigator) {
+  var found = false;
+  void visit(Element element) {
+    if (found) return;
+    if (element.widget is ZcodePage) {
+      // valuesOf 无上层 TickerMode 时默认 enabled=true（保守按可见处理）
+      if (TickerMode.valuesOf(element).enabled) found = true;
+      // ZcodePage 子树内不会再有 ZcodePage，无需继续下钻；
+      // 兄弟节点（栈上更靠上的路由）仍会被继续遍历
+      return;
+    }
+    element.visitChildElements(visit);
+  }
+
+  navigator.context.visitChildElements(visit);
+  return found;
 }
 
 /// Root widget for wzxClaw Android.
