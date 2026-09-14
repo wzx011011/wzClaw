@@ -360,14 +360,34 @@ test('half-open probe (missed heartbeat) is taken over by a reconnecting probe',
   assert.deepEqual(await d.next('data'), msg);
 });
 
-test('healthy incumbent still gets PEER_EXISTS protection', async (t) => {
-  const f = await fixture(t);
-  const d = await device(t, f.url);
-  const p1 = await client(t, f.url);
-  assert.equal((await auth(p1, d.sid, d.hash)).ack.pair_status, 'matched');
-  const p2 = await client(t, f.url);
-  p2.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
-  assert.equal((await p2.next('error')).code, 'PEER_EXISTS');
+test('healthy probe incumbents protected: extra probe rejected at capacity', async (t) => {
+  await t.test('default capacity 3 rejects the 4th probe', async (t) => {
+    const f = await fixture(t);
+    const d = await device(t, f.url);
+    const probes = [];
+    for (let i = 0; i < 3; i++) {
+      const p = await client(t, f.url);
+      assert.equal((await auth(p, d.sid, d.hash)).ack.pair_status, 'matched');
+      probes.push(p);
+    }
+    const fourth = await client(t, f.url);
+    fourth.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
+    assert.equal((await fourth.next('error')).code, 'CAPACITY');
+    await delay(30);
+    // 在位 probe 均健康存活，未被清退
+    for (const p of probes) assert.equal(p.ws.readyState, WebSocket.OPEN);
+  });
+  await t.test('maxProbes is configurable', async (t) => {
+    const f = await fixture(t, { maxProbes: 2 });
+    const d = await device(t, f.url);
+    const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+    const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+    const third = await client(t, f.url);
+    third.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
+    assert.equal((await third.next('error')).code, 'CAPACITY');
+    const msg = { type: 'data', payload: { pair: 'intact' } };
+    p1.send(msg); assert.deepEqual(await d.next('data'), msg);
+  });
 });
 
 test('preauth data, unknown room/role, wrong proof length/key, and replay rejected', async (t) => {
@@ -394,23 +414,182 @@ test('preauth data, unknown room/role, wrong proof length/key, and replay reject
   assert.equal(d.messages.filter((m) => m.type === 'data').length, 0);
 });
 
-test('second same-role peer rejected while existing pair survives, including auth race', async (t) => {
+test('probe beyond capacity rejected while existing pair survives, including auth race', async (t) => {
   const f = await fixture(t);
   const d = await device(t, f.url);
+  // 质询发出时槽位未满，应答时已被占满 → 认证竞态按容量拒绝
   const late = await client(t, f.url);
   const nonce = await challenge(late, d.sid);
-  const p = await client(t, f.url); await auth(p, d.sid, d.hash);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  const p3 = await client(t, f.url); await auth(p3, d.sid, d.hash);
   late.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor(d.hash, nonce, 'probe', d.sid) });
-  assert.equal((await late.next('error')).code, 'PEER_EXISTS');
-  const second = await client(t, f.url);
-  second.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
-  assert.equal((await second.next('error')).code, 'PEER_EXISTS');
+  assert.equal((await late.next('error')).code, 'CAPACITY');
+  const fourth = await client(t, f.url);
+  fourth.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
+  assert.equal((await fourth.next('error')).code, 'CAPACITY');
   const fakeDevice = await client(t, f.url);
   fakeDevice.send({ type: 'auth_init', role: 'device', device_sid: d.sid });
   assert.equal((await fakeDevice.next('error')).code, 'AUTH_FAILED');
-  p.send({ type: 'data', payload: { alive: true } });
+  p1.send({ type: 'data', payload: { alive: true } });
   assert.deepEqual((await d.next('data')).payload, { alive: true });
-  assert.equal(p.ws.readyState, WebSocket.OPEN);
+  assert.equal(p1.ws.readyState, WebSocket.OPEN);
+});
+
+test('two probes join the same paired room in either arrival order', async (t) => {
+  await t.test('device authenticated first', async (t) => {
+    const f = await fixture(t);
+    const d = await device(t, f.url);
+    const p1 = await client(t, f.url);
+    assert.equal((await auth(p1, d.sid, d.hash)).ack.pair_status, 'matched');
+    const p2 = await client(t, f.url);
+    assert.equal((await auth(p2, d.sid, d.hash)).ack.pair_status, 'matched');
+    // 任一 probe 加入都要让在位成员感知最新 pair_status
+    await p1.next('pair_status_ack', (m) => m.pair_status === 'matched');
+    await d.next('pair_status_ack', (m) => m.pair_status === 'matched');
+    assert.deepEqual(await f.health(), { status: 'ok', sockets: 3, rooms: 1, devices: 1 });
+  });
+  await t.test('probes waiting before the device authenticates', async (t) => {
+    const f = await fixture(t);
+    const d = await device(t, f.url, false);
+    const p1 = await client(t, f.url);
+    assert.equal((await auth(p1, d.sid, d.hash)).ack.pair_status, 'waiting');
+    const p2 = await client(t, f.url);
+    assert.equal((await auth(p2, d.sid, d.hash)).ack.pair_status, 'waiting');
+    await auth(d, d.sid, d.hash, 'device');
+    await p1.next('pair_status_ack', (m) => m.pair_status === 'matched');
+    await p2.next('pair_status_ack', (m) => m.pair_status === 'matched');
+  });
+});
+
+test('partial probe departure keeps the room matched for the remaining probe', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  d.messages.length = 0; p1.messages.length = 0; p2.messages.length = 0;
+  await closeClient(p1);
+  // 一台离席：device 与幸存 probe 看到的仍是 matched，不能回落成 waiting
+  await d.next('pair_status_ack', (m) => m.pair_status === 'matched');
+  await p2.next('pair_status_ack', (m) => m.pair_status === 'matched');
+  await delay(30);
+  assert.equal(d.messages.some((m) => m.type === 'pair_status_ack' && m.pair_status === 'waiting'), false);
+  const msg = { type: 'data', payload: { alive: 1 } };
+  p2.send(msg); assert.deepEqual(await d.next('data'), msg);
+  d.send(msg); assert.deepEqual(await p2.next('data'), msg);
+  // 最后一台离席：device 才看到 waiting
+  d.messages.length = 0;
+  await closeClient(p2);
+  await d.next('pair_status_ack', (m) => m.pair_status === 'waiting');
+  assert.deepEqual(await f.health(), { status: 'ok', sockets: 1, rooms: 1, devices: 1 });
+});
+
+test('room expires by TTL only after the device and all probes have left', async (t) => {
+  const f = await fixture(t, { roomTtlMs: 50, sweepIntervalMs: 10 });
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  await closeClient(p1); await closeClient(p2);
+  await delay(80); // 超过 roomTtl，但 device 仍在房 → 不过期
+  assert.equal((await f.health()).rooms, 1);
+  await closeClient(d);
+  await eventually(async () => (await f.health()).rooms === 0);
+  const late = await client(t, f.url);
+  late.send({ type: 'auth_init', role: 'probe', device_sid: d.sid });
+  assert.equal((await late.next('error')).code, 'AUTH_FAILED');
+});
+
+test('device broadcast reaches every probe while probe upstream goes to device only', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  const down = { type: 'data', payload: { broadcast: true } };
+  d.send(down);
+  assert.deepEqual(await p1.next('data'), down);
+  assert.deepEqual(await p2.next('data'), down);
+  p1.send({ type: 'data', payload: { from: 'p1' } });
+  assert.deepEqual((await d.next('data')).payload, { from: 'p1' });
+  p2.send({ type: 'data', payload: { from: 'p2' } });
+  assert.deepEqual((await d.next('data')).payload, { from: 'p2' });
+  await delay(30);
+  // probe 之间不互通：p2 收不到 p1 的上行，p1 收不到 p2 的上行
+  assert.equal(p2.messages.some((m) => m.type === 'data' && m.payload.from === 'p1'), false);
+  assert.equal(p1.messages.some((m) => m.type === 'data' && m.payload.from === 'p2'), false);
+});
+
+test('stale probe slot is reclaimed individually while healthy probes stay connected', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  const p3 = await client(t, f.url); await auth(p3, d.sid, d.hash);
+  // 房间满员后模拟 p3 半开（socket 仍 OPEN 但错过心跳）：新 probe 应只接管 p3 的槽位。
+  // _sockets 按连接顺序插入，同房间 probe 过滤后的第 3 个即 p3 的服务端状态。
+  const probeStates = [...f.relay._sockets.values()].filter((s) => s.role === 'probe' && s.room?.sid === d.sid);
+  assert.equal(probeStates.length, 3);
+  probeStates[2].alive = false;
+  const p3Closed = once(p3.ws, 'close');
+  const p4 = await client(t, f.url);
+  assert.equal((await auth(p4, d.sid, d.hash)).ack.pair_status, 'matched');
+  await p3Closed;
+  assert.equal(p1.ws.readyState, WebSocket.OPEN);
+  assert.equal(p2.ws.readyState, WebSocket.OPEN);
+  const msg = { type: 'data', payload: { after: 'takeover' } };
+  p4.send(msg); assert.deepEqual(await d.next('data'), msg);
+  d.send(msg); assert.deepEqual(await p4.next('data'), msg);
+});
+
+test('unverified takeover attempts cause no side effects on room members', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  // 仅持 sid 的未认证端：质询应答验证失败不得清场，在位成员照常收发
+  const attacker = await client(t, f.url);
+  const nonce = await challenge(attacker, d.sid);
+  attacker.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce, 'probe', d.sid) });
+  assert.equal((await attacker.next('error')).code, 'AUTH_FAILED');
+  const fakeDevice = await client(t, f.url);
+  fakeDevice.send({ type: 'auth_init', role: 'device', device_sid: d.sid });
+  // owner 归属校验先于槽位检查：未注册端直接 AUTH_FAILED，同样零副作用
+  assert.equal((await fakeDevice.next('error')).code, 'AUTH_FAILED');
+  await delay(30);
+  assert.equal(p1.ws.readyState, WebSocket.OPEN);
+  assert.equal(d.ws.readyState, WebSocket.OPEN);
+  const keep = { type: 'data', payload: { intact: true } };
+  p1.send(keep); assert.deepEqual(await d.next('data'), keep);
+  // probe 半开槽位同样只对验证通过的端开放：错误 proof 不清场，正主才能接管
+  const p1State = [...f.relay._sockets.values()].find((s) => s.role === 'probe' && s.room?.sid === d.sid);
+  p1State.alive = false;
+  const attacker2 = await client(t, f.url);
+  const nonce2 = await challenge(attacker2, d.sid);
+  attacker2.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce2, 'probe', d.sid) });
+  assert.equal((await attacker2.next('error')).code, 'AUTH_FAILED');
+  await delay(30);
+  assert.equal(p1.ws.readyState, WebSocket.OPEN); // 半开在位端未被未验证端清场
+  const p1Closed = once(p1.ws, 'close');
+  const p2 = await client(t, f.url);
+  assert.equal((await auth(p2, d.sid, d.hash)).ack.pair_status, 'matched');
+  await p1Closed;
+  // device 半开槽位：owner 归属校验会拦下陌生端，故先让正主 d 断开、二任 d2 接管
+  // 原槽位并进入半开，攻击者才能拿到质询——但不持正确密钥，不得清场。
+  await closeClient(d);
+  const d2 = await client(t, f.url);
+  assert.equal((await auth(d2, d.sid, d.hash, 'device')).ack.pair_status, 'matched');
+  const d2State = [...f.relay._sockets.values()].find((s) => s.role === 'device' && s.room?.sid === d.sid);
+  d2State.alive = false;
+  const attacker3 = await client(t, f.url);
+  const nonce3 = await challenge(attacker3, d.sid, 'device');
+  attacker3.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce3, 'device', d.sid) });
+  assert.equal((await attacker3.next('error')).code, 'AUTH_FAILED');
+  await delay(30);
+  assert.equal(d2.ws.readyState, WebSocket.OPEN); // 半开 device 未被未验证端清场
+  const d2Closed = once(d2.ws, 'close');
+  const d3 = await client(t, f.url);
+  assert.equal((await auth(d3, d.sid, d.hash, 'device')).ack.pair_status, 'matched');
+  await d2Closed;
+  const after = { type: 'data', payload: { recovered: true } };
+  p2.send(after); assert.deepEqual(await d3.next('data'), after);
 });
 
 test('registration generates unique sid and forwarding cannot cross rooms', async (t) => {

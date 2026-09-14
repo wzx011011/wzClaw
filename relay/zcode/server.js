@@ -8,7 +8,7 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 function createRelay(options = {}) {
   const config = { authTimeoutMs: 10000, roomTtlMs: 60000, sweepIntervalMs: 1000,
-    pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16,
+    pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16, maxProbes: 3,
     rateLimit: 120, rateWindowMs: 10000, ...options };
   const logger = typeof config.logger === 'function' ? config.logger : () => {};
   delete config.logger;
@@ -37,20 +37,23 @@ function createRelay(options = {}) {
     }
     ws.send(json);
   }
-  const matched = (room) => Boolean(room.device && room.probe);
+  // 配对语义：device 在房且至少一个 probe 在房。同一房间支持多台手机（上限 maxProbes），
+  // relay 对 device 侧广播，companion 无感知。
+  const matched = (room) => Boolean(room.device && room.probes.size > 0);
   function notify(room) {
-    for (const peer of [room.device, room.probe]) {
-      if (peer) send(peer.ws, { type: 'pair_status_ack', pair_status: matched(room) ? 'matched' : 'waiting' });
-    }
+    const pair_status = matched(room) ? 'matched' : 'waiting';
+    if (room.device) send(room.device.ws, { type: 'pair_status_ack', pair_status });
+    for (const probe of room.probes.values()) send(probe.ws, { type: 'pair_status_ack', pair_status });
   }
   function detach(state) {
     clearTimeout(state.authTimer);
     const room = state.room;
     if (!room) return;
-    if (room[state.role] === state) room[state.role] = null;
+    if (state.role === 'probe') room.probes.delete(state.ws);
+    else if (room[state.role] === state) room[state.role] = null;
     if (room.owner === state) room.owner = null;
     state.room = null;
-    if (!room.device && !room.probe && !room.owner && room.inactiveAt === null) room.inactiveAt = Date.now();
+    if (!room.device && room.probes.size === 0 && !room.owner && room.inactiveAt === null) room.inactiveAt = Date.now();
     notify(room);
   }
   function fail(state, code = 'BAD_MESSAGE') {
@@ -113,7 +116,7 @@ function createRelay(options = {}) {
       if (rooms.size >= config.maxRooms
         || [...rooms.values()].filter((room) => room.device || room.owner).length >= config.maxDevices) return fail(state, 'CAPACITY');
       const sid = randomUUID();
-      const room = { sid, secret: msg.pass_hash, owner: state, device: null, probe: null, inactiveAt: null };
+      const room = { sid, secret: msg.pass_hash, owner: state, device: null, probes: new Map(), inactiveAt: null };
       rooms.set(sid, room); state.room = room;
       send(ws, { type: 'device_register_ack', device_sid: sid }); return;
     }
@@ -123,15 +126,18 @@ function createRelay(options = {}) {
       if (!room || (msg.role === 'device' && ((room.owner !== null && room.owner !== state)
         || (state.room !== null && state.room !== room)))
         || (msg.role === 'probe' && state.room)) return fail(state, 'AUTH_FAILED');
-      if (room[msg.role]) {
-        // 旧端 socket 已断/失联（半开）时允许接管：新端仍要过 HMAC 质询，安全等价。
-        // 典型场景：手机网络闪断留下半开连接，旧端要等一个心跳周期才被清理，
-        // 期间手机重连会一直撞 PEER_EXISTS 表现为"频繁重连"。
-        const incumbent = room[msg.role];
-        if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) return fail(state, 'PEER_EXISTS');
-        room[msg.role] = null;
-        incumbent.ws.terminate();
-        logger('peer-takeover', `role=${msg.role} stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
+      if (msg.role === 'device') {
+        // 纯检查、零副作用：健康在位端直接拒绝；陈旧（半开）槽位不在此时清场，
+        // 留到 auth_response 验证通过后接管——仅持 sid 的未认证端不能触发任何清场。
+        if (room.device && room.device.ws.readyState === WebSocket.OPEN && room.device.alive) {
+          return fail(state, 'PEER_EXISTS');
+        }
+      } else {
+        // probe 容量预检（纯检查、零副作用）：健康在位数已达上限直接拒绝；
+        // 陈旧槽位不计入占用，可在 auth_response 验证通过后被接管回收。
+        const healthy = [...room.probes.values()]
+          .filter((s) => s.ws.readyState === WebSocket.OPEN && s.alive).length;
+        if (healthy >= config.maxProbes) return fail(state, 'CAPACITY');
       }
       state.room = room; state.role = msg.role;
       state.nonce = randomBytes(32).toString('base64url');
@@ -147,9 +153,33 @@ function createRelay(options = {}) {
         ? Buffer.from(msg.proof, 'base64url') : Buffer.alloc(0);
       if (proof.length !== expected.length || proof.toString('base64url') !== msg.proof
         || !timingSafeEqual(proof, expected)) return fail(state, 'AUTH_FAILED');
-      if (room[state.role]) return fail(state, 'PEER_EXISTS');
-      if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
-      room[state.role] = state; room.inactiveAt = null; state.authenticated = true;
+      if (state.role === 'probe') {
+        if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
+        // 已验证持有 pass_hash 才允许清场：逐槽回收陈旧连接（半开接管，判定为
+        // 非 OPEN 或错过心跳），重连端可立即收回旧槽而不必等心跳周期。
+        for (const incumbent of [...room.probes.values()]) {
+          if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) continue;
+          room.probes.delete(incumbent.ws);
+          incumbent.ws.terminate();
+          logger('peer-takeover', `role=probe stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
+        }
+        // 回收后仍满员（质询期间被其他 probe 占满的认证竞态）：按容量拒绝。
+        if (room.probes.size >= config.maxProbes) return fail(state, 'CAPACITY');
+        room.probes.set(state.ws, state);
+      } else {
+        if (room.device) {
+          const incumbent = room.device;
+          // 健康在位端拒绝；陈旧（半开）槽位在验证通过后接管：新端已过 HMAC
+          // 质询，安全等价。典型场景：device 断网留下半开连接，重连时立即收回。
+          if (incumbent.ws.readyState === WebSocket.OPEN && incumbent.alive) return fail(state, 'PEER_EXISTS');
+          room.device = null;
+          incumbent.ws.terminate();
+          logger('peer-takeover', `role=device stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
+        }
+        if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
+        room.device = state;
+      }
+      room.inactiveAt = null; state.authenticated = true;
       clearTimeout(state.authTimer);
       send(ws, { type: 'auth_ack', pair_status: matched(room) ? 'matched' : 'waiting' });
       notify(room); return;
@@ -163,7 +193,16 @@ function createRelay(options = {}) {
       // 未配对时外发数据静默丢弃：认证设备（companion）常在手机离开后仍有
       // app-server 尾流数据，踢掉会迫使其重注册轮换 sid/hash，手机端配对全部失效。
       if (!matched(state.room)) return;
-      send(state.room[state.role === 'device' ? 'probe' : 'device'].ws, msg);
+      if (state.role === 'device') {
+        // device 下行广播给全体 probe（多手机同房间，各自收到完整流）。
+        // v1 已知限制：广播不区分 probe，且手机端请求 id 各自从 1 起编号，
+        // 双手机同时在线时可能出现 RPC id 冲突串台与反向请求扇出双重应答；
+        // 后续由 companion/Dart 侧引入 per-probe id 命名空间解决，relay 层不改协议。
+        for (const probe of state.room.probes.values()) send(probe.ws, msg);
+      } else {
+        // probe 上行只发给 device，probe 之间不互通。
+        send(state.room.device.ws, msg);
+      }
     } else fail(state);
   }
   const sweepTimer = setInterval(() => {
