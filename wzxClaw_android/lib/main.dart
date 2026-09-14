@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'config/app_colors.dart';
 import 'pages/file_browser_page.dart';
 import 'pages/home_page.dart';
-import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/zcode_page.dart';
 import 'services/file_sync_service.dart';
@@ -141,7 +140,9 @@ class WzxClawApp extends StatelessWidget {
               themeMode: mode,
               initialRoute: '/',
               routes: {
-                '/': (context) => const LandingPage(),
+                // 入口直进 ZCode 远程控制（PLAN-zcode-remote-v2 P0.2 入口简化）：
+                // 已配对自动重连，未配对先进配对视图。旧 LandingPage 流程退役。
+                '/': (context) => const ZcodePage(),
                 '/chat': (context) => const ChatPage(),
                 '/settings': (context) => const SettingsPage(),
                 '/files': (context) => const FileBrowserPage(),
