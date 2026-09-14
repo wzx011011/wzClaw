@@ -22,14 +22,15 @@ if [ -f "$SECRET_FILE" ]; then
     exit 1
   fi
   # base64 字符集（A-Za-z0-9+/=）不含单引号，远程 shell 单引号包裹安全。
-  printf -v SECRET_FLAG "-e REGISTRATION_SECRET='%s'" "$REG_SECRET"
-  RUN_ARGS+=("$SECRET_FLAG")
+  # 直接赋值而非 printf -v：格式串以 -e 开头会被 printf 当作选项解析而报错。
+  RUN_ARGS+=("-e REGISTRATION_SECRET='$REG_SECRET'")
 else
   echo "未设置注册密钥，relay 将开放注册" >&2
 fi
 
 ssh nas "mkdir -p $BUILD_DIR"
-scp Dockerfile package.json server.js lib nas:$BUILD_DIR/
+# -r：lib/ 是目录（proof/protocol 共享模块）
+scp -r Dockerfile package.json server.js lib nas:$BUILD_DIR/
 ssh nas "$DOCKER build -t $NAME $BUILD_DIR"
 ssh nas "$DOCKER rm -f $NAME 2>/dev/null || true; \
   $DOCKER run ${RUN_ARGS[*]} $NAME"
