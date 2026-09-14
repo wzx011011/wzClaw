@@ -697,9 +697,16 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// 清空本地消息缓存（配对与会话列表保留；
-  /// 下次打开会话时从服务端重新拉取）
+  /// 下次打开会话时从服务端重新拉取）。
+  /// 内存会话态一并清空：否则已打开会话的消息仍留在内存，
+  /// 后续缓存写入会把它们写回 SQLite（清了又复活）。
+  /// 活动会话视图随之关闭，需重新 openSession。
   Future<void> clearLocalCache() async {
     await _cache.clearAll();
+    _stopFallbackPolling();
+    _states.clear();
+    _activeSessionId = null;
+    notifyListeners();
   }
 
   /// 设置会话权限模式（session/setMode；plan|build|edit|yolo|auto）。
