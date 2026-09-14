@@ -28,6 +28,7 @@ import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../services/chat_store.dart'
     show PermissionRequest, AskUserQuestion;
+import 'settings_page.dart';
 import '../widgets/animated_message_item.dart';
 import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
@@ -385,6 +386,7 @@ class _ZcodePageState extends State<ZcodePage> {
           foregroundColor: colors.textPrimary,
           title: Text('ZCode 远程控制',
               style: TextStyle(color: colors.textPrimary),),
+          actions: [_buildSettingsAction(context)],
         );
       case _ZcodeView.pairing:
         return AppBar(
@@ -392,8 +394,22 @@ class _ZcodePageState extends State<ZcodePage> {
           foregroundColor: colors.textPrimary,
           title: Text('ZCode 远程控制',
               style: TextStyle(color: colors.textPrimary),),
+          actions: [_buildSettingsAction(context)],
         );
     }
+  }
+
+  /// 设置入口（主题/推送等）。会话与配对视图 AppBar 共用；
+  /// 旧 LandingPage 退役后这里是设置的唯一入口。
+  Widget _buildSettingsAction(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.settings_outlined),
+      tooltip: '设置',
+      onPressed: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SettingsPage()),
+      ),
+    );
   }
 
   /// 从会话列表元信息中找当前会话标题
