@@ -23,6 +23,18 @@ const safeError = (code) => Object.assign(new Error(code), { code });
 const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
 const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
 
+// 权限/确认/AskUser 类反向请求判定（决定超时看护档位）：
+// - 实名：session/requestPermission（权限确认）、interaction/askUser（提问），
+//   即手机端 UI 接入的两种形态（见 Flutter zcode_chat_store 的路由规则）；
+// - 模式：method 含 permission / confirm / approval / approve / askUser 变体 /
+//   interaction 的都视为需要人盯手机应答，放宽看护窗口。
+//   注意不能用裸 "ask"——会误伤 cancelBackgroundTask 里的 "task"。
+const PERMISSION_LIKE_METHOD_PATTERN = /permission|confirm|approval|approve|ask[-_]?user|interaction/i;
+
+function isPermissionLikeMethod(method) {
+  return typeof method === 'string' && PERMISSION_LIKE_METHOD_PATTERN.test(method);
+}
+
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
 function defaultZcodeCommand() {
   const local = path.join(process.env.LOCALAPPDATA || '', 'Programs/ZCode/resources/glm/zcode.cjs');
@@ -128,7 +140,10 @@ function createCompanion(options = {}) {
     relayUrl, cwd = process.cwd(), zcodeCommand, v2ConfigPath,
     midFile = path.join(os.homedir(), '.wzxclaw', 'zcode-companion', 'mid'),
     logger = () => {}, onPairing = () => {}, onStateChange = () => {},
-    reconnectDelayMs = 5000, requestTimeoutMs = 15000,
+    reconnectDelayMs = 5000,
+    // 反向请求超时看护分两档：权限/确认/AskUser 类（isPermissionLikeMethod）
+    // 等人在手机上应答，放宽到 120s；其余维持 15s。两档均可注入短值供测试。
+    requestTimeoutMs = 15000, permissionRequestTimeoutMs = 120000,
   } = options;
   if (typeof relayUrl !== 'string' || !/^wss?:\/\/.+\/ws$/.test(relayUrl)) throw safeError('INVALID_RELAY_URL');
 
@@ -145,7 +160,7 @@ function createCompanion(options = {}) {
   let creds = null;
   let reattaching = false;
   let matchedUp = false; // 房间当前是否手机+设备齐全（决定 app-server 出站是否放行）
-  const pending = new Map(); // 反向请求超时看护（不代答的转发给手机端）
+  const pending = new Map(); // 反向请求超时看护（按 method 分档，见 handleAppServerFrame）
 
   function log(event, detail) { logger(event, detail); }
 
@@ -217,18 +232,21 @@ function createCompanion(options = {}) {
   }
 
   // app-server → 手机。运行时偏好反向请求由 companion 代答；其余反向请求
-  // （权限确认等）转发给手机端应答，并做超时看护。
+  // （权限确认等）转发给手机端应答，并按 method 分档做超时看护：
+  // 权限/确认/AskUser 类放宽到 permissionRequestTimeoutMs（人看手机应答），
+  // 其余走 requestTimeoutMs；超时一律代答 -32022 拒绝（行为与旧版一致）。
   function handleAppServerFrame(frame) {
     if (frame.method && frame.id != null) {
       if (frame.method === RUNTIME_PREFERENCES_METHOD) {
         bridge.write({ id: frame.id, result: RUNTIME_PREFERENCES_RESULT });
         return;
       }
+      const timeoutMs = isPermissionLikeMethod(frame.method) ? permissionRequestTimeoutMs : requestTimeoutMs;
       const timer = setTimeout(() => {
         if (pending.delete(frame.id) && bridge) {
           bridge.write({ id: frame.id, error: { code: -32022, message: 'Client request timed out' } });
         }
-      }, requestTimeoutMs).unref();
+      }, timeoutMs).unref();
       pending.set(frame.id, timer);
     }
     sendToPhone(frame);
