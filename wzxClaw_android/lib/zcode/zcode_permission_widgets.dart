@@ -22,8 +22,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
-import '../services/chat_store.dart'
-    show AskUserQuestion, PermissionRequest;
+import 'zcode_reverse_models.dart';
 
 /// 入参里可能携带截止时间的字段名（绝对 epoch 时间戳语义）。
 ///

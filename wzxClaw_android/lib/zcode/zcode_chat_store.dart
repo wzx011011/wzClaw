@@ -52,10 +52,10 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
-import '../services/chat_store.dart' show AskUserQuestion, PermissionRequest;
 import 'zcode_notifier.dart';
 import 'zcode_pairing.dart';
 import 'zcode_relay_client.dart';
+import 'zcode_reverse_models.dart';
 import 'zcode_session_cache.dart';
 import 'zcode_session_state.dart';
 
@@ -242,6 +242,16 @@ class ZcodeChatStore extends ChangeNotifier {
   /// ChatMessage 模型没有 thinking 字段，与 services/chat_store 一致由
   /// store 层管理渲染状态。
   String get thinkingContent => _activeState?.thinkingContent ?? '';
+
+  /// 当前会话的权限模式（plan|build|edit|yolo|auto；null = 未知）
+  String? get sessionMode => _activeState?.mode;
+
+  /// 视口会话是否正在打开（未 materialize 且无缓存内容）——
+  /// ChatPage 骨架屏判定用（派生态，不引入新状态字段）
+  bool get sessionOpening {
+    final state = _activeState;
+    return state != null && !state.materialized && state.items.isEmpty;
+  }
 
   /// 当前待处理的权限请求（供 UI 渲染权限条）
   PermissionRequest? get activePermission => _activePermission;
@@ -668,6 +678,49 @@ class ZcodeChatStore extends ChangeNotifier {
       return added;
     } catch (_) {
       return 0; // 缓存尽力而为
+    }
+  }
+
+  /// 清除全局错误横幅（UI 关闭按钮用）
+  void clearError() {
+    if (_error == null) return;
+    _error = null;
+    notifyListeners();
+  }
+
+  /// 清空本地消息缓存（配对与会话列表保留；
+  /// 下次打开会话时从服务端重新拉取）
+  Future<void> clearLocalCache() async {
+    await _cache.clearAll();
+  }
+
+  /// 设置会话权限模式（session/setMode；plan|build|edit|yolo|auto）。
+  /// 乐观更新本地 mode；权威值以 state.updated 的 patch.mode.current
+  /// 回填为准（实测 setMode 响应快照口径有差异：设 edit 快照显示 build，
+  /// 故不从响应/ projection 播种）。
+  Future<bool> setMode(String mode) async {
+    const allowed = ['plan', 'build', 'edit', 'yolo', 'auto'];
+    if (!allowed.contains(mode)) {
+      _fail('未知权限模式：$mode');
+      return false;
+    }
+    final client = _client;
+    final state = _activeState;
+    if (client == null || state == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      await client.request('session/setMode', {
+        'sessionId': state.sessionId,
+        'mode': mode,
+      });
+      state.mode = mode;
+      _notifyIfActive(state);
+      return true;
+    } catch (e) {
+      _fail('设置权限模式失败：$e');
+      return false;
     }
   }
 
@@ -1102,6 +1155,16 @@ class ZcodeChatStore extends ChangeNotifier {
       }
     }
     if (sid != null && status != null) _updateSessionBadge(sid, status);
+
+    // 权限模式权威回填：patch.mode.current（setMode 响应快照口径
+    // 有差异，不作为来源；见 setMode 注释）
+    final modePatch = patch['mode'];
+    final modeCurrent =
+        modePatch is Map ? _nonEmpty(modePatch['current']) : null;
+    if (modeCurrent != null && state.mode != modeCurrent) {
+      state.mode = modeCurrent;
+      _notifyIfActive(state);
+    }
   }
 
   /// v4/telemetry/event：usage.delta 记 token；turn.terminal 回合收尾

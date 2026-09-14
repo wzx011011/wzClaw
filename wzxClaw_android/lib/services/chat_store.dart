@@ -13,33 +13,13 @@ import 'chat_database.dart';
 import 'connection_manager.dart';
 import 'ws_transport.dart';
 
-/// Permission request from the desktop agent.
-class PermissionRequest {
-  final String toolCallId;
-  final String toolName;
-  final Map<String, dynamic> input;
-
-  const PermissionRequest({
-    required this.toolCallId,
-    required this.toolName,
-    required this.input,
-  });
-}
-
-/// AskUserQuestion request from the desktop agent.
-class AskUserQuestion {
-  final String questionId;
-  final String question;
-  final List<Map<String, String>> options; // [{label, description}]
-  final bool multiSelect;
-
-  const AskUserQuestion({
-    required this.questionId,
-    required this.question,
-    required this.options,
-    this.multiSelect = false,
-  });
-}
+// PermissionRequest / AskUserQuestion 已迁移至 zcode 层
+// （zcode/zcode_reverse_models.dart）。此处 import 供本文件内部使用 +
+// re-export 过渡：现有 `import ...chat_store.dart show PermissionRequest,
+// AskUserQuestion` 继续编译；旧栈退役（chat_store 删除）时一并移除。
+import '../zcode/zcode_reverse_models.dart';
+export '../zcode/zcode_reverse_models.dart'
+    show PermissionRequest, AskUserQuestion;
 
 class ChatStore {
   static ChatStore _instance = ChatStore._();
