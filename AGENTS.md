@@ -57,6 +57,10 @@ cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
 flutter test           # 366 项
 
+# 手机端 release APK（2026-09-16 定）：编译产物统一放 NAS `/volume1/share/zcode/`，
+# 文件名沿用 wzxClaw-android-release.apk
+flutter build apk --release
+
 # companion（PC 常驻节点）
 node relay/zcode/companion.js --relay wss://zcode.5945.top/ws --cwd <工作目录>
 # 生产用计划任务 wzxClawZcodeCompanion 拉起（勿在代理任务托管里长跑，会被回收）
@@ -100,6 +104,8 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **确定性房间号**：房间 id 由 (pass_hash, mid) 派生、口令落盘
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
+- **APK 发布纪律**：编译好的手机端 release APK 一律放 NAS `/volume1/share/zcode/`
+  （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`。
 
 ## 外部服务
 
