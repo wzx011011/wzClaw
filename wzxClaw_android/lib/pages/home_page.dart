@@ -554,7 +554,7 @@ class _ChatPageState extends State<ChatPage> {
       itemCount: itemCount,
       itemBuilder: (context, index) {
         if (showThinking && index == grouped.length) {
-          return const ThinkingIndicator();
+          return AgentThinkingBlock(thinkingStream: ChatStore.instance.thinkingStream);
         }
         final item = grouped[index];
         Widget child;
@@ -681,16 +681,29 @@ class _ChatPageState extends State<ChatPage> {
             _buildMarkdownBody(msg.content, isStreaming: msg.isStreaming),
             if (msg.isStreaming) const StreamingShimmer(),
             // Token usage footer
-            if (msg.usage != null || msg.model != null)
+            if (msg.usage != null || msg.model != null || msg.durationMs != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    if (msg.usage != null)
-                      Text(
-                        'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
-                        style: TextStyle(color: colors.textMuted, fontSize: 10),
+                    if (msg.usage != null || msg.durationMs != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (msg.usage != null)
+                            Text(
+                              'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
+                              style: TextStyle(color: colors.textMuted, fontSize: 10),
+                            ),
+                          if (msg.durationMs != null) ...[
+                            if (msg.usage != null) const SizedBox(width: 8),
+                            Text(
+                              '已工作 ${_formatDurationMs(msg.durationMs!)}',
+                              style: TextStyle(color: colors.textMuted, fontSize: 10),
+                            ),
+                          ],
+                        ],
                       )
                     else
                       const SizedBox.shrink(),
@@ -802,6 +815,13 @@ class _ChatPageState extends State<ChatPage> {
       return '${(tokens / 1000).toStringAsFixed(1)}k';
     }
     return tokens.toString();
+  }
+
+  /// 回合耗时（turn.completed duration 毫秒）→「2 分 7 秒」
+  String _formatDurationMs(int ms) {
+    final s = ms <= 0 ? 0 : ms ~/ 1000;
+    if (s < 60) return '$s 秒';
+    return '${s ~/ 60} 分 ${s % 60} 秒';
   }
 
   // ── Slash command autocomplete ────────────────────────────────────

@@ -86,6 +86,10 @@ class ChatMessage {
   /// 子智能体消息按此字段折叠渲染；仅运行时，不持久化。
   final String? agent;
 
+  /// 本回合耗时（引擎 turn.completed duration 毫秒）→「已工作 X 分 X 秒」。
+  /// 仅运行时，不持久化。
+  final int? durationMs;
+
   ChatMessage({
     this.id,
     required this.role,
@@ -102,6 +106,7 @@ class ChatMessage {
     this.toolResultSummary,
     this.model,
     this.agent,
+    this.durationMs,
   });
 
   /// 主 agent 名（引擎实测 zcode-agent）；null 视为主时间线（旧数据兼容）
@@ -118,6 +123,8 @@ class ChatMessage {
   ChatMessage copyWith({
     int? id,
     String? content,
+    String? toolName,
+    String? toolInput,
     ToolCallStatus? toolStatus,
     bool? isStreaming,
     List<ToolCallInfo>? toolCalls,
@@ -126,23 +133,25 @@ class ChatMessage {
     String? toolResultSummary,
     String? model,
     String? agent,
+    int? durationMs,
   }) =>
       ChatMessage(
         id: id ?? this.id,
         role: role,
         content: content ?? this.content,
-        toolName: toolName,
+        toolName: toolName ?? this.toolName,
         toolStatus: toolStatus ?? this.toolStatus,
         createdAt: createdAt,
         isStreaming: isStreaming ?? this.isStreaming,
         toolCalls: toolCalls ?? this.toolCalls,
         usage: usage ?? this.usage,
         toolCallId: toolCallId,
-        toolInput: toolInput,
+        toolInput: toolInput ?? this.toolInput,
         toolOutput: toolOutput ?? this.toolOutput,
         toolResultSummary: toolResultSummary ?? this.toolResultSummary,
         model: model ?? this.model,
         agent: agent ?? this.agent,
+        durationMs: durationMs ?? this.durationMs,
       );
 
   Map<String, dynamic> toDbMap() => {

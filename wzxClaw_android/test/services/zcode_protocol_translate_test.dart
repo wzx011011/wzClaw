@@ -210,6 +210,124 @@ void main() {
     });
   });
 
+  group('实测单事件形状（probe-stream-shape 词表校准）', () {
+    // 生产推送是单事件：params={sessionId,type,payload,...}，语义载荷在
+    // payload 内。回归锚点：解包 bug 曾导致所有单事件帧零翻译（空白根因）。
+    test('model.streaming text_delta → stream:agent:text', () {
+      final events = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'model.streaming',
+        'payload': {'kind': 'text_delta', 'delta': '你好', 'done': false},
+      }, (_, __) {});
+      expect(events.single.event, 'stream:agent:text');
+      expect(events.single.data, containsPair('content', '你好'));
+    });
+
+    test('reasoning_delta → stream:agent:thinking；tool_input_delta/end 忽略', () {
+      final think = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'model.streaming',
+        'payload': {'kind': 'reasoning_delta', 'delta': '先想想'},
+      }, (_, __) {});
+      expect(think.single.event, 'stream:agent:thinking');
+
+      expect(
+        translateNotification('session/event', {
+          'sessionId': 's1',
+          'type': 'model.streaming',
+          'payload': {'kind': 'tool_input_delta', 'delta': '{"command"', 'toolCallId': 'c1'},
+        }, (_, __) {},),
+        isEmpty,
+      );
+      expect(
+        translateNotification('session/event', {
+          'sessionId': 's1',
+          'type': 'model.streaming',
+          'payload': {'kind': 'tool_input_end', 'toolCallId': 'c1'},
+        }, (_, __) {},),
+        isEmpty,
+      );
+    });
+
+    test('tool_input_start 建占位卡；tool_call 补全完整 input 对象', () {
+      final start = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'model.streaming',
+        'payload': {'kind': 'tool_input_start', 'toolCallId': 'c1', 'toolName': 'Bash'},
+      }, (_, __) {});
+      expect(start.single.event, 'stream:agent:tool_call');
+      expect(start.single.data, containsPair('toolName', 'Bash'));
+
+      final call = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'model.streaming',
+        'payload': {
+          'kind': 'tool_call',
+          'toolCallId': 'c1',
+          'toolName': 'Bash',
+          'input': {'command': 'echo hi'},
+        },
+      }, (_, __) {});
+      expect(call.single.event, 'stream:agent:tool_call');
+      expect((call.single.data as Map)['input'], containsPair('command', 'echo hi'));
+    });
+
+    test('type=turn.completed → turn_end + done（usage + durationMs）', () {
+      final events = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'turn.completed',
+        'payload': {
+          'resultType': 'success',
+          'duration': 127000,
+          'usage': {'inputTokens': 100, 'outputTokens': 5},
+        },
+      }, (_, __) {});
+      expect(events[0].event, 'stream:agent:turn_end');
+      expect(events[1].event, 'stream:agent:done');
+      expect((events[1].data as Map)['durationMs'], 127000);
+      expect(((events[1].data as Map)['usage'] as Map), containsPair('inputTokens', 100));
+    });
+
+    test('type=turn.started → running；type=permission.resolved（无 kind）→ 待清', () {
+      final running = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'turn.started',
+        'payload': {'turnNumber': 0},
+      }, (_, __) {});
+      expect(running.single.event, 'stream:agent:running');
+
+      final resolved = translateNotification('session/event', {
+        'sessionId': 's1',
+        'type': 'permission.resolved',
+        'payload': {'toolCallId': 'c1', 'decision': 'approved'},
+      }, (_, __) {});
+      expect(resolved.single.event, 'stream:agent:permission_resolved');
+    });
+
+    test('title/steer/recovery 等无关事件零产出（不误译为文本/工具结果）', () {
+      for (final t in ['session.titleUpdated', 'session.updated', 'turn.steerQueued']) {
+        expect(
+          translateNotification('session/event', {
+            'sessionId': 's1',
+            'type': t,
+            'payload': {'title': 'x'},
+          }, (_, __) {},),
+          isEmpty,
+          reason: t,
+        );
+      }
+      // streamRecovery 的 payload 自带 kind=tool_result（簿记），必须整体跳过
+      expect(
+        translateNotification('session/event', {
+          'sessionId': 's1',
+          'type': 'streamRecovery.updated',
+          'payload': {'kind': 'tool_result', 'toolCallId': 'c1', 'resultPartId': 'p1'},
+        }, (_, __) {},),
+        isEmpty,
+      );
+    });
+  });
+
   group('历史消息映射', () {
     test('callID（大写 D 权威字段）被读取', () {
       final events = responseToWsMessages('session/messages', {
@@ -231,6 +349,74 @@ void main() {
       final msg = (events.single.data as Map)['messages'].single as Map;
       expect((msg['tool_calls'] as List).single,
           containsPair('toolCallId', 'callID_1'));
+    });
+
+    test('state.input 为 Map 时派生单行摘要（command/file_path/pattern）', () {
+      final events = responseToWsMessages('session/messages', {
+        'messages': [
+          {
+            'info': {'role': 'assistant', 'time': {'created': 1}},
+            'parts': [
+              {
+                'type': 'tool',
+                'callID': 'c1',
+                'tool': 'Bash',
+                'state': {
+                  'status': 'completed',
+                  'input': {'command': 'echo hi', 'timeout': 1000},
+                },
+              },
+              {
+                'type': 'tool',
+                'callID': 'c2',
+                'tool': 'Read',
+                'state': {
+                  'status': 'completed',
+                  'input': {'file_path': '/tmp/a.txt'},
+                },
+              },
+              {
+                'type': 'tool',
+                'callID': 'c3',
+                'tool': 'Grep',
+                'state': {
+                  'status': 'error',
+                  'input': {'pattern': 'foo.*bar'},
+                },
+              },
+            ],
+          },
+        ],
+      }, const {});
+      final calls =
+          ((events.single.data as Map)['messages'].single as Map)['tool_calls'] as List;
+      expect(calls[0], containsPair('inputSummary', 'echo hi'));
+      expect(calls[1], containsPair('inputSummary', '/tmp/a.txt'));
+      expect(calls[2], containsPair('inputSummary', 'foo.*bar'));
+      expect(calls[2], containsPair('status', 'error'));
+    });
+
+    test('纯工具助手行（无 text part）不丢行（APP-SERVER.md 364）', () {
+      final events = responseToWsMessages('session/messages', {
+        'messages': [
+          {
+            'info': {'role': 'assistant', 'time': {'created': 1}},
+            'parts': [
+              {'type': 'step-start'},
+              {
+                'type': 'tool',
+                'callID': 'c9',
+                'tool': 'Bash',
+                'state': {'status': 'completed'},
+              },
+              {'type': 'step-finish', 'tokens': {'total': 10, 'output': 2}},
+            ],
+          },
+        ],
+      }, const {});
+      final msgs = (events.single.data as Map)['messages'] as List;
+      expect(msgs, hasLength(1));
+      expect((msgs.single as Map)['tool_calls'], isNotNull);
     });
 
     test('hasMore 按返回条数==limit 推算', () {

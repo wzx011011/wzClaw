@@ -326,6 +326,21 @@ class ChatStore {
     _finalizeStreamingMessage();
     _setWaiting(false);
 
+    // 同一 toolCallId 可能推多次（tool_input_start 建卡 → tool_call 补全
+    // input），按 id upsert：已有卡片只补全摘要，避免重复气泡
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      if (_messages[i].role == MessageRole.tool &&
+          _messages[i].toolCallId == toolCallId) {
+        _messages[i] = _messages[i].copyWith(
+          toolName: toolName,
+          toolInput: inputSummary ?? _messages[i].toolInput,
+        );
+        ChatDatabase.instance.updateMessage(_messages[i]);
+        _notifyListeners();
+        return;
+      }
+    }
+
     final toolMsg = ChatMessage(
       role: MessageRole.tool,
       content: toolName,
@@ -483,7 +498,9 @@ class ChatStore {
     if (data is Map<String, dynamic>) {
       final usageMap = data['usage'] as Map<String, dynamic>?;
       final modelName = data['model'] as String?;
-      if ((usageMap != null || modelName != null) && _messages.isNotEmpty) {
+      final durationMs = data['durationMs'] is num ? (data['durationMs'] as num).toInt() : null;
+      if ((usageMap != null || modelName != null || durationMs != null) &&
+          _messages.isNotEmpty) {
         TokenUsage? usage;
         if (usageMap != null) {
           usage = TokenUsage(
@@ -491,12 +508,13 @@ class ChatStore {
             outputTokens: (usageMap['outputTokens'] as num?)?.toInt() ?? 0,
           );
         }
-        // Attach usage + model to the last assistant message
+        // Attach usage + model + duration to the last assistant message
         for (int i = _messages.length - 1; i >= 0; i--) {
           if (_messages[i].role == MessageRole.assistant) {
             _messages[i] = _messages[i].copyWith(
               usage: usage,
               model: modelName,
+              durationMs: durationMs,
             );
             ChatDatabase.instance.updateMessage(_messages[i]);
             break;

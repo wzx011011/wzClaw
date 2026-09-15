@@ -1311,18 +1311,33 @@ class SessionSyncService {
     }
 
     // Handle tool calls embedded in assistant messages
+    // 双词表：桌面 legacy 行用 toolCalls/{id,name,input}；引擎行
+    // （翻译层 _mapEngineMessage）用 tool_calls/{toolCallId,toolName,inputSummary}。
+    // 引擎行的助手消息可只含工具 part（无文本），丢键即渲染成空气泡。
     List<ToolCallInfo>? toolCalls;
-    if (json['toolCalls'] is List) {
-      toolCalls = (json['toolCalls'] as List).whereType<Map>().map((tc) {
+    final rawToolCalls = json['toolCalls'] is List
+        ? json['toolCalls'] as List
+        : json['tool_calls'] is List ? json['tool_calls'] as List : null;
+    if (rawToolCalls != null) {
+      toolCalls = rawToolCalls.whereType<Map>().map((tc) {
         final tcMap = Map<String, dynamic>.from(tc);
+        final name = (tcMap['name'] ?? tcMap['toolName'] ?? '').toString();
+        final statusRaw = tcMap['status']?.toString();
+        final status = switch (statusRaw) {
+          'running' => ToolCallStatus.running,
+          'error' => ToolCallStatus.error,
+          'done' || 'completed' => ToolCallStatus.done,
+          _ => ToolCallStatus.done,
+        };
         return ToolCallInfo(
-          toolCallId: tcMap['id'] as String? ?? '',
-          toolName: tcMap['name'] as String? ?? '',
+          toolCallId: (tcMap['id'] ?? tcMap['toolCallId'] ?? '').toString(),
+          toolName: name,
+          // 引擎行直接给 inputSummary 字符串；legacy 行给 input 对象现场摘要
           inputSummary: _summarizeToolInput(
-            tcMap['name'] as String?,
-            tcMap['input'],
+            name,
+            tcMap['input'] ?? tcMap['inputSummary'],
           ),
-          status: ToolCallStatus.done,
+          status: status,
         );
       }).toList();
     }
@@ -1330,14 +1345,18 @@ class SessionSyncService {
     TokenUsage? usage;
     if (json['usage'] is Map) {
       final u = Map<String, dynamic>.from(json['usage'] as Map);
+      final inTok = u['inputTokens'] ?? u['input_tokens'];
+      final outTok = u['outputTokens'] ?? u['output_tokens'];
       usage = TokenUsage(
-        inputTokens: (u['inputTokens'] as num?)?.toInt() ?? 0,
-        outputTokens: (u['outputTokens'] as num?)?.toInt() ?? 0,
+        inputTokens: inTok is num ? inTok.toInt() : 0,
+        outputTokens: outTok is num ? outTok.toInt() : 0,
       );
     }
 
-    final timestamp =
-        json['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+    final tsRaw = json['timestamp'] ?? json['created_at'];
+    final timestamp = tsRaw is int
+        ? tsRaw
+        : DateTime.now().millisecondsSinceEpoch;
 
     // 提取文本内容：优先使用 content 字段；若为空，从 contentBlocks 中拼接 text 块
     // 这是 Anthropic interleaved 格式的兼容处理

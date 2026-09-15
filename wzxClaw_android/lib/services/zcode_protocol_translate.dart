@@ -11,6 +11,8 @@
 //   会话响应由 ConnectionManager 编排后经 [responseToWsMessages] 映射
 // ============================================================
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/goal_snapshot.dart';
@@ -75,12 +77,15 @@ List<WsMessage> translateNotification(
     final sessionId = p['sessionId']?.toString() ?? '';
     final events = p['events'];
     if (events is! List) {
-      return _translatePayload(sessionId, p);
+      // 实测推送形状（probe-stream-shape）：单事件，语义载荷在 params.payload，
+      // 事件类型在 params.type（如 model.streaming / turn.completed）。
+      return _translatePayload(sessionId, p['payload'], p['type']?.toString());
     }
     final out = <WsMessage>[];
     for (final ev in events) {
       final payload = ev is Map ? (ev['payload'] ?? ev) : ev;
-      out.addAll(_translatePayload(sessionId, payload));
+      out.addAll(_translatePayload(
+          sessionId, payload, ev is Map ? ev['type']?.toString() : null));
     }
     return out;
   }
@@ -157,36 +162,61 @@ List<WsMessage> _translateReverse(
   return [event];
 }
 
-List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
+List<WsMessage> _translatePayload(
+    String sessionId, dynamic payload, String? outerType) {
   final p = payload is Map ? payload : const {};
   final kind = p['kind']?.toString();
-  final type = p['type']?.toString();
+  // 词表来源：probe-stream-shape 实测。kind 在 payload 内（model.streaming /
+  // tool.updated 的事件），kind 缺失时回退到外层事件 type（turn.completed、
+  // permission.resolved 等无 kind 的事件）。
+  final effectiveKind =
+      kind ?? (outerType != null && outerType.isNotEmpty ? outerType : null);
   final out = <WsMessage>[];
+  // streamRecovery.updated 的 payload.kind 是 tool_result/tool_error 簿记
+  // （断线恢复锚点），不是工具完成事件，绝不能译成 tool_result。
+  if (outerType == 'streamRecovery.updated') return out;
   String content(dynamic v) => v?.toString() ?? '';
 
-  // kind 缺省视为 text_delta（与协议实测一致）
-  if (type == 'text_delta' || kind == 'text_delta' || kind == null) {
+  // 文本/思考增量（model.streaming kind=text_delta|reasoning_delta）
+  if (effectiveKind == 'text_delta' ||
+      (effectiveKind == null && (p['delta'] != null || p['text'] != null))) {
     final c = content(p['delta'] ?? p['text']);
     if (c.isNotEmpty) {
       out.add(WsMessage(event: 'stream:agent:text', data: {'sessionId': sessionId, 'content': c}));
     }
   }
-  if (type == 'reasoning_delta' || kind == 'reasoning_delta') {
+  if (effectiveKind == 'reasoning_delta') {
     final c = content(p['delta'] ?? p['text']);
     if (c.isNotEmpty) {
       out.add(WsMessage(event: 'stream:agent:thinking', data: {'sessionId': sessionId, 'content': c}));
     }
   }
-  // 工具事件实测轨迹（APP-SERVER.md「工具事件序列」）：
-  // scheduled → started → progress×N → result → batch
-  if (kind == 'scheduled' || kind == 'started') {
+  // 工具输入流（kind=tool_call 携带完整已解析 input，probe 实测）。
+  // tool_input_start 先建占位卡片（仅名字），tool_input_delta/end 忽略
+  // （原始 JSON 分片，无展示价值）；ChatStore 按 toolCallId upsert 补全 input。
+  if (effectiveKind == 'tool_input_start') {
+    out.add(WsMessage(event: 'stream:agent:tool_call', data: {
+      'sessionId': sessionId,
+      'toolCallId': content(p['toolCallId']),
+      'toolName': content(p['toolName']),
+      'input': const {},
+    }));
+  } else if (effectiveKind == 'tool_call') {
+    out.add(WsMessage(event: 'stream:agent:tool_call', data: {
+      'sessionId': sessionId,
+      'toolCallId': content(p['toolCallId']),
+      'toolName': content(p['toolName']),
+      'input': p['input'] is Map ? Map<String, dynamic>.from(p['input'] as Map) : const {},
+    }));
+  } else if (effectiveKind == 'scheduled' || effectiveKind == 'started') {
+    // 兼容旧观察词表：无 input（inputOmitted），仅提前建卡
     out.add(WsMessage(event: 'stream:agent:tool_call', data: {
       'sessionId': sessionId,
       'toolCallId': content(p['toolCallId'] ?? p['callId']),
       'toolName': content(p['toolName'] ?? p['tool']),
       'input': const {},
     }));
-  } else if (kind == 'result' || kind == 'tool.result') {
+  } else if (effectiveKind == 'result' || effectiveKind == 'tool.result') {
     // result.payload: {toolCallId, result:{success, content,...}, duration}
     final inner = p['result'] is Map ? p['result'] as Map : const {};
     final output = inner['content']?.toString() ?? '';
@@ -196,7 +226,7 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       'output': output.length > 2000 ? output.substring(0, 2000) : output,
       'isError': inner['success'] == false,
     }));
-  } else if (kind == 'permission.resolved') {
+  } else if (effectiveKind == 'permission.resolved') {
     // {requestId, toolCallId, decision, reason}：交由调用方清待答表
     out.add(WsMessage(event: 'stream:agent:permission_resolved', data: {
       'sessionId': sessionId,
@@ -204,11 +234,12 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       'toolCallId': content(p['toolCallId']),
       'decision': content(p['decision']),
     }));
-  } else if (kind == 'progress' || kind == 'batch') {
+  } else if (kind != null &&
+      (kind == 'progress' || kind == 'batch')) {
     // 进度/批次心跳：旧协议无对应事件，忽略（有观测计数）
     debugPrint('[translate] tool $kind: ${content(p['toolName'])}');
   } else if (kind != null && kind.startsWith('tool.')) {
-    // 兼容旧观察词表
+    // 兼容旧观察词表（仅 payload.kind，避免误吞外层 type=tool.updated）
     final callId = content(p['callId'] ?? p['toolCallId'] ?? p['id']);
     final toolName = content(p['tool'] ?? p['name']);
     if (kind == 'tool.call' || kind == 'tool.use' || kind == 'tool_start') {
@@ -228,11 +259,11 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       }));
     }
   }
-  if (kind == 'turn.started' || type == 'turn.started') {
+  if (effectiveKind == 'turn.started') {
     out.add(WsMessage(event: 'stream:agent:running', data: {'sessionId': sessionId}));
   }
-  if (kind == 'turn.terminal' || type == 'turn.terminal' || kind == 'turn.completed') {
-    final status = content(p['status']);
+  if (effectiveKind == 'turn.terminal' || effectiveKind == 'turn.completed') {
+    final status = content(p['status'] ?? p['resultType']);
     out.add(WsMessage(event: 'stream:agent:turn_end', data: {
       'sessionId': sessionId,
       'status': status,
@@ -241,9 +272,11 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       'sessionId': sessionId,
       'status': status,
       'usage': p['usage'],
+      // turn.completed: {duration(ms), toolCallCount, response,...} → 已工作时长
+      'durationMs': p['duration'],
     }));
   }
-  if (kind == 'model.error' || p['isError'] == true) {
+  if (effectiveKind == 'model.error' || p['isError'] == true) {
     out.add(WsMessage(event: 'stream:agent:error', data: {
       'sessionId': sessionId,
       'error': content(p['error'] ?? p['message']),
@@ -539,8 +572,9 @@ Map<String, dynamic>? _mapEngineMessage(Map row) {
       toolCalls.add({
         'toolCallId': (raw['callID'] ?? raw['callId'] ?? state['callId'] ?? '').toString(),
         'toolName': (raw['tool'] ?? state['tool'] ?? '').toString(),
-        'inputSummary': _truncate(state['input']),
-        'outputSummary': _truncate(state['output']),
+        'inputSummary': _toolInputSummary(
+            (raw['tool'] ?? state['tool'] ?? '').toString(), state['input']),
+        'outputSummary': _truncate(state['output']?.toString()),
         'status': state['status'] == 'completed'
             ? 'done'
             : state['status'] == 'error' ? 'error' : 'running',
@@ -571,4 +605,40 @@ int _num(dynamic v) => v is int ? v : (v is num ? v.toInt() : 0);
 String? _truncate(dynamic v) {
   if (v is! String || v.isEmpty) return null;
   return v.length > 200 ? v.substring(0, 200) : v;
+}
+
+/// 工具输入 → 单行摘要（与 ChatStore._summarizeToolInput 同语义，
+/// 纯函数版供历史行映射复用）。state.input 实测是 Map（对象）而非字符串。
+String? _toolInputSummary(String toolName, dynamic input) {
+  if (input == null) return null;
+  if (input is String) return _truncate(input);
+  if (input is! Map) return _truncate(input.toString());
+  String pick(List<String> keys) {
+    for (final k in keys) {
+      final v = input[k];
+      if (v is String && v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  final s = switch (toolName) {
+    'Bash' || 'Shell' || 'shell-execute' => pick(['command']),
+    'Read' || 'Write' || 'Edit' || 'file-read' || 'file-write' || 'file-edit' =>
+      pick(['file_path', 'filePath', 'path']),
+    'Grep' || 'Glob' => pick(['pattern']),
+    'WebSearch' || 'web-search' => pick(['query']),
+    'WebFetch' || 'web-fetch' => pick(['url']),
+    _ => pick(['command', 'file_path', 'filePath', 'path', 'pattern', 'url',
+      'query', 'description']),
+  };
+  if (s.isNotEmpty) return _truncate(s);
+  // 兜底：第一个字符串值 → 压缩 JSON → toString
+  for (final v in input.values) {
+    if (v is String && v.isNotEmpty) return _truncate(v);
+  }
+  try {
+    return _truncate(jsonEncode(input));
+  } catch (_) {
+    return _truncate(input.toString());
+  }
 }
