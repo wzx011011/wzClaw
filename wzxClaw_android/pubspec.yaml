@@ -24,7 +24,6 @@ dependencies:
   google_fonts: ^6.1.0
   flutter_inappwebview: ^6.0.0
   flutter_local_notifications: ^18.0.0
-  image_picker: ^1.2.3
 
 dev_dependencies:
   flutter_test:
@@ -34,7 +33,6 @@ dev_dependencies:
   shelf: ^1.4.0
   shelf_web_socket: ^2.0.0
 
-  stream_channel: any
 flutter:
   uses-material-design: true
 

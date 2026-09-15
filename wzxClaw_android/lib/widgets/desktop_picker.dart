@@ -45,7 +45,7 @@ class DesktopPicker extends StatelessWidget {
                 onTap: () => onSelect(d.desktopId),
                 colors: colors,
               ),
-            ),),
+            )),
           ],
         ),
       ),
