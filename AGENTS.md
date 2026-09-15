@@ -55,7 +55,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 # 手机端
 cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
-flutter test           # 374 项
+flutter test           # 378 项
 
 # 手机端 release APK（2026-09-16 定）：
 # 1. 每次出包前 pubspec.yaml 的 patch 版本 +1 并带 +N（如 1.2.5+5 → 1.2.6+6），
