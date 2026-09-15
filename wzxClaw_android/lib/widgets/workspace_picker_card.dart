@@ -74,7 +74,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                         Text(
                           ws.primaryPath!,
                           style: TextStyle(
-                              color: colors.textMuted, fontSize: 11),
+                              color: colors.textMuted, fontSize: 11,),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -87,7 +87,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                            horizontal: 6, vertical: 2,),
                         decoration: BoxDecoration(
                           color: colors.accent.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(10),
@@ -109,7 +109,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                   )
                 else
                   Icon(Icons.arrow_forward_ios,
-                      size: 14, color: colors.textMuted),
+                      size: 14, color: colors.textMuted,),
               ],
             ),
           ),
@@ -142,7 +142,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                   borderRadius: BorderRadius.circular(6),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 8),
+                        horizontal: 8, vertical: 8,),
                     child: Row(
                       children: [
                         // 运行状态指示灯
@@ -179,7 +179,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                                 '${session.messageCount} 条消息${_formatTime(session.updatedAt)}',
                                 style: TextStyle(
                                     fontSize: 11,
-                                    color: colors.textMuted),
+                                    color: colors.textMuted,),
                               ),
                             ],
                           ),
@@ -187,7 +187,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                         if (isRunning)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 1),
+                                horizontal: 6, vertical: 1,),
                             decoration: BoxDecoration(
                               color: colors.success
                                   .withValues(alpha: 0.15),
@@ -196,7 +196,7 @@ class _WorkspacePickerCardState extends State<WorkspacePickerCard> {
                             child: Text(
                               statusText,
                               style: TextStyle(
-                                  color: colors.success, fontSize: 10),
+                                  color: colors.success, fontSize: 10,),
                             ),
                           ),
                       ],
