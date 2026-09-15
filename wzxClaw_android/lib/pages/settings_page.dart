@@ -9,6 +9,7 @@ import '../services/connection_manager.dart';
 import '../services/push_wake_service.dart';
 import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
+import '../services/zcode_protocol_translate.dart' show normalizeQrScanToServerUrl;
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -190,6 +191,19 @@ class _SettingsPageState extends State<SettingsPage> {
         return;
       }
       try {
+        // 新配对链接（sid+hash）：scheme 升级后原样填入地址栏，链接即完整
+        // 凭据，不走旧 token 提取/剥参（剥掉 sid/hash 会直接配对失败）
+        final pairingUrl = normalizeQrScanToServerUrl(result);
+        if (pairingUrl != null) {
+          final validated = _parseAndValidateServerUrl(pairingUrl);
+          if (validated == null) return;
+          _serverUrlController.text = pairingUrl;
+          _tokenController.text = '';
+          setState(() {});
+          _saveValues();
+          _connect();
+          return;
+        }
         final uri = Uri.parse(result);
         // Extract token from QR code URL query params
         final token = uri.queryParameters['token'] ?? '';

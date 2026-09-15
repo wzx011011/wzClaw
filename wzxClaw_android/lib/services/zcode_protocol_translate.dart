@@ -39,6 +39,19 @@ import '../models/ws_message.dart';
   }
 }
 
+/// 扫码结果 → 设置页地址栏应填内容（配对链接专用）。
+/// https/http 升级为 wss/ws 以通过地址校验；路径与查询参数（sid/hash/name）
+/// 原样保留——链接本身就是完整凭据，任何剥参都会破坏配对。
+/// 非配对链接（无 sid+hash）返回 null，调用方走旧 token 二维码后处理。
+String? normalizeQrScanToServerUrl(String raw) {
+  if (parsePairingUrlAny(raw) == null) return null;
+  final uri = Uri.parse(raw.trim());
+  final scheme = uri.scheme.toLowerCase();
+  final wsScheme =
+      scheme == 'https' ? 'wss' : scheme == 'http' ? 'ws' : scheme;
+  return uri.replace(scheme: wsScheme).toString();
+}
+
 /// 反向请求（app-server → 手机）登记信息
 class ReverseRequestInfo {
   final dynamic frameId;

@@ -20,6 +20,25 @@ void main() {
     });
   });
 
+  group('normalizeQrScanToServerUrl（扫码配对链接归一化）', () {
+    test('https 配对链接升级为 wss，sid/hash/name 参数原样保留', () {
+      final url = normalizeQrScanToServerUrl(
+          'https://zcode.5945.top/pair?sid=abc&hash=xxx&name=MY-PC');
+      expect(url, 'wss://zcode.5945.top/pair?sid=abc&hash=xxx&name=MY-PC');
+      // 归一化结果必须能被 connect() 直接接受（parsePairingUrlAny 非 null）
+      expect(parsePairingUrlAny(url!), isNotNull);
+    });
+
+    test('wss 配对链接原样返回；非配对链接返回 null 走旧后处理', () {
+      expect(normalizeQrScanToServerUrl('wss://zcode.5945.top/pair?sid=a&hash=b'),
+          'wss://zcode.5945.top/pair?sid=a&hash=b');
+      // 旧 token 二维码（无 sid+hash）：返回 null，不能被误当配对链接
+      expect(normalizeQrScanToServerUrl('https://5945.top/relay/?token=tok123'),
+          isNull);
+      expect(normalizeQrScanToServerUrl('wss://5945.top/relay/'), isNull);
+    });
+  });
+
   group('权限反向请求翻译', () {
     test('options 原文透传（含 response 模板）+ requestId 作 key', () {
       final registered = <String, ReverseRequestInfo>{};
