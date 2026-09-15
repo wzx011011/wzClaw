@@ -57,8 +57,11 @@ cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
 flutter test           # 366 项
 
-# 手机端 release APK（2026-09-16 定）：编译产物统一放 NAS `/volume1/share/zcode/`，
-# 文件名沿用 wzxClaw-android-release.apk
+# 手机端 release APK（2026-09-16 定）：
+# 1. 每次出包前 pubspec.yaml 的 patch 版本 +1 并带 +N（如 1.2.5+5 → 1.2.6+6），
+#    versionCode 单调递增，手机上能看出是否最新版；
+# 2. 产物统一放 NAS `/volume1/share/zcode/`，文件名带版本：
+#    wzxClaw-android-release-vX.Y.Z.apk（不带版本的旧文件删掉，避免分不清）
 flutter build apk --release
 
 # companion（PC 常驻节点）
@@ -105,7 +108,9 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
 - **APK 发布纪律**：编译好的手机端 release APK 一律放 NAS `/volume1/share/zcode/`
-  （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`。
+  （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`；
+  每次出包 patch 版本 +1（pubspec 带 +N 保 versionCode 递增），文件名带
+  版本号 `wzxClaw-android-release-vX.Y.Z.apk`。
 
 ## 外部服务
 
