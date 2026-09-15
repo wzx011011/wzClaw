@@ -94,7 +94,7 @@ void main() {
               isConnected: true,
             ),
           ),
-        ),);
+        ));
         // Widget built without error -- callback accepted
         expect(received, isNull);
       });
@@ -109,7 +109,7 @@ void main() {
               isConnected: false,
             ),
           ),
-        ),);
+        ));
         // Widget built with isConnected: false
         expect(find.byType(MicButton), findsOneWidget);
       });
@@ -125,7 +125,7 @@ void main() {
               isStreaming: true,
             ),
           ),
-        ),);
+        ));
         // Widget built with isStreaming: true
         expect(find.byType(MicButton), findsOneWidget);
       });

@@ -6,7 +6,7 @@ import 'package:wzxclaw_android/widgets/tool_card.dart';
 
 void main() {
   group('ToolCard', () {
-    ChatMessage toolMsg({
+    ChatMessage _toolMsg({
       String name = 'Bash',
       ToolCallStatus status = ToolCallStatus.done,
       String? input,
@@ -29,25 +29,25 @@ void main() {
 
     group('rendering', () {
       testWidgets('renders tool name text', (tester) async {
-        await tester.pumpWidget(buildSubject(toolMsg(name: 'Bash')));
+        await tester.pumpWidget(buildSubject(_toolMsg(name: 'Bash')));
         expect(find.text('Bash'), findsOneWidget);
       });
 
       testWidgets('shows "Running" text when toolStatus=running',
           (tester) async {
         await tester
-            .pumpWidget(buildSubject(toolMsg(status: ToolCallStatus.running)));
+            .pumpWidget(buildSubject(_toolMsg(status: ToolCallStatus.running)));
         expect(find.text('Running'), findsOneWidget);
       });
 
       testWidgets('shows "Done" text when toolStatus=done', (tester) async {
-        await tester.pumpWidget(buildSubject(toolMsg(status: ToolCallStatus.done)));
+        await tester.pumpWidget(buildSubject(_toolMsg(status: ToolCallStatus.done)));
         expect(find.text('Done'), findsOneWidget);
       });
 
       testWidgets('shows "Error" text when toolStatus=error', (tester) async {
         await tester
-            .pumpWidget(buildSubject(toolMsg(status: ToolCallStatus.error)));
+            .pumpWidget(buildSubject(_toolMsg(status: ToolCallStatus.error)));
         expect(find.text('Error'), findsOneWidget);
       });
 
@@ -55,12 +55,12 @@ void main() {
           'auto-expands when toolStatus=error (input/output visible without tap)',
           (tester) async {
         await tester.pumpWidget(buildSubject(
-          toolMsg(
+          _toolMsg(
             status: ToolCallStatus.error,
             input: 'error input details',
             output: 'error output details',
           ),
-        ),);
+        ));
         await tester.pumpAndSettle();
         // Input appears twice (header ellipsis + expanded body), output once
         expect(find.text('error input details'), findsWidgets);
@@ -70,7 +70,7 @@ void main() {
       testWidgets('shows input text when provided and expanded',
           (tester) async {
         await tester.pumpWidget(
-            buildSubject(toolMsg(input: 'ls -la /home')),);
+            buildSubject(_toolMsg(input: 'ls -la /home')));
         await tester.pumpAndSettle();
         // Header shows input in ellipsis form even when collapsed
         expect(find.text('ls -la /home'), findsOneWidget);
@@ -83,7 +83,7 @@ void main() {
       testWidgets('shows output text when provided and expanded',
           (tester) async {
         await tester.pumpWidget(
-            buildSubject(toolMsg(output: 'total 42')),);
+            buildSubject(_toolMsg(output: 'total 42')));
         await tester.pumpAndSettle();
         // Tap to expand
         await tester.tap(find.byType(InkWell).first);
@@ -94,28 +94,28 @@ void main() {
       testWidgets('shows "✓ 文件已修改" for Write tool when done with output',
           (tester) async {
         await tester.pumpWidget(buildSubject(
-          toolMsg(name: 'Write', output: 'file written ok'),
-        ),);
+          _toolMsg(name: 'Write', output: 'file written ok'),
+        ));
         await tester.pumpAndSettle();
         expect(find.text('✓ 文件已修改'), findsOneWidget);
       });
 
       testWidgets('shows correct icon for Bash tool (terminal)',
           (tester) async {
-        await tester.pumpWidget(buildSubject(toolMsg(name: 'Bash')));
+        await tester.pumpWidget(buildSubject(_toolMsg(name: 'Bash')));
         expect(find.byIcon(Icons.terminal), findsOneWidget);
       });
 
       testWidgets('shows correct icon for Read tool (description_outlined)',
           (tester) async {
-        await tester.pumpWidget(buildSubject(toolMsg(name: 'Read')));
+        await tester.pumpWidget(buildSubject(_toolMsg(name: 'Read')));
         expect(find.byIcon(Icons.description_outlined), findsOneWidget);
       });
 
       testWidgets('shows correct icon for unknown tool (build_outlined)',
           (tester) async {
         await tester
-            .pumpWidget(buildSubject(toolMsg(name: 'UnknownTool')));
+            .pumpWidget(buildSubject(_toolMsg(name: 'UnknownTool')));
         expect(find.byIcon(Icons.build_outlined), findsOneWidget);
       });
     });
@@ -123,7 +123,7 @@ void main() {
     group('expand/collapse toggle', () {
       testWidgets('tap to expand then tap again to collapse', (tester) async {
         await tester.pumpWidget(
-            buildSubject(toolMsg(input: 'hidden input', output: 'hidden output')),);
+            buildSubject(_toolMsg(input: 'hidden input', output: 'hidden output')));
         await tester.pumpAndSettle();
 
         // Collapsed: header shows input in ellipsis row, but output hidden

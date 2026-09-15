@@ -45,7 +45,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   // -- Public state streams --
   final StreamController<WsConnectionState> _stateController =
       StreamController<WsConnectionState>.broadcast();
-  @override
   Stream<WsConnectionState> get stateStream => _stateController.stream;
 
   final StreamController<WsMessage> _messageController =
@@ -72,11 +71,9 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   // -- Selected desktop for routing --
   String? _selectedDesktopId;
-  @override
   String? get selectedDesktopId => _selectedDesktopId;
   final StreamController<String?> _selectedDesktopIdController =
       StreamController<String?>.broadcast();
-  @override
   Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
 
   // -- Backward-compatible convenience getters --
@@ -95,7 +92,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   // -- Internal state --
   WsConnectionState _state = WsConnectionState.disconnected;
-  @override
   WsConnectionState get state => _state;
 
   WebSocketChannel? _channel;
@@ -245,7 +241,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   /// If connected and heartbeat is healthy, sends immediately.
   /// Otherwise, queues the message for delivery on reconnect.
   /// [priority] controls send order when flushing (higher = sent first).
-  @override
   void send(WsMessage message, {int priority = 0}) {
     final json = message.toJsonString();
 
@@ -571,7 +566,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
           // 注入合成事件：先 done 重置 streaming 状态，再 error 展示错误气泡。
           final errMsg = (json['data'] as Map<String, dynamic>?)?['error'] as String? ??
               'Desktop is offline. Please open wzxClaw on your computer.';
-          _messageController.add(const WsMessage(event: WsEvents.agentDone, data: {'cancelled': true}));
+          _messageController.add(WsMessage(event: WsEvents.agentDone, data: {'cancelled': true}));
           _messageController.add(WsMessage(event: WsEvents.agentError, data: {'error': errMsg, 'recoverable': false}));
         }
         return;
