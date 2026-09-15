@@ -115,10 +115,29 @@ class ChatMessage {
 
   /// 桌面端注入给 agent 的系统提醒会以 user-role 存进 JSONL，
   /// 但聊天 UI 不应把它们当成用户消息展示。
+  /// 实测（桌面端引擎包）：除 <system-reminder> 包裹外，todo 提醒以裸文本
+  /// 「The TodoWrite tool hasn't been used recently.」直接入库。
   bool get isSystemInjected {
     final text = content.trimLeft();
-    return text.startsWith('<system-reminder>') || text.startsWith('[System]');
+    if (text.startsWith('<system-reminder>') || text.startsWith('[System]')) {
+      return true;
+    }
+    if (text.startsWith("The TodoWrite tool hasn't been used recently")) {
+      return true;
+    }
+    if (text.contains('This is a gentle reminder - ignore if not applicable.')) {
+      return true;
+    }
+    return false;
   }
+
+  /// 空助手行（无文本/无工具/无输出）——历史同步或旧版本写入的占位垃圾，
+  /// 渲染成只带「In: 0 · Out: 0」的空气泡，不展示。
+  bool get isEmptyAssistant =>
+      role == MessageRole.assistant &&
+      content.trim().isEmpty &&
+      (toolCalls == null || toolCalls!.isEmpty) &&
+      (toolOutput == null || toolOutput!.isEmpty);
 
   ChatMessage copyWith({
     int? id,

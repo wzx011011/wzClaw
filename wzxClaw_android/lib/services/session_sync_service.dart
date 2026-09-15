@@ -502,7 +502,8 @@ class SessionSyncService {
     for (final raw in rawMessages) {
       if (raw is Map) {
         final message = _fromDesktopMessage(Map<String, dynamic>.from(raw));
-        if (!message.isSystemInjected) {
+        // 系统注入提醒 + 空助手占位行都不进时间线
+        if (!message.isSystemInjected && !message.isEmptyAssistant) {
           messages.add(message);
         }
       }

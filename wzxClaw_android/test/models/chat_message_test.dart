@@ -633,6 +633,69 @@ void main() {
     });
   });
 
+  group('系统注入/空行过滤（引擎历史垃圾行）', () {
+    test('裸 TodoWrite 提醒（无 <system-reminder> 包裹）被识别', () {
+      final reminder = ChatMessage(
+        role: MessageRole.user,
+        content: "The TodoWrite tool hasn't been used recently. If you're "
+            'working on tasks that would benefit from tracking progress, '
+            'consider using the TodoWrite tool. This is a gentle reminder - '
+            'ignore if not applicable.\n\nHere are the existing contents of '
+            'your todo list:\n[1. [completed] x]',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(reminder.isSystemInjected, isTrue);
+    });
+
+    test('gentle reminder 短语兜底；普通用户消息不受影响', () {
+      final wrapped = ChatMessage(
+        role: MessageRole.user,
+        content: 'some note. This is a gentle reminder - ignore if not '
+            'applicable.',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(wrapped.isSystemInjected, isTrue);
+
+      final normal = ChatMessage(
+        role: MessageRole.user,
+        content: '帮我把这个函数改成异步的',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(normal.isSystemInjected, isFalse);
+    });
+
+    test('空助手行（无文本无工具）识别为占位垃圾', () {
+      final empty = ChatMessage(
+        role: MessageRole.assistant,
+        content: '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(empty.isEmptyAssistant, isTrue);
+
+      final withTool = ChatMessage(
+        role: MessageRole.assistant,
+        content: '',
+        toolCalls: [
+          ToolCallInfo(
+            toolCallId: 'c1',
+            toolName: 'Bash',
+            inputSummary: 'echo hi',
+            status: ToolCallStatus.done,
+          ),
+        ],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(withTool.isEmptyAssistant, isFalse);
+
+      final userEmpty = ChatMessage(
+        role: MessageRole.user,
+        content: '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      expect(userEmpty.isEmptyAssistant, isFalse);
+    });
+  });
+
   // ── Enum naming verification ──────────────────────────────────────────
 
   group('Enum name consistency', () {

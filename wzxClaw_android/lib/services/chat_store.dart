@@ -140,8 +140,12 @@ class ChatStore {
   bool get isBrowsingHistory => _isBrowsingHistory;
   bool get userManuallySwitched => _userManuallySwitched;
 
+  /// 统一可见性过滤：系统注入提醒 + 空助手占位行
+  static bool _renderable(ChatMessage m) =>
+      !m.isSystemInjected && !m.isEmptyAssistant;
+
   List<ChatMessage> get messages =>
-      List.unmodifiable(_messages.where((m) => !m.isSystemInjected));
+      List.unmodifiable(_messages.where((m) => _renderable(m)));
 
   List<ChatMessage> get displayMessages {
     final hasStreaming = _streamingMessage != null;
@@ -154,12 +158,12 @@ class ChatStore {
     _cachedMessagesLength = msgLen;
     if (hasStreaming) {
       _cachedDisplayMessages = [
-        ..._messages.where((m) => !m.isSystemInjected),
-        if (!_streamingMessage!.isSystemInjected) _streamingMessage!,
+        ..._messages.where((m) => _renderable(m)),
+        if (_renderable(_streamingMessage!)) _streamingMessage!,
       ];
     } else {
       _cachedDisplayMessages = List.unmodifiable(
-        _messages.where((m) => !m.isSystemInjected),
+        _messages.where((m) => _renderable(m)),
       );
     }
     return _cachedDisplayMessages;
@@ -863,7 +867,7 @@ class ChatStore {
         sessionId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => !m.isSystemInjected));
+      _messages.addAll(messages.where((m) => _renderable(m)));
       _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else {
@@ -872,7 +876,7 @@ class ChatStore {
         desktopId: _transport.selectedDesktopId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => !m.isSystemInjected));
+      _messages.addAll(messages.where((m) => _renderable(m)));
     }
     _notifyListeners();
   }
@@ -897,7 +901,7 @@ class ChatStore {
     // 用户在清空后已发过消息 → 不覆盖
     if (_lastUserMsgGen > _clearGeneration) return;
     final visibleMessages =
-        messages.where((m) => !m.isSystemInjected).toList(growable: false);
+        messages.where((m) => _renderable(m)).toList(growable: false);
     _messages.clear();
     _messages.addAll(visibleMessages);
     _restoreLiveSessionState(sessionId);
@@ -1016,7 +1020,7 @@ class ChatStore {
       desktopId: _transport.selectedDesktopId,
       limit: 100,
     );
-    _messages.addAll(messages.where((m) => !m.isSystemInjected));
+    _messages.addAll(messages.where((m) => _renderable(m)));
     _cleanupStaleTools();
     _notifyListeners();
   }
@@ -1037,7 +1041,7 @@ class ChatStore {
       );
     }
     if (older.isEmpty) return;
-    _messages.insertAll(0, older.where((m) => !m.isSystemInjected));
+    _messages.insertAll(0, older.where((m) => _renderable(m)));
     _notifyListeners();
   }
 
