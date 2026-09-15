@@ -11,7 +11,6 @@ import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
-import '../models/ws_message.dart';
 import '../services/app_restore_state.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
@@ -218,41 +217,6 @@ class _ChatPageState extends State<ChatPage> {
     _scrollToBottom();
   }
 
-  void _clearSession() {
-    final colors = AppColors.of(context);
-    final sessionId = ChatStore.instance.currentSessionId;
-    if (sessionId == null) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.bgElevated,
-        title: Text('清空会话', style: TextStyle(color: colors.textPrimary)),
-        content: Text(
-          '确定要清空当前会话所有消息吗？',
-          style: TextStyle(color: colors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              ChatStore.instance.clearCurrentSessionMessages();
-              // 设置冷却标记：5 秒内忽略对该会话的自动消息同步
-              SessionSyncService.instance.setClearCooldown(sessionId);
-              ConnectionManager.instance.send(WsMessage(
-                event: WsEvents.sessionClearRequest,
-                data: {'sessionId': sessionId},
-              ),);
-            },
-            child: Text('清空', style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showMessageActions(ChatMessage msg) {
     final colors = AppColors.of(context);
@@ -368,15 +332,6 @@ class _ChatPageState extends State<ChatPage> {
         ),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
-          // 切换桃面：返回 LandingPage 重新选择
-          IconButton(
-            icon: const Icon(Icons.swap_horiz_outlined),
-            tooltip: '切换桃面端',
-            onPressed: () {
-              AppRestoreState.setLastRoute('/');
-              Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
-            },
-          ),
           // 新对话：在桌面端创建新会话并切换
           StreamBuilder<String?>(
             stream: SessionSyncService.instance.activeSessionStream,
@@ -401,11 +356,6 @@ class _ChatPageState extends State<ChatPage> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: '清空会话',
-            onPressed: _clearSession,
-          ),
-          IconButton(
             icon: const Icon(Icons.settings),
             tooltip: '设置',
             onPressed: () => Navigator.pushNamed(context, '/settings'),
@@ -423,30 +373,13 @@ class _ChatPageState extends State<ChatPage> {
                 stream: ConnectionManager.instance.desktopsStream,
                 initialData: ConnectionManager.instance.desktops,
                 builder: (context, desktopsSnap) {
-                  return StreamBuilder<String?>(
-                    stream: ConnectionManager.instance.selectedDesktopIdStream,
-                    initialData: ConnectionManager.instance.selectedDesktopId,
-                    builder: (context, selectedSnap) {
-                      final desktops = desktopsSnap.data ?? [];
-                      return ConnectionStatusBar(
-                        state: _visibleConnectionState,
-                        desktops: desktops,
-                        selectedDesktopId: selectedSnap.data,
-                        onDesktopSelect: (id) {
-                          if (id == null ||
-                              ConnectionManager.instance.selectedDesktopId ==
-                                  id) {
-                            return;
-                          }
-                          // 多配对：选另一台 = 切换连接（连接成功后自动重同步会话）
-                          unawaited(ConnectionManager.instance.connectToStored(id));
-                        },
-                        desktopIdentity: ConnectionManager.instance.desktopIdentity,
-                        desktopOnline: desktops.any((d) => d.online),
-                        errorMessage: errorSnap.data,
-                        workspaceName: _workspaceName,
-                      );
-                    },
+                  final desktops = desktopsSnap.data ?? const [];
+                  return ConnectionStatusBar(
+                    state: _visibleConnectionState,
+                    desktopIdentity: ConnectionManager.instance.desktopIdentity,
+                    desktopOnline: desktops.any((d) => d.online),
+                    errorMessage: errorSnap.data,
+                    workspaceName: _workspaceName,
                   );
                 },
               );
