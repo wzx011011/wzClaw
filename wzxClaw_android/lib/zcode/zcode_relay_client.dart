@@ -82,7 +82,7 @@ class ZcodeRelayClient {
     Duration reconnectDelay = const Duration(seconds: 2), // 退避基数
     WebSocketChannel Function(Uri url)? socketFactory, // WebSocket 连接工厂（测试注入）
     Duration pingInterval = const Duration(seconds: 15), // 保活/死链检测周期
-    int pingLossLimit = 2, // 连续无入站帧的周期数上限
+    int pingLossLimit = 3, // 连续无入站帧的周期数上限（45s：容忍移动网络短暂静默，仍早于 relay 的 60s 陈旧判定）
   })  : _pairing = pairing,
         _onStateChange = onStateChange,
         _onNotify = onNotify,
@@ -457,9 +457,27 @@ class ZcodeRelayClient {
     _onSocketClosed(socket);
   }
 
-  /// 发送一条 relay 信封（连接已断开时静默丢弃，由断线流程统一善后）
-  void _send(Object value) {
+  /// 回前台链路校验：Android 后台期间 Dart 定时器被冻结，保活/死链检测
+  /// 停摆，链路多半已被系统或对端回收；回前台若仍显示已连接，要等最多
+  /// 一个死链窗口才会发现。此方法供生命周期回调立即调用——已认证但超过
+  /// [threshold] 无任何入站帧 → 视为死链，主动断开走快速重连。
+  void verifyAlive({Duration threshold = const Duration(seconds: 10)}) {
+    final state = _state;
+    if (state != ZcodeRelayState.matched && state != ZcodeRelayState.waiting) {
+      return; // 未认证：断线重连流程本就自理
+    }
+    if (_inboundWatch.elapsed <= threshold) return; // 链路新鲜
     final socket = _socket;
+    if (socket == null) return;
+    _stopKeepalive();
+    try {
+      socket.sink.close();
+    } catch (_) {/* 忽略关闭异常 */}
+    _onSocketClosed(socket);
+  }
+
+  /// 发送一条 relay 信封（连接已断开时静默丢弃，由断线流程统一善后）
+  void _send(Object value) {    final socket = _socket;
     if (socket == null) return;
     try {
       socket.sink.add(jsonEncode(value));

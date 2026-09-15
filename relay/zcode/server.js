@@ -99,15 +99,18 @@ function createRelay(options = {}) {
   wss.on('connection', (ws, req, url) => {
     const state = { ws, mid: url.searchParams.get('mid'), headerMid: req.headers['x-device-id'],
       role: null, room: null, nonce: null, authenticated: false, failed: false,
-      lastPongAt: Date.now(), rateStart: Date.now(), rateCount: 0 };
+      lastPongAt: Date.now(), rateStart: Date.now(), rateCount: 0,
+      openAt: Date.now(), ip: req.socket.remoteAddress || '-' };
     sockets.set(ws, state);
+    // 连接级诊断（排查手机端断线重连）：只记 IP 与时刻，不含任何标识值
+    logger('ws-open', `ip=${state.ip}`);
     state.authTimer = setTimeout(() => fail(state, 'AUTH_TIMEOUT'), config.authTimeoutMs).unref();
     ws.on('pong', () => { state.lastPongAt = Date.now(); });
     ws.on('error', () => { ws.terminate(); });
     ws.on('close', (code) => {
       clearTimeout(state.closeTimer); detach(state); sockets.delete(ws);
       // 只记角色与关闭码（1000 正常关 / 1006 网络中断 / 1008 被拒），不含任何标识值
-      logger('ws-close', `role=${state.role || 'unauth'} code=${code}`);
+      logger('ws-close', `role=${state.role || 'unauth'} code=${code} ip=${state.ip} life=${Math.round((Date.now() - state.openAt) / 1000)}s`);
     });
     ws.on('message', (raw, binary) => {
       if (state.failed) return;
@@ -226,6 +229,7 @@ function createRelay(options = {}) {
       room.inactiveAt = null; state.authenticated = true;
       clearTimeout(state.authTimer);
       send(ws, { type: 'auth_ack', pair_status: matched(room) ? 'matched' : 'waiting' });
+      logger('auth-ok', `role=${state.role} ip=${state.ip}`);
       notify(room); return;
     }
     if (!state.authenticated) return fail(state, 'AUTH_REQUIRED');

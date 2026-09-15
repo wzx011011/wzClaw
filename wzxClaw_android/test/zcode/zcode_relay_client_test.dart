@@ -541,7 +541,7 @@ void main() {
       expect(client.paired, isTrue);
     });
 
-    test('连续两个周期无入站帧 → 判定死链，主动断开并走既有重连', () async {
+    test('连续三个周期无入站帧 → 判定死链，主动断开并走既有重连', () async {
       final h = RelayHarness(
         reconnectDelay: const Duration(milliseconds: 30),
         pingInterval: const Duration(milliseconds: 50),
@@ -554,6 +554,27 @@ void main() {
       expect(h.states, contains((ZcodeRelayState.closed, false)));
       expect(h.channels.length, greaterThanOrEqualTo(2));
       expect(client.paired, isFalse); // 新连接未完成认证
+    });
+
+    test('verifyAlive：回前台超过阈值无入站帧 → 立即断开走快速重连', () async {
+      final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
+      final client = await h.connectMatched();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      final before = h.channels.length;
+      client.verifyAlive(threshold: const Duration(milliseconds: 5));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(h.channels.length, greaterThan(before)); // 旧链路被断开并重连
+      expect(h.states, contains((ZcodeRelayState.closed, false)));
+    });
+
+    test('verifyAlive：链路新鲜（阈值内有入站）→ 不动作', () async {
+      final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
+      final client = await h.connectMatched();
+      // 刚完成认证（auth_ack 刚重置活性计时），默认 10s 阈值内
+      client.verifyAlive();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(h.channels, hasLength(1)); // 连接未被动过
+      expect(client.paired, isTrue);
     });
 
     test('close() 手动关闭：保活停止，不再发心跳', () async {

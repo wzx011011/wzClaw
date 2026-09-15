@@ -900,6 +900,11 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     if (state == AppLifecycleState.resumed) {
       if (_stateNow == WsConnectionState.disconnected) {
         unawaited(connectFromSavedConfiguration());
+      } else {
+        // Android 后台期间定时器被冻结、链路多半已被回收，而客户端还挂着
+        // matched 状态：立即校验活性，死链当场断开走快速重连，不再干等
+        // 下一个保活周期（最长 45s）才暴露断线
+        _client?.verifyAlive();
       }
     }
   }
