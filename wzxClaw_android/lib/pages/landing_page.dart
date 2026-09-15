@@ -24,7 +24,7 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   WsConnectionState _state = WsConnectionState.disconnected;
   List<DesktopInfo> _desktops = [];
   String? _serverHost;
@@ -47,6 +47,7 @@ class _LandingPageState extends State<LandingPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _pulseController = AnimationController(
       vsync: this,
@@ -85,8 +86,18 @@ class _LandingPageState extends State<LandingPage>
     _autoConnect();
   }
 
+  /// 回前台重探在线状态：后台期间探测结果全部过期（Android 冻结定时器，
+  /// 连接也多半被回收），继续显示旧「在线/离线」就是假状态
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _refreshOnlineStatus();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _stateSub?.cancel();
     _desktopsSub?.cancel();
@@ -294,6 +305,47 @@ class _LandingPageState extends State<LandingPage>
         ConnectionManager.instance.disconnect();
       }
     });
+  }
+
+  /// 中继条统一入口：与设备卡片同一口径 —— 已连接 / 连接中 / 未连接
+  Widget _buildRelayChip(AppColors colors) {
+    if (_isConnected) return _buildRelayStatusChip(colors);
+    if (_isConnecting) return _buildRelayConnectingChip(colors);
+    return _buildRelayOfflineChip(colors);
+  }
+
+  /// 连接/重连中的中继条：橙点 + 主机名；重连由客户端自动进行，
+  /// 不提供「重连」按钮（点击会和进行中的重连互踩）
+  Widget _buildRelayConnectingChip(AppColors colors) {
+    final host = _serverHost ?? 'relay';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration:
+                BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Text('连接中',
+              style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text('· $host',
+                style: TextStyle(color: colors.textMuted, fontSize: 12),
+                overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 未连接态的中继条：灰点 + 重连活动桌面入口
@@ -543,14 +595,15 @@ class _LandingPageState extends State<LandingPage>
   // ── 状态 D：有桌面列表 ─────────────────────────────────────────────
 
   Widget _buildDesktopListState(AppColors colors) {
-    final onlineCount = _desktops.where((d) => d.online).length;
+    // 与卡片同一口径（_statusFor）：probe 探到在线的也计入，
+    // 否则会出现「0/2 在线」但 NAS 卡片显示「在线」的自相矛盾
+    final onlineCount =
+        _desktops.where((d) => _statusFor(d) == _DeviceStatus.online).length;
     return Column(
       key: const ValueKey('state_d'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _isConnected
-            ? _buildRelayStatusChip(colors)
-            : _buildRelayOfflineChip(colors),
+        _buildRelayChip(colors),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
