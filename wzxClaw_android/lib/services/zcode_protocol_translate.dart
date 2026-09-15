@@ -267,21 +267,8 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
   switch (method) {
     case 'session/list':
       final sessions = (result is Map ? result['sessions'] : null) as List? ?? [];
-      final mapped = sessions.whereType<Map>().map((s) {
-        final ws = s['workspace'] is Map ? s['workspace'] as Map : const {};
-        return {
-          'id': s['sessionId']?.toString() ?? '',
-          'title': (s['title']?.toString().isNotEmpty ?? false)
-              ? s['title'].toString()
-              : s['sessionId'].toString(),
-          'createdAt': _num(s['createdAt']),
-          'updatedAt': _num(s['updatedAt']),
-          'messageCount': 0,
-          'preview': s['preview']?.toString() ?? '',
-          'isRunning': s['status'] == 'running',
-          'workspacePath': ws['workspacePath']?.toString(),
-        };
-      }).toList();
+      final mapped =
+          sessions.whereType<Map>().map(_mapSessionRow).toList();
       return [
         WsMessage(event: 'session:list:response', data: {
           'sessions': mapped,
@@ -332,6 +319,156 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
       ];
   }
   return const [];
+}
+
+/// 工作区分组条目：session/list 结果按 workspaceKey 聚合。
+/// [key] 为权威分组键（workspaceKey），[sessions] 为已映射的旧协议会话行。
+class WorkspaceGroup {
+  final String key;
+  final String path;
+  final List<Map<String, dynamic>> sessions;
+  final int newestUpdatedAt;
+  const WorkspaceGroup({
+    required this.key,
+    required this.path,
+    required this.sessions,
+    required this.newestUpdatedAt,
+  });
+}
+
+/// session/list 结果 → 工作区分组（最新活跃在前）。
+/// workspaceKey 是权威键（路径大小写可能不一致）；每条会话行带 workspacePath。
+List<WorkspaceGroup> groupSessionsByWorkspace(dynamic result) {
+  final sessions = (result is Map ? result['sessions'] : null) as List? ?? [];
+  final groups = <String, WorkspaceGroup>{};
+  for (final s in sessions.whereType<Map>()) {
+    final ws = s['workspace'] is Map ? s['workspace'] as Map : const {};
+    final key = ws['workspaceKey']?.toString() ??
+        ws['workspacePath']?.toString() ??
+        '';
+    if (key.isEmpty) continue;
+    final row = _mapSessionRow(s);
+    final updatedAt = row['updatedAt'] as int? ?? 0;
+    final g = groups[key];
+    if (g == null) {
+      groups[key] = WorkspaceGroup(
+        key: key,
+        path: ws['workspacePath']?.toString() ?? key,
+        sessions: [row],
+        newestUpdatedAt: updatedAt,
+      );
+    } else {
+      g.sessions.add(row);
+      if (updatedAt > g.newestUpdatedAt) {
+        // WorkspaceGroup 不可变，替换为更新了 newest 的实例
+        groups[key] = WorkspaceGroup(
+          key: g.key,
+          path: g.path,
+          sessions: g.sessions,
+          newestUpdatedAt: updatedAt,
+        );
+      }
+    }
+  }
+  final list = groups.values.toList()
+    ..sort((a, b) => b.newestUpdatedAt.compareTo(a.newestUpdatedAt));
+  return list;
+}
+
+/// 选中工作区解析：显式选中键优先（大小写不敏感回退），否则最新活跃组。
+WorkspaceGroup? resolveWorkspace(
+    List<WorkspaceGroup> groups, String? selectedKey) {
+  if (groups.isEmpty) return null;
+  if (selectedKey != null && selectedKey.isNotEmpty) {
+    for (final g in groups) {
+      if (g.key == selectedKey) return g;
+    }
+    for (final g in groups) {
+      if (g.key.toLowerCase() == selectedKey.toLowerCase()) return g;
+    }
+    // 键未命中时按路径兜底（workspace:switch 传的是路径）
+    for (final g in groups) {
+      if (g.path.toLowerCase() == selectedKey.toLowerCase()) return g;
+    }
+    return null;
+  }
+  return groups.first; // 已按最新活跃排序
+}
+
+/// 旧协议 workspace:list:response（新格式：工作区卡片内嵌会话，
+/// SessionSyncService._handleWorkspaceListResponse 的新格式分支）
+WsMessage workspaceListWsResponse(String requestId, List<WorkspaceGroup> groups) {
+  return WsMessage(event: 'workspace:list:response', data: {
+    'requestId': requestId,
+    'workspaces': [
+      for (final g in groups)
+        {
+          'id': g.key,
+          'title': workspaceBasename(g.path),
+          'projects': [
+            {'id': '', 'path': g.path, 'name': workspaceBasename(g.path)},
+          ],
+          'sessions': [
+            for (final s in g.sessions)
+              {
+                'id': s['id'],
+                'title': s['title'],
+                'updatedAt': s['updatedAt'],
+                'messageCount': s['messageCount'],
+                'isRunning': s['isRunning'],
+              },
+          ],
+          'activeSessionId': null,
+          'runningSessionIds': [
+            for (final s in g.sessions)
+              if (s['isRunning'] == true) s['id'],
+          ],
+          'updatedAt': g.newestUpdatedAt,
+        },
+    ],
+  });
+}
+
+/// 旧协议 session:list:response（顶层带当前工作区 + 仅该工作区的会话）
+WsMessage sessionListWsResponse(
+    String requestId, List<WorkspaceGroup> groups, String? selectedKey) {
+  final g = resolveWorkspace(groups, selectedKey);
+  final sessions = g?.sessions ?? const <Map<String, dynamic>>[];
+  return WsMessage(event: 'session:list:response', data: {
+    'requestId': requestId,
+    'workspacePath': g?.path ?? '',
+    'workspaceName': g == null ? '' : workspaceBasename(g.path),
+    'sessions': sessions,
+    'runningSessionIds': [
+      for (final s in sessions)
+        if (s['isRunning'] == true) s['id'],
+    ],
+    'taskStatuses': <String, dynamic>{},
+    'activeSessionId': null,
+  });
+}
+
+String workspaceBasename(String path) {
+  final norm = path.replaceAll('\\', '/');
+  final parts = norm.split('/').where((p) => p.isNotEmpty).toList();
+  return parts.isEmpty ? path : parts.last;
+}
+
+/// app-server session/list 行 → 旧协议会话行（分组与平铺共用）
+Map<String, dynamic> _mapSessionRow(Map s) {
+  final ws = s['workspace'] is Map ? s['workspace'] as Map : const {};
+  return {
+    'id': s['sessionId']?.toString() ?? '',
+    'title': (s['title']?.toString().isNotEmpty ?? false)
+        ? s['title'].toString()
+        : s['sessionId'].toString(),
+    'createdAt': _num(s['createdAt']),
+    'updatedAt': _num(s['updatedAt']),
+    'messageCount': 0,
+    'preview': s['preview']?.toString() ?? '',
+    'isRunning': s['status'] == 'running',
+    'workspacePath': ws['workspacePath']?.toString(),
+  };
 }
 
 /// app-server 消息行（info+parts）→ 旧 ChatMessage JSON（snake_case）

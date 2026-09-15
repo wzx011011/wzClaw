@@ -103,6 +103,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   String? _desktopName;
   String? _wsKey;
   String? _wsPath;
+  /// 用户显式切换的工作区（workspaceKey）；null = 未选，取最新活跃组
+  String? _selectedWsKey;
   WsConnectionState _stateNow = WsConnectionState.disconnected;
   final List<_QueueEntry> _sendQueue = [];
   final Map<String, ReverseRequestInfo> _pendingReverse = {};
@@ -121,6 +123,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     }
     disconnect();
     _desktopName = _paramOf(url, 'name');
+    _selectedWsKey = null; // 新连接重置选中态，取最新活跃工作区为默认
     _pairing = ZcodePairingInfo(
       relayWsUrl: parsed.relayWsUrl,
       sid: parsed.sid,
@@ -344,6 +347,14 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         await _respondList(client, d['requestId']?.toString() ?? '');
         return;
 
+      case 'workspace:list:request':
+        await _respondWorkspaceList(client, d['requestId']?.toString() ?? '');
+        return;
+
+      case 'workspace:switch:request':
+        await _respondWorkspaceSwitch(client, d);
+        return;
+
       case 'session:load:request':
         await _respondLoad(client, d);
         return;
@@ -405,8 +416,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       case 'session:rename:request':
       case 'session:delete:request':
       case 'session:clear:request':
-      case 'workspace:list:request':
-      case 'workspace:switch:request':
       case 'file:tree:request':
       case 'file:read:request':
         return;
@@ -416,29 +425,72 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Future<void> _respondList(ZcodeRelayClient client, String requestId) async {
     try {
       final result = await client.request('session/list');
-      // 定型路径缓存 workspace（APP-SERVER.md：sessions[].workspace.
-      // {workspaceKey,workspacePath}）——盲搜仅作兜底
-      if (result is Map && result['sessions'] is List) {
-        for (final s0 in (result['sessions'] as List).whereType<Map>()) {
-          final ws = s0['workspace'];
-          if (ws is Map && ws['workspaceKey'] != null && ws['workspacePath'] != null) {
-            _wsKey = ws['workspaceKey'].toString();
-            _wsPath = ws['workspacePath'].toString();
-            break;
-          }
-        }
+      // 按工作区分组：选中组优先（未选=最新活跃组），响应顶层带该工作区
+      // 的 path/name 且只含其会话——旧 UI 的会话列表/工作区卡片依赖此语义
+      final groups = groupSessionsByWorkspace(result);
+      final selected = resolveWorkspace(groups, _selectedWsKey);
+      if (selected != null) {
+        _wsKey = selected.key;
+        _wsPath = selected.path;
       }
-      final events = responseToWsMessages('session/list', result, const {});
-      for (final e in events) {
-        _messageController.add(WsMessage(
-          event: e.event,
-          data: {'requestId': requestId, ...?e.data},
-        ));
-      }
+      _messageController.add(sessionListWsResponse(requestId, groups, _selectedWsKey));
     } catch (e) {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
         'error': '获取会话列表失败: $e',
+      }));
+    }
+  }
+
+  /// 旧 workspace:list：app-server 无独立工作区接口，由 session/list 聚合
+  Future<void> _respondWorkspaceList(ZcodeRelayClient client, String requestId) async {
+    try {
+      final result = await client.request('session/list');
+      final groups = groupSessionsByWorkspace(result);
+      _messageController.add(workspaceListWsResponse(requestId, groups));
+    } catch (e) {
+      _messageController.add(WsMessage(event: 'session:error', data: {
+        'requestId': requestId,
+        'error': '获取工作区列表失败: $e',
+      }));
+    }
+  }
+
+  /// 旧 workspace:switch：引擎全局会话、cwd 不可切换——切换是客户端过滤
+  /// 语义。命中即记录选中组、应答成功并推送该工作区的会话列表刷新 UI。
+  Future<void> _respondWorkspaceSwitch(
+      ZcodeRelayClient client, Map<String, dynamic> d) async {
+    final requestId = d['requestId']?.toString() ?? '';
+    final target = d['workspacePath']?.toString() ?? '';
+    try {
+      final result = await client.request('session/list');
+      final groups = groupSessionsByWorkspace(result);
+      final hit = resolveWorkspace(groups, target);
+      if (hit == null) {
+        _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
+          'requestId': requestId,
+          'success': false,
+          'error': '未找到工作区: $target',
+        }));
+        return;
+      }
+      _selectedWsKey = hit.key;
+      _wsKey = hit.key;
+      _wsPath = hit.path;
+      _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
+        'requestId': requestId,
+        'success': true,
+        'workspacePath': hit.path,
+        'workspaceName': workspaceBasename(hit.path),
+      }));
+      // 切换后立即推送新工作区的会话列表（旧 UI 依赖推送刷新抽屉/首页）
+      _messageController
+          .add(sessionListWsResponse('$requestId-list', groups, hit.key));
+    } catch (e) {
+      _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
+        'requestId': requestId,
+        'success': false,
+        'error': '切换工作区失败: $e',
       }));
     }
   }
@@ -493,6 +545,18 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   Future<void> _respondCreate(ZcodeRelayClient client, Map<String, dynamic> d) async {
     final requestId = d['requestId']?.toString() ?? '';
+    // 工作区缓存为空（连接后直接新建，未经过 list/switch）时兜底：
+    // 拉一次列表取选中（或最新活跃）工作区
+    if (_wsKey == null || _wsPath == null) {
+      try {
+        final result = await client.request('session/list');
+        final selected = resolveWorkspace(groupSessionsByWorkspace(result), _selectedWsKey);
+        if (selected != null) {
+          _wsKey = selected.key;
+          _wsPath = selected.path;
+        }
+      } catch (_) {}
+    }
     if (_wsKey == null || _wsPath == null) {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,

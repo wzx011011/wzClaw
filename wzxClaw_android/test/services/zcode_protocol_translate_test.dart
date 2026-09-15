@@ -39,6 +39,91 @@ void main() {
     });
   });
 
+  group('工作区分组（session/list 聚合）', () {
+    final listResult = {
+      'sessions': [
+        {
+          'sessionId': 's1', 'title': '老会话', 'status': 'idle',
+          'createdAt': 1, 'updatedAt': 100,
+          'workspace': {'workspaceKey': 'E:\\ai\\wzxClaw', 'workspacePath': 'E:\\ai\\wzxClaw'},
+        },
+        {
+          'sessionId': 's2', 'title': '新会话', 'status': 'running',
+          'createdAt': 2, 'updatedAt': 900,
+          'workspace': {'workspaceKey': 'E:\\ai\\wzxClaw', 'workspacePath': 'E:\\ai\\wzxClaw'},
+        },
+        {
+          'sessionId': 's3', 'title': '打印机', 'status': 'idle',
+          'createdAt': 3, 'updatedAt': 500,
+          'workspace': {'workspaceKey': 'E:\\ai\\3DPrinter', 'workspacePath': 'E:\\ai\\3DPrinter'},
+        },
+      ],
+    };
+
+    test('按 workspaceKey 分组，最新活跃在前，行字段映射完整', () {
+      final groups = groupSessionsByWorkspace(listResult);
+      expect(groups.length, 2);
+      expect(groups.first.key, 'E:\\ai\\wzxClaw'); // updatedAt 900 > 500
+      expect(groups.first.sessions.length, 2);
+      final row = groups.first.sessions.first;
+      expect(row['id'], 's1');
+      expect(row['isRunning'], false);
+      expect(groups.first.sessions[1]['isRunning'], true);
+      expect(groups.last.key, 'E:\\ai\\3DPrinter');
+    });
+
+    test('workspaceListWsResponse：新格式（id+title+内嵌 sessions）', () {
+      final groups = groupSessionsByWorkspace(listResult);
+      final data = workspaceListWsResponse('r1', groups).data as Map;
+      final wsList = data['workspaces'] as List;
+      final first = wsList.first as Map;
+      // SessionSyncService 新格式分支要求 id+title 键存在
+      expect(first.containsKey('id') && first.containsKey('title'), true);
+      expect(first['title'], 'wzxClaw');
+      expect((first['sessions'] as List).length, 2);
+      expect((first['projects'] as List).first,
+          containsPair('path', 'E:\\ai\\wzxClaw'));
+      expect(first['runningSessionIds'], ['s2']);
+    });
+
+    test('sessionListWsResponse：选中组过滤 + 顶层工作区字段；缺省=最新组', () {
+      final groups = groupSessionsByWorkspace(listResult);
+      final selected = sessionListWsResponse('r1', groups, 'E:\\ai\\3DPrinter').data as Map;
+      expect(selected['workspaceName'], '3DPrinter');
+      expect(selected['workspacePath'], 'E:\\ai\\3DPrinter');
+      expect((selected['sessions'] as List).length, 1);
+
+      final def = sessionListWsResponse('r1', groups, null).data as Map;
+      expect(def['workspaceName'], 'wzxClaw');
+      expect((def['sessions'] as List).length, 2);
+      expect(def['runningSessionIds'], ['s2']);
+
+      // 键未命中 → 空工作区（UI 显示未选择，可重选），不静默换组
+      final miss = sessionListWsResponse('r1', groups, '不存在的键').data as Map;
+      expect((miss['sessions'] as List), isEmpty);
+      expect(miss['workspacePath'], '');
+    });
+
+    test('路径大小写不一致仍按 workspaceKey 归组；切换按路径兜底匹配', () {
+      final result = {
+        'sessions': [
+          {
+            'sessionId': 'a', 'title': 't', 'status': 'idle', 'updatedAt': 1,
+            'workspace': {'workspaceKey': 'K', 'workspacePath': 'e:\\AI\\X'},
+          },
+          {
+            'sessionId': 'b', 'title': 't', 'status': 'idle', 'updatedAt': 2,
+            'workspace': {'workspaceKey': 'K', 'workspacePath': 'E:\\ai\\X'},
+          },
+        ],
+      };
+      final groups = groupSessionsByWorkspace(result);
+      expect(groups.length, 1);
+      expect(groups.single.sessions.length, 2);
+      expect(resolveWorkspace(groups, 'e:\\ai\\x')!.key, 'K');
+    });
+  });
+
   group('权限反向请求翻译', () {
     test('options 原文透传（含 response 模板）+ requestId 作 key', () {
       final registered = <String, ReverseRequestInfo>{};
