@@ -30,6 +30,7 @@ import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
 import '../models/goal_snapshot.dart';
+import 'pairing_store.dart';
 import 'session_sync_service.dart';
 import 'ws_transport.dart';
 import '../zcode/zcode_relay_client.dart';
@@ -69,12 +70,14 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       StreamController<String?>.broadcast();
   Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
 
-  bool get desktopOnline => _desktops.isNotEmpty;
+  bool get desktopOnline => _desktops.any((d) => d.online);
   Stream<bool> get desktopOnlineStream =>
       _desktopsController.stream.map((list) => list.isNotEmpty);
 
   String? get desktopIdentity {
-    final d = _desktops.isNotEmpty ? _desktops.last : null;
+    final sid = _pairing?.sid;
+    final d = _desktops.where((d) => d.desktopId == sid).firstOrNull ??
+        (_desktops.any((d) => d.online) ? _desktops.firstWhere((d) => d.online) : null);
     final name = d?.name;
     return (name != null && name.isNotEmpty) ? name : null;
   }
@@ -124,13 +127,17 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       return;
     }
     disconnect();
-    _desktopName = _paramOf(url, 'name');
+    final name = _paramOf(url, 'name');
+    _desktopName = name;
     _selectedWsKey = null; // 新连接重置选中态，取最新活跃工作区为默认
     _pairing = ZcodePairingInfo(
       relayWsUrl: parsed.relayWsUrl,
       sid: parsed.sid,
       hash: parsed.hash,
+      desktopName: (name == null || name.isEmpty) ? null : name,
     );
+    // 多配对：入库并设为活动桌面（持久化失败不阻断连接）
+    unawaited(PairingStore.instance.upsert(_pairing!));
     _connectPairing();
   }
 
@@ -161,8 +168,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         }
         break;
       case ZcodeRelayState.waiting:
-        _desktops.clear();
-        _desktopsController.add([]);
+        // 多配对：列表常驻，仅当前桌面标记离线（relay 可达、桌面不在）
+        unawaited(_refreshDesktopList());
         _setState(WsConnectionState.connecting);
         _messageController.add(const WsMessage(
           event: 'system:no_desktop',
@@ -170,8 +177,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         ));
         break;
       case ZcodeRelayState.closed:
-        _desktops.clear();
-        _desktopsController.add([]);
+        unawaited(_refreshDesktopList());
         _setState(WsConnectionState.disconnected);
         break;
       case ZcodeRelayState.idle:
@@ -185,17 +191,59 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   void _emitDesktopOnline() {
     final pairing = _pairing;
     if (pairing == null) return;
-    _desktops
-      ..clear()
-      ..add(DesktopInfo(
-        desktopId: pairing.sid,
-        name: _desktopName ?? '桌面 ZCode',
-        platform: 'zcode',
-        connectedAt: DateTime.now().millisecondsSinceEpoch,
-      ));
     _selectedDesktopId = pairing.sid;
     _selectedDesktopIdController.add(pairing.sid);
+    unawaited(_refreshDesktopList());
+  }
+
+  int _listGen = 0;
+
+  /// 由配对存储重建桌面列表：全部已保存配对常驻，
+  /// 当前配对按连接状态标在线（matched），其余离线。
+  Future<void> _refreshDesktopList() async {
+    final gen = ++_listGen;
+    final stored = await PairingStore.instance.loadAll();
+    if (gen != _listGen) return; // 过期响应：期间已有新刷新
+    final isCurrentOnline = _stateNow == WsConnectionState.connected;
+    _desktops
+      ..clear()
+      ..addAll([
+        for (final sp in stored)
+          DesktopInfo(
+            desktopId: sp.info.sid,
+            name: (sp.info.sid == _pairing?.sid && _desktopName != null)
+                ? _desktopName
+                : (sp.info.desktopName ?? '桌面 ZCode'),
+            platform: 'zcode',
+            connectedAt: sp.addedAt,
+            online: isCurrentOnline && sp.info.sid == _pairing?.sid,
+          ),
+      ]);
     _desktopsController.add(List.from(_desktops));
+  }
+
+  /// 外部触发的列表刷新（landing 初始化等）
+  Future<void> refreshDesktops() => _refreshDesktopList();
+
+  /// 切换到已保存的某台桌面并连接；未找到返回 false
+  Future<bool> connectToStored(String sid) async {
+    final stored = await PairingStore.instance.loadAll();
+    final hit = stored.where((s) => s.info.sid == sid).firstOrNull;
+    if (hit == null) return false;
+    disconnect();
+    _desktopName = hit.info.desktopName;
+    _selectedWsKey = null;
+    _pairing = hit.info;
+    unawaited(PairingStore.instance.setActiveSid(sid));
+    _connectPairing();
+    return true;
+  }
+
+  /// 删除已保存配对；删的是当前连接的桌面时先断开
+  Future<void> removePairing(String sid) async {
+    if (sid == _pairing?.sid && _client != null) disconnect();
+    await PairingStore.instance.remove(sid);
+    await _refreshDesktopList();
   }
 
   // ---- 入站：通知 → 旧事件 ----
@@ -767,6 +815,17 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Future<void> connectFromSavedConfiguration() async {
     if (_stateNow != WsConnectionState.disconnected) return;
     try {
+      final stored = await PairingStore.instance.loadAll();
+      if (stored.isNotEmpty) {
+        final active = await PairingStore.instance.activeSid();
+        final hit = stored.where((s) => s.info.sid == active).firstOrNull ??
+            stored.first;
+        _desktopName = hit.info.desktopName;
+        _selectedWsKey = null;
+        _pairing = hit.info;
+        _connectPairing();
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       final serverUrl = prefs.getString('server_url');
       if (serverUrl == null || serverUrl.isEmpty) return;
@@ -800,8 +859,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     _client?.close();
     _client = null;
     _sendQueue.clear();
-    _desktops.clear();
-    _desktopsController.add([]);
     _selectedDesktopId = null;
     _selectedDesktopIdController.add(null);
     for (final w in _reverseWaiters.values) {
@@ -810,6 +867,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     _reverseWaiters.clear();
     _pendingReverse.clear();
     _setState(WsConnectionState.disconnected);
+    unawaited(_refreshDesktopList());
   }
 
   void dispose() {

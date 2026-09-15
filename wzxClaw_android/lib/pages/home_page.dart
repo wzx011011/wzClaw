@@ -432,9 +432,17 @@ class _ChatPageState extends State<ChatPage> {
                         state: _visibleConnectionState,
                         desktops: desktops,
                         selectedDesktopId: selectedSnap.data,
-                        onDesktopSelect: (id) => ConnectionManager.instance.selectDesktop(id),
+                        onDesktopSelect: (id) {
+                          if (id == null ||
+                              ConnectionManager.instance.selectedDesktopId ==
+                                  id) {
+                            return;
+                          }
+                          // 多配对：选另一台 = 切换连接（连接成功后自动重同步会话）
+                          unawaited(ConnectionManager.instance.connectToStored(id));
+                        },
                         desktopIdentity: ConnectionManager.instance.desktopIdentity,
-                        desktopOnline: desktops.isNotEmpty,
+                        desktopOnline: desktops.any((d) => d.online),
                         errorMessage: errorSnap.data,
                         workspaceName: _workspaceName,
                       );
