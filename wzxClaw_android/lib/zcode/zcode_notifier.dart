@@ -156,21 +156,26 @@ class ZcodeNotifier with WidgetsBindingObserver {
     final plugin = _plugin;
     if (plugin == null) return; // 未初始化（测试/非 Android）静默跳过
 
-    plugin.show(
-      2001,
-      title,
-      body,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          _channelName,
-          channelDescription: 'ZCode 远程任务完成/失败提醒',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-      ),
-      payload: payload,
-    );
+    // 尽力而为能力：展示失败只留观测，不允许未捕获异步异常冒泡
+    plugin
+        .show(
+          2001,
+          title,
+          body,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              _channelId,
+              _channelName,
+              channelDescription: 'ZCode 远程任务完成/失败提醒',
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+          payload: payload,
+        )
+        .catchError((Object error) {
+          debugPrint('[zcode-notifier] 通知展示失败: $error');
+        });
   }
 
   /// 懒挂 WidgetsBindingObserver（幂等）。

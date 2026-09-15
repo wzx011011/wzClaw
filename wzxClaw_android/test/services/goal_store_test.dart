@@ -1,5 +1,4 @@
 // GoalStore 回归：快照事件驱动 + 断连清空 + 主动刷新
-import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/models/connection_state.dart';

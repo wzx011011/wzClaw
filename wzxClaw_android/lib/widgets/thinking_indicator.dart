@@ -44,7 +44,7 @@ class _AgentThinkingBlockState extends State<AgentThinkingBlock> {
                   child: Row(
                     children: [
                       Icon(Icons.psychology_outlined,
-                          size: 16, color: colors.accent),
+                          size: 16, color: colors.accent,),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(

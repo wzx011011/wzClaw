@@ -132,10 +132,13 @@ class ZcodeSessionState {
   List<ChatMessage> get chatMessages =>
       items.map((e) => e.message).toList(growable: false);
 
-  /// 尾部最后一条已知协议消息 id（缓存恢复时推导水位用）
+  /// 尾部最后一条**已确认（synced）**的协议消息 id（缓存恢复时推导水位用）。
+  /// 未确认条目（本地乐观消息/流式占位）即使采纳了 protoId 也不计入——
+  /// 水位语义是「最后一条经服务端 session/messages 确认的消息 id」，
+  /// 让占位推进水位会使 afterMessageId 增量永久跳过该消息的最终版本。
   String? get lastProtoId {
     for (final it in items.reversed) {
-      if (it.protoId != null) return it.protoId;
+      if (it.synced && it.protoId != null) return it.protoId;
     }
     return null;
   }

@@ -722,7 +722,7 @@ void main() {
 
       final future = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-5',
-        method: 'session/requestPermission',
+        method: 'interaction/requestPermission',
         params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
       ),);
       await Future<void>.delayed(Duration.zero);
@@ -788,7 +788,7 @@ void main() {
       expect(
         () => store.debugHandleReverseRequest(const ZcodeFrame(
           id: 'server-5',
-          method: 'session/requestPermission',
+          method: 'interaction/requestPermission',
           params: {'input': {}},
         ),),
         throwsA(isA<Exception>()),
@@ -812,7 +812,7 @@ void main() {
 
       final future = store.debugHandleReverseRequest(const ZcodeFrame(
         id: 'server-7',
-        method: 'session/requestPermission',
+        method: 'interaction/requestPermission',
         params: {'toolCallId': 'tc-x', 'toolName': 'FileRead'},
       ),);
       await Future<void>.delayed(Duration.zero);
@@ -826,6 +826,56 @@ void main() {
       store.unpair();
       await done;
       expect(store.activePermission, isNull);
+    });
+
+    test('断线：在途权限请求立即作废——权限条清除、应答拒绝、迟到批准无效果', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = pairedStore(fake);
+
+      final events = <PermissionRequest?>[];
+      final sub = store.permissionStream.listen(events.add);
+      addTearDown(sub.cancel);
+
+      final future = store.debugHandleReverseRequest(const ZcodeFrame(
+        id: 'server-9',
+        method: 'interaction/requestPermission',
+        params: {
+          'input': {'command': 'echo hi'},
+          'toolCallId': 'call_dc1',
+          'toolName': 'Bash',
+          'options': [
+            {
+              'optionId': 'allow_once',
+              'response': {'decision': 'allow', 'reason': 'Approved once'},
+            },
+            {
+              'optionId': 'deny',
+              'response': {'decision': 'deny', 'reason': 'Denied'},
+            },
+          ],
+        },
+      ),);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.activePermission?.toolCallId, 'call_dc1');
+
+      // 断线（重连中/被顶号）：server-N id 将被新连接复用，
+      // 在途请求必须立即作废，权限条同步清除
+      final done = expectLater(
+        future,
+        throwsA(isA<ZcodeReverseRejectException>()),
+      );
+      store.debugSimulateRelayState(ZcodeRelayState.closed, false);
+      await done;
+
+      expect(store.activePermission, isNull);
+      await Future<void>.delayed(Duration.zero);
+      expect(events.last, isNull); // 权限条流被清空
+
+      // 此刻迟到的"批准"是无害 no-op：不再产生任何应答
+      expect(
+        () => store.respondToPermission('call_dc1', approved: true),
+        returnsNormally,
+      );
     });
   });
 
@@ -950,6 +1000,31 @@ void main() {
       await store.openSession('sess-v');
       expect(store.messages.map((m) => m.content), isNot(contains('陈旧消息')));
       expect(store.messages.single.content, '最新回答');
+    });
+
+    test('尾窗请求带 limit:40，替身按实测契约只回最新 N 条升序', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      // 50 条服务端消息：尾窗只应取回最新 40 条（m10..m49，升序）
+      for (var i = 0; i < 50; i++) {
+        server.session('sess-big').messages.add(fakeMsg(
+              i.isEven ? 'user' : 'assistant',
+              [
+                {'type': 'text', 'text': 'm$i'},
+              ],
+              id: 'm$i',
+              created: i,
+            ),);
+      }
+      final store = pairedStore(fake);
+
+      await store.openSession('sess-big');
+      final req = fake.requests.firstWhere((e) => e.key == 'session/messages');
+      expect(req.value!['limit'], 40);
+      expect(req.value!['afterMessageId'], isNull);
+      expect(store.messages, hasLength(40));
+      expect(store.messages.first.content, 'm10');
+      expect(store.messages.last.content, 'm49');
     });
 
     test('分页方向（实测升序）：升序页直通；降序页被投票兜底翻转', () async {
@@ -1129,6 +1204,110 @@ void main() {
       expect(store.isStreaming, isFalse);
       // 流式占位被权威版本原位消解（不重复出现"正在写"）
       expect(store.messages.where((m) => m.content == '正在写'), isEmpty);
+    });
+
+    test('水位安全（回归）：流式占位不得推进水位——回合中权威合并后仍能拉回最终版本', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      // 预置历史形成水位 h1
+      server.session('sess-w').messages.add(fakeMsg('user', [
+        {'type': 'text', 'text': '旧问题'},
+      ], id: 'h1', created: 1,),);
+      final store = pairedStore(fake);
+      await store.openSession('sess-w');
+      expect(store.messages, hasLength(1));
+
+      await store.sendMessage('写文件');
+      // 流式占位采纳 assistantMessageId msg-a1——服务端权威列表此刻还没有它
+      pushEvent(store,
+          sessionId: 'sess-w',
+          type: 'model.streaming',
+          seq: 1,
+          turnId: 'turn-w',
+          payload: {
+            'assistantMessageId': 'msg-a1',
+            'delta': '正在写',
+            'kind': 'text_delta',
+          },);
+
+      // 回合在途时发生一次权威合并（真实场景：切走再切回，openSession
+      // 重拉尾窗）。服务端此刻只有 h1 + user（assistant 尚未落库）。
+      await store.openSession('sess-w');
+      final reopenFetch =
+          fake.requests.lastWhere((e) => e.key == 'session/messages');
+      expect(reopenFetch.value!['afterMessageId'], 'h1');
+
+      // 服务端此刻落库 assistant（msg-a1 带工具结果）。若占位曾推进水位
+      //（afterMessageId 已被抬到 msg-a1），此消息的最终版本将永远拉不回。
+      server.session('sess-w').messages.add(fakeMsg('assistant', [
+        {'type': 'text', 'text': '写完了'},
+        {
+          'type': 'tool',
+          'callID': 'tc-w',
+          'tool': 'FileWrite',
+          'state': {'status': 'completed', 'output': 'ok'},
+        },
+      ], id: 'msg-a1', created: 2,),);
+      // turn.completed(带工具) → 增量权威刷新
+      pushEvent(store,
+          sessionId: 'sess-w',
+          type: 'turn.completed',
+          seq: 2,
+          turnId: 'turn-w',
+          payload: {
+            'response': '写完了',
+            'toolCallCount': 1,
+            'resultType': 'success',
+          },);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // 关键断言：刷新水位 = 上一批**权威数据**的尾部（send 落库的 user
+      // 消息 srv-u-1），而不是未确认的流式占位 msg-a1
+      final refresh =
+          fake.requests.lastWhere((e) => e.key == 'session/messages');
+      expect(refresh.value!['afterMessageId'], 'srv-u-1');
+      // msg-a1 的最终版本（含工具卡片）被完整拉回并原位消解占位
+      expect(store.messages, hasLength(3));
+      final last = store.messages.last;
+      expect(last.content, '写完了');
+      expect(last.toolCalls, isNotNull);
+      expect(last.toolCalls!.single.toolCallId, 'tc-w');
+      expect(store.isStreaming, isFalse);
+    });
+
+    test('lastProtoId 只认已确认（synced）条目——缓存水位推导不被占位污染', () {
+      final state = ZcodeSessionState('sess-z');
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          message: ChatMessage(
+            role: MessageRole.user,
+            content: 'q',
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1),
+          ),
+          protoId: 'm1',
+          synced: true,
+        ),
+      ],);
+      expect(state.lastProtoId, 'm1');
+      // 流式占位采纳了更新的 protoId，但仍未确认：不得成为水位推导对象
+      state.ensureStreamingPlaceholder();
+      state.adoptStreamingProtoId('msg-a1');
+      state.appendTextDelta('partial');
+      expect(state.lastProtoId, 'm1');
+      // 占位被权威版本消解（synced 置真）后才可推进
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            content: 'partial+full',
+            createdAt: DateTime.fromMillisecondsSinceEpoch(2),
+          ),
+          protoId: 'msg-a1',
+          synced: true,
+        ),
+      ],);
+      expect(state.lastProtoId, 'msg-a1');
     });
 
     test('乱串杜绝：会话 A 流式中途切到 B——A 增量零泄漏进 B，切回 A 完整', () async {

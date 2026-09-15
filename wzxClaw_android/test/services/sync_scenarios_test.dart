@@ -368,14 +368,14 @@ void main() {
         title: 'S1',
         createdAt: 1,
         updatedAt: 1,
-      ));
+      ),);
       await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
         sessionId: 's2',
         deviceSid: 'desktop-1',
         title: 'S2',
         createdAt: 2,
         updatedAt: 2,
-      ));
+      ),);
       await h.sessionSync.refreshLocalSessions();
       await h.settle();
 
@@ -390,7 +390,7 @@ void main() {
 
       expect(h.sessionSync.workspaceInfo?.workspacePath, '/ws');
       expect(
-          h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']));
+          h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']),);
 
       // 拉取并进入 s1
       final s1Future =
@@ -419,7 +419,7 @@ void main() {
       await h.settle();
       expect(h.chatStore.currentSessionId, 's1');
       expect(h.chatStore.messages.map((m) => m.content).join('\n'),
-          contains('from-s1'));
+          contains('from-s1'),);
 
       // 切到 s2，确保展示内容来自 s2，不残留 s1
       final s2Future =
@@ -597,7 +597,7 @@ void main() {
       final cached = await h.db.getSessionMessages('s1');
       expect(cached.map((m) => m.role), everyElement(MessageRole.assistant));
       expect(cached.map((m) => m.content).join('\n'),
-          isNot(contains('old tool result')));
+          isNot(contains('old tool result')),);
     });
   });
 
@@ -673,7 +673,7 @@ void main() {
         title: 'S1',
         createdAt: 1,
         updatedAt: 1,
-      ));
+      ),);
       await h.sessionSync.refreshLocalSessions();
       await h.settle();
       h.sessionSync.setActiveSession('s1');

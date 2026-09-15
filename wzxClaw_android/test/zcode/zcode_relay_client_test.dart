@@ -491,6 +491,63 @@ void main() {
       expect(h.server.messages.first['type'], 'auth_init');
     });
 
+    test('反向请求 hook 完成前连接重连：过期应答不发给新连接（防同 id 串台）', () async {
+      // 每次反向请求分配独立 completer（模拟 store 的 pending 语义）
+      final completers = <Completer<dynamic>>[];
+      final h = RelayHarness(
+        reconnectDelay: const Duration(milliseconds: 30),
+        onRequest: (_) {
+          final c = Completer<dynamic>();
+          completers.add(c);
+          return c.future;
+        },
+      );
+      final client = await h.connectMatched();
+      final firstServer = h.server;
+
+      // 服务端发反向请求 server-1，hook 挂起（用户未应答）
+      firstServer.send({
+        'type': 'data',
+        'payload': {
+          'id': 'server-1',
+          'method': 'interaction/requestPermission',
+          'params': {'toolCallId': 'call_x'},
+        },
+      });
+      await settle();
+
+      // 断线 → 自动重连 → 新连接认证成功
+      await firstServer.close();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(h.channels, hasLength(2));
+      await h.auth();
+      final secondServer = h.server;
+
+      // 新连接上 app-server 又发了一个同 id 的新反向请求（server-N 从头计数）
+      secondServer.send({
+        'type': 'data',
+        'payload': {
+          'id': 'server-1',
+          'method': 'interaction/requestPermission',
+          'params': {'toolCallId': 'call_new'},
+        },
+      });
+      await settle();
+
+      // 用户此刻才批准旧请求（completers[0]）：hook 完成，但连接已换代——
+      // 陈旧 result 绝不能发上新连接命中同 id 的新请求
+      completers.first.complete({'decision': 'allow', 'reason': 'Approved once'});
+      await settle();
+
+      // 新连接只应收到对新反向请求的响应之外的数据帧为空——
+      // 旧 result 未串台（无 {id:'server-1', result:...} 的陈旧帧）
+      final stale = secondServer.dataPayloads
+          .where((p) => p['id'] == 'server-1' && p['result'] != null)
+          .toList();
+      expect(stale, isEmpty);
+      expect(client.currentState, ZcodeRelayState.matched);
+    });
+
     test('close() 手动关闭：pending 失败、不重连', () async {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
       final client = await h.connectMatched();
@@ -590,15 +647,15 @@ void main() {
   });
 
   group('重连退避', () {
-    test('延迟 = 指数(基数*2^n) - 1/3 抖动；认证成功后计数归零', () async {
+    test('延迟 = 指数(基数*2^n) ± 1/6 对称抖动；认证成功后计数归零', () async {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 90));
       final client = h.newClient();
 
-      // 尝试 0：延迟 ∈ [60, 90]ms（基数 - 1/3 抖动）
+      // 尝试 0：延迟 ∈ [75, 105]ms（基数 ± 1/6 对称抖动，防多设备同步重连）
       for (var i = 0; i < 10; i++) {
         final d = client.debugNextReconnectDelay().inMilliseconds;
-        expect(d, greaterThanOrEqualTo(60));
-        expect(d, lessThanOrEqualTo(90));
+        expect(d, greaterThanOrEqualTo(75));
+        expect(d, lessThanOrEqualTo(105));
       }
 
       client.connect();
@@ -606,13 +663,13 @@ void main() {
       await h.auth();
       expect(client.debugReconnectAttempts, 0); // 认证成功归零
 
-      // 断线一次：计数 +1，下一次延迟翻倍区间 [120, 180]
+      // 断线一次：计数 +1，下一次延迟翻倍区间 [150, 210]
       await h.server.close();
       await settle();
       expect(client.debugReconnectAttempts, 1);
       final d = client.debugNextReconnectDelay().inMilliseconds;
-      expect(d, greaterThanOrEqualTo(120));
-      expect(d, lessThanOrEqualTo(180));
+      expect(d, greaterThanOrEqualTo(150));
+      expect(d, lessThanOrEqualTo(210));
     });
   });
 

@@ -97,6 +97,13 @@ class ZcodeDesktopRegistry extends ChangeNotifier {
 
   // ---- 恢复（冷启动） ----
 
+  /// 恢复持久化的多桌面条目并为每个桌面建 store（pair 即连接）。
+  ///
+  /// **尚未接线**：当前聊天 UI 走 ConnectionManager（services/，自建
+  /// client），没有任何页面消费本注册表；在 zcode 聊天页落地前调用
+  /// 本方法只会为每个桌面开一条无消费端的平行连接（电量/流量浪费，
+  /// 还会与 ConnectionManager 的链路并存）。接线点规划在 main.dart，
+  /// 与聊天页同里程碑。
   Future<void> restore() async {
     if (_restored) return;
     _restored = true;

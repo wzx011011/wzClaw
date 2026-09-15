@@ -46,6 +46,11 @@
 //
 // 权限确认 / AskUser 通过客户端 onRequest 钩子接入（实现不变；
 // AskUser 类反向请求实测未触发，解析/应答仍为兜底形状）。
+//
+// 【接线状态】本 store 目前无页面直接引用（消费方仅 ZcodeDesktopRegistry
+// 与 keepalive 控制器，测试覆盖完整）——当前聊天 UI 走 services/
+// chat_store（ConnectionManager 换芯路径）。本模块是 zcode 聊天页的
+// 目标栈，随该页落地接线（同见 zcode_desktop_registry.restore 注释）。
 // ============================================================
 
 import 'dart:async';
@@ -393,6 +398,12 @@ class ZcodeChatStore extends ChangeNotifier {
     _availableModels.clear();
     _modelCatalog.clear();
     _currentModelRef = null;
+    // 会话级运行时快照一并清掉：残留会让下一次配对直接复用旧桌面的
+    // 工作区/思考强度（旧桌面可能已不在线或路径已变）
+    thoughtLevel = null;
+    _defaultWorkspaceKey = null;
+    _defaultWorkspacePath = null;
+    _resumeTitle = _resumeWsKey = _resumeWsPath = null;
     _error = null;
     notifyListeners();
     unawaited(_clearPersistedPairing());
@@ -417,8 +428,11 @@ class ZcodeChatStore extends ChangeNotifier {
       saved = ZcodePairingInfo.fromJson(
         decoded is Map ? decoded.cast<String, dynamic>() : null,
       );
-    } catch (_) {
-      return; // 持久化损坏：按未配对处理
+    } catch (e) {
+      // 持久化损坏：按未配对处理，但必须留观测——用户会看到「明明配过对
+      // 却要求重新扫码」，没有这条日志就无法定位是 prefs 被谁写坏了
+      debugPrint('[zcode-store] 配对持久化损坏，按未配对处理: $e');
+      return;
     }
     if (saved == null) return;
     _pairing = saved;
@@ -491,8 +505,26 @@ class ZcodeChatStore extends ChangeNotifier {
       // 重置一次性自动拉取标记：重连 matched 后重新自动刷新会话列表
       _sessionsAutoLoaded = false;
       _stopFallbackPolling();
+      // 断线（掉线/被顶号/重连中）即作废全部在途反向请求：链路已更换，
+      // app-server 侧 server-N 反向请求 id 会从头复用，迟到应答若带着旧
+      // 帧 id 发上新连接，可能命中同 id 的新请求（一次未经确认的批准）。
+      // 权限/AskUser 条同步清除——它们已不可能被应答（审查 P0 #2）。
+      _clearReverseUi();
+      _rejectAllPendingReverse();
     }
     notifyListeners();
+  }
+
+  /// 清除权限/AskUser 交互条（断线/作废路径）；控制器已关闭时静默跳过
+  void _clearReverseUi() {
+    if (_activePermission != null) {
+      _activePermission = null;
+      if (!_permissionController.isClosed) _permissionController.add(null);
+    }
+    if (_activeAskUser != null) {
+      _activeAskUser = null;
+      if (!_askUserController.isClosed) _askUserController.add(null);
+    }
   }
 
   ZcodeConnState _relayStateToConn(ZcodeRelayState state, bool paired) {
@@ -1036,15 +1068,19 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// app-server 反向请求接入点（客户端 onRequest 钩子，运行时由客户端调用）。
   ///
-  /// - method 含 permission → 解析 PermissionRequest 推流，等待用户应答
-  /// - method 含 interaction / askUser 且带 options/question → AskUserQuestion 推流
+  /// - `interaction/requestPermission`（实测方法名）→ 解析 PermissionRequest
+  ///   推流，等待用户应答
+  /// - AskUser 类（实测未触发，方法名未知）→ 模糊网兜底，见
+  ///   _parseAskUserQuestion 的 UNVERIFIED 标注
   /// - 解析失败或未知 method → 抛错（客户端回默认拒绝 error 帧，安全优先）
+  ///
+  /// 已实测的方法用**精确匹配**：contains 模糊匹配会把未来新增的相似方法
+  /// （如 *PermissionPolicy）误路由到错误分支。
   Future<dynamic> _handleReverseRequest(ZcodeFrame frame) {
     final method = frame.method ?? '';
     final params = frame.params is Map ? frame.params as Map : const {};
-    final lower = method.toLowerCase();
 
-    if (lower.contains('permission')) {
+    if (method == 'interaction/requestPermission') {
       final request = _parsePermissionRequest(params,
           fallbackId: frame.id?.toString(),);
       if (request == null) {
@@ -1063,6 +1099,9 @@ class ZcodeChatStore extends ChangeNotifier {
       );
     }
 
+    // UNVERIFIED：AskUser 反向请求从未实测触发，方法名未知——保留模糊网
+    // 兜底（interaction/askuser/ask_user），解析失败自然落入安全拒绝
+    final lower = method.toLowerCase();
     if (lower.contains('interaction') ||
         lower.contains('askuser') ||
         lower.contains('ask_user')) {
@@ -1092,6 +1131,14 @@ class ZcodeChatStore extends ChangeNotifier {
     required dynamic frameId,
     required void Function() onRegistered,
   }) {
+    final existing = _pendingReverse[key];
+    if (existing != null && !existing.completer.isCompleted) {
+      // 同 key 重复请求（连接重建后 server-N id 从头复用等）：旧挂起者
+      // 让位——以拒绝完成，防 completer 泄漏悬挂（拒绝 = error 帧安全拒绝）
+      existing.completer.completeError(
+        const ZcodeReverseRejectException('同 id 的新请求到达，旧请求作废'),
+      );
+    }
     final completer = Completer<dynamic>();
     _pendingReverse[key] = _PendingReverse(frameId: frameId, completer: completer);
     onRegistered();
@@ -1307,6 +1354,10 @@ class ZcodeChatStore extends ChangeNotifier {
       );
     } else if (kind == 'stream.chunk') {
       if (!state.pushAvailable && _isActive(state)) _startFallbackPolling();
+    } else {
+      // 未知 telemetry kind：留观测（不硬猜用途）
+      debugPrint('[zcode-store] telemetry 未处理 kind=$kind '
+          'session=${state.sessionId}');
     }
   }
 
@@ -1346,7 +1397,11 @@ class ZcodeChatStore extends ChangeNotifier {
             state.appendThinkingDelta(delta);
           } else if (kind == null || kind == 'text_delta') {
             state.appendTextDelta(delta);
-          } // 其他 kind（工具增量等）忽略，权威刷新兜底
+          } else {
+            // 未知增量种类：不留观测就会变成「内容少了但没人知道」
+            debugPrint('[zcode-store] model.streaming 未处理 kind=$kind '
+                'session=${state.sessionId}');
+          }
           _notifyIfActive(state);
         }
         return;
@@ -1398,7 +1453,11 @@ class ZcodeChatStore extends ChangeNotifier {
         if (title != null) _renameSessionBadge(state.sessionId, title);
         return;
       default:
-        return; // 未知类型透传忽略
+        // 静默丢弃 = 缺陷：未知类型留观测（session.updated 等已知无对应
+        // 行为的类型也会经过这里，日志是发现新事件的唯一手段）
+        debugPrint('[zcode-store] session/event 未处理 type=$type '
+            'session=${state.sessionId}');
+        return;
     }
   }
 
@@ -1417,9 +1476,21 @@ class ZcodeChatStore extends ChangeNotifier {
   }) {
     if (turnId != null) {
       if (!state.endedTurnIds.add(turnId)) return; // 该回合已收尾
-      // 回合已被其他通道收尾（如 state.updated idle 兜底先到）：只记账，
-      // 不重复走收尾路径（避免双份通知/双份权威刷新）
-      if (!state.hasTurnInFlight) return;
+      // 回合已被其他通道收尾（如 state.updated idle 兜底先到）：不重复走
+      // 收尾路径（避免双份通知），但 turn.completed 携带的权威全文/用量
+      // 不能跟着丢——先前通道收尾时可能只有残缺流式文本，这里补一次
+      // 增量权威刷新把最终内容拉平（幂等，仅此迟到场景触发）。
+      if (!state.hasTurnInFlight) {
+        if (usage != null) {
+          state.lastInputTokens = usage.inputTokens;
+          state.lastOutputTokens = usage.outputTokens;
+        }
+        if ((authoritativeText != null && authoritativeText.isNotEmpty) ||
+            usage != null) {
+          unawaited(_refreshAuthoritative(state));
+        }
+        return;
+      }
     }
     _stopFallbackPollingFor(state.sessionId);
     state.isStreaming = false;
@@ -1648,9 +1719,8 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// 合并 session/messages 响应：映射 → 时间序归一 → 增量合并 + 推进水位。
-  /// 入参条目一律视为已同步（synced），水位取合并后容器尾部的最后
-  /// 协议 id（以展示序为准，天然单调——避免无游标的整窗响应把水位
-  /// 拉回旧值引发重复拉取）。
+  /// 入参条目一律视为已同步（synced），水位取**本批权威数据**中最新的
+  /// 协议 id（不取容器尾——尾部可能有未确认的流式占位，见下方注释）。
   void _mergeServerMessages(ZcodeSessionState state, Map map) {
     final raw = map['messages'];
     if (raw is! List) return;
@@ -1669,9 +1739,18 @@ class ZcodeChatStore extends ChangeNotifier {
     if (incoming.isEmpty) return;
     _normalizeChronological(incoming);
     state.mergeAuthoritative(incoming);
-    // 水位 = 合并后容器尾部最后一条协议消息 id（按展示序单调）
-    final tail = state.lastProtoId;
-    if (tail != null) state.watermark = tail;
+    // 水位只由**本批权威数据**推进（服务端确认过的消息 id，展示序最后
+    // 一条即最新）。不能取合并后容器尾部：容器尾部可能还挂着未确认的
+    // 流式占位（已采纳 assistantMessageId 但权威页尚未返回它）——占位
+    // 推进水位会使后续 afterMessageId 增量永久跳过该消息的最终版本
+    //（数据丢失链，2026-09-15 审查 P0 #1）。
+    for (final it in incoming.reversed) {
+      final id = it.protoId;
+      if (id != null) {
+        state.watermark = id;
+        break;
+      }
+    }
   }
 
   /// 时间序归一：实测（probe-sync3，APP-SERVER.md「分页契约实测」）确认
@@ -2164,10 +2243,15 @@ class ZcodeChatStore extends ChangeNotifier {
   /// usage 映射：{inputTokens, outputTokens} → TokenUsage（字段齐全才映射）
   TokenUsage? _mapUsage(dynamic usage) {
     if (usage is! Map) return null;
-    final input = _toIntOrNull(usage['inputTokens']);
-    final output = _toIntOrNull(usage['outputTokens']);
-    if (input == null || output == null) return null;
-    return TokenUsage(inputTokens: input, outputTokens: output);
+    final rawInput = usage['inputTokens'];
+    final rawOutput = usage['outputTokens'];
+    if (rawInput == null && rawOutput == null) return null;
+    // 部分字段容忍：字段存在但解析失败按 0 计，不因单边缺失整体丢弃
+    // （usage 形状可能随版本增减字段——丢一个字段比丢整份好）
+    return TokenUsage(
+      inputTokens: _toIntOrNull(rawInput) ?? 0,
+      outputTokens: _toIntOrNull(rawOutput) ?? 0,
+    );
   }
 
   /// app-server 消息（info + parts）→ ChatMessage。
@@ -2266,14 +2350,17 @@ class ZcodeChatStore extends ChangeNotifier {
 
     final ToolCallStatus status;
     switch (statusStr) {
-      case 'running':
-        status = ToolCallStatus.running;
-        break;
       case 'completed':
         status = ToolCallStatus.done;
         break;
-      default: // error / failed / 其他一律视为 error
+      case 'error':
+      case 'failed': // 显式失败档
         status = ToolCallStatus.error;
+        break;
+      default:
+        // pending/running/未知状态一律视为进行中——未知 ≠ 失败（失败模式
+        // 方向：宁可多等不误报；真实失败会带 state.error 并落 error 档）
+        status = ToolCallStatus.running;
     }
 
     return ToolCallInfo(

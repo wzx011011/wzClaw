@@ -178,9 +178,14 @@ class FakeSessionServer {
     };
     fake.handlers['session/messages'] = (params) {
       final s = session(params!['sessionId'] as String);
-      return {
-        'messages': s.messagesAfter(params['afterMessageId'] as String?),
-      };
+      var rows = s.messagesAfter(params['afterMessageId'] as String?);
+      // 实测分页契约（APP-SERVER.md「分页契约实测」）：{limit} 返回最新
+      // N 条且升序——替身照此截尾，让依赖该语义的回归在此暴露
+      final limit = params['limit'];
+      if (limit is int && limit > 0 && rows.length > limit) {
+        rows = rows.sublist(rows.length - limit);
+      }
+      return {'messages': rows};
     };
     fake.handlers['session/send'] = (params) {
       session(params!['sessionId'] as String).addSend(params);
@@ -190,7 +195,8 @@ class FakeSessionServer {
       final s = session(params!['sessionId'] as String);
       s.status = 'idle';
       s.closeCalls++;
-      return {'ok': true};
+      // 实测形状（APP-SERVER.md）：{closed:true}；close ≠ delete
+      return {'closed': true};
     };
     fake.handlers['session/list'] = (_) => {'sessions': []};
   }

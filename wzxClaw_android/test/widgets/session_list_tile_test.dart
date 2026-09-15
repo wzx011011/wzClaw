@@ -44,7 +44,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.text('My Session'), findsOneWidget);
     });
@@ -56,7 +56,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.textContaining('12'), findsOneWidget);
     });
@@ -68,7 +68,7 @@ void main() {
           isActive: true,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.byIcon(Icons.check_circle), findsOneWidget);
     });
@@ -80,7 +80,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.byIcon(Icons.check_circle), findsNothing);
     });
@@ -92,7 +92,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.textContaining('缓存'), findsOneWidget);
     });
@@ -113,7 +113,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.text('等待'), findsOneWidget);
     });
@@ -126,7 +126,7 @@ void main() {
           isActive: false,
           onTap: () => tapped = true,
         ),
-      ));
+      ),);
 
       await tester.tap(find.byType(SessionListTile));
       expect(tapped, isTrue);
@@ -140,7 +140,7 @@ void main() {
           isActive: false,
           onTap: () {},
         ),
-      ));
+      ),);
 
       expect(find.textContaining('分钟前'), findsOneWidget);
     });

@@ -278,7 +278,7 @@ void main() {
       } catch (_) {}
 
       expect(store.userManuallySwitched, isFalse,
-          reason: 'System-driven switchToSession must leave userManuallySwitched false');
+          reason: 'System-driven switchToSession must leave userManuallySwitched false',);
     });
 
     test('userManuallySwitched true after user-initiated switchToSession', () async {
@@ -290,7 +290,7 @@ void main() {
       } catch (_) {}
 
       expect(store.userManuallySwitched, isTrue,
-          reason: 'User-initiated switchToSession must set userManuallySwitched true');
+          reason: 'User-initiated switchToSession must set userManuallySwitched true',);
     });
 
     test('userManuallySwitched cleared to false after resetSessionScope', () async {

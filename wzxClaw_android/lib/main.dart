@@ -12,6 +12,7 @@ import 'pages/settings_page.dart';
 import 'services/file_sync_service.dart';
 import 'services/goal_store.dart';
 import 'services/push_wake_service.dart';
+import 'zcode/zcode_keepalive_controller.dart';
 import 'zcode/zcode_notifier.dart';
 import 'services/session_sync_service.dart';
 
@@ -44,6 +45,13 @@ void main() async {
   // ZCode 任务完成通知：渠道创建 + 权限申请（幂等；当前聊天栈
   // services/chat_store 的 turn done 也会调用它，不再依赖 zcode 桌面注册表先加载）
   unawaited(ZcodeNotifier.instance.initialize());
+  // 后台保活控制器（幂等）：注册生命周期观察——paused 起前台服务、
+  // 回前台停服务并对注册表内各桌面 store 做快速重连快检。
+  // 注意：registry.restore() 此处**有意不调用**——当前聊天 UI 走
+  // ConnectionManager（自建 client，回前台快检在 _resumeCheck），
+  // 提前恢复注册表会为每个桌面开无 UI 消费端的平行连接；等 zcode
+  // 聊天页落地时随页接线。
+  unawaited(ZcodeKeepAliveController.instance.initialize());
   runApp(const WzxClawApp());
 }
 

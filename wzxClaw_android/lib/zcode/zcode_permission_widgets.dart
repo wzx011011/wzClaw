@@ -3,9 +3,9 @@
 //
 // 从 zcode_page.dart 的私有组件 _ZcodePermissionBar / _ZcodeAskUserBar
 // 提升而来（计划 P0.2）：
-// - ZcodePermissionBar：权限确认卡。带计时（入参含截止时间字段时
-//   显示剩余秒数，否则显示已等待秒数，每秒刷新）与工具 method 名 +
-//   入参紧凑摘要（默认 1-2 行，可展开完整 JSON）。
+// - ZcodePermissionBar：权限确认卡。显示已等待秒数（每秒刷新，超过
+//   companion 看护窗口后禁用按钮），工具 method 名 + 入参紧凑摘要
+//   （默认 1-2 行，可展开完整 JSON）。
 // - ZcodeAskUserBar：AskUser 反向请求问答卡（选项 + 补充回答）。
 //
 // 两个组件都通过回调参数化应答动作（原 widgets/permission_bar.dart
@@ -13,7 +13,13 @@
 // ZcodeChatStore.respondToPermission / respondToAskUser。
 //
 // 注意：调用方应传 key: ValueKey(request.toolCallId) 之类区分请求，
-// 换请求重建组件即重置计时；组件内 didUpdateWidget 只是兜底。
+// 换请求重建组件即重置计时；组件内 didUpdateWidget 是兜底（重置计时
+// 并重算入参摘要，防止新请求沿用旧请求的 JSON）。
+//
+// **尚未接线**：目前没有任何页面引用本组件——当前聊天 UI 走
+// services/chat_store（widgets/permission_bar.dart），本组件供
+// lib/zcode（ZcodeChatStore）目标栈的聊天页使用，随该页落地接线；
+// 数据面（权限请求解析/应答回放）已由 store 层测试钉死。
 // ============================================================
 
 import 'dart:async';
@@ -23,19 +29,6 @@ import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
 import 'zcode_reverse_models.dart';
-
-/// 入参里可能携带截止时间的字段名（绝对 epoch 时间戳语义）。
-///
-/// 刻意不扫描 timeout/ttl 等时长字段：PermissionRequest.input 是工具
-/// 自身的执行入参（如 Bash 的 timeout 是命令执行超时），拿它算权限
-/// 倒计时会编造出错误的「剩余/已超时」。
-const List<String> _kDeadlineKeys = [
-  'expiresAt',
-  'expires_at',
-  'expiry',
-  'deadline',
-  'expires',
-];
 
 /// 入参紧凑摘要的最大长度（约 1-2 行）
 const int _kInputSummaryMaxChars = 120;
@@ -48,40 +41,6 @@ const int _kInputSummaryMaxChars = 120;
 /// 非权限类反向请求在 store 层即被默认拒绝，不会显示本卡。
 /// 到点后本卡禁用按钮并提示，避免「点了批准其实已被拒」的假象。
 const Duration _kCompanionWatchdog = Duration(seconds: 120);
-
-/// 宽松数值解析（int/num/数字字符串）
-int? _toInt(dynamic v) {
-  if (v is int) return v;
-  if (v is num) return v.toInt();
-  if (v is String) return int.tryParse(v.trim());
-  return null;
-}
-
-/// 从权限请求入参解析截止时间：
-/// 只认绝对时间戳字段（expiresAt/deadline 等，按数量级区分毫秒/秒），
-/// 且必须是未来时间——过去的值多半是工具入参里的业务时间，不当截止用。
-/// 解析不到返回 null（UI 退化为显示已等待秒数）。
-DateTime? parsePermissionDeadline(
-  Map<String, dynamic> input,
-  DateTime receivedAt,
-) {
-  for (final key in _kDeadlineKeys) {
-    final v = _toInt(input[key]);
-    if (v == null || v <= 0) continue;
-    // epoch 毫秒 ~1.7e12、秒 ~1.7e9，按数量级区分单位
-    final int ms;
-    if (v >= 1000000000000) {
-      ms = v;
-    } else if (v >= 1000000000) {
-      ms = v * 1000;
-    } else {
-      continue; // 数量级不合理，跳过
-    }
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-    if (dt.isAfter(receivedAt)) return dt;
-  }
-  return null;
-}
 
 /// 工具入参紧凑摘要：压成单行 JSON 后截断，供权限卡 1-2 行展示
 String compactPermissionInputSummary(Map<String, dynamic> input) {
@@ -110,8 +69,8 @@ String fullPermissionInputJson(Map<String, dynamic> input) {
 // ── 权限确认条（复刻 widgets/permission_bar.dart 的视觉布局） ────────
 
 /// 权限确认卡：
-/// - 计时：入参带截止时间 → 剩余秒数倒计时；否则 → 已等待秒数；
-///   超过 companion 看护窗口 → 提示可能已被桌面端自动拒绝并禁用按钮
+/// - 计时：显示已等待秒数（协议未定义截止时间字段，不编造倒计时；
+///   超过 companion 看护窗口 → 提示可能已被桌面端自动拒绝并禁用按钮）
 /// - 摘要：工具 method 名 + 入参紧凑 JSON（默认 1-2 行，可展开全文）
 class ZcodePermissionBar extends StatefulWidget {
   const ZcodePermissionBar({
@@ -135,15 +94,12 @@ class _ZcodePermissionBarState extends State<ZcodePermissionBar> {
   /// 请求到达时间（计时基准；比真实到达晚一帧以内，可忽略）
   late DateTime _receivedAt;
 
-  /// 从入参解析出的截止时间；null 表示没有（退化为已等待秒数）
-  DateTime? _deadline;
-
   /// 计时秒计数器：每秒 +1，只驱动计时文本局部重建（不整卡 setState）
   final ValueNotifier<int> _clock = ValueNotifier<int>(0);
 
-  /// 紧凑摘要 / 完整 JSON 只算一次，避免每秒重建重复 jsonEncode
-  late final String _compactSummary;
-  late final String _fullJson;
+  /// 紧凑摘要 / 完整 JSON 只在请求变更时重算，避免每秒重建重复 jsonEncode
+  late String _compactSummary;
+  late String _fullJson;
 
   /// 是否展开完整入参
   bool _expanded = false;
@@ -152,7 +108,6 @@ class _ZcodePermissionBarState extends State<ZcodePermissionBar> {
   void initState() {
     super.initState();
     _receivedAt = DateTime.now();
-    _deadline = parsePermissionDeadline(widget.request.input, _receivedAt);
     _compactSummary = compactPermissionInputSummary(widget.request.input);
     _fullJson = fullPermissionInputJson(widget.request.input);
     _startTicker();
@@ -161,11 +116,13 @@ class _ZcodePermissionBarState extends State<ZcodePermissionBar> {
   @override
   void didUpdateWidget(covariant ZcodePermissionBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 请求换了对象（调用方未加 key 的兜底）：重置计时基准并重新走表
-    // （旧请求可能已因看护到期停表，不重启的话新计时不会刷新）
+    // 请求换了对象（调用方未加 key 的兜底）：重置计时基准、重算入参摘要
+    // （旧请求可能已因看护到期停表，不重启的话新计时不会刷新；
+    // late 字段不重算的话新请求会沿用旧请求的 JSON——审批看错入参）
     if (oldWidget.request.toolCallId != widget.request.toolCallId) {
       _receivedAt = DateTime.now();
-      _deadline = parsePermissionDeadline(widget.request.input, _receivedAt);
+      _compactSummary = compactPermissionInputSummary(widget.request.input);
+      _fullJson = fullPermissionInputJson(widget.request.input);
       _startTicker();
     }
   }
@@ -199,30 +156,20 @@ class _ZcodePermissionBarState extends State<ZcodePermissionBar> {
   bool get _watchdogExpired =>
       DateTime.now().difference(_receivedAt) >= _kCompanionWatchdog;
 
-  /// 计时文案：看护到期 → 应答超时；有截止 → 剩余/已超时；否则 → 已等待
+  /// 计时文案：看护到期 → 应答超时；否则 → 已等待秒数
   String _timeLabel() {
     final now = DateTime.now();
     if (now.difference(_receivedAt) >= _kCompanionWatchdog) return '应答超时';
-    final deadline = _deadline;
-    if (deadline == null) {
-      return '已等待 ${now.difference(_receivedAt).inSeconds}s';
-    }
-    final remain = deadline.difference(now).inSeconds;
-    return remain > 0 ? '剩余 ${remain}s' : '已超时';
+    return '已等待 ${now.difference(_receivedAt).inSeconds}s';
   }
 
-  /// 计时颜色：看护到期/已超时用错误色，临期用警示色，普通用次级色
+  /// 计时颜色：看护到期用错误色，普通用次级色
   Color _timeColor(AppColors colors) {
     final now = DateTime.now();
     if (now.difference(_receivedAt) >= _kCompanionWatchdog) {
       return colors.error;
     }
-    final deadline = _deadline;
-    if (deadline == null) return colors.textMuted;
-    final remain = deadline.difference(now).inSeconds;
-    if (remain <= 0) return colors.error;
-    if (remain <= 10) return colors.warning;
-    return colors.textSecondary;
+    return colors.textMuted;
   }
 
   @override
@@ -325,6 +272,11 @@ class _ZcodePermissionBarState extends State<ZcodePermissionBar> {
             ),
           ],
           const SizedBox(height: 10),
+          // 词典说明（对应 store._buildPermissionResult 的映射表）：本卡
+          // Approve 固定走 allow_once 档（optionId=allow_once，回放实测
+          // response 原文）；服务端的 allow_project（本会话总是允许）需要
+          // remember 语义，手机端暂无入口——待实测其 permissionUpdates
+          // 对后续回合的实际效果后再决定是否开放第三档按钮。
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [

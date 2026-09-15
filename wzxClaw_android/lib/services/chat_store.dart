@@ -163,7 +163,7 @@ class ChatStore {
             toolOutput: tc.outputSummary,
             toolStatus: tc.isError ? ToolCallStatus.error : tc.status,
             createdAt: m.createdAt,
-          ));
+          ),);
         }
         if (m.content.trim().isNotEmpty) out.add(m);
       } else {
@@ -921,7 +921,7 @@ class ChatStore {
         limit: 100,
       );
       _messages.addAll(
-        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
       _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else {
@@ -931,7 +931,7 @@ class ChatStore {
         limit: 100,
       );
       _messages.addAll(
-        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
     }
     _notifyListeners();
   }
@@ -956,7 +956,7 @@ class ChatStore {
     // 用户在清空后已发过消息 → 不覆盖
     if (_lastUserMsgGen > _clearGeneration) return;
     final visibleMessages = _expandEmbeddedToolCalls(
-        messages.where((m) => _renderable(m)).toList(growable: false));
+        messages.where((m) => _renderable(m)).toList(growable: false),);
     _messages.clear();
     _messages.addAll(visibleMessages);
     _restoreLiveSessionState(sessionId);
@@ -1076,7 +1076,7 @@ class ChatStore {
       limit: 100,
     );
     _messages.addAll(
-        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
     _cleanupStaleTools();
     _notifyListeners();
   }
@@ -1098,7 +1098,7 @@ class ChatStore {
     }
     if (older.isEmpty) return;
     _messages.insertAll(
-        0, _expandEmbeddedToolCalls(older.where((m) => _renderable(m)).toList()));
+        0, _expandEmbeddedToolCalls(older.where((m) => _renderable(m)).toList()),);
     _notifyListeners();
   }
 

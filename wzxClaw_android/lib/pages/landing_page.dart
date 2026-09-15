@@ -81,7 +81,7 @@ class _LandingPageState extends State<LandingPage>
     // 多配对：设备列表持久常驻 + 探测其余桌面在线状态
     unawaited(ConnectionManager.instance.refreshDesktops().then((_) {
       if (mounted) _refreshOnlineStatus();
-    }));
+    }),);
 
     _autoConnect();
   }
@@ -203,7 +203,7 @@ class _LandingPageState extends State<LandingPage>
                       style: TextStyle(
                           color: colors.textPrimary,
                           fontSize: 16,
-                          fontWeight: FontWeight.bold)),
+                          fontWeight: FontWeight.bold,),),
                   const Spacer(),
                   GestureDetector(
                     onTap: () {
@@ -211,7 +211,7 @@ class _LandingPageState extends State<LandingPage>
                       _navigateToChat();
                     },
                     child: Text('跳过',
-                        style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                        style: TextStyle(color: colors.textMuted, fontSize: 13),),
                   ),
                 ],
               ),
@@ -226,10 +226,10 @@ class _LandingPageState extends State<LandingPage>
                     Icon(Icons.folder_off_outlined, size: 40, color: colors.textMuted),
                     const SizedBox(height: 12),
                     Text('暂无工作区',
-                        style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                        style: TextStyle(color: colors.textSecondary, fontSize: 14),),
                     const SizedBox(height: 6),
                     Text('请在桌面端打开项目后重试',
-                        style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                        style: TextStyle(color: colors.textMuted, fontSize: 12),),
                   ],
                 ),
               )
@@ -287,7 +287,7 @@ class _LandingPageState extends State<LandingPage>
         backgroundColor: colors.bgElevated,
         title: Text('断开连接', style: TextStyle(color: colors.textPrimary)),
         content: Text('确定要断开 Relay 服务器连接吗？',
-            style: TextStyle(color: colors.textSecondary)),
+            style: TextStyle(color: colors.textSecondary),),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -332,16 +332,16 @@ class _LandingPageState extends State<LandingPage>
             width: 8,
             height: 8,
             decoration:
-                BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
+                const BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
           ),
           const SizedBox(width: 10),
           Text('连接中',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
           const SizedBox(width: 4),
           Expanded(
             child: Text('· $host',
                 style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis),
+                overflow: TextOverflow.ellipsis,),
           ),
         ],
       ),
@@ -369,16 +369,16 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(width: 10),
           Text('未连接',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
           const SizedBox(width: 4),
           Expanded(
-            child: Text('· ' + host,
+            child: Text('· $host',
                 style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis),
+                overflow: TextOverflow.ellipsis,),
           ),
           GestureDetector(
             onTap: () => unawaited(
-                ConnectionManager.instance.connectFromSavedConfiguration()),
+                ConnectionManager.instance.connectFromSavedConfiguration(),),
             child:
                 Text('重连', style: TextStyle(color: colors.accent, fontSize: 12)),
           ),
@@ -464,10 +464,10 @@ class _LandingPageState extends State<LandingPage>
             const SizedBox(height: 16),
             Text('wzxClaw',
                 style: TextStyle(color: colors.textPrimary, fontSize: 28,
-                    fontWeight: FontWeight.bold)),
+                    fontWeight: FontWeight.bold,),),
             const SizedBox(height: 6),
             Text('AI 编程助手',
-                style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                style: TextStyle(color: colors.textSecondary, fontSize: 14),),
             const SizedBox(height: 48),
             Text(
               '扫描桌面端的二维码\n快速连接到你的工作站',
@@ -486,7 +486,7 @@ class _LandingPageState extends State<LandingPage>
                   backgroundColor: colors.accent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
+                      borderRadius: BorderRadius.circular(16),),
                 ),
               ),
             ),
@@ -500,7 +500,7 @@ class _LandingPageState extends State<LandingPage>
                   foregroundColor: colors.textSecondary,
                   side: BorderSide(color: colors.border),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
+                      borderRadius: BorderRadius.circular(16),),
                 ),
                 child: const Text('手动配置'),
               ),
@@ -535,11 +535,11 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(height: 24),
           Text('正在连接 Relay 服务器',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
           const SizedBox(height: 6),
           if (_serverHost != null)
             Text(_serverHost!,
-                style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                style: TextStyle(color: colors.textMuted, fontSize: 13),),
           const SizedBox(height: 32),
           TextButton(
             onPressed: () => ConnectionManager.instance.disconnect(),
@@ -568,20 +568,20 @@ class _LandingPageState extends State<LandingPage>
                     style: TextStyle(
                         color: colors.textPrimary,
                         fontSize: 16,
-                        fontWeight: FontWeight.bold)),
+                        fontWeight: FontWeight.bold,),),
                 const SizedBox(height: 8),
                 Text('请在电脑上打开 wzxClaw',
-                    style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 13),),
                 const SizedBox(height: 24),
                 OutlinedButton.icon(
                   onPressed: () => Navigator.pushNamed(context, '/settings'),
                   icon: Icon(Icons.qr_code_scanner, color: colors.textSecondary),
                   label: Text('重新扫码',
-                      style: TextStyle(color: colors.textSecondary)),
+                      style: TextStyle(color: colors.textSecondary),),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: colors.border),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),),
                   ),
                 ),
               ],
@@ -612,7 +612,7 @@ class _LandingPageState extends State<LandingPage>
                   style: TextStyle(
                       color: colors.textSecondary,
                       fontSize: 13,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,),),
               const Spacer(),
               IconButton(
                 onPressed: _refreshOnlineStatus,
@@ -621,7 +621,7 @@ class _LandingPageState extends State<LandingPage>
                 visualDensity: VisualDensity.compact,
               ),
               Text('$onlineCount/${_desktops.length} 在线',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
             ],
           ),
         ),
@@ -649,9 +649,9 @@ class _LandingPageState extends State<LandingPage>
             child: TextButton.icon(
               onPressed: _addDesktopViaScan,
               icon: Icon(Icons.qr_code_scanner,
-                  size: 16, color: colors.textMuted),
+                  size: 16, color: colors.textMuted,),
               label: Text('扫码添加桌面',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
             ),
           ),
         ),
@@ -695,7 +695,7 @@ class _LandingPageState extends State<LandingPage>
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('不是桌面端配对二维码'),
         duration: Duration(seconds: 2),
-      ));
+      ),);
       return;
     }
     _pendingAutoSelectSid = parsed.sid;
@@ -723,9 +723,9 @@ class _LandingPageState extends State<LandingPage>
             const SizedBox(height: 8),
             ListTile(
               leading: Icon(d.online ? Icons.login : Icons.link,
-                  color: colors.accent),
+                  color: colors.accent,),
               title: Text(d.online ? '进入此桌面' : '连接此桌面',
-                  style: TextStyle(color: colors.textPrimary)),
+                  style: TextStyle(color: colors.textPrimary),),
               onTap: () {
                 Navigator.pop(ctx);
                 _onDeviceTap(d);
@@ -754,8 +754,8 @@ class _LandingPageState extends State<LandingPage>
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgElevated,
         title: Text('删除桌面', style: TextStyle(color: colors.textPrimary)),
-        content: Text('将移除「' + (d.name ?? '桌面 ZCode') + '」的配对，需要重新扫码才能再连接。确定删除吗？',
-            style: TextStyle(color: colors.textSecondary)),
+        content: Text('将移除「${d.name ?? '桌面 ZCode'}」的配对，需要重新扫码才能再连接。确定删除吗？',
+            style: TextStyle(color: colors.textSecondary),),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -772,7 +772,7 @@ class _LandingPageState extends State<LandingPage>
       unawaited(ConnectionManager.instance.removePairing(d.desktopId)
           .then((_) {
         if (mounted) setState(() => _probeStatus.remove(d.desktopId));
-      }));
+      }),);
     });
   }
 
@@ -847,17 +847,17 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(width: 10),
           Text('Relay 已连接',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
           const SizedBox(width: 4),
           Expanded(
             child: Text('· $host',
                 style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis),
+                overflow: TextOverflow.ellipsis,),
           ),
           GestureDetector(
             onTap: _onDisconnect,
             child: Text('断开',
-                style: TextStyle(color: colors.error, fontSize: 12)),
+                style: TextStyle(color: colors.error, fontSize: 12),),
           ),
         ],
       ),
@@ -1006,11 +1006,11 @@ class _DesktopCardState extends State<_DesktopCard>
                           style: TextStyle(
                               color: colors.textPrimary,
                               fontSize: 15,
-                              fontWeight: FontWeight.bold)),
+                              fontWeight: FontWeight.bold,),),
                       const SizedBox(height: 4),
                       Text(subtitle,
                           style:
-                              TextStyle(color: colors.textMuted, fontSize: 12)),
+                              TextStyle(color: colors.textMuted, fontSize: 12),),
                     ],
                   ),
                 ),
@@ -1033,7 +1033,7 @@ class _DesktopCardState extends State<_DesktopCard>
                       const SizedBox(width: 5),
                       Text(badgeText,
                           style:
-                              TextStyle(color: badgeColor, fontSize: 11)),
+                              TextStyle(color: badgeColor, fontSize: 11),),
                     ],
                   ),
                 ),

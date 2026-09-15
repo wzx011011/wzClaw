@@ -36,15 +36,15 @@ void main() {
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'a', deviceSid: 'd1', title: 'A',
         createdAt: 1, updatedAt: 100,
-      ));
+      ),);
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'b', deviceSid: 'd1', title: 'B',
         createdAt: 2, updatedAt: 200,
-      ));
+      ),);
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'c', deviceSid: 'd2', title: 'C',
         createdAt: 3, updatedAt: 300,
-      ));
+      ),);
 
       final d1 = await idx.sessionsForDevice('d1');
       expect(d1.map((e) => e.sessionId).toList(), ['b', 'a']);
@@ -57,11 +57,11 @@ void main() {
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'a', deviceSid: 'd1', title: '旧标题',
         firstMessage: '旧首条', createdAt: 111, updatedAt: 111,
-      ));
+      ),);
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'a', deviceSid: 'd1', title: '新标题',
         createdAt: 999, updatedAt: 999,
-      ));
+      ),);
       final e = await idx.find('a');
       expect(e?.createdAt, 111, reason: 'createdAt 不应被二次 upsert 覆盖');
       expect(e?.firstMessage, '旧首条');
@@ -74,7 +74,7 @@ void main() {
       await idx.upsert(const PhoneSessionEntry(
         sessionId: 'a', deviceSid: 'd1', title: 'A',
         createdAt: 1, updatedAt: 1,
-      ));
+      ),);
       await idx.rename('a', '改名');
       await idx.touch('a', updatedAt: 500);
       expect((await idx.find('a'))?.title, '改名');
@@ -111,7 +111,7 @@ void main() {
       await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
         sessionId: 'p1', deviceSid: 'desktop-fake', title: '手机会话',
         createdAt: 1, updatedAt: 10,
-      ));
+      ),);
 
       h.transport.clearSent();
       await h.sessionSync.refreshLocalSessions();
@@ -178,7 +178,7 @@ void main() {
       await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
         sessionId: 'p1', deviceSid: 'desktop-fake', title: 'P1',
         createdAt: 1, updatedAt: 1,
-      ));
+      ),);
       await h.sessionSync.refreshLocalSessions();
       h.sessionSync.setActiveSession('p1');
       await h.chatStore.switchToSession('p1', userInitiated: true);
@@ -191,7 +191,7 @@ void main() {
       expect(await PhoneSessionIndex.instance.find('p1'), isNull);
       expect(h.sessionSync.sessions, isEmpty);
       expect(h.chatStore.currentSessionId, isNull,
-          reason: '删除当前会话应回到「新任务」欢迎态');
+          reason: '删除当前会话应回到「新任务」欢迎态',);
       // Option A：删除不再向引擎发 session:delete
       expect(
         h.transport.sentMessages

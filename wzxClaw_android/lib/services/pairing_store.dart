@@ -104,7 +104,7 @@ class PairingStore {
                   : name,
             ),
             addedAt: DateTime.now().millisecondsSinceEpoch,
-          ));
+          ),);
           await prefs.setString(_listKey, jsonEncode([list.first.toJson()]));
           await prefs.setString(_activeKey, list.first.info.sid);
         }

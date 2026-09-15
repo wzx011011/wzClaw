@@ -85,7 +85,7 @@ List<WsMessage> translateNotification(
     for (final ev in events) {
       final payload = ev is Map ? (ev['payload'] ?? ev) : ev;
       out.addAll(_translatePayload(
-          sessionId, payload, ev is Map ? ev['type']?.toString() : null));
+          sessionId, payload, ev is Map ? ev['type']?.toString() : null,),);
     }
     return out;
   }
@@ -128,7 +128,7 @@ List<WsMessage> _translateReverse(
         .map((o) => {
               'label': o['label']?.toString() ?? o['value']?.toString() ?? '',
               'description': o['description']?.toString(),
-            })
+            },)
         .toList();
     final event = WsMessage(event: 'stream:agent:ask_user_question', data: {
       'questionId': questionId,
@@ -136,7 +136,7 @@ List<WsMessage> _translateReverse(
       'options': options,
       'allowCustom': p['allowCustom'] == true || p['allow_multiple'] == true,
       'sessionId': p['sessionId']?.toString() ?? '',
-    });
+    },);
     registerReverse(ReverseRequestInfo(frameId, 'ask_user'), event);
     return [event];
   }
@@ -154,7 +154,7 @@ List<WsMessage> _translateReverse(
     'riskLevel': p['riskLevel']?.toString() ?? '',
     'options': options,
     'sessionId': p['sessionId']?.toString() ?? '',
-  });
+  },);
   registerReverse(
     ReverseRequestInfo(frameId, 'permission', permissionOptions: options),
     event,
@@ -163,7 +163,7 @@ List<WsMessage> _translateReverse(
 }
 
 List<WsMessage> _translatePayload(
-    String sessionId, dynamic payload, String? outerType) {
+    String sessionId, dynamic payload, String? outerType,) {
   final p = payload is Map ? payload : const {};
   final kind = p['kind']?.toString();
   // 词表来源：probe-stream-shape 实测。kind 在 payload 内（model.streaming /
@@ -200,14 +200,14 @@ List<WsMessage> _translatePayload(
       'toolCallId': content(p['toolCallId']),
       'toolName': content(p['toolName']),
       'input': const {},
-    }));
+    },),);
   } else if (effectiveKind == 'tool_call') {
     out.add(WsMessage(event: 'stream:agent:tool_call', data: {
       'sessionId': sessionId,
       'toolCallId': content(p['toolCallId']),
       'toolName': content(p['toolName']),
       'input': p['input'] is Map ? Map<String, dynamic>.from(p['input'] as Map) : const {},
-    }));
+    },),);
   } else if (effectiveKind == 'scheduled' || effectiveKind == 'started') {
     // 兼容旧观察词表：无 input（inputOmitted），仅提前建卡
     out.add(WsMessage(event: 'stream:agent:tool_call', data: {
@@ -215,7 +215,7 @@ List<WsMessage> _translatePayload(
       'toolCallId': content(p['toolCallId'] ?? p['callId']),
       'toolName': content(p['toolName'] ?? p['tool']),
       'input': const {},
-    }));
+    },),);
   } else if (effectiveKind == 'result' || effectiveKind == 'tool.result') {
     // result.payload: {toolCallId, result:{success, content,...}, duration}
     final inner = p['result'] is Map ? p['result'] as Map : const {};
@@ -225,7 +225,7 @@ List<WsMessage> _translatePayload(
       'toolCallId': content(p['toolCallId'] ?? p['callId']),
       'output': output.length > 2000 ? output.substring(0, 2000) : output,
       'isError': inner['success'] == false,
-    }));
+    },),);
   } else if (effectiveKind == 'permission.resolved') {
     // {requestId, toolCallId, decision, reason}：交由调用方清待答表
     out.add(WsMessage(event: 'stream:agent:permission_resolved', data: {
@@ -233,7 +233,7 @@ List<WsMessage> _translatePayload(
       'requestId': content(p['requestId']),
       'toolCallId': content(p['toolCallId']),
       'decision': content(p['decision']),
-    }));
+    },),);
   } else if (kind != null &&
       (kind == 'progress' || kind == 'batch')) {
     // 进度/批次心跳：旧协议无对应事件，忽略（有观测计数）
@@ -248,7 +248,7 @@ List<WsMessage> _translatePayload(
         'toolCallId': callId,
         'toolName': toolName,
         'input': p['input'] ?? p['params'] ?? '',
-      }));
+      },),);
     } else {
       final output = p['output'] is String ? p['output'] : (p['output']?.toString() ?? '');
       out.add(WsMessage(event: 'stream:agent:tool_result', data: {
@@ -256,7 +256,7 @@ List<WsMessage> _translatePayload(
         'toolCallId': callId,
         'output': output.length > 2000 ? output.substring(0, 2000) : output,
         'isError': kind.contains('error'),
-      }));
+      },),);
     }
   }
   if (effectiveKind == 'turn.started') {
@@ -267,20 +267,20 @@ List<WsMessage> _translatePayload(
     out.add(WsMessage(event: 'stream:agent:turn_end', data: {
       'sessionId': sessionId,
       'status': status,
-    }));
+    },),);
     out.add(WsMessage(event: 'stream:agent:done', data: {
       'sessionId': sessionId,
       'status': status,
       'usage': p['usage'],
       // turn.completed: {duration(ms), toolCallCount, response,...} → 已工作时长
       'durationMs': p['duration'],
-    }));
+    },),);
   }
   if (effectiveKind == 'model.error' || p['isError'] == true) {
     out.add(WsMessage(event: 'stream:agent:error', data: {
       'sessionId': sessionId,
       'error': content(p['error'] ?? p['message']),
-    }));
+    },),);
   }
   // agent 归属透传（payload 若携带）：子智能体事件据此折叠进卡片
   final agent = p['agent']?.toString() ??
@@ -308,7 +308,7 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
             ? '该会话正在桌面端运行，手机端暂无法查看'
             : (error['message'] ?? '请求失败'),
         'code': code,
-      }),
+      },),
     ];
   }
   switch (method) {
@@ -325,11 +325,11 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
           ],
           'taskStatuses': <String, dynamic>{},
           'activeSessionId': null,
-        }),
+        },),
       ];
 
     case 'session/messages':
-      final limit = 200; // 与 ConnectionManager 请求一致
+      const limit = 200; // 与 ConnectionManager 请求一致
       final rows = (result is Map ? result['messages'] : null) as List? ?? [];
       final mapped = <Map<String, dynamic>>[];
       String? sessionId;
@@ -347,7 +347,7 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
           'offset': 0,
           // 尾窗语义：返回条数==limit 即可能还有更旧消息
           'hasMore': rows.length >= limit,
-        }),
+        },),
       ];
 
     case 'session/create':
@@ -362,7 +362,7 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
             'updatedAt': DateTime.now().millisecondsSinceEpoch,
             'messageCount': 0,
           },
-        }),
+        },),
       ];
   }
   return const [];
@@ -424,7 +424,7 @@ List<WorkspaceGroup> groupSessionsByWorkspace(dynamic result) {
 
 /// 选中工作区解析：显式选中键优先（大小写不敏感回退），否则最新活跃组。
 WorkspaceGroup? resolveWorkspace(
-    List<WorkspaceGroup> groups, String? selectedKey) {
+    List<WorkspaceGroup> groups, String? selectedKey,) {
   if (groups.isEmpty) return null;
   if (selectedKey != null && selectedKey.isNotEmpty) {
     for (final g in groups) {
@@ -473,12 +473,12 @@ WsMessage workspaceListWsResponse(String requestId, List<WorkspaceGroup> groups)
           'updatedAt': g.newestUpdatedAt,
         },
     ],
-  });
+  },);
 }
 
 /// 旧协议 session:list:response（顶层带当前工作区 + 仅该工作区的会话）
 WsMessage sessionListWsResponse(
-    String requestId, List<WorkspaceGroup> groups, String? selectedKey) {
+    String requestId, List<WorkspaceGroup> groups, String? selectedKey,) {
   final g = resolveWorkspace(groups, selectedKey);
   final sessions = g?.sessions ?? const <Map<String, dynamic>>[];
   return WsMessage(event: 'session:list:response', data: {
@@ -492,7 +492,7 @@ WsMessage sessionListWsResponse(
     ],
     'taskStatuses': <String, dynamic>{},
     'activeSessionId': null,
-  });
+  },);
 }
 
 String workspaceBasename(String path) {
@@ -573,7 +573,7 @@ Map<String, dynamic>? _mapEngineMessage(Map row) {
         'toolCallId': (raw['callID'] ?? raw['callId'] ?? state['callId'] ?? '').toString(),
         'toolName': (raw['tool'] ?? state['tool'] ?? '').toString(),
         'inputSummary': _toolInputSummary(
-            (raw['tool'] ?? state['tool'] ?? '').toString(), state['input']),
+            (raw['tool'] ?? state['tool'] ?? '').toString(), state['input'],),
         'outputSummary': _truncate(state['output']?.toString()),
         'status': state['status'] == 'completed'
             ? 'done'
@@ -629,7 +629,7 @@ String? _toolInputSummary(String toolName, dynamic input) {
     'WebSearch' || 'web-search' => pick(['query']),
     'WebFetch' || 'web-fetch' => pick(['url']),
     _ => pick(['command', 'file_path', 'filePath', 'path', 'pattern', 'url',
-      'query', 'description']),
+      'query', 'description',]),
   };
   if (s.isNotEmpty) return _truncate(s);
   // 兜底：第一个字符串值 → 压缩 JSON → toString

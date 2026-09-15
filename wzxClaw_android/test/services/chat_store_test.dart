@@ -87,7 +87,7 @@ void main() {
             role: MessageRole.user,
             content: 'hack',
             createdAt: DateTime.now(),
-          )), throwsA(anything));
+          ),), throwsA(anything),);
     });
 
     test('messages is a List<ChatMessage>', () {
@@ -107,7 +107,7 @@ void main() {
       final first = store.displayMessages;
       final second = store.displayMessages;
       expect(identical(first, second), isTrue,
-          reason: 'Cached list should be the same object when nothing changed');
+          reason: 'Cached list should be the same object when nothing changed',);
     });
 
     test('displayMessages length matches messages length when not streaming', () {
@@ -162,13 +162,13 @@ void main() {
           role: MessageRole.assistant,
           content: '',
           toolCalls: [
-            ToolCallInfo(
+            const ToolCallInfo(
               toolCallId: 'c1',
               toolName: 'Bash',
               inputSummary: 'echo hi',
               status: ToolCallStatus.done,
             ),
-            ToolCallInfo(
+            const ToolCallInfo(
               toolCallId: 'c2',
               toolName: 'Read',
               inputSummary: '/tmp/a.txt',
@@ -182,7 +182,7 @@ void main() {
           role: MessageRole.assistant,
           content: '执行完成，共两步。',
           toolCalls: [
-            ToolCallInfo(
+            const ToolCallInfo(
               toolCallId: 'c3',
               toolName: 'Grep',
               inputSummary: 'pattern',
@@ -247,7 +247,7 @@ void main() {
 
       expect(store.messages, isNotEmpty);
       expect(store.messages.any((m) => m.content == 'Fresh response after clear'),
-          isTrue);
+          isTrue,);
     });
 
     test('clear guard: messages rejected when user sent message without intermediate clear', () async {
@@ -314,7 +314,7 @@ void main() {
       final store = ChatStore.instance;
       final todos = store.todos;
       expect(() => (todos as List).add({'content': 'hack', 'status': 'pending', 'activeForm': ''}),
-          throwsA(anything));
+          throwsA(anything),);
     });
   });
 
@@ -402,7 +402,7 @@ void main() {
       final store = ChatStore.instance;
       store.respondToAskUser('q-1', ['Option A']);
       store.respondToAskUser('q-2', ['Option A', 'Option B'],
-          customText: 'Custom input');
+          customText: 'Custom input',);
     });
   });
 
@@ -466,7 +466,7 @@ void main() {
       }
 
       expect(store.userManuallySwitched, isFalse,
-          reason: 'System-initiated switch must not set userManuallySwitched');
+          reason: 'System-initiated switch must not set userManuallySwitched',);
     });
 
     test('becomes true when switchToSession called with userInitiated: true', () async {
@@ -480,7 +480,7 @@ void main() {
       }
 
       expect(store.userManuallySwitched, isTrue,
-          reason: 'User-initiated switch must set userManuallySwitched');
+          reason: 'User-initiated switch must set userManuallySwitched',);
     });
 
     test('reset to false after resetSessionScope', () async {
@@ -511,7 +511,7 @@ void main() {
         await store.switchToSession('sys-session-B');
       } catch (_) {}
       expect(store.userManuallySwitched, isFalse,
-          reason: 'System switch must clear userManuallySwitched so desktop can lead again');
+          reason: 'System switch must clear userManuallySwitched so desktop can lead again',);
     });
   });
 

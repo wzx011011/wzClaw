@@ -357,14 +357,29 @@ class ZcodeRelayClient {
       });
       return;
     }
+    // 捕获分发时的 socket：hook 完成时若连接已换代（断线重连/客户端重建），
+    // 应答帧绝不能发上新连接——app-server 侧 server-N id 会从头复用，陈旧
+    // 应答可能命中同 id 的新请求（一次未经确认的批准）。直接丢弃并留观测。
+    // （store 侧另在断线时作废全部 pending 反向请求，这里是第二道防线。）
+    final socketAtRequest = _socket;
     unawaited(() async {
       try {
         final result = await hook(ZcodeFrame(id: id, method: method, params: params));
+        if (!identical(_socket, socketAtRequest)) {
+          debugPrint(
+              '[zcode-relay] 丢弃过期反向请求应答（连接已换代）: id=$id method=$method',);
+          return;
+        }
         _send({
           'type': 'data',
           'payload': {'id': id, 'result': result},
         });
       } catch (error) {
+        if (!identical(_socket, socketAtRequest)) {
+          debugPrint(
+              '[zcode-relay] 丢弃过期反向请求拒绝（连接已换代）: id=$id method=$method',);
+          return;
+        }
         _send({
           'type': 'data',
           'payload': {
@@ -410,7 +425,8 @@ class ZcodeRelayClient {
     });
   }
 
-  /// 计算下一次重连延迟：base * 2^attempt 封顶 60s，再减去 [0, 1/3) 抖动
+  /// 计算下一次重连延迟：base * 2^attempt 封顶 60s，叠加 ±1/6 对称抖动。
+  /// 对称而非纯减：纯减抖动会让多台设备挤在窗口上限同时重连
   Duration _nextReconnectDelay() {
     final baseMs = _reconnectDelay.inMilliseconds;
     final shift = _reconnectAttempts < 16 ? _reconnectAttempts : 16; // 防溢出
@@ -418,9 +434,12 @@ class ZcodeRelayClient {
     final cappedMs = expMs < baseMs
         ? baseMs
         : (expMs > _kMaxReconnectMs ? _kMaxReconnectMs : expMs);
-    final jitterMs = cappedMs ~/ 3;
+    final jitterMs = cappedMs ~/ 6;
     if (jitterMs == 0) return Duration(milliseconds: cappedMs);
-    return Duration(milliseconds: cappedMs - _random.nextInt(jitterMs + 1));
+    return Duration(
+      milliseconds:
+          cappedMs - jitterMs + _random.nextInt(jitterMs * 2 + 1),
+    );
   }
 
   // ---------- 保活 / 死链检测 ----------

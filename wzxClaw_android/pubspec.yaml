@@ -34,6 +34,7 @@ dev_dependencies:
   shelf: ^1.4.0
   shelf_web_socket: ^2.0.0
 
+  stream_channel: any
 flutter:
   uses-material-design: true
 

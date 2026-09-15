@@ -12,10 +12,10 @@ void main() {
   group('parsePairingUrlAny', () {
     test('https 与 wss 均可，host/port 正确', () {
       final a = parsePairingUrlAny(
-          'https://zcode.5945.top/pair?sid=abc&hash=xxx');
+          'https://zcode.5945.top/pair?sid=abc&hash=xxx',);
       expect(a!.relayWsUrl, 'wss://zcode.5945.top/ws');
       final b = parsePairingUrlAny(
-          'wss://zcode.5945.top/pair?sid=abc&hash=xxx');
+          'wss://zcode.5945.top/pair?sid=abc&hash=xxx',);
       expect(b!.relayWsUrl, 'wss://zcode.5945.top/ws');
       expect(parsePairingUrlAny('wss://host/ws?sid='), isNull);
     });
@@ -24,7 +24,7 @@ void main() {
   group('normalizeQrScanToServerUrl（扫码配对链接归一化）', () {
     test('https 配对链接升级为 wss，sid/hash/name 参数原样保留', () {
       final url = normalizeQrScanToServerUrl(
-          'https://zcode.5945.top/pair?sid=abc&hash=xxx&name=MY-PC');
+          'https://zcode.5945.top/pair?sid=abc&hash=xxx&name=MY-PC',);
       expect(url, 'wss://zcode.5945.top/pair?sid=abc&hash=xxx&name=MY-PC');
       // 归一化结果必须能被 connect() 直接接受（parsePairingUrlAny 非 null）
       expect(parsePairingUrlAny(url!), isNotNull);
@@ -32,10 +32,10 @@ void main() {
 
     test('wss 配对链接原样返回；非配对链接返回 null 走旧后处理', () {
       expect(normalizeQrScanToServerUrl('wss://zcode.5945.top/pair?sid=a&hash=b'),
-          'wss://zcode.5945.top/pair?sid=a&hash=b');
+          'wss://zcode.5945.top/pair?sid=a&hash=b',);
       // 旧 token 二维码（无 sid+hash）：返回 null，不能被误当配对链接
       expect(normalizeQrScanToServerUrl('https://5945.top/relay/?token=tok123'),
-          isNull);
+          isNull,);
       expect(normalizeQrScanToServerUrl('wss://5945.top/relay/'), isNull);
     });
   });
@@ -83,7 +83,7 @@ void main() {
       expect(first['title'], 'wzxClaw');
       expect((first['sessions'] as List).length, 2);
       expect((first['projects'] as List).first,
-          containsPair('path', 'E:\\ai\\wzxClaw'));
+          containsPair('path', 'E:\\ai\\wzxClaw'),);
       expect(first['runningSessionIds'], ['s2']);
     });
 
@@ -162,7 +162,7 @@ void main() {
       final info = registered['perm_1']!;
       expect(info.permissionOptions!.length, 2);
       expect(info.permissionOptions!.first['response'],
-          {'decision': 'allow', 'reason': 'Approved once'});
+          {'decision': 'allow', 'reason': 'Approved once'},);
     });
   });
 
@@ -218,7 +218,7 @@ void main() {
         'sessionId': 's1',
         'type': 'model.streaming',
         'payload': {'kind': 'text_delta', 'delta': '你好', 'done': false},
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(events.single.event, 'stream:agent:text');
       expect(events.single.data, containsPair('content', '你好'));
     });
@@ -228,7 +228,7 @@ void main() {
         'sessionId': 's1',
         'type': 'model.streaming',
         'payload': {'kind': 'reasoning_delta', 'delta': '先想想'},
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(think.single.event, 'stream:agent:thinking');
 
       expect(
@@ -254,7 +254,7 @@ void main() {
         'sessionId': 's1',
         'type': 'model.streaming',
         'payload': {'kind': 'tool_input_start', 'toolCallId': 'c1', 'toolName': 'Bash'},
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(start.single.event, 'stream:agent:tool_call');
       expect(start.single.data, containsPair('toolName', 'Bash'));
 
@@ -267,7 +267,7 @@ void main() {
           'toolName': 'Bash',
           'input': {'command': 'echo hi'},
         },
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(call.single.event, 'stream:agent:tool_call');
       expect((call.single.data as Map)['input'], containsPair('command', 'echo hi'));
     });
@@ -281,7 +281,7 @@ void main() {
           'duration': 127000,
           'usage': {'inputTokens': 100, 'outputTokens': 5},
         },
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(events[0].event, 'stream:agent:turn_end');
       expect(events[1].event, 'stream:agent:done');
       expect((events[1].data as Map)['durationMs'], 127000);
@@ -293,14 +293,14 @@ void main() {
         'sessionId': 's1',
         'type': 'turn.started',
         'payload': {'turnNumber': 0},
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(running.single.event, 'stream:agent:running');
 
       final resolved = translateNotification('session/event', {
         'sessionId': 's1',
         'type': 'permission.resolved',
         'payload': {'toolCallId': 'c1', 'decision': 'approved'},
-      }, (_, __) {});
+      }, (_, __) {},);
       expect(resolved.single.event, 'stream:agent:permission_resolved');
     });
 
@@ -345,10 +345,10 @@ void main() {
             ],
           },
         ],
-      }, const {});
+      }, const {},);
       final msg = (events.single.data as Map)['messages'].single as Map;
       expect((msg['tool_calls'] as List).single,
-          containsPair('toolCallId', 'callID_1'));
+          containsPair('toolCallId', 'callID_1'),);
     });
 
     test('state.input 为 Map 时派生单行摘要（command/file_path/pattern）', () {
@@ -387,7 +387,7 @@ void main() {
             ],
           },
         ],
-      }, const {});
+      }, const {},);
       final calls =
           ((events.single.data as Map)['messages'].single as Map)['tool_calls'] as List;
       expect(calls[0], containsPair('inputSummary', 'echo hi'));
@@ -413,7 +413,7 @@ void main() {
             ],
           },
         ],
-      }, const {});
+      }, const {},);
       final msgs = (events.single.data as Map)['messages'] as List;
       expect(msgs, hasLength(1));
       expect((msgs.single as Map)['tool_calls'], isNotNull);
@@ -426,8 +426,8 @@ void main() {
               'parts': [
                 {'type': 'text', 'text': 'm$i'},
               ],
-            }),
-      }, const {});
+            },),
+      }, const {},);
       expect((events.single.data as Map)['hasMore'], true);
     });
 
@@ -464,7 +464,7 @@ void main() {
             ],
           },
         ],
-      }, const {});
+      }, const {},);
       final rows = (events.single.data as Map)['messages'] as List;
       expect(rows[0]['agent'], 'general-purpose');
       expect(rows[1]['agent'], 'zcode-agent');
@@ -528,7 +528,7 @@ void main() {
     });
 
     test('toLegacyTodo 映射旧协议 todo:updated 行', () {
-      final t = GoalTodo(
+      const t = GoalTodo(
           content: 'x', status: 'in_progress', activeForm: '做 x',);
       expect(t.toLegacyTodo(), {
         'content': 'x',
@@ -616,4 +616,4 @@ List<WsMessage> _payload(Map<String, dynamic> payload) =>
       'events': [
         {'payload': payload},
       ],
-    }, (_, __) {});
+    }, (_, __) {},);

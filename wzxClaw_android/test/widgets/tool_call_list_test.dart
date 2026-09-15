@@ -44,7 +44,7 @@ void main() {
       testWidgets('shows tool action verb for a single done tool', (tester) async {
         await tester.pumpWidget(buildSubject(tools: [
           _toolMsg(name: 'Read', status: ToolCallStatus.done),
-        ]));
+        ],),);
         // "Read" is the action verb for a done Read tool
         expect(find.text('Read'), findsOneWidget);
       });
@@ -56,7 +56,7 @@ void main() {
           _toolMsg(name: 'Read', status: ToolCallStatus.done),
           _toolMsg(name: 'Bash', status: ToolCallStatus.done),
           _toolMsg(name: 'Edit', status: ToolCallStatus.done),
-        ]));
+        ],),);
         // Action verbs for done tools: Read, Ran, Edited
         expect(find.text('Read'), findsOneWidget);
         expect(find.text('Ran'), findsOneWidget);
@@ -67,7 +67,7 @@ void main() {
         await tester.pumpWidget(buildSubject(tools: [
           _toolMsg(name: 'Read', status: ToolCallStatus.done),
           _toolMsg(name: 'Bash', status: ToolCallStatus.done),
-        ]));
+        ],),);
         // The widget tree should contain IntrinsicHeight (wraps the vertical line row)
         expect(find.byType(IntrinsicHeight), findsOneWidget);
       });
@@ -78,7 +78,7 @@ void main() {
         final tools = List.generate(6, (i) => _toolMsg(
           name: i % 2 == 0 ? 'Read' : 'Bash',
           status: ToolCallStatus.done,
-        ));
+        ),);
         await tester.pumpWidget(buildSubject(tools: tools));
         // Header should be visible (shows summary text)
         // Tool entries should be hidden (collapsed)
@@ -128,7 +128,7 @@ void main() {
         final tools = List.generate(6, (i) => _toolMsg(
           name: 'Read',
           status: ToolCallStatus.done,
-        ));
+        ),);
         await tester.pumpWidget(buildSubject(tools: tools));
         // Initially collapsed (all done, 6 tools)
         expect(find.byIcon(Icons.chevron_right), findsOneWidget);

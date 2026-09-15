@@ -20,7 +20,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,11 +49,13 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   final StreamController<WsConnectionState> _stateController =
       StreamController<WsConnectionState>.broadcast();
+  @override
   Stream<WsConnectionState> get stateStream => _stateController.stream;
 
   final StreamController<WsMessage> _messageController =
       StreamController<WsMessage>.broadcast();
   Stream<WsMessage> get messageStream => _messageController.stream;
+  @override
   Stream<WsMessage> get incoming => _messageController.stream;
 
   final StreamController<String?> _errorController =
@@ -66,10 +67,12 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Stream<List<DesktopInfo>> get desktopsStream => _desktopsController.stream;
 
   String? _selectedDesktopId;
+  @override
   String? get selectedDesktopId => _selectedDesktopId;
 
   final StreamController<String?> _selectedDesktopIdController =
       StreamController<String?>.broadcast();
+  @override
   Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
 
   bool get desktopOnline => _desktops.any((d) => d.online);
@@ -100,6 +103,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Stream<String?> get desktopIdentityStream =>
       _desktopsController.stream.map((_) => desktopIdentity);
 
+  @override
   WsConnectionState get state => _stateNow;
 
   // ---- 内部状态 ----
@@ -176,7 +180,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         _messageController.add(const WsMessage(
           event: 'system:no_desktop',
           data: {'error': '桌面端不在线，等待其连接…'},
-        ));
+        ),);
         break;
       case ZcodeRelayState.closed:
         unawaited(_refreshDesktopList());
@@ -309,7 +313,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         _messageController.add(WsMessage(event: 'todo:updated', data: {
           'sessionId': sessionId,
           'todos': [for (final t in snapshot.todos) t.toLegacyTodo()],
-        }));
+        },),);
       }
     } catch (e) {
       // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
@@ -382,6 +386,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   // ---- 出站：旧事件 → app-server 请求（编排）----
 
+  @override
   void send(WsMessage message, {int priority = 0}) {
     final client = _client;
     if (client == null || _stateNow != WsConnectionState.connected || !client.paired) {
@@ -457,7 +462,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
           _messageController.add(WsMessage(
             event: 'stream:agent:error',
             data: {'sessionId': sessionId, 'error': error},
-          ));
+          ),);
         }
         return;
 
@@ -510,7 +515,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
             _messageController.add(WsMessage(event: 'permission:mode:response', data: {
               'requestId': d['requestId'] ?? '',
               'error': '设置模式失败: $e',
-            }));
+            },),);
             return;
           }
         }
@@ -520,7 +525,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
             'requestId': d['requestId'] ?? '',
             'mode': _serverToUiMode[_serverModeNow] ?? uiMode ?? 'always-ask',
           },
-        ));
+        ),);
         return;
 
       case 'permission:get_mode:request':
@@ -530,7 +535,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
             'requestId': d['requestId'] ?? '',
             'mode': _serverToUiMode[_serverModeNow] ?? 'always-ask',
           },
-        ));
+        ),);
         return;
 
       // 旧 relay 控制语义：新链路无对应，吞掉
@@ -604,7 +609,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
         'error': '获取会话列表失败: $e',
-      }));
+      },),);
     }
   }
 
@@ -618,14 +623,14 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
         'error': '获取工作区列表失败: $e',
-      }));
+      },),);
     }
   }
 
   /// 旧 workspace:switch：引擎全局会话、cwd 不可切换——切换是客户端过滤
   /// 语义。命中即记录选中组、应答成功并推送该工作区的会话列表刷新 UI。
   Future<void> _respondWorkspaceSwitch(
-      ZcodeRelayClient client, Map<String, dynamic> d) async {
+      ZcodeRelayClient client, Map<String, dynamic> d,) async {
     final requestId = d['requestId']?.toString() ?? '';
     final target = d['workspacePath']?.toString() ?? '';
     try {
@@ -637,7 +642,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
           'requestId': requestId,
           'success': false,
           'error': '未找到工作区: $target',
-        }));
+        },),);
         return;
       }
       _selectedWsKey = hit.key;
@@ -647,14 +652,14 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       final sid = _pairing?.sid ?? '';
       if (sid.isNotEmpty) {
         unawaited(PhoneSessionIndex.instance
-            .setDeviceWorkspace(sid, hit.key, hit.path));
+            .setDeviceWorkspace(sid, hit.key, hit.path),);
       }
       _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
         'requestId': requestId,
         'success': true,
         'workspacePath': hit.path,
         'workspaceName': workspaceBasename(hit.path),
-      }));
+      },),);
       // 切换后立即推送新工作区的会话列表（旧 UI 依赖推送刷新抽屉/首页）
       _messageController
           .add(sessionListWsResponse('$requestId-list', groups, hit.key));
@@ -663,7 +668,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         'requestId': requestId,
         'success': false,
         'error': '切换工作区失败: $e',
-      }));
+      },),);
     }
   }
 
@@ -674,7 +679,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _messageController.add(WsMessage(
         event: 'session:error',
         data: {'requestId': requestId, 'error': '缺少会话 ID'},
-      ));
+      ),);
       return;
     }
     try {
@@ -702,7 +707,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         _messageController.add(WsMessage(
           event: e.event,
           data: {'requestId': requestId, 'sessionId': sessionId, ...?e.data},
-        ));
+        ),);
       }
       // 会话加载完成 → 拉一次目标快照（悬浮窗"进程"板块随会话就绪）
       _scheduleGoalRefresh();
@@ -713,7 +718,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         'error': e is ZcodeRequestException && e.code == -32004
             ? '该会话正在桌面端运行，手机端暂无法查看'
             : '加载会话失败: $e',
-      }));
+      },),);
     }
   }
 
@@ -743,7 +748,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
         'error': '没有可用工作区，请先打开一个会话',
-      }));
+      },),);
       return;
     }
     try {
@@ -753,20 +758,20 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       // 记住本设备工作区：下次新建会话免发现
       if (sid.isNotEmpty) {
         unawaited(PhoneSessionIndex.instance
-            .setDeviceWorkspace(sid, _wsKey!, _wsPath!));
+            .setDeviceWorkspace(sid, _wsKey!, _wsPath!),);
       }
       final events = responseToWsMessages('session/create', result, const {});
       for (final e in events) {
         _messageController.add(WsMessage(
           event: e.event,
           data: {'requestId': requestId, ...?e.data},
-        ));
+        ),);
       }
     } catch (e) {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
         'error': '新建会话失败: $e',
-      }));
+      },),);
     }
   }
 

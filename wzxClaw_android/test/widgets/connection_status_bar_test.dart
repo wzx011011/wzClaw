@@ -29,19 +29,19 @@ void main() {
         await tester.pumpWidget(buildSubject(
           state: WsConnectionState.connected,
           desktopIdentity: 'MyDesktop',
-        ));
+        ),);
         expect(find.textContaining('已连接'), findsOneWidget);
       });
 
       testWidgets('connecting state shows "连接中" text', (tester) async {
         await tester.pumpWidget(
-            buildSubject(state: WsConnectionState.connecting));
+            buildSubject(state: WsConnectionState.connecting),);
         expect(find.textContaining('连接中'), findsOneWidget);
       });
 
       testWidgets('disconnected state shows "已断开" text', (tester) async {
         await tester.pumpWidget(
-            buildSubject(state: WsConnectionState.disconnected));
+            buildSubject(state: WsConnectionState.disconnected),);
         expect(find.text('已断开'), findsOneWidget);
       });
     });
@@ -51,7 +51,7 @@ void main() {
         await tester.pumpWidget(buildSubject(
           state: WsConnectionState.disconnected,
           errorMessage: 'Connection refused',
-        ));
+        ),);
         expect(find.textContaining('Connection refused'), findsOneWidget);
       });
 
@@ -59,7 +59,7 @@ void main() {
         await tester.pumpWidget(buildSubject(
           state: WsConnectionState.connected,
           desktopOnline: true,
-        ));
+        ),);
         expect(find.text('桌面已连接'), findsOneWidget);
       });
 
@@ -69,7 +69,7 @@ void main() {
         await tester.pumpWidget(buildSubject(
           state: WsConnectionState.connected,
           desktopOnline: false,
-        ));
+        ),);
         expect(find.textContaining('等待桌面'), findsOneWidget);
       });
     });

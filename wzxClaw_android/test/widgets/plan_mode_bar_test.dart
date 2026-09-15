@@ -14,8 +14,8 @@ void main() {
   group('PlanModeBar', () {
     testWidgets('renders plan text from planData[plan]', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PlanModeBar(planData: {'plan': 'Refactor auth module'}),
-      ));
+        const PlanModeBar(planData: {'plan': 'Refactor auth module'}),
+      ),);
 
       expect(find.text('Refactor auth module'), findsOneWidget);
       expect(find.text('Plan Mode'), findsOneWidget);
@@ -23,24 +23,24 @@ void main() {
 
     testWidgets('renders plan text from planData[planContent]', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PlanModeBar(planData: {'planContent': 'Implement caching'}),
-      ));
+        const PlanModeBar(planData: {'planContent': 'Implement caching'}),
+      ),);
 
       expect(find.text('Implement caching'), findsOneWidget);
     });
 
     testWidgets('renders plan text from planData[summary] as fallback', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PlanModeBar(planData: {'summary': 'Summary text'}),
-      ));
+        const PlanModeBar(planData: {'summary': 'Summary text'}),
+      ),);
 
       expect(find.text('Summary text'), findsOneWidget);
     });
 
     testWidgets('renders reject and approve buttons', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PlanModeBar(planData: {'plan': 'Do something'}),
-      ));
+        const PlanModeBar(planData: {'plan': 'Do something'}),
+      ),);
 
       expect(find.text('Reject'), findsOneWidget);
       expect(find.text('Approve & Execute'), findsOneWidget);
@@ -50,7 +50,7 @@ void main() {
       final longPlan = 'A' * 500;
       await tester.pumpWidget(wrapWithTheme(
         PlanModeBar(planData: {'plan': longPlan}),
-      ));
+      ),);
 
       final textWidget = tester.widget<Text>(find.byType(Text).at(2));
       expect(textWidget.data!.length, lessThan(500));
@@ -58,8 +58,8 @@ void main() {
 
     testWidgets('renders default message when no plan data', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PlanModeBar(planData: {}),
-      ));
+        const PlanModeBar(planData: {}),
+      ),);
 
       expect(find.text('Plan Mode'), findsOneWidget);
       expect(find.textContaining('plan mode'), findsOneWidget);
