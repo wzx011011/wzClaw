@@ -6,7 +6,6 @@ import 'package:wzxclaw_android/models/connection_state.dart';
 import 'package:wzxclaw_android/models/goal_snapshot.dart';
 import 'package:wzxclaw_android/models/ws_message.dart';
 import 'package:wzxclaw_android/services/goal_store.dart';
-import 'package:wzxclaw_android/services/ws_transport.dart';
 import 'package:wzxclaw_android/services/zcode_protocol_translate.dart';
 
 import '../harness/sync_harness.dart';
