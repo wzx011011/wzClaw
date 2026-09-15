@@ -560,6 +560,8 @@ class _ChatPageState extends State<ChatPage> {
         Widget child;
         if (item is _ToolGroup) {
           child = ToolCallGroup(tools: item.messages);
+        } else if (item is _SubagentGroup) {
+          child = _SubagentGroupCard(group: item, buildItem: _buildMessageItem);
         } else {
           child = _buildMessageItem(item as ChatMessage);
         }
@@ -573,25 +575,42 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// Group consecutive tool messages into _ToolGroup objects.
+  /// 子智能体消息（isSubagentMessage）优先按 agent 连续折叠为
+  /// _SubagentGroup——与主时间线分离，修复主/子消息混排。
   List<dynamic> _groupMessages(List<ChatMessage> messages) {
     final result = <dynamic>[];
     List<ChatMessage>? currentToolGroup;
+    List<ChatMessage>? currentSubGroup;
+
+    void flushToolGroup() {
+      if (currentToolGroup != null) {
+        result.add(_ToolGroup(currentToolGroup!));
+        currentToolGroup = null;
+      }
+    }
+
+    void flushSubGroup() {
+      if (currentSubGroup != null) {
+        result.add(_SubagentGroup(currentSubGroup!));
+        currentSubGroup = null;
+      }
+    }
 
     for (final msg in messages) {
+      if (msg.isSubagentMessage) {
+        flushToolGroup();
+        (currentSubGroup ??= []).add(msg);
+        continue;
+      }
+      flushSubGroup();
       if (msg.role == MessageRole.tool) {
-        currentToolGroup ??= [];
-        currentToolGroup.add(msg);
+        (currentToolGroup ??= []).add(msg);
       } else {
-        if (currentToolGroup != null) {
-          result.add(_ToolGroup(currentToolGroup));
-          currentToolGroup = null;
-        }
         result.add(msg);
       }
     }
-    if (currentToolGroup != null) {
-      result.add(_ToolGroup(currentToolGroup));
-    }
+    flushToolGroup();
+    flushSubGroup();
     return result;
   }
 
@@ -1408,6 +1427,135 @@ class _SkeletonBoxState extends State<_SkeletonBox>
 class _ToolGroup {
   final List<ChatMessage> messages;
   const _ToolGroup(this.messages);
+}
+
+/// 连续子智能体消息折叠组（悬浮窗"智能体"思路在聊天流的落点）
+class _SubagentGroup {
+  final List<ChatMessage> messages;
+  const _SubagentGroup(this.messages);
+
+  String get agent => messages.first.agent ?? '';
+  String get label {
+    final a = agent;
+    if (a.isEmpty) return '子智能体';
+    // 常见命名 mcp__x__y / general-purpose → 取可读末段
+    final parts = a.split('__');
+    return parts.isNotEmpty ? parts.last : a;
+  }
+}
+
+/// 子智能体消息组卡片：默认折叠为一行摘要，点击展开内部消息
+/// （内部沿用主列表的分组逻辑：连续工具消息再次折叠为工具组）
+class _SubagentGroupCard extends StatefulWidget {
+  final _SubagentGroup group;
+  final Widget Function(ChatMessage) buildItem;
+
+  const _SubagentGroupCard({required this.group, required this.buildItem});
+
+  @override
+  State<_SubagentGroupCard> createState() => _SubagentGroupCardState();
+}
+
+class _SubagentGroupCardState extends State<_SubagentGroupCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final g = widget.group;
+    final textCount =
+        g.messages.where((m) => m.role == MessageRole.assistant).length;
+    final hasError = g.messages
+        .any((m) => m.toolCalls?.any((t) => t.isError) ?? false);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: hasError ? Colors.redAccent.withValues(alpha: 0.4) : colors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.smart_toy_outlined,
+                      size: 15, color: colors.accent,),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${g.label} · $textCount 条消息',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                          fontWeight: FontWeight.w600,),
+                    ),
+                  ),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 16,
+                    color: colors.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final item in _groupMessagesNested(g.messages))
+                    item is _ToolGroup
+                        ? ToolCallGroup(tools: item.messages)
+                        : widget.buildItem(item as ChatMessage),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 嵌套分组：组内复用连续工具折叠（组内全部同 agent，
+  /// 不会再产出 _SubagentGroup）
+  List<dynamic> _groupMessagesNested(List<ChatMessage> messages) =>
+      _groupPlainMessages(messages);
+}
+
+/// 纯连续工具折叠（供子智能体组内使用；不产生子智能体组）
+List<dynamic> _groupPlainMessages(List<ChatMessage> messages) {
+  final result = <dynamic>[];
+  List<ChatMessage>? currentToolGroup;
+  for (final msg in messages) {
+    if (msg.role == MessageRole.tool) {
+      currentToolGroup ??= [];
+      currentToolGroup.add(msg);
+    } else {
+      if (currentToolGroup != null) {
+        result.add(_ToolGroup(currentToolGroup));
+        currentToolGroup = null;
+      }
+      result.add(msg);
+    }
+  }
+  if (currentToolGroup != null) {
+    result.add(_ToolGroup(currentToolGroup));
+  }
+  return result;
 }
 
 // ── Slash command model ───────────────────────────────────────────────

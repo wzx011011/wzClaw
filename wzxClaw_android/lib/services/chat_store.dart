@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
+import '../models/goal_snapshot.dart' show SubagentThread;
 import '../models/session_task_state.dart';
 import '../models/ws_message.dart';
 import 'app_restore_state.dart';
@@ -270,6 +271,7 @@ class ChatStore {
         content: content,
         createdAt: DateTime.now(),
         isStreaming: true,
+        agent: _agentOf(data),
       );
       _isStreaming = true;
       _notifyListeners();
@@ -332,6 +334,7 @@ class ChatStore {
       toolCallId: toolCallId,
       toolInput: inputSummary,
       createdAt: DateTime.now(),
+      agent: _agentOf(data),
     );
     _messages.add(toolMsg);
     ChatDatabase.instance.insertMessage(
@@ -1021,6 +1024,15 @@ class ChatStore {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
+
+  /// 事件数据中的子智能体归属（翻译层透传引擎 payload.agent）。
+  /// 主 agent/缺失 → null（主时间线）。实测当前引擎工具/文本事件
+  /// 多数不带该字段，归属以回合结束后的权威刷新为准。
+  static String? _agentOf(dynamic data) {
+    final a = data is Map ? data['agent'] : null;
+    if (a is! String || a.isEmpty || a == SubagentThread.mainAgent) return null;
+    return a;
+  }
 
   void _setWaiting(bool value) {
     if (_isWaitingForResponse == value) return;

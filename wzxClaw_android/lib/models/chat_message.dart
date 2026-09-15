@@ -82,6 +82,10 @@ class ChatMessage {
   final String? toolResultSummary;
   final String? model;
 
+  /// 产出该消息的 agent（引擎 info.agent；null/主 agent = 主时间线）。
+  /// 子智能体消息按此字段折叠渲染；仅运行时，不持久化。
+  final String? agent;
+
   ChatMessage({
     this.id,
     required this.role,
@@ -97,7 +101,12 @@ class ChatMessage {
     this.toolOutput,
     this.toolResultSummary,
     this.model,
+    this.agent,
   });
+
+  /// 主 agent 名（引擎实测 zcode-agent）；null 视为主时间线（旧数据兼容）
+  bool get isSubagentMessage =>
+      agent != null && agent!.isNotEmpty && agent != 'zcode-agent';
 
   /// 桌面端注入给 agent 的系统提醒会以 user-role 存进 JSONL，
   /// 但聊天 UI 不应把它们当成用户消息展示。
@@ -116,6 +125,7 @@ class ChatMessage {
     String? toolOutput,
     String? toolResultSummary,
     String? model,
+    String? agent,
   }) =>
       ChatMessage(
         id: id ?? this.id,
@@ -132,6 +142,7 @@ class ChatMessage {
         toolOutput: toolOutput ?? this.toolOutput,
         toolResultSummary: toolResultSummary ?? this.toolResultSummary,
         model: model ?? this.model,
+        agent: agent ?? this.agent,
       );
 
   Map<String, dynamic> toDbMap() => {

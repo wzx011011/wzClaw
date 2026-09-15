@@ -36,6 +36,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 Divider(color: colors.border, height: 1),
                 _buildSessionSection(context, colors),
                 Divider(color: colors.border, height: 1),
+                _buildGoalPanelEntry(context, colors),
                 _buildFileBrowseEntry(context, colors),
               ],
             ),
@@ -454,6 +455,23 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
               ),
           ],
         );
+      },
+    );
+  }
+
+  /// 任务面板（悬浮窗还原：目标/进程/计划/智能体）
+  Widget _buildGoalPanelEntry(BuildContext context, AppColors colors) {
+    return ListTile(
+      leading: Icon(Icons.monitor_heart_outlined,
+          color: colors.textSecondary, size: 20,),
+      title: Text(
+        '任务面板',
+        style: TextStyle(color: colors.textSecondary, fontSize: 14),
+      ),
+      dense: true,
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.pushNamed(context, '/goal-panel');
       },
     );
   }

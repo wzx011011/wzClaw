@@ -13,6 +13,7 @@
 
 import 'package:flutter/foundation.dart';
 
+import '../models/goal_snapshot.dart';
 import '../models/ws_message.dart';
 
 /// 解析配对链接（宽容 scheme 版）：https/http/wss/ws 均可。
@@ -248,6 +249,19 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       'error': content(p['error'] ?? p['message']),
     }));
   }
+  // agent 归属透传（payload 若携带）：子智能体事件据此折叠进卡片
+  final agent = p['agent']?.toString() ??
+      p['agentId']?.toString() ??
+      '';
+  if (agent.isNotEmpty && out.isNotEmpty) {
+    return [
+      for (final e in out)
+        WsMessage(
+          event: e.event,
+          data: {...(e.data as Map? ?? const {}), 'agent': agent},
+        ),
+    ];
+  }
   return out;
 }
 
@@ -471,6 +485,41 @@ Map<String, dynamic> _mapSessionRow(Map s) {
   };
 }
 
+/// session/goal 响应 → 悬浮窗快照（todos/todoGroups/goalStats）。
+/// 非法形状返回空快照（isEmpty），调用方以此判空。
+GoalSnapshot parseGoalSnapshot(dynamic result) {
+  if (result is! Map) return const GoalSnapshot(todos: [], groups: []);
+  return GoalSnapshot.fromEngineJson(result);
+}
+
+/// session/subagents {action:'show'} 响应 → 子智能体线程列表。
+/// messages 行按 info.agent 聚合（缺 agent 的行归入 '子智能体'）。
+List<SubagentThread> parseSubagentThreads(dynamic result) {
+  final rows = (result is Map ? result['messages'] : null) as List? ?? [];
+  final byAgent = <String, List<Map<String, dynamic>>>{};
+  for (final row in rows.whereType<Map>()) {
+    final info = row['info'] is Map ? row['info'] as Map : const {};
+    final agent = info['agent']?.toString() ?? '';
+    final m = _mapEngineMessage(row);
+    if (m == null) continue;
+    byAgent.putIfAbsent(agent, () => []).add(m);
+  }
+  final threads = byAgent.entries
+      .map((e) => SubagentThread(agent: e.key, messages: e.value))
+      .toList();
+  threads.sort((a, b) => _threadNewest(b).compareTo(_threadNewest(a)));
+  return threads;
+}
+
+int _threadNewest(SubagentThread t) {
+  var newest = 0;
+  for (final m in t.messages) {
+    final ts = m['created_at'];
+    if (ts is int && ts > newest) newest = ts;
+  }
+  return newest;
+}
+
 /// app-server 消息行（info+parts）→ 旧 ChatMessage JSON（snake_case）
 Map<String, dynamic>? _mapEngineMessage(Map row) {
   final info = row['info'] is Map ? row['info'] as Map : const {};
@@ -511,6 +560,9 @@ Map<String, dynamic>? _mapEngineMessage(Map row) {
     'created_at': createdAt,
     if (toolCalls.isNotEmpty) 'tool_calls': toolCalls,
     if (usage != null) 'usage': usage,
+    // agent 归属：null = 主时间线（旧数据兼容），子智能体按此折叠
+    if (info['agent'] is String && (info['agent'] as String).isNotEmpty)
+      'agent': info['agent'],
   };
 }
 

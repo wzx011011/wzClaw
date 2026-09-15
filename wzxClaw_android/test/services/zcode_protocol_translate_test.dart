@@ -4,6 +4,7 @@
 // 3) 权限/AskUser 反向请求解析（含 options 原文与 requestKey）
 // 4) callID 大小写、hasMore 推算、配对链接宽容 scheme
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wzxclaw_android/models/goal_snapshot.dart';
 import 'package:wzxclaw_android/models/ws_message.dart';
 import 'package:wzxclaw_android/services/zcode_protocol_translate.dart';
 
@@ -242,6 +243,183 @@ void main() {
             }),
       }, const {});
       expect((events.single.data as Map)['hasMore'], true);
+    });
+
+    test('info.agent 透传到消息行（子智能体归属）', () {
+      final events = responseToWsMessages('session/messages', {
+        'messages': [
+          {
+            'info': {
+              'role': 'assistant',
+              'agent': 'general-purpose',
+              'time': {'created': 1},
+            },
+            'parts': [
+              {'type': 'text', 'text': '子线程输出'},
+            ],
+          },
+          {
+            'info': {
+              'role': 'assistant',
+              'agent': 'zcode-agent',
+              'time': {'created': 2},
+            },
+            'parts': [
+              {'type': 'text', 'text': '主线输出'},
+            ],
+          },
+          {
+            'info': {
+              'role': 'assistant',
+              'time': {'created': 3},
+            },
+            'parts': [
+              {'type': 'text', 'text': '无 agent'},
+            ],
+          },
+        ],
+      }, const {});
+      final rows = (events.single.data as Map)['messages'] as List;
+      expect(rows[0]['agent'], 'general-purpose');
+      expect(rows[1]['agent'], 'zcode-agent');
+      expect(rows[2]['agent'], isNull);
+    });
+  });
+
+  group('悬浮窗快照解析（session/goal）', () {
+    test('todos/todoGroups/goalStats 全量解析', () {
+      final s = parseGoalSnapshot({
+        'todos': [
+          {'content': 'a', 'status': 'completed', 'priority': 'high'},
+          {
+            'content': 'b',
+            'status': 'in_progress',
+            'activeForm': '正在 b',
+          },
+        ],
+        'todoGroups': [
+          {
+            'id': 'g1',
+            'source': 'session',
+            'startedAt': 1000,
+            'updatedAt': 5000,
+            'todos': [
+              {'content': 'a', 'status': 'completed'},
+            ],
+          },
+          {
+            'id': 'p1',
+            'source': 'plan',
+            'todos': [],
+          },
+        ],
+        'goalStats': {
+          'contextUsed': 100,
+          'contextWindow': 200,
+          'iterationCount': 3,
+          'timeUsedSeconds': 42,
+          'tokensUsed': 500,
+          'toolCallCount': 7,
+        },
+      });
+      expect(s.todos.length, 2);
+      expect(s.todos[0].isCompleted, true);
+      expect(s.todos[1].activeForm, '正在 b');
+      expect(s.groups.length, 2);
+      expect(s.groups[0].completedCount, 1);
+      expect(s.groups[1].isPlan, true);
+      expect(s.plans.length, 1);
+      expect(s.stats?.contextRatio, 0.5);
+      expect(s.stats?.toolCallCount, 7);
+      expect(s.isEmpty, false);
+      // groups[0] 已全部完成 → activeGroup 回退取最后组
+      expect(identical(s.activeGroup, s.groups[1]), true);
+    });
+
+    test('非 Map（错误帧 result）→ 空快照', () {
+      expect(parseGoalSnapshot(null).isEmpty, true);
+      expect(parseGoalSnapshot('x').isEmpty, true);
+    });
+
+    test('toLegacyTodo 映射旧协议 todo:updated 行', () {
+      final t = GoalTodo(
+          content: 'x', status: 'in_progress', activeForm: '做 x',);
+      expect(t.toLegacyTodo(), {
+        'content': 'x',
+        'status': 'in_progress',
+        'activeForm': '做 x',
+      });
+    });
+  });
+
+  group('子智能体线程解析（session/subagents action:show）', () {
+    test('按 info.agent 聚合 + 最新线程在前', () {
+      final threads = parseSubagentThreads({
+        'messages': [
+          {
+            'info': {
+              'role': 'assistant',
+              'agent': 'a1',
+              'time': {'created': 100},
+            },
+            'parts': [
+              {'type': 'text', 'text': 'a1-msg'},
+            ],
+          },
+          {
+            'info': {
+              'role': 'assistant',
+              'agent': 'a2',
+              'time': {'created': 300},
+            },
+            'parts': [
+              {'type': 'text', 'text': 'a2-msg'},
+            ],
+          },
+          {
+            'info': {
+              'role': 'assistant',
+              'agent': 'a1',
+              'time': {'created': 200},
+            },
+            'parts': [
+              {'type': 'text', 'text': 'a1-msg2'},
+            ],
+          },
+        ],
+      });
+      expect(threads.length, 2);
+      expect(threads[0].agent, 'a2'); // 最新消息 300 在前
+      expect(threads[1].agent, 'a1');
+      expect(threads[1].messages.length, 2);
+      expect(threads[1].label, 'a1');
+    });
+
+    test('空内容行丢弃；非 Map result → 空列表', () {
+      expect(
+        parseSubagentThreads({
+          'messages': [
+            {
+              'info': {'role': 'assistant'},
+              'parts': [],
+            },
+          ],
+        },).isEmpty,
+        true,
+      );
+      expect(parseSubagentThreads(null).isEmpty, true);
+    });
+  });
+
+  group('流事件 agent 归属透传', () {
+    test('payload.agent → 事件 data.agent', () {
+      final events = _payload({
+        'kind': 'text_delta',
+        'delta': 'hi',
+        'agent': 'general-purpose',
+      });
+      expect(events.single.event, WsEvents.agentText);
+      expect((events.single.data as Map)['agent'], 'general-purpose');
     });
   });
 }

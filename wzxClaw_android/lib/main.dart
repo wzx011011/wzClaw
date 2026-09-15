@@ -5,10 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_colors.dart';
 import 'pages/file_browser_page.dart';
+import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
 import 'services/file_sync_service.dart';
+import 'services/goal_store.dart';
 import 'services/push_wake_service.dart';
 import 'services/session_sync_service.dart';
 
@@ -23,6 +25,7 @@ void main() async {
   // Initialize services early so they start listening (lightweight — only subscribes to streams)
   SessionSyncService.instance;
   FileSyncService.instance;
+  GoalStore.instance; // 尽早订阅 goal 快照广播（回合驱动刷新即开始积累状态）
   // Load persisted theme mode
   final prefs = await SharedPreferences.getInstance();
   final saved = prefs.getString('theme_mode');
@@ -96,6 +99,7 @@ class WzxClawApp extends StatelessWidget {
               routes: {
                 '/': (context) => const LandingPage(),
                 '/chat': (context) => const ChatPage(),
+                '/goal-panel': (context) => const GoalPanelPage(),
                 '/settings': (context) => const SettingsPage(),
                 '/files': (context) => const FileBrowserPage(),
               },

@@ -1370,6 +1370,8 @@ class SessionSyncService {
               ? ToolCallStatus.error
               : ToolCallStatus.done)
           : null,
+      // 子智能体归属（翻译层从引擎 info.agent 透传）；主时间线为 null
+      agent: json['agent'] as String?,
     );
   }
 

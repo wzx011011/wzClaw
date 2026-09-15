@@ -82,6 +82,9 @@ class WsEvents {
   // -- Todo events (incoming: desktop -> mobile) --
   static const String todoUpdated = 'todo:updated';
 
+  // -- Goal panel (incoming: ConnectionManager goal 快照广播，仅进程内) --
+  static const String goalSnapshot = 'zcode:goal:snapshot';
+
   // -- Session sync events (outgoing: mobile -> desktop) --
   static const String sessionListRequest = 'session:list:request';
   static const String sessionLoadRequest = 'session:load:request';

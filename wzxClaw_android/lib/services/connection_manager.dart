@@ -29,6 +29,8 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
+import '../models/goal_snapshot.dart';
+import 'session_sync_service.dart';
 import 'ws_transport.dart';
 import '../zcode/zcode_relay_client.dart';
 import 'zcode_protocol_translate.dart';
@@ -211,12 +213,78 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         continue;
       }
       _messageController.add(e);
+      // 回合边界/会话加载 → 延迟刷新目标快照（todos 在回合中会变化，
+      // 引擎无独立 todo 推送；去抖避免一次回合内反复拉取）
+      if (_goalRefreshPendingEvents.contains(e.event)) {
+        _scheduleGoalRefresh();
+      }
     }
     // state.updated：缓存 workspace（session/create 复用）+ 真实权限模式
     if (method == 'state.updated' && frame.params is Map) {
       _cacheWorkspace(frame.params as Map);
       _cacheMode(frame.params as Map);
     }
+  }
+
+  /// 触发 goal 快照刷新的事件（回合边界 + 会话加载完成）
+  static const _goalRefreshPendingEvents = {
+    'stream:agent:turn_end',
+    'session:load:response',
+  };
+
+  Timer? _goalRefreshTimer;
+  void _scheduleGoalRefresh() {
+    _goalRefreshTimer?.cancel();
+    _goalRefreshTimer = Timer(const Duration(milliseconds: 800), () {
+      final sid = SessionSyncService.instance.activeSessionId;
+      if (sid != null && sid.isNotEmpty) {
+        unawaited(refreshGoalState(sid));
+      }
+    });
+  }
+
+  /// 拉取目标快照并广播：
+  /// 1) 旧 `todo:updated` 事件（ChatStore 现有 Todo 面板直接点亮，零 UI 改动）
+  /// 2) `zcode:goal:snapshot` 事件（GoalStore 面板消费，含 groups/stats）
+  Future<void> refreshGoalState(String sessionId) async {
+    try {
+      final result = await _requireClient().request('session/goal', {
+        'sessionId': sessionId,
+      });
+      final snapshot = parseGoalSnapshot(result);
+      _messageController.add(WsMessage(
+          event: WsEvents.goalSnapshot,
+          data: {'sessionId': sessionId, 'snapshot': snapshot},),);
+      if (snapshot.todos.isNotEmpty) {
+        _messageController.add(WsMessage(event: 'todo:updated', data: {
+          'sessionId': sessionId,
+          'todos': [for (final t in snapshot.todos) t.toLegacyTodo()],
+        }));
+      }
+    } catch (e) {
+      // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
+      debugPrint('[ConnectionManager] goal snapshot failed: $e');
+    }
+  }
+
+  /// 子智能体线程（悬浮窗"智能体"板块）。引擎参数 schema 实测只接受
+  /// {action:'show'}（带 sessionId 反而报 action 非法），作用于本进程
+  /// 最近 materialize 的会话——手机驱动场景即当前会话。
+  Future<List<SubagentThread>> fetchSubagentThreads() async {
+    try {
+      final result = await _requireClient()
+          .request('session/subagents', {'action': 'show'});
+      return parseSubagentThreads(result);
+    } catch (e) {
+      debugPrint('[ConnectionManager] subagents fetch failed: $e');
+      return const [];
+    }
+  }
+
+  ZcodeRelayClient _requireClient() {
+    final c = _client;
+    if (c == null) throw StateError('relay not connected');
+    return c;
   }
 
   void _registerReverse(ReverseRequestInfo info, WsMessage event) {
@@ -532,6 +600,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
           data: {'requestId': requestId, 'sessionId': sessionId, ...?e.data},
         ));
       }
+      // 会话加载完成 → 拉一次目标快照（悬浮窗"进程"板块随会话就绪）
+      _scheduleGoalRefresh();
     } catch (e) {
       _messageController.add(WsMessage(event: 'session:error', data: {
         'requestId': requestId,
