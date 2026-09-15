@@ -12,6 +12,7 @@ import 'pages/settings_page.dart';
 import 'services/file_sync_service.dart';
 import 'services/goal_store.dart';
 import 'services/push_wake_service.dart';
+import 'zcode/zcode_notifier.dart';
 import 'services/session_sync_service.dart';
 
 /// Global theme mode notifier — allows settings page to switch theme at runtime.
@@ -40,6 +41,9 @@ void main() async {
   // PushWakeService init (notification channel setup, permission request) is not
   // needed before the first frame — defer so runApp() is called immediately.
   unawaited(PushWakeService.instance.initialize());
+  // ZCode 任务完成通知：渠道创建 + 权限申请（幂等；当前聊天栈
+  // services/chat_store 的 turn done 也会调用它，不再依赖 zcode 桌面注册表先加载）
+  unawaited(ZcodeNotifier.instance.initialize());
   runApp(const WzxClawApp());
 }
 

@@ -152,6 +152,65 @@ void main() {
       expect(store.messages.last.content, equals('Welcome back!'));
     });
 
+    test('历史内嵌 toolCalls 的助手行展开为独立 tool 消息（与实时路径同构）', () {
+      final store = ChatStore.instance;
+      store.loadFetchedMessages('test-session', []);
+
+      final now = DateTime.now();
+      final fetched = [
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: '',
+          toolCalls: [
+            ToolCallInfo(
+              toolCallId: 'c1',
+              toolName: 'Bash',
+              inputSummary: 'echo hi',
+              status: ToolCallStatus.done,
+            ),
+            ToolCallInfo(
+              toolCallId: 'c2',
+              toolName: 'Read',
+              inputSummary: '/tmp/a.txt',
+              status: ToolCallStatus.error,
+              isError: true,
+            ),
+          ],
+          createdAt: now,
+        ),
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: '执行完成，共两步。',
+          toolCalls: [
+            ToolCallInfo(
+              toolCallId: 'c3',
+              toolName: 'Grep',
+              inputSummary: 'pattern',
+              status: ToolCallStatus.done,
+            ),
+          ],
+          createdAt: now,
+        ),
+      ];
+      store.loadFetchedMessages('test-session', fetched);
+
+      final msgs = store.messages.toList();
+      // 纯工具行展开为 2 条 tool 消息；带正文的行展开为 1 条 tool + 1 条正文 assistant
+      expect(msgs.length, equals(4));
+      expect(msgs[0].role, equals(MessageRole.tool));
+      expect(msgs[0].toolName, equals('Bash'));
+      expect(msgs[0].toolCallId, equals('c1'));
+      expect(msgs[0].toolInput, equals('echo hi'));
+      expect(msgs[0].toolStatus, equals(ToolCallStatus.done));
+      expect(msgs[1].role, equals(MessageRole.tool));
+      expect(msgs[1].toolName, equals('Read'));
+      expect(msgs[1].toolStatus, equals(ToolCallStatus.error));
+      expect(msgs[2].role, equals(MessageRole.tool));
+      expect(msgs[2].toolName, equals('Grep'));
+      expect(msgs[3].role, equals(MessageRole.assistant));
+      expect(msgs[3].content, equals('执行完成，共两步。'));
+    });
+
     test('clear guard: non-empty messages rejected after clear + sendMessage + another clear', () async {
       // This tests the generation-based guard indirectly.
       // Pattern: clear -> sendMessage (sets _lastUserMsgGen = _clearGeneration) ->

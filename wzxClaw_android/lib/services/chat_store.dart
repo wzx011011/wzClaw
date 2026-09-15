@@ -18,6 +18,7 @@ import 'ws_transport.dart';
 // （zcode/zcode_reverse_models.dart）。此处 import 供本文件内部使用 +
 // re-export 过渡：现有 `import ...chat_store.dart show PermissionRequest,
 // AskUserQuestion` 继续编译；旧栈退役（chat_store 删除）时一并移除。
+import '../zcode/zcode_notifier.dart';
 import '../zcode/zcode_reverse_models.dart';
 export '../zcode/zcode_reverse_models.dart'
     show PermissionRequest, AskUserQuestion;
@@ -143,6 +144,34 @@ class ChatStore {
   /// 统一可见性过滤：系统注入提醒 + 空助手占位行
   static bool _renderable(ChatMessage m) =>
       !m.isSystemInjected && !m.isEmptyAssistant;
+
+  /// 历史加载的助手消息可能内嵌 toolCalls（引擎 JSONL 单行同时含 tool part），
+  /// 而实时路径是独立 tool 消息——展开成同构消息序列，复用 ToolCallGroup 折叠渲染；
+  /// 纯工具行（无正文）展开后不再保留，避免只剩 token 统计的空气泡。
+  static List<ChatMessage> _expandEmbeddedToolCalls(List<ChatMessage> messages) {
+    final out = <ChatMessage>[];
+    for (final m in messages) {
+      final calls = m.toolCalls;
+      if (m.role == MessageRole.assistant && calls != null && calls.isNotEmpty) {
+        for (final tc in calls) {
+          out.add(ChatMessage(
+            role: MessageRole.tool,
+            content: tc.toolName,
+            toolName: tc.toolName,
+            toolCallId: tc.toolCallId,
+            toolInput: tc.inputSummary,
+            toolOutput: tc.outputSummary,
+            toolStatus: tc.isError ? ToolCallStatus.error : tc.status,
+            createdAt: m.createdAt,
+          ));
+        }
+        if (m.content.trim().isNotEmpty) out.add(m);
+      } else {
+        out.add(m);
+      }
+    }
+    return out;
+  }
 
   List<ChatMessage> get messages =>
       List.unmodifiable(_messages.where((m) => _renderable(m)));
@@ -486,6 +515,30 @@ class ChatStore {
 
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
+    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+    // 任务完成本地通知：主会话与后台会话的回合结束都提醒，
+    // 前台守卫（用户正看着界面时跳过）在 notifier 内部处理
+    final usageForNotify = map['usage'] as Map<String, dynamic>?;
+    int? tokens;
+    if (usageForNotify != null) {
+      final total = usageForNotify['totalTokens'];
+      final input = usageForNotify['inputTokens'];
+      final output = usageForNotify['outputTokens'];
+      tokens = total is num
+          ? total.toInt()
+          : (input is num && output is num)
+              ? input.toInt() + output.toInt()
+              : null;
+    }
+    final notifySessionId = map['sessionId']?.toString() ?? '';
+    final notifyStatus = map['status']?.toString() ?? '';
+    ZcodeNotifier.instance.showTaskDone(
+      status: notifyStatus.isEmpty ? 'success' : notifyStatus,
+      tokens: tokens,
+      sessionId:
+          notifySessionId.isNotEmpty ? notifySessionId : currentSessionId,
+    );
+
     final inactiveSessionId = _inactiveSessionId(data);
     if (inactiveSessionId != null) {
       _finalizeInactiveStreamingMessage(inactiveSessionId);
@@ -867,7 +920,8 @@ class ChatStore {
         sessionId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => _renderable(m)));
+      _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
       _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else {
@@ -876,7 +930,8 @@ class ChatStore {
         desktopId: _transport.selectedDesktopId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => _renderable(m)));
+      _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
     }
     _notifyListeners();
   }
@@ -900,8 +955,8 @@ class ChatStore {
     }
     // 用户在清空后已发过消息 → 不覆盖
     if (_lastUserMsgGen > _clearGeneration) return;
-    final visibleMessages =
-        messages.where((m) => _renderable(m)).toList(growable: false);
+    final visibleMessages = _expandEmbeddedToolCalls(
+        messages.where((m) => _renderable(m)).toList(growable: false));
     _messages.clear();
     _messages.addAll(visibleMessages);
     _restoreLiveSessionState(sessionId);
@@ -1020,7 +1075,8 @@ class ChatStore {
       desktopId: _transport.selectedDesktopId,
       limit: 100,
     );
-    _messages.addAll(messages.where((m) => _renderable(m)));
+    _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()));
     _cleanupStaleTools();
     _notifyListeners();
   }
@@ -1041,7 +1097,8 @@ class ChatStore {
       );
     }
     if (older.isEmpty) return;
-    _messages.insertAll(0, older.where((m) => _renderable(m)));
+    _messages.insertAll(
+        0, _expandEmbeddedToolCalls(older.where((m) => _renderable(m)).toList()));
     _notifyListeners();
   }
 
