@@ -476,3 +476,23 @@ waiting-pairing);事后 `/health` 仍 `rooms:1, devices:1`;R3 全程监控未复
 app-server 实现；无头容器部署需让引擎 cwd 指向一个含 `app-server` 模块的
 目录（例如把 CLI 包目录整体挂载后从其父级启动，或确认官方 Linux 发行包）。
 待专项：美化 zcode.cjs 定位该 require 调用点后给出容器化标准方案。
+
+## companion 本地扩展协议 x/*（2026-09-16，probe-git.js 实测 + companion.test.js 钉住）
+
+背景：手机端要做 git 分支选择器与工作区新鲜度过滤，但 app-server 协议不提供
+相关方法（`git/*`、`workspace/list`、`workspace/info` 等 13 个候选方法实测
+全部 `-32601 Method not found`；官方桌面 App 的 git UI 由其 IDE 层自实现，
+不经 app-server）。故在 companion（与 app-server 同机）落地本地扩展方法族，
+`x/` 前缀，手机 → relay → companion 拦截执行、不转发给 app-server。
+
+| 方法 | params | 返回 | 说明 |
+|---|---|---|---|
+| `x/git/status` | `{path}` | `{branch, dirty}` | `git --no-optional-locks status --porcelain=v1 -b`；detached HEAD 时 branch 为 `""` |
+| `x/git/branches` | `{path}` | `{branches:[{name,current}]}` | `for-each-ref refs/heads`，current 标记 `*` |
+| `x/git/checkout` | `{path, branch, create?}` | `{ok:true, branch}` | create=true 时 `-b` 新建；分支名白名单 `[A-Za-z0-9][A-Za-z0-9._/-]{0,119}` 且禁 `..`、结尾 `.lock`（防选项注入，禁止前导 `-`）；**不得加 `--` 分隔符**（checkout 语义中 `--` 后一律按 pathspec 处理） |
+| `x/fs/exists` | `{paths:[≤50]}` | `{exists:[bool]}` | 目录存在性（工作区列表过滤已删除路径用） |
+
+错误帧：`X_BAD_PARAMS`（参数/路径非法）、`X_GIT_FAILED`（git 非零退出，message
+为 stderr 首行）、未知 x/ 方法 `-32000`（ERR_UNHANDLED）。已知限制：companion
+进程的 PATH 需含 git（计划任务环境实测可用；若无 git 报 X_GIT_FAILED/ENOENT，
+显性失败不静默）。

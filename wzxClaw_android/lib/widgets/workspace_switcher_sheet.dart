@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
+import '../services/git_service.dart';
 import '../services/session_sync_service.dart';
 import 'workspace_picker_card.dart';
 
@@ -8,6 +9,9 @@ import 'workspace_picker_card.dart';
 ///
 /// 数据仍来自引擎 session/list 聚合（app-server 无独立工作区接口）；
 /// 选中后写入手机本地每设备记忆（ConnectionManager._respondWorkspaceSwitch）。
+/// 列表按 companion x/fs/exists 过滤已不存在的目录（会话历史会残留
+/// 已删除/改名的工作区，即「老数据」）；过滤失败（旧 companion/未连接）
+/// 时如实展示全量，不隐藏。
 Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
   final colors = AppColors.of(context);
   SessionSyncService.instance.fetchWorkspaces();
@@ -60,36 +64,79 @@ Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
                   ),
                 );
               }
-              return ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(ctx).size.height * 0.55,
-                ),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: workspaces.length,
-                  itemBuilder: (ctx, i) {
-                    final ws = workspaces[i];
-                    return WorkspacePickerCard(
-                      workspace: ws,
-                      colors: colors,
-                      onWorkspaceTap: () {
-                        Navigator.pop(ctx);
-                        final path = ws.primaryPath;
-                        if (path != null && path.isNotEmpty) {
-                          SessionSyncService.instance.switchWorkspace(path);
-                        }
-                      },
-                      onSessionTap: (sessionId) {
-                        Navigator.pop(ctx);
-                        final path = ws.primaryPath;
-                        if (path != null && path.isNotEmpty) {
-                          SessionSyncService.instance.switchWorkspace(path);
-                        }
-                        SessionSyncService.instance.setActiveSession(sessionId);
-                      },
+              // 过滤已不存在的目录：x/fs/exists 批量探测；探测中/失败展示全量
+              return FutureBuilder<List<bool>>(
+                future: GitService.instance.existingDirs(
+                  [for (final w in workspaces) w.primaryPath ?? ''],
+                ).catchError((_) => List<bool>.filled(workspaces.length, true)),
+                builder: (context, exSnap) {
+                  final exists = exSnap.data;
+                  final visible = (exists == null)
+                      ? workspaces
+                      : [
+                          for (var i = 0; i < workspaces.length; i++)
+                            if (exists[i]) workspaces[i],
+                        ];
+                  final hiddenCount = workspaces.length - visible.length;
+                  if (visible.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Text(
+                        hiddenCount > 0 ? '工作区目录均已不存在' : '暂无工作区',
+                        style: TextStyle(color: colors.textMuted, fontSize: 14),
+                      ),
                     );
-                  },
-                ),
+                  }
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (hiddenCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                          child: Text(
+                            '已隐藏 $hiddenCount 个已不存在的目录',
+                            style: TextStyle(
+                                color: colors.textMuted, fontSize: 12,),
+                          ),
+                        ),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(ctx).size.height * 0.55,
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: visible.length,
+                          itemBuilder: (ctx, i) {
+                            final ws = visible[i];
+                            return WorkspacePickerCard(
+                              workspace: ws,
+                              colors: colors,
+                              onWorkspaceTap: () {
+                                Navigator.pop(ctx);
+                                final path = ws.primaryPath;
+                                if (path != null && path.isNotEmpty) {
+                                  SessionSyncService.instance
+                                      .switchWorkspace(path);
+                                }
+                              },
+                              onSessionTap: (sessionId) {
+                                Navigator.pop(ctx);
+                                final path = ws.primaryPath;
+                                if (path != null && path.isNotEmpty) {
+                                  SessionSyncService.instance
+                                      .switchWorkspace(path);
+                                }
+                                SessionSyncService.instance
+                                    .setActiveSession(sessionId);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                },
               );
             },
           ),

@@ -863,3 +863,103 @@ test('relay 断开：pending 立即代答 -32022 到 app-server 并留日志，�
   assert.ok(entry, 'close 代答应答必须真实到达 app-server');
   assert.equal(entry.code, -32022);
 });
+
+test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本地执行，不进 app-server）', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-x-'));
+  const { execFileSync } = require('node:child_process');
+  const git = (args) => execFileSync('git', ['-C', dir, ...args],
+    { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  git(['init', '-b', 'main']);
+  git(['config', 'user.email', 'test@test']);
+  git(['config', 'user.name', 'test']);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  git(['add', '.']);
+  git(['commit', '-m', 'init']);
+  git(['branch', 'dev']);
+
+  const logs = [];
+  let pairingUrl = '';
+  // harness 状态文件（mid/passhash/v2 配置）放仓库外的独立目录：否则会被
+  // x/git/status 的 dirty 计数当成 untracked 文件
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-x-state-'));
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  const ask = (id, method, params) =>
+    client.send({ type: 'data', payload: { id, method, params } });
+
+  // x/git/status：干净仓库 → main / dirty 0
+  ask(10, 'x/git/status', { path: dir });
+  const st = await client.next((m) => m.type === 'data' && m.payload.id === 10);
+  assert.equal(st.payload.result.branch, 'main');
+  assert.equal(st.payload.result.dirty, 0);
+
+  // x/git/branches：main（当前）+ dev
+  ask(11, 'x/git/branches', { path: dir });
+  const br = await client.next((m) => m.type === 'data' && m.payload.id === 11);
+  const names = br.payload.result.branches.map((b) => b.name);
+  assert.ok(names.includes('main') && names.includes('dev'), `branches: ${names}`);
+  assert.deepEqual(br.payload.result.branches.filter((b) => b.current).map((b) => b.name), ['main']);
+
+  // x/git/checkout：检出已有分支 dev，再建新分支 feat/x
+  ask(12, 'x/git/checkout', { path: dir, branch: 'dev' });
+  const co = await client.next((m) => m.type === 'data' && m.payload.id === 12);
+  assert.equal(co.payload.result.ok, true);
+  ask(13, 'x/git/status', { path: dir });
+  const st2 = await client.next((m) => m.type === 'data' && m.payload.id === 13);
+  assert.equal(st2.payload.result.branch, 'dev');
+
+  ask(14, 'x/git/checkout', { path: dir, branch: 'feat/new-branch', create: true });
+  const co2 = await client.next((m) => m.type === 'data' && m.payload.id === 14);
+  assert.equal(co2.payload.result.ok, true);
+  ask(15, 'x/git/branches', { path: dir });
+  const br2 = await client.next((m) => m.type === 'data' && m.payload.id === 15);
+  assert.deepEqual(
+    br2.payload.result.branches.filter((b) => b.current).map((b) => b.name),
+    ['feat/new-branch']);
+
+  // 非法分支名（选项注入形态）→ X_BAD_PARAMS，不得执行
+  ask(16, 'x/git/checkout', { path: dir, branch: '-oCore.proxy=evil' });
+  const bad = await client.next((m) => m.type === 'data' && m.payload.id === 16);
+  assert.equal(bad.payload.error.code, 'X_BAD_PARAMS');
+
+  // x/fs/exists：存在目录 true / 不存在 false
+  ask(17, 'x/fs/exists', { paths: [dir, path.join(dir, 'nope-dir')] });
+  const ex = await client.next((m) => m.type === 'data' && m.payload.id === 17);
+  assert.deepEqual(ex.payload.result.exists, [true, false]);
+
+  // 未知 x/ 方法 → 明确错误（不留静默）
+  ask(18, 'x/unknown', {});
+  const unk = await client.next((m) => m.type === 'data' && m.payload.id === 18);
+  // ERR_UNHANDLED（lib/protocol.js 常量）= -32000
+  assert.equal(unk.payload.error.code, -32000);
+
+  // x/* 必须不进 app-server：session/list 证明常规链路仍然工作后，
+  // 扫描全量消息断言泄漏哨兵帧（fake/x-leak）从未出现
+  client.send({ type: 'data', payload: { id: 99, method: 'session/list' } });
+  const reply99 = await client.next((m) => m.type === 'data' && m.payload.id === 99);
+  assert.equal(reply99.payload.result.sessions[0].sessionId, 'sess_mock');
+  assert.ok(client.messages.every((m) => m.payload?.method !== 'fake/x-leak'),
+    'x/* 方法不得转发给 app-server');
+});
+

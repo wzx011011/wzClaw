@@ -319,6 +319,17 @@ function createCompanion(options = {}) {
   // 手机 → app-server。
   function handlePhoneFrame(frame) {
     if (!isObject(frame)) return;
+    // x/* 前缀 = companion 本地扩展方法：不进 app-server，由 companion 在
+    // 本机执行真实 git/文件系统操作后直接应答。背景（2026-09-16 实测，见
+    // probe-git.js 与 APP-SERVER.md）：app-server 协议不暴露 git 分支与
+    // 工作区文件系统查询（官方桌面 App 的 git UI 由其 IDE 层自实现），手机端
+    // 的分支选择器/工作区新鲜度需要 companion 侧扩展补齐。通道本身已被配对
+    // 凭据门禁，且 agent 通道本就可在桌面执行任意代码，此处不额外收敛路径
+    // 白名单；但所有命令一律数组参数禁 shell，分支名白名单校验防选项注入。
+    if (typeof frame.method === 'string' && frame.method.startsWith('x/') && frame.id != null) {
+      handleXMethod(frame);
+      return;
+    }
     // 手机端对反向请求的应答：无对应看护条目（已超时代答/进程重启作废/迟到）
     // 则静默丢弃，不向 app-server 转发重复响应（重复应答是协议错误源）。
     if (frame.id != null && (frame.result !== undefined || frame.error !== undefined) && !frame.method) {
@@ -341,6 +352,101 @@ function createCompanion(options = {}) {
       return;
     }
     if (bridge.write(frame)) bridge.resetRestartBudget();
+  }
+
+  // ---- companion 本地扩展方法（x/*）----
+
+  // git 分支名白名单：常规分支字符，禁止前导 -（选项注入）、..（区间）、
+  // 结尾 .lock（git 保留）、空白与控制字符。覆盖个人项目的实际分支命名。
+  const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
+  const branchAllowed = (name) => BRANCH_RE.test(name) && !name.includes('..') && !name.endsWith('.lock');
+
+  function validateDir(rawPath) {
+    if (typeof rawPath !== 'string' || !rawPath.length || rawPath.length > 500) {
+      throw safeError('X_BAD_PARAMS');
+    }
+    const resolved = path.resolve(rawPath);
+    let stat;
+    try { stat = fs.statSync(resolved); } catch { throw safeError('X_BAD_PARAMS'); }
+    if (!stat.isDirectory()) throw safeError('X_BAD_PARAMS');
+    return resolved;
+  }
+
+  function spawnGit(args, cwdPath) {
+    return new Promise((resolve, reject) => {
+      // --no-optional-locks：只读查询不与 IDE/其它 git 进程争索引锁
+      const child = spawn('git', ['--no-optional-locks', '-C', cwdPath, ...args],
+        { windowsHide: true });
+      let stdout = ''; let stderr = '';
+      child.stdout.on('data', (c) => { stdout += c; });
+      child.stderr.on('data', (c) => { stderr += c; });
+      child.on('error', (err) => reject(err));
+      child.on('exit', (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(Object.assign(new Error(stderr.trim().split('\n')[0] || `git exit ${code}`), { code: 'X_GIT_FAILED' }));
+      });
+    });
+  }
+
+  async function handleXMethod(frame) {
+    const reply = (payload) => send({ type: 'data', payload: payload });
+    log('x-method', frame.method);
+    try {
+      switch (frame.method) {
+        case 'x/git/status': {
+          const dir = validateDir(frame.params && frame.params.path);
+          const out = await spawnGit(['status', '--porcelain=v1', '-b'], dir);
+          // 首行 `## <branch>...`（或 detached `## HEAD (no branch)`），其余为变更行
+          const lines = out.split('\n').filter((l) => l.length);
+          const head = lines[0] || '';
+          const branch = head.startsWith('## ')
+            ? head.slice(3).replace(/\s*\[.*\]$/, '').trim()
+            : '';
+          reply({ id: frame.id, result: { branch: branch === 'HEAD (no branch)' ? '' : branch, dirty: Math.max(0, lines.length - 1) } });
+          return;
+        }
+        case 'x/git/branches': {
+          const dir = validateDir(frame.params && frame.params.path);
+          const out = await spawnGit(['for-each-ref', 'refs/heads',
+            '--format=%(refname:short)%09%(HEAD)'], dir);
+          const branches = out.split('\n').filter((l) => l.length).map((line) => {
+            const idx = line.lastIndexOf('\t');
+            return { name: line.slice(0, idx), current: line.slice(idx + 1) === '*' };
+          });
+          reply({ id: frame.id, result: { branches } });
+          return;
+        }
+        case 'x/git/checkout': {
+          const params = frame.params || {};
+          const dir = validateDir(params.path);
+          const branch = params.branch;
+          if (typeof branch !== 'string' || !branchAllowed(branch)) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          // 注意不能加 `--` 分隔符：checkout 语义里 `--` 之后一律按 pathspec
+          // 处理（`git checkout -- dev` 变成恢复路径 dev 的文件而非切分支）。
+          // 选项注入已由 branchAllowed 白名单挡住（禁止前导 -）。
+          const args = ['checkout', ...(params.create === true ? ['-b'] : []), branch];
+          await spawnGit(args, dir);
+          reply({ id: frame.id, result: { ok: true, branch } });
+          return;
+        }
+        case 'x/fs/exists': {
+          const paths = frame.params && frame.params.paths;
+          if (!Array.isArray(paths) || paths.length > 50) throw safeError('X_BAD_PARAMS');
+          reply({ id: frame.id, result: {
+            exists: paths.map((p) => {
+              try { return fs.statSync(path.resolve(String(p))).isDirectory(); } catch { return false; }
+            }),
+          } });
+          return;
+        }
+        default:
+          reply({ id: frame.id, error: { code: ERR_UNHANDLED, message: `companion 未实现该扩展方法: ${frame.method}` } });
+      }
+    } catch (err) {
+      reply({ id: frame.id, error: { code: err.code || 'X_GIT_FAILED', message: String(err.message || err) } });
+    }
   }
 
   function register() {

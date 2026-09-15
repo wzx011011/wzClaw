@@ -30,6 +30,10 @@ process.stdin.on('data', (chunk) => {
         parts: [{ type: 'text', text: 'x'.repeat(40000) }],
       }));
       send({ id: frame.id, result: { messages: big, session: {} } });
+    } else if (String(frame.method || '').startsWith('x/')) {
+      // 泄漏哨兵：x/* 是 companion 本地扩展，绝不允许到达 app-server；
+      // 一旦到达即回特定标记帧供测试断言
+      send({ method: 'fake/x-leak', params: { id: frame.id } });
     } else if (frame.method === 'session/list') {
       send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
     } else if (frame.method === 'session/subscribe') {

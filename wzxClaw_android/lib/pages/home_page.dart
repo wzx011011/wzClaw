@@ -16,9 +16,11 @@ import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
 import '../services/voice_input_service.dart';
+import '../services/git_service.dart';
 import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
+import '../widgets/git_branch_sheet.dart';
 import '../widgets/mic_button.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/plan_mode_bar.dart';
@@ -50,7 +52,6 @@ class _ChatPageState extends State<ChatPage> {
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   bool _sessionJustSwitched = false;
-  String? _desktopIdentity;
   String? _workspaceName;
   PermissionRequest? _permissionRequest;
   StreamSubscription? _messagesSub;
@@ -62,7 +63,6 @@ class _ChatPageState extends State<ChatPage> {
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
   StreamSubscription<WsConnectionState>? _connectionStateSub;
-  StreamSubscription<String?>? _desktopIdentitySub;
   StreamSubscription<PermissionRequest?>? _permissionSub;
   StreamSubscription<WorkspaceInfo?>? _workspaceInfoSub;
   final FocusNode _inputFocusNode = FocusNode();
@@ -145,16 +145,15 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
 
-    _desktopIdentitySub =
-        ConnectionManager.instance.desktopIdentityStream.listen((identity) {
-      if (mounted) setState(() => _desktopIdentity = identity);
-    });
-
     _workspaceInfoSub =
         SessionSyncService.instance.workspaceInfoStream.listen((info) {
       if (mounted) setState(() => _workspaceName = info?.workspaceName);
+      // 工作区变化/切换后刷新当前分支（companion x/* 扩展，见 git_service.dart）
+      GitService.instance.refreshBranch(info?.workspacePath);
     });
     _workspaceName = SessionSyncService.instance.workspaceInfo?.workspaceName;
+    GitService.instance
+        .refreshBranch(SessionSyncService.instance.workspaceInfo?.workspacePath);
 
     // Debounce all transient (non-connected) states so brief reconnects
     // don't flash the status bar.  We stay on the last known state until
@@ -184,7 +183,6 @@ class _ChatPageState extends State<ChatPage> {
     _streamingSub?.cancel();
     _waitingSub?.cancel();
     _voiceErrorSub?.cancel();
-    _desktopIdentitySub?.cancel();
     _workspaceInfoSub?.cancel();
     _permissionSub?.cancel();
     _sessionLoadingSub?.cancel();
@@ -1179,7 +1177,20 @@ class _ChatPageState extends State<ChatPage> {
             color: colors.bgSecondary,
             border: Border(top: BorderSide(color: colors.border, width: 0.5)),
           ),
-          child: Row(
+          child: Column(children: [
+            // 顶行：工作区 chip + git 分支 chip（对齐官方 ZCode 输入区样式）
+            if (isConnected)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                child: Row(
+                  children: [
+                    _buildWorkspaceChip(colors),
+                    const SizedBox(width: 8),
+                    _buildBranchChip(colors),
+                  ],
+                ),
+              ),
+            Row(
               children: [
                 // Permission mode dropdown
                 if (isConnected)
@@ -1268,11 +1279,7 @@ class _ChatPageState extends State<ChatPage> {
                     enabled: isConnected,
                     style: TextStyle(color: colors.textPrimary, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: isConnected
-                          ? (_desktopIdentity != null
-                              ? '$_desktopIdentity — 输入指令...'
-                              : '输入指令...')
-                          : '未连接',
+                      hintText: isConnected ? '向 ZCode 提问...' : '未连接',
                       hintStyle: TextStyle(color: colors.textMuted),
                       filled: true,
                       fillColor:
@@ -1320,6 +1327,62 @@ class _ChatPageState extends State<ChatPage> {
                   ),
               ],
             ),
+          ],),
+        );
+      },
+    );
+  }
+
+  /// git 分支 chip：显示当前工作区分支；点按弹分支选择器（companion x/* 扩展）
+  Widget _buildBranchChip(AppColors colors) {
+    return ValueListenableBuilder<String?>(
+      valueListenable: GitService.instance.currentBranch,
+      builder: (context, branch, _) {
+        final wsPath =
+            SessionSyncService.instance.workspaceInfo?.workspacePath;
+        final hasBranch = branch != null && branch.isNotEmpty;
+        return InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: (wsPath == null || wsPath.isEmpty)
+              ? null
+              : () async {
+                  final newBranch =
+                      await showGitBranchSheet(context, workspacePath: wsPath);
+                  if (newBranch != null) {
+                    // 检出成功：刷新分支显示；新会话即在该分支上运行
+                    GitService.instance.refreshBranch(wsPath);
+                  }
+                },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: colors.bgTertiary,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colors.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.call_split,
+                  size: 15,
+                  color: hasBranch ? colors.accent : colors.textMuted,
+                ),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 140),
+                  child: Text(
+                    hasBranch ? branch : '分支',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: hasBranch ? colors.textPrimary : colors.textMuted,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );

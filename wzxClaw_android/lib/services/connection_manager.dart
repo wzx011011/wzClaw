@@ -29,6 +29,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
+import '../zcode/zcode_keepalive_controller.dart';
 import '../zcode/zcode_model_heal.dart';
 import '../models/goal_snapshot.dart';
 import 'pairing_store.dart';
@@ -106,8 +107,10 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   /// f25b231 UI 契约：后台保活开关（前台服务由 App 生命周期模块接管，
   /// 新链路客户端自带保活 ping——保留 API 兼容，仅记录偏好）
   Future<void> setBackgroundKeepAliveEnabled(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('background_keepalive_enabled', enabled);
+    // 前台服务的实际启停由 ZcodeKeepAliveController 接管（监听生命周期 +
+    // 同一 pref key）。此前这里只写 pref 不通知 controller，设置开关要
+    // 重启 App 才生效——开关必须即时生效，故整体委托。
+    await ZcodeKeepAliveController.instance.setEnabled(enabled);
   }
 
   Stream<String?> get desktopIdentityStream =>
@@ -400,6 +403,17 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   }
 
   // ---- 出站：旧事件 → app-server 请求（编排）----
+
+  /// 直发 zcode/companion 请求（不经旧事件翻译层）。典型用途：companion
+  /// 本地扩展方法 `x/*`（git 分支/文件系统，见 APP-SERVER.md「companion
+  /// 本地扩展协议」）。未连接或未配对时抛 StateError。
+  Future<dynamic> zcodeRequest(String method, [Map<String, dynamic>? params]) {
+    final client = _client;
+    if (client == null || _stateNow != WsConnectionState.connected || !client.paired) {
+      throw StateError('未连接桌面');
+    }
+    return client.request(method, params);
+  }
 
   @override
   void send(WsMessage message, {int priority = 0}) {

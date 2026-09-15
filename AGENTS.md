@@ -31,7 +31,7 @@ NAS relay
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `relay/zcode/brain-adapter.js` | 旧 WsEvents 协议 ↔ app-server 帧适配器（v3 大脑节点核心） |
-| `relay/zcode/test/` | 68 项测试（node --test） |
+| `relay/zcode/test/` | 69 项测试（node --test） |
 | `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
 
 > 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
@@ -55,7 +55,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 # 手机端
 cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
-flutter test           # 370 项
+flutter test           # 374 项
 
 # 手机端 release APK（2026-09-16 定）：
 # 1. 每次出包前 pubspec.yaml 的 patch 版本 +1 并带 +N（如 1.2.5+5 → 1.2.6+6），
