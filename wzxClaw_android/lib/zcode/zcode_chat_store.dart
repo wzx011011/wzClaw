@@ -56,6 +56,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
 import 'zcode_desktop_registry.dart';
+import 'zcode_model_heal.dart';
 import 'zcode_notifier.dart';
 import 'zcode_pairing.dart';
 import 'zcode_relay_client.dart';
@@ -897,59 +898,48 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// session/send「模型已不可用」拒绝（字符串 result 或错误帧 -32031）：
-  /// 用缓存的可用模型 session/setModel 后重发一次；实测（APP-SERVER.md
-  /// 「模型不可用实测」）setModel 只接受对象 {providerId, modelId}，且历史
-  /// 模型下线的旧会话 setModel 救不回（重发仍 -32031）——兜底失败提示新建会话
+  /// session/send「模型不可用」拒绝（字符串 result 或错误帧 -32031）：
+  /// 用缓存的可用模型走共享自愈尾段（zcode_model_heal.dart：setModel →
+  /// close → resume 重新物化 → 重发；probe-modelheal4 真链路验证时序，
+  /// 只 setModel 重发仍 -32031）——兜底失败提示新建会话
   Future<void> _handleSendRejection(
       ZcodeSessionState state, String text, String reason,) async {
     final client = _client;
     var attempted = false;
+    var healError = '发送失败：$reason';
     if (client != null && client.paired && _availableModels.isNotEmpty) {
       final model = _availableModels.first;
       final slash = model.indexOf('/');
       if (slash > 0) {
         attempted = true;
-        try {
-          // setModel 实测只接受对象 {providerId, modelId}——字符串 'p/m'
-          // 会被 -32602 拒绝（APP-SERVER.md「模型不可用实测」）
-          await client.request('session/setModel', {
-            'sessionId': state.sessionId,
-            'model': {
-              'providerId': model.substring(0, slash),
-              'modelId': model.substring(slash + 1),
-            },
-          });
-          final retry = await client.request(
-            'session/send',
-            {'sessionId': state.sessionId, 'content': text},
-          );
-          if (retry is! String) {
-            // 已恢复：继续走流式
-            _error = null;
-            await _ensureSubscribed(state);
-            if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
-              _startFallbackPollingFor(state.sessionId);
-            } else if (state.isStreaming) {
-              _armPushWatchdog(state);
-            }
-            notifyListeners();
-            return;
+        final error = await zcodeSetModelResend(
+          request: client.request,
+          sessionId: state.sessionId,
+          content: text,
+          providerId: model.substring(0, slash),
+          modelId: model.substring(slash + 1),
+          reason: reason,
+        );
+        if (error == null) {
+          // 已恢复：继续走流式
+          _error = null;
+          await _ensureSubscribed(state);
+          if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
+            _startFallbackPollingFor(state.sessionId);
+          } else if (state.isStreaming) {
+            _armPushWatchdog(state);
           }
-        } catch (_) {
-          // 兜底失败（含重发仍 -32031 错误帧）→ 提示
+          notifyListeners();
+          return;
         }
+        healError = error;
       }
     }
     state.isStreaming = false;
     state.isWaitingForResponse = false;
     state.finalizeStreaming();
     _notifyIfActive(state);
-    _fail(
-      attempted
-          ? '发送失败：$reason。已自动切换可用模型仍被拒（历史模型已下线），请新建会话继续。'
-          : '发送失败：$reason',
-    );
+    _fail(attempted ? healError : '发送失败：$reason');
   }
 
   /// 停止生成（session/stop + 增量权威刷新）

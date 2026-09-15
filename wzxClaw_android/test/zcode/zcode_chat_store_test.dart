@@ -1450,6 +1450,11 @@ void main() {
         },
       });
       expect(sendCalls, 2); // 拒绝后自动重发一次
+      // probe-modelheal4 验证时序：setModel → close → resume（重新物化）→ 重发
+      final keys = fake.requests.map((e) => e.key).toList();
+      final resendIdx = keys.lastIndexOf('session/send');
+      expect(keys.sublist(resendIdx - 3, resendIdx + 1),
+          ['session/setModel', 'session/close', 'session/resume', 'session/send'],);
       expect(store.error, isNull);
       expect(store.isStreaming, isTrue); // 重发被接受，回合在途
       expect(store.messages.where((m) => m.content == 'hi'), hasLength(1));
@@ -1526,14 +1531,19 @@ void main() {
           },
         },
       ),);
-      // 实测（probe-modelheal）：历史模型下线的旧会话 setModel 救不回，
-      // 重发仍以错误帧 -32031 被拒
+      // 即使按 probe-modelheal4 时序 setModel + close + resume 重新物化，
+      // 重发仍可能以错误帧 -32031 被拒（provider 真不可用）→ 提示新建会话
       fake.handlers['session/send'] = (_) => throw const ZcodeRequestException(
           -32031, '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',);
       fake.handlers['session/setModel'] = (_) => {'ok': true};
 
       await store.sendMessage('hi');
       expect(fake.requests.any((e) => e.key == 'session/setModel'), isTrue);
+      // 自愈链完整走过（setModel → close → resume → 重发）
+      final keys = fake.requests.map((e) => e.key).toList();
+      final resendIdx = keys.lastIndexOf('session/send');
+      expect(keys.sublist(resendIdx - 3, resendIdx + 1),
+          ['session/setModel', 'session/close', 'session/resume', 'session/send'],);
       expect(store.error, contains('新建会话'));
       expect(store.isStreaming, isFalse);
       expect(store.messages.last.isStreaming, isFalse); // 占位已终结

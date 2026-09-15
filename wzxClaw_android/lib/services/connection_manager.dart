@@ -29,6 +29,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
+import '../zcode/zcode_model_heal.dart';
 import '../models/goal_snapshot.dart';
 import 'pairing_store.dart';
 import 'session_sync_service.dart';
@@ -426,26 +427,35 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         final sessionId = d['sessionId'] as String?;
         final content = d['content'] as String? ?? '';
         if (sessionId == null || sessionId.isEmpty || content.isEmpty) return;
+        String? error;
         try {
           final r = await client.request('session/send', {
             'sessionId': sessionId,
             'content': content,
           });
           if (r is String) {
-            _messageController.add(WsMessage(
-              event: 'stream:agent:error',
-              data: {'sessionId': sessionId, 'error': r},
-            ));
-            return;
+            // 字符串 result = 业务拒绝；仅「模型不可用」类走自愈，
+            // 其他按原文提示，不擅自改桌面端会话配置
+            error =
+                r.contains('模型') ? await _healModelAndResend(client, sessionId, content, r) : r;
+          } else {
+            await client.request('session/subscribe', {
+              'sessionId': sessionId,
+              'deliveryKind': 'web-remote-replayable',
+            });
           }
-          await client.request('session/subscribe', {
-            'sessionId': sessionId,
-            'deliveryKind': 'web-remote-replayable',
-          });
         } catch (e) {
+          if (e is ZcodeRequestException &&
+              (e.code == -32031 || e.message.contains('模型'))) {
+            error = await _healModelAndResend(client, sessionId, content, e.message);
+          } else {
+            error = '发送失败: $e';
+          }
+        }
+        if (error != null) {
           _messageController.add(WsMessage(
             event: 'stream:agent:error',
-            data: {'sessionId': sessionId, 'error': '发送失败: $e'},
+            data: {'sessionId': sessionId, 'error': error},
           ));
         }
         return;
@@ -535,6 +545,45 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       case 'file:tree:request':
       case 'file:read:request':
         return;
+    }
+  }
+
+  /// 「模型已不可用」自愈：resume 现取可用模型（桥内无模型缓存），
+  /// setModel → close → resume → 重发的共享尾段见 zcode_model_heal.dart。
+  /// 返回 null = 已恢复（订阅由本方法补发）；否则返回给用户的错误文案。
+  Future<String?> _healModelAndResend(
+      ZcodeRelayClient client, String sessionId, String content, String reason,) async {
+    try {
+      final resume = await client.request('session/resume', {'sessionId': sessionId});
+      final settings = resume is Map ? resume['settings'] as Map? : null;
+      final modelCfg = settings?['model'] as Map?;
+      final available = modelCfg?['available'] as List? ?? const [];
+      Map? ref;
+      for (final item in available) {
+        final r = item is Map ? item['ref'] as Map? : null;
+        if (r is Map && r['providerId'] is String && r['modelId'] is String) {
+          ref = r;
+          break;
+        }
+      }
+      if (ref == null) return '发送失败：$reason（当前无可用模型，请检查桌面端登录状态）';
+      final error = await zcodeSetModelResend(
+        request: client.request,
+        sessionId: sessionId,
+        content: content,
+        providerId: ref['providerId'] as String,
+        modelId: ref['modelId'] as String,
+        reason: reason,
+      );
+      if (error == null) {
+        await client.request('session/subscribe', {
+          'sessionId': sessionId,
+          'deliveryKind': 'web-remote-replayable',
+        });
+      }
+      return error;
+    } catch (_) {
+      return '发送失败：$reason';
     }
   }
 

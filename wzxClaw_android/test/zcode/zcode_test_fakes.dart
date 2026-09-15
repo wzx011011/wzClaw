@@ -128,6 +128,7 @@ class FakeServerSession {
   final String id;
   String status = 'idle';
   int subscribeCalls = 0;
+  int closeCalls = 0;
   final List<Map<String, dynamic>> messages = [];
 
   /// send 落库 user 消息（返回分配的消息 id）
@@ -184,6 +185,12 @@ class FakeSessionServer {
     fake.handlers['session/send'] = (params) {
       session(params!['sessionId'] as String).addSend(params);
       return {'accepted': true};
+    };
+    fake.handlers['session/close'] = (params) {
+      final s = session(params!['sessionId'] as String);
+      s.status = 'idle';
+      s.closeCalls++;
+      return {'ok': true};
     };
     fake.handlers['session/list'] = (_) => {'sessions': []};
   }
