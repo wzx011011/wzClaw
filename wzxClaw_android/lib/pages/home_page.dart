@@ -354,6 +354,15 @@ class _ChatPageState extends State<ChatPage> {
         ),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
+          // 切换桃面：返回设备列表（LandingPage）重新选择/切换桌面
+          IconButton(
+            icon: const Icon(Icons.swap_horiz_outlined),
+            tooltip: '切换桃面端',
+            onPressed: () {
+              AppRestoreState.setLastRoute('/');
+              Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+            },
+          ),
           // 新对话：进入「新任务」欢迎态（引擎会话等首条消息发出时才创建）
           IconButton(
             icon: const Icon(Icons.add_comment_outlined),
