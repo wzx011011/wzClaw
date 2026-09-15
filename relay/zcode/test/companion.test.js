@@ -169,7 +169,7 @@ test('companion 配对 → 桥接 → 双向转发 + 反向请求代答/转发�
 // 两档超时后代答行为一致（-32022 拒绝）；放宽档内人工应答不触发代答。
 // 内联假 app-server（node -e，不动共享 fixture）：收到 emit/reverse 指令即发
 // 一条指定 method 的反向请求。
-test('反向请求超时按 method 分档：权限/AskUser 放宽、非权限短超时，超时回 -32022', async (t) => {
+test('反向请求超时默认长档：白名单方法短档、未知方法不被短档误杀，超时回 -32022', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-timeout-'));
   const onDemandServer = `
@@ -200,8 +200,8 @@ test('反向请求超时按 method 分档：权限/AskUser 放宽、非权限短
     zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
     v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
     midFile: path.join(dir, 'mid'),
-    requestTimeoutMs: 300,            // 非权限类：短档（对应线上 15s 档）
-    permissionRequestTimeoutMs: 2000, // 权限/AskUser 类：放宽档（对应线上 120s 档）
+    requestTimeoutMs: 300,            // 白名单快速方法：短档（线上 15s 档）
+    permissionRequestTimeoutMs: 2000, // 其余一律长档（线上 120s 档，防未知交互方法被静默代答拒绝）
     logger: () => {},
     onPairing: () => {},
   });
@@ -225,15 +225,14 @@ test('反向请求超时按 method 分档：权限/AskUser 放宽、非权限短
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
   await waitFor(() => companion.state === 'paired');
 
-  // 同挂一条权限类（session/requestPermission）与一条非权限类（workspace/open）。
+  // 权限类反向请求转发手机（白名单 runtimePrefs 由 companion 自动代答、
+  // 不转发——短档路径由「runtime-prefs 代答」用例覆盖，此处验证非白名单
+  // 方法不被短档误杀）。
   emit('srv-perm', 'session/requestPermission');
-  emit('srv-plain', 'workspace/open');
   await client.next((m) => m.type === 'data' && m.payload.id === 'srv-perm');
-  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-plain');
 
-  // 短档（300ms）到期后：非权限类已被代答拒绝；权限类不受短档影响仍在等待。
+  // 短档（300ms）到期后：非白名单方法不受短档影响，仍在等待手机应答。
   await delay(900);
-  assert.equal(rejected('srv-plain'), true);
   assert.equal(rejected('srv-perm'), false);
 
   // 权限类在放宽档内从容应答（模拟人看手机后点确认）：不触发代答。

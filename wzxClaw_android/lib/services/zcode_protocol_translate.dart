@@ -11,13 +11,43 @@
 //   会话响应由 ConnectionManager 编排后经 [responseToWsMessages] 映射
 // ============================================================
 
+import 'package:flutter/foundation.dart';
+
 import '../models/ws_message.dart';
+
+/// 解析配对链接（宽容 scheme 版）：https/http/wss/ws 均可。
+/// 旧 UI 的地址校验只放行 wss://，因此 wss 形式的配对链接也必须可用。
+/// 返回 relay 的 ws 地址（wss/ws 原样保留 scheme，http(s) 按升级规则转换）。
+({String relayWsUrl, String sid, String hash})? parsePairingUrlAny(String url) {
+  try {
+    final uri = Uri.parse(url.trim());
+    final scheme = uri.scheme.toLowerCase();
+    final isHttp = scheme == 'https' || scheme == 'http';
+    final isWs = scheme == 'wss' || scheme == 'ws';
+    if (!isHttp && !isWs) return null;
+    final sid = uri.queryParameters['sid'] ?? '';
+    final hash = uri.queryParameters['hash'] ?? '';
+    if (sid.isEmpty || sid.length > 256 || hash.isEmpty) return null;
+    final wsScheme = isHttp ? (scheme == 'https' ? 'wss' : 'ws') : scheme;
+    return (
+      relayWsUrl: '$wsScheme://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}/ws',
+      sid: sid,
+      hash: hash,
+    );
+  } catch (_) {
+    return null;
+  }
+}
 
 /// 反向请求（app-server → 手机）登记信息
 class ReverseRequestInfo {
   final dynamic frameId;
   final String kind; // 'permission' | 'ask_user'
-  const ReverseRequestInfo(this.frameId, this.kind);
+  /// 权限请求的 options 原文（含每个 option 的 response 应答模板——
+  /// 应答的本质是回放所选 option 的 response，其它形状一律被服务端
+  /// 静默按 deny 处理，见 APP-SERVER.md「畸形应答实验」）
+  final List<Map>? permissionOptions;
+  const ReverseRequestInfo(this.frameId, this.kind, {this.permissionOptions});
 }
 
 /// 入站翻译：app-server 通知帧 → 旧事件流
@@ -49,9 +79,11 @@ List<WsMessage> translateNotification(
 
 bool _looksReverse(String method) {
   final m = method.toLowerCase();
+  // 与 relay/zcode/lib/protocol.js 的权威正则保持一致
   return m.contains('permission') || m.contains('confirm') ||
-      m.contains('approval') || m.contains('askuser') ||
-      m.contains('ask_user') || m.contains('interaction');
+      m.contains('approval') || m.contains('approve') ||
+      m.contains('askuser') || m.contains('ask_user') ||
+      m.contains('ask-user') || m.contains('interaction');
 }
 
 List<WsMessage> _translateReverse(
@@ -64,8 +96,12 @@ List<WsMessage> _translateReverse(
   final lower = method.toLowerCase();
   final toolCallId = (p['toolCallId'] ?? p['tool_call_id'] ?? p['callId'] ??
           p['requestId'] ?? p['id'] ?? frameId ?? '').toString();
-  if (lower.contains('askuser') || lower.contains('ask_user') ||
-      lower.contains('interaction')) {
+  // 判定顺序：permission 最先（interaction/requestPermission 含 interaction
+  // 前缀，先判 ask 会误路由）；裸 interaction 且带 question/options 才是 AskUser
+  final isPermission = lower.contains('permission');
+  if (!isPermission &&
+      (lower.contains('askuser') || lower.contains('ask_user') ||
+          lower.contains('ask-user'))) {
     final questionId = (p['questionId'] ?? p['requestId'] ?? toolCallId).toString();
     final options = (p['options'] as List? ?? [])
         .whereType<Map>()
@@ -85,13 +121,25 @@ List<WsMessage> _translateReverse(
     registerReverse(ReverseRequestInfo(frameId, 'ask_user'), event);
     return [event];
   }
+  final options = (p['options'] as List? ?? [])
+      .whereType<Map>()
+      .map((o) => Map<String, dynamic>.from(o))
+      .toList();
+  final requestKey = (p['requestId'] ?? toolCallId).toString();
   final event = WsMessage(event: 'stream:agent:permission_request', data: {
+    'requestId': requestKey,
     'toolCallId': toolCallId,
     'toolName': p['toolName'] ?? p['tool'] ?? p['name'] ?? '',
     'input': p['input'] ?? p['params'] ?? p['arguments'] ?? {},
+    'reason': p['reason']?.toString() ?? '',
+    'riskLevel': p['riskLevel']?.toString() ?? '',
+    'options': options,
     'sessionId': p['sessionId']?.toString() ?? '',
   });
-  registerReverse(ReverseRequestInfo(frameId, 'permission'), event);
+  registerReverse(
+    ReverseRequestInfo(frameId, 'permission', permissionOptions: options),
+    event,
+  );
   return [event];
 }
 
@@ -115,7 +163,38 @@ List<WsMessage> _translatePayload(String sessionId, dynamic payload) {
       out.add(WsMessage(event: 'stream:agent:thinking', data: {'sessionId': sessionId, 'content': c}));
     }
   }
-  if (kind != null && kind.startsWith('tool.')) {
+  // 工具事件实测轨迹（APP-SERVER.md「工具事件序列」）：
+  // scheduled → started → progress×N → result → batch
+  if (kind == 'scheduled' || kind == 'started') {
+    out.add(WsMessage(event: 'stream:agent:tool_call', data: {
+      'sessionId': sessionId,
+      'toolCallId': content(p['toolCallId'] ?? p['callId']),
+      'toolName': content(p['toolName'] ?? p['tool']),
+      'input': const {},
+    }));
+  } else if (kind == 'result' || kind == 'tool.result') {
+    // result.payload: {toolCallId, result:{success, content,...}, duration}
+    final inner = p['result'] is Map ? p['result'] as Map : const {};
+    final output = inner['content']?.toString() ?? '';
+    out.add(WsMessage(event: 'stream:agent:tool_result', data: {
+      'sessionId': sessionId,
+      'toolCallId': content(p['toolCallId'] ?? p['callId']),
+      'output': output.length > 2000 ? output.substring(0, 2000) : output,
+      'isError': inner['success'] == false,
+    }));
+  } else if (kind == 'permission.resolved') {
+    // {requestId, toolCallId, decision, reason}：交由调用方清待答表
+    out.add(WsMessage(event: 'stream:agent:permission_resolved', data: {
+      'sessionId': sessionId,
+      'requestId': content(p['requestId']),
+      'toolCallId': content(p['toolCallId']),
+      'decision': content(p['decision']),
+    }));
+  } else if (kind == 'progress' || kind == 'batch') {
+    // 进度/批次心跳：旧协议无对应事件，忽略（有观测计数）
+    debugPrint('[translate] tool $kind: ${content(p['toolName'])}');
+  } else if (kind != null && kind.startsWith('tool.')) {
+    // 兼容旧观察词表
     final callId = content(p['callId'] ?? p['toolCallId'] ?? p['id']);
     final toolName = content(p['tool'] ?? p['name']);
     if (kind == 'tool.call' || kind == 'tool.use' || kind == 'tool_start') {
@@ -203,6 +282,7 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
       ];
 
     case 'session/messages':
+      final limit = 200; // 与 ConnectionManager 请求一致
       final rows = (result is Map ? result['messages'] : null) as List? ?? [];
       final mapped = <Map<String, dynamic>>[];
       String? sessionId;
@@ -218,7 +298,8 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
           'messages': mapped,
           'total': mapped.length,
           'offset': 0,
-          'hasMore': false,
+          // 尾窗语义：返回条数==limit 即可能还有更旧消息
+          'hasMore': rows.length >= limit,
         }),
       ];
 
@@ -257,7 +338,7 @@ Map<String, dynamic>? _mapEngineMessage(Map row) {
     } else if (raw['type'] == 'tool') {
       final state = raw['state'] is Map ? raw['state'] as Map : const {};
       toolCalls.add({
-        'toolCallId': (raw['callId'] ?? state['callId'] ?? '').toString(),
+        'toolCallId': (raw['callID'] ?? raw['callId'] ?? state['callId'] ?? '').toString(),
         'toolName': (raw['tool'] ?? state['tool'] ?? '').toString(),
         'inputSummary': _truncate(state['input']),
         'outputSummary': _truncate(state['output']),

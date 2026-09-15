@@ -112,7 +112,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   /// [url] 为配对链接：https://host/pair?sid=..&hash=..（&name=.. 可选）
   void connect(String url) {
-    final parsed = parsePairingUrl(url);
+    final parsed = parsePairingUrlAny(url);
     if (parsed == null) {
       lastError = '连接地址无效：请使用配对链接';
       _errorController.add(lastError!);
@@ -199,11 +199,20 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     final method = frame.method ?? '';
     final events = translateNotification(method, frame.params, _registerReverse);
     for (final e in events) {
+      // permission.resolved（超时/桌面已答）：清待答表；旧协议无对应
+      // 事件不下发，UI 卡片由超时兜底/用户点击自然清除
+      if (e.event == 'stream:agent:permission_resolved') {
+        final d = e.data is Map ? e.data as Map : const {};
+        final rid = (d['requestId'] ?? d['toolCallId'])?.toString();
+        if (rid != null && rid.isNotEmpty) _pendingReverse.remove(rid);
+        continue;
+      }
       _messageController.add(e);
     }
-    // state.updated / resume 响应缓存 workspace（session/create 复用）
+    // state.updated：缓存 workspace（session/create 复用）+ 真实权限模式
     if (method == 'state.updated' && frame.params is Map) {
       _cacheWorkspace(frame.params as Map);
+      _cacheMode(frame.params as Map);
     }
   }
 
@@ -228,6 +237,15 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _messageController.add(e);
     }
     _reverseWaiters[frame.id.toString()] = completer;
+    // 与 companion 的权限超时档对齐（120s）：companion 代答 -32022 给
+    // 服务端后不会通知手机——此处兜底 complete，防止 waiter/UI 永久滞留
+    final frameId = frame.id;
+    Timer(const Duration(seconds: 120), () {
+      final w = _reverseWaiters.remove(frameId.toString());
+      if (w != null && !w.isCompleted) {
+        w.completeError(TimeoutException('permission timeout'));
+      }
+    });
     return completer.future;
   }
 
@@ -266,8 +284,9 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   }
 
   void _flushQueue() {
+    // 头部排空（FIFO；队列头高尾低 → 高优先级先发、同优先级按入队顺序）
     while (_sendQueue.isNotEmpty) {
-      final entry = _sendQueue.removeLast();
+      final entry = _sendQueue.removeAt(0);
       final client = _client;
       if (client == null) break;
       try {
@@ -340,22 +359,39 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
       case 'permission:set_mode:request':
         final sessionId = d['sessionId'] as String?;
-        final mode = d['mode'] as String?;
-        if (sessionId != null && mode != null) {
+        final uiMode = d['mode'] as String?;
+        final serverMode = _uiToServerMode[uiMode] ?? uiMode;
+        if (sessionId != null && serverMode != null) {
           try {
-            await client.request('session/setMode', {'sessionId': sessionId, 'mode': mode});
-          } catch (_) {}
+            await client.request('session/setMode', {
+              'sessionId': sessionId,
+              'mode': serverMode,
+            });
+            _serverModeNow = serverMode; // 乐观更新，权威以快照回填
+          } catch (e) {
+            _messageController.add(WsMessage(event: 'permission:mode:response', data: {
+              'requestId': d['requestId'] ?? '',
+              'error': '设置模式失败: $e',
+            }));
+            return;
+          }
         }
         _messageController.add(WsMessage(
           event: 'permission:mode:response',
-          data: {'requestId': d['requestId'] ?? '', 'mode': mode ?? 'build'},
+          data: {
+            'requestId': d['requestId'] ?? '',
+            'mode': _serverToUiMode[_serverModeNow] ?? uiMode ?? 'always-ask',
+          },
         ));
         return;
 
       case 'permission:get_mode:request':
         _messageController.add(WsMessage(
           event: 'permission:mode:response',
-          data: {'requestId': d['requestId'] ?? '', 'mode': 'build'},
+          data: {
+            'requestId': d['requestId'] ?? '',
+            'mode': _serverToUiMode[_serverModeNow] ?? 'always-ask',
+          },
         ));
         return;
 
@@ -380,6 +416,18 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Future<void> _respondList(ZcodeRelayClient client, String requestId) async {
     try {
       final result = await client.request('session/list');
+      // 定型路径缓存 workspace（APP-SERVER.md：sessions[].workspace.
+      // {workspaceKey,workspacePath}）——盲搜仅作兜底
+      if (result is Map && result['sessions'] is List) {
+        for (final s0 in (result['sessions'] as List).whereType<Map>()) {
+          final ws = s0['workspace'];
+          if (ws is Map && ws['workspaceKey'] != null && ws['workspacePath'] != null) {
+            _wsKey = ws['workspaceKey'].toString();
+            _wsPath = ws['workspacePath'].toString();
+            break;
+          }
+        }
+      }
       final events = responseToWsMessages('session/list', result, const {});
       for (final e in events) {
         _messageController.add(WsMessage(
@@ -407,16 +455,25 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     }
     try {
       final resume = await client.request('session/resume', {'sessionId': sessionId});
-      if (resume is Map) _cacheWorkspace(resume);
+      if (resume is Map) {
+        _cacheWorkspace(resume);
+        _cacheMode(resume);
+      }
       await client.request('session/subscribe', {
         'sessionId': sessionId,
         'deliveryKind': 'web-remote-replayable',
       });
-      final messages = await client.request('session/messages', {
-        'sessionId': sessionId,
-        'limit': 200,
-      });
-      final events = responseToWsMessages('session/messages', messages, const {});
+      // resume 响应自带全量 messages（companion 已按帧上限截尾并打
+      // messagesTruncated 标记）——直接使用，省一次同量级重拉
+      final events = resume is Map && (resume['messages'] is List)
+          ? responseToWsMessages('session/messages', resume, const {})
+          : await (() async {
+              final messages = await client.request('session/messages', {
+                'sessionId': sessionId,
+                'limit': 200,
+              });
+              return responseToWsMessages('session/messages', messages, const {});
+            }());
       for (final e in events) {
         _messageController.add(WsMessage(
           event: e.event,
@@ -469,6 +526,13 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     final approved = message.event == 'permission:response'
         ? d['approved'] == true
         : (d['selectedLabels'] is List && (d['selectedLabels'] as List).isNotEmpty);
+    if (message.event == 'permission:response') {
+      // 应答 = 所选 option 的 response 原文（APP-SERVER.md 实测：其它形状
+      // 一律被服务端静默按 deny 处理）。旧 UI 无 remember 开关 → allow_once。
+      final result = _pickPermissionResponse(info, approved);
+      _flushReverseAck(info.frameId, {'result': result});
+      return;
+    }
     if (approved) {
       _flushReverseAck(info.frameId, {'result': d});
     } else {
@@ -476,6 +540,64 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         'error': {'code': -32000, 'message': '用户拒绝'},
       });
     }
+  }
+
+  /// 从权限请求暂存的 options 里回放所选 option 的 response 原文；
+  /// 无暂存时按实测 schema 兜底构造（一次性批准，permissionUpdates 无法
+  /// 凭空构造故不提供 remember 语义）
+  Map<String, dynamic> _pickPermissionResponse(ReverseRequestInfo info, bool approved) {
+    final options = info.permissionOptions;
+    if (options != null) {
+      final wanted = approved ? 'allow_once' : 'deny';
+      for (final o in options) {
+        if (o['optionId']?.toString() == wanted) {
+          final response = o['response'];
+          if (response is Map) return Map<String, dynamic>.from(response);
+        }
+      }
+    }
+    return {
+      'decision': approved ? 'allow' : 'deny',
+      'reason': approved ? 'Approved once' : 'Denied',
+    };
+  }
+
+  /// 服务端权限模式真实值（state.updated patch.mode.current，实测字段）。
+  /// UI 词表 ↔ 服务端枚举映射（语义最近对应，非完全等价）：
+  /// always-ask→build（默认执行+权限拦截）、accept-edits→edit、
+  /// plan→plan、bypass→yolo；auto 显示回落 build 档。
+  static const _uiToServerMode = {
+    'always-ask': 'build',
+    'accept-edits': 'edit',
+    'plan': 'plan',
+    'bypass': 'yolo',
+  };
+  static const _serverToUiMode = {
+    'plan': 'plan',
+    'edit': 'accept-edits',
+    'yolo': 'bypass',
+    'build': 'always-ask',
+    'auto': 'always-ask',
+  };
+  String? _serverModeNow;
+
+  void _cacheMode(Map node) {
+    dynamic mode;
+    void search(Map n, int depth) {
+      if (depth > 4 || mode != null) return;
+      // state.updated 补丁形状：mode:{current:...}
+      final m = n['mode'];
+      if (m is Map && m['current'] != null) {
+        mode = m['current'];
+        return;
+      }
+      for (final v in n.values) {
+        if (v is Map) search(v, depth + 1);
+      }
+    }
+
+    search(node, 0);
+    if (mode != null) _serverModeNow = mode.toString();
   }
 
   void _cacheWorkspace(Map node) {
@@ -514,7 +636,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       final prefs = await SharedPreferences.getInstance();
       final serverUrl = prefs.getString('server_url');
       if (serverUrl == null || serverUrl.isEmpty) return;
-      if (parsePairingUrl(serverUrl) == null) {
+      if (parsePairingUrlAny(serverUrl) == null) {
         _errorController.add('保存的连接配置不是有效的配对链接，请在设置中重新配置');
         return;
       }

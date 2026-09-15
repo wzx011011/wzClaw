@@ -14,6 +14,9 @@ SECRET_FILE="$HOME/.wzxclaw/zcode-companion/relay-secret"
 
 # 读取注册密钥（首行，去 CRLF）。文件存在但为空视为配置错误：直接终止部署，
 # 避免用户以为有密钥保护、实际部署出开放注册的 relay。
+# 注入方式：scp 到 NAS 的 0600 env 文件 + docker --env-file——不走
+# -e 值参数（会进 NAS 进程列表/命令历史，违反「密钥不进进程参数」约定）。
+ENV_FILE_NAS="$BUILD_DIR/relay.env"
 RUN_ARGS=(-d --name "$NAME" --restart unless-stopped -p 127.0.0.1:18884:18884)
 if [ -f "$SECRET_FILE" ]; then
   REG_SECRET="$(sed -n '1p' "$SECRET_FILE" | tr -d '\r\n')"
@@ -21,9 +24,7 @@ if [ -f "$SECRET_FILE" ]; then
     echo "错误: $SECRET_FILE 为空——请写入一行密钥（openssl rand -base64 32）后重跑，或删除该文件以开放注册" >&2
     exit 1
   fi
-  # base64 字符集（A-Za-z0-9+/=）不含单引号，远程 shell 单引号包裹安全。
-  # 直接赋值而非 printf -v：格式串以 -e 开头会被 printf 当作选项解析而报错。
-  RUN_ARGS+=("-e REGISTRATION_SECRET='$REG_SECRET'")
+  RUN_ARGS+=(--env-file "$ENV_FILE_NAS")
 else
   echo "未设置注册密钥，relay 将开放注册" >&2
 fi
@@ -31,6 +32,9 @@ fi
 ssh nas "mkdir -p $BUILD_DIR"
 # -r：lib/ 是目录（proof/protocol 共享模块）
 scp -r Dockerfile package.json server.js lib nas:$BUILD_DIR/
+if [ -f "$SECRET_FILE" ]; then
+  printf 'REGISTRATION_SECRET=%s\n' "$REG_SECRET" | ssh nas "cat > $ENV_FILE_NAS && chmod 600 $ENV_FILE_NAS"
+fi
 ssh nas "$DOCKER build -t $NAME $BUILD_DIR"
 ssh nas "$DOCKER rm -f $NAME 2>/dev/null || true; \
   $DOCKER run ${RUN_ARGS[*]} $NAME"

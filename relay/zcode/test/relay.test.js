@@ -9,6 +9,7 @@ const { WebSocket } = require('ws');
 const { createRelay, MAX_PAYLOAD } = require('../server');
 const { deriveProof, deriveRegisterProof, verifyProof } = require('../lib/proof');
 const { classifyFrame, ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
+  isFastMethod,
   isPermissionLikeMethod } = require('../lib/protocol');
 const { runProbe } = require('../probe');
 const { spawn } = require('node:child_process');
@@ -758,13 +759,15 @@ test('lib/protocol：classifyFrame 帧分类与错误码常量', () => {
   assert.deepEqual([ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT], [-32000, -32001, -32022]);
 });
 
-test('lib/protocol：isPermissionLikeMethod 分档判定', () => {
-  assert.equal(isPermissionLikeMethod('session/requestPermission'), true);
-  assert.equal(isPermissionLikeMethod('interaction/askUser'), true);
-  assert.equal(isPermissionLikeMethod('workspace/confirmOverwrite'), true);
-  // 裸 "ask" 不得误伤 cancelBackgroundTask 里的 "task"
-  assert.equal(isPermissionLikeMethod('session/cancelBackgroundTask'), false);
-  assert.equal(isPermissionLikeMethod('session/list'), false);
-  assert.equal(isPermissionLikeMethod(123), false);
-  assert.equal(isPermissionLikeMethod(undefined), false);
+test('lib/protocol：默认长档 + isFastMethod 白名单短档', () => {
+  // 已知快速方法走短档
+  assert.equal(isFastMethod('session/requestRuntimePreferences'), true);
+  // 其余（含未知交互方法）一律长档：误入短档会被静默代答拒绝——
+  // 失败模式必须偏向"多等"而非"误杀"
+  assert.equal(isFastMethod('session/requestPermission'), false);
+  assert.equal(isFastMethod('interaction/askUser'), false);
+  assert.equal(isFastMethod('workspace/open'), false);
+  assert.equal(isFastMethod('session/list'), false);
+  assert.equal(isFastMethod(123), false);
+  assert.equal(isFastMethod(undefined), false);
 });

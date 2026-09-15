@@ -13,16 +13,23 @@ const ERR_UNHANDLED = -32000;
 const ERR_FRAME_TOO_LARGE = -32001;
 const ERR_TIMEOUT = -32022;
 
-// 权限/确认/AskUser 类反向请求判定（决定超时看护档位）：
-// - 实名：session/requestPermission（权限确认）、interaction/askUser（提问），
-//   即手机端 UI 接入的两种形态（见 Flutter zcode_chat_store 的路由规则）；
-// - 模式：method 含 permission / confirm / approval / approve / askUser 变体 /
-//   interaction 的都视为需要人盯手机应答，放宽看护窗口。
-//   注意不能用裸 "ask"——会误伤 cancelBackgroundTask 里的 "task"。
-const PERMISSION_LIKE_METHOD_PATTERN = /permission|confirm|approval|approve|ask[-_]?user|interaction/i;
+// 超时档位判定（方向：默认长档）。
+// 失败模式分析（2026-09-15 设计审查）：若默认短档，app-server 新增的任何
+// 交互式方法不匹配模式 → 15s 后被静默代答拒绝，用户正看着手机却丢失
+// 确认框；默认长档的最坏结果只是"多等一会"。因此：
+// - 已知快速方法（实名白名单）走短档；
+// - 其余全部按"可能需要人应答"走长档（120s）。
+const FAST_METHODS = new Set([
+  'session/requestRuntimePreferences',
+]);
 
+function isFastMethod(method) {
+  return typeof method === 'string' && FAST_METHODS.has(method);
+}
+
+// 兼容旧名：权限类显式归长档（如今长档是默认，此函数仅表达意图）
 function isPermissionLikeMethod(method) {
-  return typeof method === 'string' && PERMISSION_LIKE_METHOD_PATTERN.test(method);
+  return !isFastMethod(method);
 }
 
 // 帧分类（规则以 APP-SERVER.md 帧格式节为准）：
@@ -41,4 +48,4 @@ function classifyFrame(frame) {
 }
 
 module.exports = { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
-  isPermissionLikeMethod, classifyFrame };
+  isFastMethod, isPermissionLikeMethod, classifyFrame };

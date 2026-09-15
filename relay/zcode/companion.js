@@ -17,7 +17,7 @@ const path = require('node:path');
 const { WebSocket } = require('ws');
 const { MAX_PAYLOAD } = require('./server');
 const { deriveProof, deriveRegisterProof } = require('./lib/proof');
-const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, isPermissionLikeMethod } = require('./lib/protocol');
+const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, isFastMethod } = require('./lib/protocol');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
@@ -154,8 +154,9 @@ function createCompanion(options = {}) {
     // （防公网注册 DoS）。仅当 secret 存在时才附 register_proof；
     // 未提供时注册帧与旧版完全一致（对开放注册的 relay 零影响）。
     registrationSecret,
-    // 反向请求超时看护分两档：权限/确认/AskUser 类（isPermissionLikeMethod）
-    // 等人在手机上应答，放宽到 120s；其余维持 15s。两档均可注入短值供测试。
+    // 反向请求超时看护分两档（默认长档策略）：已知快速方法（isFastMethod
+    // 白名单）短档；其余一律长档——未知交互方法误入短档会被静默代答拒绝，
+    // 长档最坏只是多等。两档均可注入短值供测试。
     requestTimeoutMs = 15000, permissionRequestTimeoutMs = 120000,
   } = options;
   if (typeof relayUrl !== 'string' || !/^wss?:\/\/.+\/ws$/.test(relayUrl)) throw safeError('INVALID_RELAY_URL');
@@ -294,16 +295,15 @@ function createCompanion(options = {}) {
   }
 
   // app-server → 手机。运行时偏好反向请求由 companion 代答；其余反向请求
-  // （权限确认等）转发给手机端应答，并按 method 分档做超时看护：
-  // 权限/确认/AskUser 类放宽到 permissionRequestTimeoutMs（人看手机应答），
-  // 其余走 requestTimeoutMs；超时一律代答 -32022 拒绝（行为与旧版一致）。
+  // 转发给手机端应答并做超时看护（默认长档，见 lib/protocol.js 失败模式
+  // 分析）：仅白名单快速方法走短档；超时代答 -32022 拒绝。
   function handleAppServerFrame(frame) {
     if (frame.method && frame.id != null) {
       if (frame.method === RUNTIME_PREFERENCES_METHOD) {
         bridge.write({ id: frame.id, result: RUNTIME_PREFERENCES_RESULT });
         return;
       }
-      const timeoutMs = isPermissionLikeMethod(frame.method) ? permissionRequestTimeoutMs : requestTimeoutMs;
+      const timeoutMs = isFastMethod(frame.method) ? requestTimeoutMs : permissionRequestTimeoutMs;
       const stale = pending.get(frame.id);
       if (stale) clearTimeout(stale); // 同 id 覆盖前先清旧定时器，防旧定时器误杀复用 id 的新请求
       const timer = setTimeout(() => {
@@ -486,11 +486,11 @@ function createCompanion(options = {}) {
 // 与 NAS 部署脚本 deploy-nas-zcode.sh 读取的路径同名同语义——两端各自持有同一行
 // 密钥，不进 git、不进进程参数。文件缺失或为空返回 ''（开放注册模式，不附 proof）。
 function readRegistrationSecretFile(homeDir = os.homedir()) {
+  const secretFile = path.join(homeDir, '.wzxclaw', 'zcode-companion', 'relay-secret');
   try {
-    const firstLine = fs.readFileSync(
-      path.join(homeDir, '.wzxclaw', 'zcode-companion', 'relay-secret'),
-      'utf8',
-    ).split(/\r?\n/, 1)[0].trim();
+    const firstLine = fs.readFileSync(secretFile, 'utf8').split(/\r?\n/, 1)[0].trim();
+    // 凭据文件统一 0600（与 mid/passhash 一致；此前遗漏）
+    try { fs.chmodSync(secretFile, 0o600); } catch { /* 平台不支持时忽略 */ }
     return firstLine || '';
   } catch {
     return '';
@@ -530,8 +530,11 @@ if (require.main === module) {
   // 注册共享密钥三级回退：CLI 参数 > 环境变量 REGISTRATION_SECRET >
   // ~/.wzxclaw/zcode-companion/relay-secret 文件；都未提供时不附
   // register_proof（对开放注册的 relay 零影响）。
+  // 密钥来源：环境变量 > 文件（0600）。CLI 参数档会进 shell history /
+  // 进程列表，与「密钥不进进程参数」约定冲突——仅保留供测试，并打印警告。
   const registrationSecret = secretIdx !== -1 && args[secretIdx + 1]
-    ? args[secretIdx + 1]
+    ? (console.error('[companion] 警告: --register-secret 会暴露在进程参数中，仅建议测试使用'),
+       args[secretIdx + 1])
     : process.env.REGISTRATION_SECRET || readRegistrationSecretFile();
   if (relayIdx === -1 || !args[relayIdx + 1]) {
     console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>] [--mid-file <路径>] [--qr-png <路径>]');
