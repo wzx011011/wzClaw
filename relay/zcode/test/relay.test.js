@@ -771,3 +771,39 @@ test('lib/protocol：默认长档 + isFastMethod 白名单短档', () => {
   assert.equal(isFastMethod(123), false);
   assert.equal(isFastMethod(undefined), false);
 });
+
+// owner 接管（server.js「幂等重注册」路径）：同 mid+hash 二次注册时 relay
+// terminate 旧 owner socket，新连接随即以 device 角色完成 auth 接管 device 槽
+// （stale 在位者被重claim）。回归判据：旧 socket 迟到的 close 处理（detach）
+// 不得按角色无条件清槽——若那样，room.owner/room.device 会被旧连接清空，
+// 房间瘫掉（配对退化为 waiting、data 无法送达新 companion）。
+test('owner takeover terminates the old owner socket without clearing the new owner', async (t) => {
+  const mid = randomUUID();
+  const hash = createHash('sha256').update(randomBytes(32)).digest('base64');
+  const f = await fixture(t);
+  const d1 = await client(t, `${f.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d1.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash });
+  const sid = (await d1.next('device_register_ack')).device_sid;
+  assert.equal((await auth(d1, sid, hash, 'device')).ack.pair_status, 'waiting');
+
+  // 同 mid+hash 二次注册：relay terminate 旧 owner，房间 owner 立即换成 d2；
+  // d2 随后以 device 角色 auth，重claim 已死的 d1 留下的 device 槽
+  const d2 = await client(t, `${f.url}?mid=${mid}`, { headers: { 'X-Device-ID': mid } });
+  d2.send({ type: 'device_register_init', device_mid: mid, pass_hash: hash });
+  assert.equal((await d2.next('device_register_ack')).device_sid, sid);
+  assert.equal((await auth(d2, sid, hash, 'device')).ack.pair_status, 'waiting');
+
+  // 等 d1 的连接真正关闭，其 close 在 relay 侧处理完（detach 必须跳过
+  // 已被 d2 接管的槽——回归点）
+  if (d1.ws.readyState !== WebSocket.CLOSED) await once(d1.ws, 'close');
+
+  // 手机配对：必须 matched——若 d1 close 清掉了 d2 的槽，这里是 waiting
+  const p = await client(t, f.url);
+  assert.equal((await auth(p, sid, hash)).ack.pair_status, 'matched');
+
+  // 新 companion 链路可用：probe data 送达 d2
+  p.send({ type: 'data', payload: { hello: 1 } });
+  const got = await d2.next('data');
+  assert.deepEqual(got.payload, { hello: 1 });
+  await closeClient(d2); await closeClient(p);
+});

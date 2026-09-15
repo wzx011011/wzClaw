@@ -660,3 +660,206 @@ test('readRegistrationSecretFile：文件首行去 CRLF；缺失/为空返回空
 
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 10 });
 });
+
+// 迟到/重复应答（无对应看护条目）必须留观测且不重复转发：手机在超时代答后
+// 再发一次 result，重复应答绝不能再进 app-server（重复应答是协议错误源），
+// 但静默丢弃会变成「点了允许却没生效」的无头案（铁律 4）。
+test('迟到/重复的应答被丢弃并留 phone-response-late 日志，不重复转发', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-late-'));
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  // 共享 fixture 启动即发的未知反向请求转发到手机
+  await client.next((m) => m.type === 'data' && m.payload.id === 'server-2');
+  client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
+  await client.next((m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay'
+    && m.payload.params.ok === true);
+
+  // 同一应答重发（迟到/重复）：不转发、留日志
+  client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
+  await delay(400);
+  const relays = client.messages.filter(
+    (m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay');
+  assert.equal(relays.length, 1, '重复应答不得再次到达 app-server');
+  assert.ok(logs.some((line) => line.startsWith('phone-response-late server-2')),
+    '丢弃必须有观测');
+});
+
+// app-server 进程重启后 server-N id 从头计数：onRespawn 必须清空旧 pending，
+// 否则旧 id 的迟到应答会写进新进程（跨进程串话）。用 pid 标记 id 区分新旧实例。
+test('app-server 重启作废旧 pending：旧 id 迟到应答被丢弃留日志，新 id 正常应答', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-respawn-'));
+  const logs = [];
+  let pairingUrl = '';
+  // pid 标记反向请求 id；fake/exit 触发干净退出 → 桥自动重启。
+  const onDemandServer = `
+    'use strict';
+    let buf = '';
+    const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');
+    send({ id: 'srv-' + process.pid, method: 'interaction/requestPermission', params: {} });
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      let index;
+      while ((index = buf.indexOf('\\n')) !== -1) {
+        const line = buf.slice(0, index).trim();
+        buf = buf.slice(index + 1);
+        if (!line) continue;
+        let frame; try { frame = JSON.parse(line); } catch { continue; }
+        if (frame.method === 'fake/exit') { process.exit(0); }
+        if (typeof frame.id === 'string' && frame.id.startsWith('srv-')
+          && (frame.result !== undefined || frame.error !== undefined)) {
+          send({ method: 'fake/answered', params: { tag: frame.id, code: frame.error ? frame.error.code : null } });
+        }
+      }
+    });
+  `;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  const first = await client.next(
+    (m) => m.type === 'data' && typeof m.payload.id === 'string' && m.payload.id.startsWith('srv-'));
+  const pid1 = first.payload.id;
+
+  // 触发子进程退出 → 桥自动重启（默认 1s 退避）；重启时 onRespawn 清空 pending
+  client.send({ type: 'data', payload: { method: 'fake/exit' } });
+  const second = await client.next(
+    (m) => m.type === 'data' && typeof m.payload.id === 'string'
+      && m.payload.id.startsWith('srv-') && m.payload.id !== pid1);
+  const pid2 = second.payload.id;
+
+  // 旧 id 的迟到应答：pending 已被 onRespawn 清空 → 丢弃 + 日志，
+  // 绝不能写进新进程（若无清空，此应答会被转发并出现在 fake/answered）。
+  client.send({ type: 'data', payload: { id: pid1, result: { approved: true } } });
+  // 新 id 正常应答闭环（证明重启后链路可用，判据非「全都坏了」）
+  client.send({ type: 'data', payload: { id: pid2, result: { approved: false } } });
+  await client.next((m) => m.type === 'data' && m.payload.method === 'fake/answered'
+    && m.payload.params.tag === pid2);
+  await delay(300);
+  assert.equal(client.messages.some((m) => m.type === 'data' && m.payload.method === 'fake/answered'
+    && m.payload.params.tag === pid1), false, '旧 id 迟到应答不得到达新进程');
+  assert.ok(logs.some((line) => line.startsWith(`phone-response-late ${pid1}`)),
+    '旧 id 迟到应答的丢弃必须有观测');
+});
+
+// relay 断开（重部署/闪断）时对未应答反向请求的立即代答（-32022）必须真实
+// 到达 app-server 且留观测；重连接管后同一手机连接无需重配对即可继续使用。
+// 手机直连 relay（不受闪断影响），companion 走 TCP 代理模拟断线。
+test('relay 断开：pending 立即代答 -32022 到 app-server 并留日志，重连后链路恢复', async (t) => {
+  const relay = createRelay({});
+  const address = await relay.listen({ port: 0 });
+  const proxy = tcpProxy(address.port);
+  await proxy.listen();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-drop-'));
+  const logs = [];
+  const states = [];
+  let pairingUrl = '';
+  // 同上：pid 标记反向请求 id；fake/answers 查询已收到的应答清单。
+  const onDemandServer = `
+    'use strict';
+    let buf = '';
+    const answers = [];
+    const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');
+    send({ id: 'srv-' + process.pid, method: 'interaction/requestPermission', params: {} });
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      let index;
+      while ((index = buf.indexOf('\\n')) !== -1) {
+        const line = buf.slice(0, index).trim();
+        buf = buf.slice(index + 1);
+        if (!line) continue;
+        let frame; try { frame = JSON.parse(line); } catch { continue; }
+        if (frame.method === 'fake/answers') {
+          send({ method: 'fake/answers-report', params: { list: answers } });
+        }
+        if (typeof frame.id === 'string' && frame.id.startsWith('srv-')
+          && (frame.result !== undefined || frame.error !== undefined)) {
+          const entry = { tag: frame.id, code: frame.error ? frame.error.code : null };
+          answers.push(entry);
+          send({ method: 'fake/answered', params: entry });
+        }
+      }
+    });
+  `;
+  const companion = createCompanion({
+    relayUrl: `ws://127.0.0.1:${proxy.port()}/ws`,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    reconnectDelayMs: 300,
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+    onStateChange: (state) => states.push(state),
+  });
+  const client = phone(`ws://127.0.0.1:${address.port}/ws`);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => proxy.close(),
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  const first = await client.next(
+    (m) => m.type === 'data' && typeof m.payload.id === 'string' && m.payload.id.startsWith('srv-'));
+  const pid1 = first.payload.id;
+
+  // 断开 companion ↔ relay（手机直连不受影响）：close 代答 -32022 并重连接管
+  proxy.dropAll();
+  await waitFor(() => logs.some((line) => line.startsWith('relay-closed-answer-pending count=1')),
+    4000);
+  // 重连后同一手机（device 槽一直在房）matched，链路恢复
+  await waitFor(() => states.filter((s) => s === 'paired').length >= 2, 8000);
+
+  // 向假 app-server 查询实际收到的应答清单：必须恰含那条 -32022 代答
+  client.send({ type: 'data', payload: { method: 'fake/answers' } });
+  const report = await client.next((m) => m.type === 'data'
+    && m.payload.method === 'fake/answers-report');
+  const entry = report.payload.params.list.find((e) => e.tag === pid1);
+  assert.ok(entry, 'close 代答应答必须真实到达 app-server');
+  assert.equal(entry.code, -32022);
+});

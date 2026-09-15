@@ -323,7 +323,13 @@ function createCompanion(options = {}) {
     // 则静默丢弃，不向 app-server 转发重复响应（重复应答是协议错误源）。
     if (frame.id != null && (frame.result !== undefined || frame.error !== undefined) && !frame.method) {
       const timer = pending.get(frame.id);
-      if (!timer) return;
+      if (!timer) {
+        // 迟到/重复应答（已超时代答/进程重启作废/relay 断开代答）：不转发
+        // （重复应答是协议错误源），但零观测会变成「手机点了允许却没生效」
+        // 的无头案，留日志（只记 id，不含载荷）。
+        log('phone-response-late', String(frame.id));
+        return;
+      }
       clearTimeout(timer); pending.delete(frame.id);
     }
     startBridge();
@@ -375,11 +381,14 @@ function createCompanion(options = {}) {
       reattaching = false;
       // relay 断开（重部署/闪断）时桥通常仍在：对未应答的反向请求立即代答 -32022，
       // 维持"每个转发的反向请求最终必有应答"的不变量，避免桌面回合中途无限挂起。
+      let answered = 0;
       for (const [id, timer] of pending) {
         clearTimeout(timer);
-        if (bridge) bridge.write({ id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
+        if (bridge && bridge.write({ id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } })) answered++;
       }
       pending.clear();
+      // 观测：代答了几条（0 条不打）。app-server 侧由此可对上「谁被拒绝」。
+      if (answered > 0) log('relay-closed-answer-pending', `count=${answered}`);
       onStateChange('disconnected');
       if (!stopped) {
         reconnectTimer = setTimeout(connect, reconnectDelayMs).unref();

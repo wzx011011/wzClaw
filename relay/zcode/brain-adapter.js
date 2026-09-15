@@ -20,6 +20,7 @@
 const { spawn } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 const { WebSocket } = require('ws');
+const { classifyFrame } = require('./lib/protocol');
 
 const DEFAULT_RELAY_URL = process.env.RELAY_URL || 'wss://5945.top/relay/';
 const RECONNECT_DELAY_MS = 5000;
@@ -40,12 +41,14 @@ class AppServerEngine extends EventEmitter {
     this.restarts = 0;
     this.maxRestarts = 10;
     this.stopped = false;
+    this._restarting = false; // 重启排程中（防 error/exit 双触发排两个定时器）
     this.nextId = 1;
     this.pending = new Map(); // id -> {resolve, timer}
   }
 
   start() {
     this.stopped = false;
+    this._restarting = false;
     this._spawn();
   }
 
@@ -57,20 +60,27 @@ class AppServerEngine extends EventEmitter {
     });
     this.child = child;
     this.buffer = '';
+    this._restarting = false;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._feed(chunk));
     child.stderr.on('data', (chunk) => this.logger('engine-stderr', chunk.slice(0, 500)));
-    child.on('error', (error) => this._onDead(`spawn-error:${error.code || error.message}`));
+    child.on('error', (error) => {
+      // spawn 失败（ENOENT 等）只发 'error' 不发 'exit'：不置空 child 会让
+      // 下面的重启定时器 `!this.child` 永远为假 → 进程已成尸仍不重启
+      if (this.child === child) this.child = null;
+      this._onDead(`spawn-error:${error.code || error.message}`);
+    });
     child.on('exit', (code) => {
-      this.child = null;
+      if (this.child === child) this.child = null;
       this._onDead(`exit=${code}`);
     });
     this.logger('engine-started', '');
   }
 
   _onDead(why) {
-    if (this.stopped) return;
+    if (this.stopped || this._restarting) return;
+    this._restarting = true;
     this.logger('engine-dead', why);
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
@@ -83,7 +93,9 @@ class AppServerEngine extends EventEmitter {
       return;
     }
     this.restarts += 1;
-    setTimeout(() => { if (!this.stopped && !this.child) this._spawn(); }, 1000 * this.restarts);
+    setTimeout(() => {
+      if (!this.stopped && !this.child) this._spawn();
+    }, 1000 * this.restarts).unref();
   }
 
   _feed(text) {
@@ -94,17 +106,56 @@ class AppServerEngine extends EventEmitter {
       this.buffer = this.buffer.slice(index + 1);
       if (!line) continue;
       let frame;
-      try { frame = JSON.parse(line); } catch { continue; }
-      const id = frame.id;
-      if (id != null && this.pending.has(id)) {
-        const entry = this.pending.get(id);
-        this.pending.delete(id);
-        clearTimeout(entry.timer);
-        entry.resolve(frame);
+      try { frame = JSON.parse(line); } catch { this.logger('engine-bad-frame', line.slice(0, 120)); continue; }
+      const kind = classifyFrame(frame);
+      if (kind === 'response') {
+        const id = frame.id;
+        if (id != null && this.pending.has(id)) {
+          const entry = this.pending.get(id);
+          this.pending.delete(id);
+          clearTimeout(entry.timer);
+          entry.resolve(frame);
+        } else {
+          // 无法配对的应答：留观测（丢弃 = 缺陷）
+          this.logger('engine-unmatched-response', `id=${typeof id === 'string' ? id.slice(0, 24) : String(id)}`);
+        }
         continue;
       }
-      // 通知帧（无 id）：转给订阅者
-      if (frame.method) this.emit('notification', frame);
+      if (kind === 'reverse-request') {
+        // 服务端反向请求（字符串 id + method）：转给订阅者应答
+        this.emit('reverseRequest', frame);
+        continue;
+      }
+      if (kind === 'notification') {
+        this.emit('notification', frame);
+        continue;
+      }
+      // request 形状（数字 id + method）不该由服务端发出：留观测
+      this.logger('engine-bad-frame', JSON.stringify(frame).slice(0, 120));
+    }
+  }
+
+  /** 反向请求应答：result 原文回传（带原字符串 id） */
+  respond(id, result) {
+    this._writeRaw({ id, result });
+  }
+
+  /** 反向请求拒绝（code 沿用 protocol.js ERR_UNHANDLED = -32000） */
+  respondError(id, code, message) {
+    this._writeRaw({ id, error: { code, message } });
+  }
+
+  _writeRaw(frame) {
+    if (!this.child || !this.child.stdin.writable) {
+      this.logger('engine-write-dropped', `child 已退出，丢弃 ${JSON.stringify(frame).slice(0, 80)}`);
+      return false;
+    }
+    try {
+      this.child.stdin.write(`${JSON.stringify(frame)}\n`);
+      return true;
+    } catch (error) {
+      this.logger('engine-write-error', String(error).slice(0, 120));
+      return false;
     }
   }
 
@@ -141,6 +192,7 @@ class AppServerEngine extends EventEmitter {
     this.child = null;
     if (!child) return;
     child.removeAllListeners('exit');
+    child.removeAllListeners('error'); // 主动停止不触发 _onDead
     try { child.stdin.destroy(); } catch { /* 忽略 */ }
     await new Promise((resolve) => {
       child.once('exit', resolve);
@@ -178,7 +230,11 @@ class BrainAdapter {
     this.stopped = false;
     this.activeSessionId = null;
     this.mode = null;
+    // 等待手机应答的反向请求：frame.id（server-N）-> 原帧。
+    // app-server 的 server-N id 会从头复用，必须按原 id 精确应答并及时清理。
+    this._pendingPermission = new Map();
     this.engine.on('notification', (frame) => this._onEngineNotification(frame));
+    this.engine.on('reverseRequest', (frame) => this._onEngineReverseRequest(frame));
   }
 
   // ---- relay 连接 ----
@@ -341,14 +397,16 @@ class BrainAdapter {
     let content = '';
     const toolCalls = [];
     let usage = null;
-    let createdAt = Number(info.time && (info.time.created || info.time.updated)) || Date.now();
+    let createdAt = Number(info.time && (info.time.created || info.time.updated)) || 0;
     for (const part of row.parts || []) {
       if (part.type === 'text' && part.text) content += part.text;
       else if (part.type === 'reasoning' && part.text) { /* 思考内容不进正文 */ }
       else if (part.type === 'tool') {
         const state = part.state || {};
         toolCalls.push({
-          toolCallId: part.callId || state.callId || '',
+          // 实测字段为 callID（大写 D，APP-SERVER.md「工具回合实测」）；
+          // callId 只作旧版本兼容回退
+          toolCallId: part.callID || part.callId || state.callID || state.callId || '',
           toolName: part.tool || state.tool || '',
           inputSummary: typeof state.input === 'string' ? state.input.slice(0, 200) : undefined,
           outputSummary: typeof state.output === 'string' ? state.output.slice(0, 200) : undefined,
@@ -361,7 +419,8 @@ class BrainAdapter {
           output_tokens: part.tokens.output || 0,
         };
       }
-      if (part.time && part.time.created) createdAt = Math.min(createdAt, part.time.created) === Number(part.time.created) ? part.time.created : createdAt;
+      // info 缺时间戳时用首个部件时间兜底；都没有则 0（不伪造当前时刻）
+      if (!createdAt && part.time && part.time.created) createdAt = Number(part.time.created) || 0;
     }
     if (role === 'tool' || (!content && toolCalls.length === 0)) return null;
     return {
@@ -404,6 +463,9 @@ class BrainAdapter {
       return;
     }
     if (d.messageId) this._send('command:ack', { messageId: d.messageId });
+    // 先订阅后发送：send 落地到引擎产生首帧事件的窗口极短，后订阅会丢开头事件
+    const sub = await this.engine.request('session/subscribe', { sessionId, deliveryKind: 'web-remote-replayable' });
+    if (sub.error) this.logger('subscribe-failed', `code=${sub.error.code} ${sessionId}`);
     const resp = await this.engine.request('session/send', { sessionId, content });
     if (resp.error) {
       this._send('stream:agent:error', { sessionId, error: resp.error.message || String(resp.error.code) });
@@ -413,7 +475,6 @@ class BrainAdapter {
       this._send('stream:agent:error', { sessionId, error: resp.result });
       return;
     }
-    await this.engine.request('session/subscribe', { sessionId, deliveryKind: 'web-remote-replayable' });
     this.activeSessionId = sessionId;
   }
 
@@ -423,70 +484,193 @@ class BrainAdapter {
   }
 
   // ---- app-server 通知 → stream:agent:* ----
+  //
+  // 实测通知形状（APP-SERVER.md「事件与通知」）：session/event 单事件，
+  // type/payload 在 params 顶层：
+  //   {method:"session/event", params:{sessionId, seq, turnId, eventId,
+  //     type:"model.streaming", payload:{kind:"text_delta", delta, done}}}
+  // params.events 数组形状仅出现在 session/subscribe 应答快照里，这里一并
+  // 兼容（sessionId 在每个 event 内部）。词典逐条对应 zcode_protocol_translate.dart
+  // （手机端旧协议栈参考实现），两处需同步修改。
 
   _onEngineNotification(frame) {
     const params = frame.params || {};
+    if (frame.method !== 'session/event') {
+      if (frame.method === 'state.updated') {
+        const mode = params.settings && params.settings.mode && params.settings.mode.current;
+        if (mode) { this.mode = mode; this._send('permission:mode:response', { mode }); }
+        return;
+      }
+      // v4/telemetry 等：无旧协议对应，留观测
+      this.logger('engine-notify-unhandled', frame.method || '(no method)');
+      return;
+    }
     const sessionId = params.sessionId || this.activeSessionId || '';
     const events = params.events;
     if (Array.isArray(events)) {
-      for (const ev of events) this._applyEngineEvent(sessionId, ev.payload || ev);
+      // subscribe 应答快照：事件数组，sessionId 在事件内
+      for (const ev of events) {
+        if (ev && typeof ev === 'object') {
+          this._applyEngineEvent(ev.sessionId || sessionId, ev.type, ev.payload !== undefined ? ev.payload : ev);
+        }
+      }
       return;
     }
-    if (params.kind) this._applyEngineEvent(sessionId, params);
-    if (frame.method === 'state.updated' && params.settings) {
-      const mode = params.settings.mode && params.settings.mode.current;
-      if (mode) { this.mode = mode; this._send('permission:mode:response', { mode }); }
+    this._applyEngineEvent(sessionId, params.type, params.payload);
+  }
+
+  _applyEngineEvent(sessionId, type, payload) {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const kind = typeof p.kind === 'string' ? p.kind : '';
+    switch (type) {
+      case 'model.streaming': {
+        if (kind === 'reasoning_delta') {
+          this._send('stream:agent:thinking', { sessionId, content: p.delta || p.text || '' });
+        } else if (kind === 'text_delta' || p.delta != null || p.text != null) {
+          const content = p.delta || p.text || '';
+          if (content) this._send('stream:agent:text', { sessionId, content });
+        } else {
+          // 未知 delta 种类：留观测不硬猜
+          this.logger('engine-event-unhandled', `model.streaming kind=${kind}`);
+        }
+        return;
+      }
+      case 'tool.updated': {
+        // kind 轨迹（实测）：scheduled → started → progress* → result；
+        // batch 只出现在批量工具。旧协议只有 tool_call/tool_result 两站。
+        const callId = p.toolCallId || p.callID || p.callId || '';
+        if (kind === 'scheduled' || kind === 'started') {
+          this._send('stream:agent:tool_call', {
+            sessionId,
+            toolCallId: callId,
+            toolName: p.toolName || p.tool || '',
+            input: p.input !== undefined ? p.input : '',
+          });
+        } else if (kind === 'result') {
+          const inner = p.result && typeof p.result === 'object' ? p.result : {};
+          const output = typeof inner.content === 'string'
+            ? inner.content
+            : (inner.content == null ? '' : JSON.stringify(inner.content));
+          this._send('stream:agent:tool_result', {
+            sessionId,
+            toolCallId: callId,
+            output: output.slice(0, 2000),
+            isError: inner.success === false,
+          });
+        } else {
+          // progress / batch / 未知：中间态，旧协议无对应，留观测
+          this.logger('engine-event-ignored', `tool.updated kind=${kind || '(none)'}`);
+        }
+        return;
+      }
+      case 'turn.started':
+        this._send('stream:agent:running', { sessionId });
+        return;
+      case 'turn.completed':
+      case 'turn.terminal': {
+        const status = p.resultType || p.status || 'completed';
+        this._send('stream:agent:turn_end', { sessionId, status });
+        this._send('stream:agent:done', { sessionId, status, usage: p.usage || null });
+        return;
+      }
+      case 'permission.resolved': {
+        // 服务端裁决落定：清掉暂存的待答反向请求（防 server-N 复用串台）
+        const key = p.requestId || p.toolCallId || '';
+        for (const [frameId, frame] of this._pendingPermission) {
+          const rp = frame.params || {};
+          if (rp.requestId === key || rp.toolCallId === key) this._pendingPermission.delete(frameId);
+        }
+        this._send('stream:agent:permission_resolved', {
+          sessionId,
+          requestId: p.requestId || '',
+          toolCallId: p.toolCallId || '',
+          decision: p.decision || '',
+        });
+        return;
+      }
+      case 'model.error':
+        this._send('stream:agent:error', { sessionId, error: p.error || p.message || 'engine error' });
+        return;
+      default:
+        // session.updated / session.titleUpdated / permission.requested（反向
+        // 请求通道已覆盖）等：旧协议无对应，留观测
+        this.logger('engine-event-ignored', `${type || '(no type)'} kind=${kind}`);
     }
   }
 
-  _applyEngineEvent(sessionId, payload) {
-    const kind = payload && payload.kind;
-    const sendText = (content) => {
-      if (content) this._send('stream:agent:text', { sessionId, content });
-    };
-    if (payload.type === 'text_delta' || kind === 'text_delta' || kind == null) {
-      if (payload.delta || payload.text) sendText(payload.delta || payload.text);
+  // ---- app-server 反向请求 → 手机应答 ----
+
+  _onEngineReverseRequest(frame) {
+    const params = frame.params && typeof frame.params === 'object' ? frame.params : {};
+    if (frame.method === 'session/requestRuntimePreferences') {
+      // 实测契约（APP-SERVER.md）：必须应答 {nativeSearchEnhancementsEnabled: false}，
+      // 不应答引擎会等待超时
+      this.engine.respond(frame.id, { nativeSearchEnhancementsEnabled: false });
+      return;
     }
-    if (kind === 'reasoning_delta' || payload.type === 'reasoning_delta') {
-      this._send('stream:agent:thinking', { sessionId, content: payload.delta || payload.text || '' });
-    }
-    if (kind && kind.startsWith('tool.')) {
-      const callId = payload.callId || payload.toolCallId || payload.id || '';
-      const toolName = payload.tool || payload.name || '';
-      if (kind === 'tool.call' || kind === 'tool.use' || kind === 'tool_start') {
-        this._send('stream:agent:tool_call', { sessionId, toolCallId: callId, toolName: toolName, input: payload.input || payload.params || '' });
-      } else {
-        this._send('stream:agent:tool_result', {
-          sessionId,
-          toolCallId: callId,
-          output: typeof payload.output === 'string' ? payload.output.slice(0, 2000) : JSON.stringify(payload.output || ''),
-          isError: kind.includes('error'),
-        });
-      }
-    }
-    if (kind === 'turn.started' || payload.type === 'turn.started') {
-      this._send('stream:agent:running', { sessionId });
-    }
-    if (kind === 'turn.terminal' || payload.type === 'turn.terminal' || kind === 'turn.completed') {
-      const status = payload.status || kind;
-      this._send('stream:agent:turn_end', { sessionId, status });
-      this._send('stream:agent:done', {
-        sessionId,
-        status,
-        usage: payload.usage || null,
+    if (frame.method === 'interaction/requestPermission') {
+      // 暂存原帧（按 server-N id），转推手机旧协议事件；
+      // 实测 params：{requestId: perm_<uuid>, toolCallId, toolName, input,
+      //   reason, riskLevel, sessionId, options:[allow_once/allow_project/deny]}
+      const toolCallId = params.toolCallId || params.requestId || frame.id;
+      this._pendingPermission.set(frame.id, frame);
+      this._send('stream:agent:permission_request', {
+        requestId: params.requestId || toolCallId,
+        toolCallId,
+        toolName: params.toolName || '',
+        input: params.input !== undefined ? params.input : {},
+        reason: params.reason || '',
+        riskLevel: params.riskLevel || '',
+        options: Array.isArray(params.options) ? params.options : [],
+        sessionId: params.sessionId || this.activeSessionId || '',
       });
+      return;
     }
-    if (kind === 'model.error' || payload.isError === true) {
-      this._send('stream:agent:error', { sessionId, error: payload.error || payload.message || 'engine error' });
-    }
+    // 未知反向请求：安全拒绝（error 帧），不假成功；留观测
+    this.logger('reverse-request-deny', frame.method || '(no method)');
+    this.engine.respondError(frame.id, -32000, `手机端未处理该反向请求: ${frame.method}`);
   }
 
   // ---- 权限 / 模式 ----
 
   _onPermissionResponse(d) {
-    // 旧 UI 的权限应答 {requestId, approved, remember} → 转给等待中的反向请求
-    // （app-server 反向请求在适配器内以 pending 形式等待，此处简化为透传日志）
-    this.logger('permission-response', JSON.stringify(d && d.requestId || '').slice(0, 40));
+    // 旧 UI 应答 {requestId?, toolCallId?, approved, remember?}：
+    // 找到暂存的反向请求原帧，回放所选 option 的 response 原文
+    //（实测契约：result 必须是 option.response 原文，畸形 result 被服务端
+    // 静默判为 deny——见 APP-SERVER.md「工具回合实测」）。
+    const key = d.toolCallId || d.requestId || '';
+    let frameId = null;
+    for (const [id, frame] of this._pendingPermission) {
+      const rp = frame.params || {};
+      if (rp.toolCallId === key || rp.requestId === key) { frameId = id; break; }
+    }
+    if (frameId == null) {
+      // 迟到/未知应答（已 resolved / 断线重连后重放）：丢弃但留观测
+      this.logger('permission-response-late', String(key).slice(0, 40));
+      return;
+    }
+    const frame = this._pendingPermission.get(frameId);
+    this._pendingPermission.delete(frameId);
+    const approved = d.approved === true;
+    // 语义映射（手机旧 UI 档位 → app-server optionId）：
+    // 批准且 remember → allow_project（服务端 kind 为 allow_always，语义近似）；
+    // 批准 → allow_once；拒绝 → deny。旧 UI 无 remember 时只有一次性批准。
+    const wanted = approved ? (d.remember ? 'allow_project' : 'allow_once') : 'deny';
+    const options = Array.isArray(frame.params && frame.params.options) ? frame.params.options : [];
+    let result = null;
+    for (const option of options) {
+      if (option && (option.optionId === wanted || option.kind === wanted)
+        && option.response && typeof option.response === 'object') {
+        result = option.response;
+        break;
+      }
+    }
+    if (!result) {
+      // 请求未带 options（异常）时按实测 schema 兜底构造（无 permissionUpdates，
+      // 只能退化为一次性决定）
+      result = { decision: approved ? 'allow' : 'deny', reason: approved ? 'Approved once' : 'Denied' };
+    }
+    this.engine.respond(frameId, result);
   }
 
   _onSetMode(d) {
