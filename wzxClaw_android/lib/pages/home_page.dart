@@ -67,6 +67,11 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription<WorkspaceInfo?>? _workspaceInfoSub;
   final FocusNode _inputFocusNode = FocusNode();
 
+  // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
+  // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
+  final List<_QueuedSend> _sendQueue = [];
+  Timer? _queueFlushTimer;
+
   // Slash command autocomplete
   List<_SlashCommand> _slashSuggestions = [];
   static const _allSlashCommands = [
@@ -102,6 +107,8 @@ class _ChatPageState extends State<ChatPage> {
           _slashSuggestions = [];
           _permissionRequest = null;
           _inputController.clear();
+          // 排队消息属于原会话上下文，切会话即清（不留到别的会话发出）
+          _sendQueue.clear();
         }
         setState(() => _displayMessages = msgs);
         if ((_isStreaming || _sessionJustSwitched) && !_showScrollFab && msgs.isNotEmpty) {
@@ -113,6 +120,7 @@ class _ChatPageState extends State<ChatPage> {
 
     _streamingSub = ChatStore.instance.streamingStream.listen((streaming) {
       if (mounted) setState(() => _isStreaming = streaming);
+      if (!streaming) _scheduleQueueFlush();
     });
 
     _waitingSub = ChatStore.instance.waitingStream.listen((waiting) {
@@ -120,6 +128,7 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _isWaiting = waiting);
         if (waiting) _scrollToBottom();
       }
+      if (!waiting) _scheduleQueueFlush();
     });
 
     _sessionLoadingSub = ChatStore.instance.sessionLoadingStream.listen((loading) {
@@ -188,6 +197,7 @@ class _ChatPageState extends State<ChatPage> {
     _sessionLoadingSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
+    _queueFlushTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -211,6 +221,12 @@ class _ChatPageState extends State<ChatPage> {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
     if (ConnectionManager.instance.state != WsConnectionState.connected) return;
+    // 流式进行中：改为排队（对齐官方 ZCode「继续输入以排队后续修改」）
+    if (_isStreaming || _isWaiting) {
+      setState(() => _sendQueue.add(_QueuedSend(text)));
+      _inputController.clear();
+      return;
+    }
     // Option A：没有活动会话 = 处于「新任务」欢迎态，首条消息触发建会话
     if (ChatStore.instance.currentSessionId == null) {
       _startNewConversation(text);
@@ -219,6 +235,163 @@ class _ChatPageState extends State<ChatPage> {
     ChatStore.instance.sendMessage(text);
     _inputController.clear();
     _scrollToBottom();
+  }
+
+  /// 队列消息「↑ 立即」：不等当前 turn 结束马上发
+  void _sendQueuedNow(_QueuedSend item) {
+    setState(() => _sendQueue.remove(item));
+    if (ChatStore.instance.currentSessionId == null) {
+      _startNewConversation(item.text);
+      return;
+    }
+    ChatStore.instance.sendMessage(item.text);
+    _scrollToBottom();
+  }
+
+  /// turn 结束后冲队首；500ms 去抖让 streaming/waiting 标志先落定
+  void _scheduleQueueFlush() {
+    if (_sendQueue.isEmpty) return;
+    _queueFlushTimer?.cancel();
+    _queueFlushTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted || _isStreaming || _isWaiting) return;
+      if (_sendQueue.isEmpty) return;
+      final item = _sendQueue.removeAt(0);
+      setState(() {});
+      if (ChatStore.instance.currentSessionId == null) {
+        _startNewConversation(item.text);
+      } else {
+        ChatStore.instance.sendMessage(item.text);
+        _scrollToBottom();
+      }
+    });
+  }
+
+  Future<void> _editQueued(_QueuedSend item) async {
+    final controller = TextEditingController(text: item.text);
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.of(dialogCtx).bgSecondary,
+        title: Text(
+          '编辑排队消息',
+          style: TextStyle(color: AppColors.of(dialogCtx).textPrimary, fontSize: 16),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 4,
+          minLines: 1,
+          style: TextStyle(color: AppColors.of(dialogCtx).textPrimary),
+          decoration: InputDecoration(
+            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: AppColors.of(dialogCtx).border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: AppColors.of(dialogCtx).accent),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text('取消',
+                style: TextStyle(color: AppColors.of(dialogCtx).textSecondary),),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, controller.text.trim()),
+            child: Text('保存', style: TextStyle(color: AppColors.of(dialogCtx).accent),),
+          ),
+        ],
+      ),
+    );
+    if (newText == null || newText.isEmpty || newText == item.text) return;
+    if (!mounted) return;
+    setState(() => item.text = newText);
+  }
+
+  /// 排队条：流式期间显示在输入框上方（拖拽排序 + ↑立即 + 编辑 + 删除）
+  Widget _buildSendQueueStrip(AppColors colors) {
+    if (_sendQueue.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
+      ),
+      child: ReorderableListView(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        buildDefaultDragHandles: false,
+        onReorder: (oldIndex, newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) newIndex--;
+            final item = _sendQueue.removeAt(oldIndex);
+            _sendQueue.insert(newIndex, item);
+          });
+        },
+        children: [
+          for (var i = 0; i < _sendQueue.length; i++)
+            _buildQueuedTile(colors, _sendQueue[i], i),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueuedTile(AppColors colors, _QueuedSend item, int index) {
+    return ListTile(
+      key: ValueKey(item.id),
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      leading: ReorderableDragStartListener(
+        index: index,
+        child: Icon(Icons.drag_indicator, size: 18, color: colors.textMuted),
+      ),
+      title: Text(
+        item.text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: colors.textPrimary, fontSize: 13),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ↑ 立即：不等当前 turn 结束
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _sendQueuedNow(item),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: colors.bgInput,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.north, size: 11, color: colors.textPrimary),
+                const SizedBox(width: 3),
+                Text(
+                  '立即',
+                  style: TextStyle(color: colors.textPrimary, fontSize: 12),
+                ),
+              ],),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.edit_outlined, size: 17, color: colors.textSecondary),
+            tooltip: '编辑',
+            onPressed: () => _editQueued(item),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.delete_outline, size: 17, color: colors.textSecondary),
+            tooltip: '删除',
+            onPressed: () => setState(() => _sendQueue.remove(item)),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 新任务首条消息：引擎建会话 → 写本地索引 → 发送。
@@ -1190,6 +1363,8 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ),
+            // 消息排队条：流式期间发送的内容在此排队（↑立即/编辑/删除/拖拽）
+            _buildSendQueueStrip(colors),
             Row(
               children: [
                 // Permission mode dropdown
@@ -1279,7 +1454,11 @@ class _ChatPageState extends State<ChatPage> {
                     enabled: isConnected,
                     style: TextStyle(color: colors.textPrimary, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: isConnected ? '向 ZCode 提问...' : '未连接',
+                      hintText: !isConnected
+                          ? '未连接'
+                          : (_isStreaming || _isWaiting)
+                              ? '继续输入以排队后续修改'
+                              : '向 ZCode 提问...',
                       hintStyle: TextStyle(color: colors.textMuted),
                       filled: true,
                       fillColor:
@@ -1390,6 +1569,13 @@ class _ChatPageState extends State<ChatPage> {
 }
 
 // ── Custom code block builder with syntax highlight + copy ────────────
+
+/// 排队中的待发消息（见 _sendQueue）
+class _QueuedSend {
+  final String id;
+  String text;
+  _QueuedSend(this.text) : id = DateTime.now().microsecondsSinceEpoch.toString();
+}
 
 class _CodeBlockBuilder extends MarkdownElementBuilder {
   @override
