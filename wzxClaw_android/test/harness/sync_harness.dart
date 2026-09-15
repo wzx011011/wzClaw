@@ -12,6 +12,7 @@ import 'package:wzxclaw_android/models/session_meta.dart';
 import 'package:wzxclaw_android/models/ws_message.dart';
 import 'package:wzxclaw_android/services/chat_database.dart';
 import 'package:wzxclaw_android/services/chat_store.dart';
+import 'package:wzxclaw_android/services/phone_session_index.dart';
 import 'package:wzxclaw_android/services/session_sync_service.dart';
 import 'package:wzxclaw_android/services/ws_transport.dart';
 
@@ -304,6 +305,8 @@ class SyncTestHarness {
   factory SyncTestHarness.fresh() {
     // 让 AppRestoreState 等组件使用空内存版的 SharedPreferences。
     SharedPreferences.setMockInitialValues({});
+    // Option A：本地会话索引也用新 mock（避免跨用例串数据）
+    PhoneSessionIndex.resetForTest();
 
     final transport = FakeWsTransport();
     final db = FakeChatDatabase();

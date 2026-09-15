@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wzxclaw_android/services/phone_session_index.dart';
 import 'package:wzxclaw_android/services/session_sync_service.dart';
 import 'package:wzxclaw_android/services/chat_store.dart';
 
@@ -172,17 +174,27 @@ void main() {
       expect(result, isNull);
     });
 
-    test('deleteSession returns false when not connected', () async {
+    test('deleteSession works offline (Option A: local index removal)', () async {
+      // Option A：删除只动手机本地索引 + 消息缓存，不再请求引擎 → 离线可用
+      SharedPreferences.setMockInitialValues({});
+      PhoneSessionIndex.resetForTest();
       final svc = SessionSyncService.instance;
-      final result = await svc.deleteSession('fake-session-id');
-      expect(result, isFalse);
+      bool? result;
+      await runZonedGuarded(() async {
+        result = await svc.deleteSession('fake-session-id');
+      }, (error, stack) {
+        // Swallow sqflite MissingPluginException from message-cache cleanup
+      });
+      expect(result, isTrue);
+      expect(await PhoneSessionIndex.instance.find('fake-session-id'), isNull);
     });
 
-    test('renameSession returns false when not connected', () async {
+    test('renameSession works offline (Option A: local index rename)', () async {
+      SharedPreferences.setMockInitialValues({});
+      PhoneSessionIndex.resetForTest();
       final svc = SessionSyncService.instance;
-      final result =
-          await svc.renameSession('fake-session-id', 'New Name');
-      expect(result, isFalse);
+      final result = await svc.renameSession('fake-session-id', 'New Name');
+      expect(result, isTrue);
     });
 
     test('fetchWorkspaces does not throw when not connected', () {

@@ -11,6 +11,7 @@ import 'app_restore_state.dart';
 import 'chat_database.dart';
 import 'chat_store.dart';
 import 'connection_manager.dart';
+import 'phone_session_index.dart';
 import 'ws_transport.dart';
 
 /// Workspace info pushed by the desktop when mobile connects.
@@ -183,7 +184,7 @@ class SessionSyncService {
       Future.delayed(const Duration(milliseconds: 800), () {
         if (_transport.state == WsConnectionState.connected &&
             _hasSelectedDesktopTarget) {
-          fetchSessions();
+          refreshLocalSessions();
         }
       });
     } else if (state == WsConnectionState.disconnected) {
@@ -201,7 +202,7 @@ class SessionSyncService {
       unawaited(_restorePersistedSessionView());
       Future.delayed(const Duration(milliseconds: 800), () {
         if (_hasSelectedDesktopTarget) {
-          fetchSessions();
+          refreshLocalSessions();
         }
       });
     }
@@ -244,8 +245,9 @@ class SessionSyncService {
         _handleWorkspaceSwitchResponse(msg.data);
         break;
       case WsEvents.sessionChanged:
-        // Desktop pushed a session change — refresh the list
-        fetchSessions();
+        // 引擎会话有变动（新消息/新会话）——Option A：只刷本地索引展示，
+        // 不再向引擎拉 session/list（避免桌面自建会话涌入抽屉列表）
+        unawaited(refreshLocalSessions());
         break;
       case WsEvents.agentRunning:
         // Mobile reconnected while desktop agent is mid-stream — re-hydrate full
@@ -302,6 +304,10 @@ class SessionSyncService {
     _sessionsController.add(List.unmodifiable(_sessions));
   }
 
+  /// 引擎 session/list 响应 —— Option A 后仅服务「从引擎导入 / 工作区发现」
+  /// 路径：解析 + 更新工作区信息 + 完成挂起请求。不再驱动抽屉列表与
+  /// 视图选择（列表由手机本地索引 [refreshLocalSessions] 提供，避免引擎
+  /// 侧桌面自建会话抢占手机视图）。
   void _handleSessionListResponse(dynamic data) async {
     if (data is! Map) return;
     final requestId = data['requestId'] as String? ?? '';
@@ -325,7 +331,6 @@ class SessionSyncService {
         }
       });
     }
-    final desktopId = _transport.selectedDesktopId;
 
     // ignore: avoid_print
     print(
@@ -347,130 +352,26 @@ class SessionSyncService {
           : meta;
     }).toList();
 
-    if (!_hasSelectedDesktopTarget || desktopId == null) {
+    if (!_hasSelectedDesktopTarget) {
       _isLoading = false;
       _loadingController.add(false);
       _completePending(requestId, const <SessionMeta>[]);
       return;
     }
 
-    _workspaceInfo = WorkspaceInfo(
-      workspaceName: workspaceName,
-      workspacePath: workspacePath,
-      activeSessionId: desktopActiveSessionId ??
-          _activeSessionId ??
-          (sessions.isNotEmpty ? sessions.first.id : null),
-      sessionCount: sessions.length,
-    );
-    _workspaceInfoController.add(_workspaceInfo);
-
-    _sessions = sessions;
-    _isLoading = false;
-    _sessionsController.add(List.unmodifiable(_sessions));
-    _loadingController.add(false);
-
-    // 持久化工作区路径，用于自动恢复
     if (workspacePath.isNotEmpty) {
+      _workspaceInfo = WorkspaceInfo(
+        workspaceName: workspaceName,
+        workspacePath: workspacePath,
+        activeSessionId: desktopActiveSessionId ?? _activeSessionId,
+        sessionCount: sessions.length,
+      );
+      _workspaceInfoController.add(_workspaceInfo);
       AppRestoreState.setLastWorkspacePath(workspacePath);
     }
 
-    // Cache to local DB
-    ChatDatabase.instance.upsertSessions(sessions);
-
-    // Phase 2：只有最新发出的请求才执行会话选择逻辑，
-    // 过期（旧 requestId）的响应更新列表即可，不做视图切换。
-    if (requestId != _currentListRequestId) {
-      // ignore: avoid_print
-      print(
-          '[SyncDiag] list-response stale req=$requestId current=$_currentListRequestId, skip session selection',);
-      _completePending(requestId, sessions);
-      return;
-    }
-
-    // 快照当前 generation，用于后续多 await 期间检测是否被新 fetch 取代
-    final gen = _fetchGeneration;
-
-    final currentSessionId = ChatStore.instance.currentSessionId;
-    final currentSessionStillExists = currentSessionId != null &&
-        sessions.any((session) => session.id == currentSessionId);
-    final restoreState = await AppRestoreState.getLastViewedSession(
-      desktopId: desktopId,
-    );
-
-    if (gen != _fetchGeneration) {
-      _completePending(requestId, sessions);
-      return;
-    }
-
-    if (currentSessionId != null && !currentSessionStillExists) {
-      await ChatStore.instance.switchToSession(null);
-      if (gen != _fetchGeneration) {
-        _completePending(requestId, sessions);
-        return;
-      }
-    }
-
-    if (currentSessionStillExists) {
-      _activeSessionId = currentSessionId;
-      _activeSessionController.add(_activeSessionId);
-      // BUG-2/3 修复：桌面新增消息后，自动刷新当前会话内容。
-      // 仅在非流式状态下刷新，避免打断正在进行的 agent 输出。
-      // 冷却期检查：清空会话后 5 秒内不自动回填。
-      final inCooldown = _clearedSessionId == currentSessionId &&
-          _clearedAt != null &&
-          DateTime.now().difference(_clearedAt!).inSeconds < 5;
-      if (!ChatStore.instance.isStreaming && !inCooldown) {
-        final desktopSession =
-            sessions.where((s) => s.id == currentSessionId).firstOrNull;
-        if (desktopSession != null) {
-          final localCount = await ChatDatabase.instance
-              .getSessionMessageCount(currentSessionId);
-          if (desktopSession.messageCount != localCount) {
-            // Bug fix: 旧版只调了 loadAllSessionMessages（写 DB），
-            // 没调 ChatStore.loadFetchedMessages（更新 UI），
-            // 导致切换会话后手机显示的内容与桌面不一致。
-            final refreshed = await loadAllSessionMessages(
-              currentSessionId,
-              forceRefresh: true,
-            );
-            // 加载期间用户可能切走了，不覆盖
-            if (ChatStore.instance.currentSessionId == currentSessionId) {
-              ChatStore.instance
-                  .loadFetchedMessages(currentSessionId, refreshed);
-            }
-          }
-        }
-      }
-      _completePending(requestId, sessions);
-      return;
-    }
-
-    final restoredSessionId = restoreState.sessionId;
-    if (restoreState.hasSavedSelection) {
-      if (restoredSessionId == null) {
-        _activeSessionId = null;
-        _activeSessionController.add(null);
-        _completePending(requestId, sessions);
-        return;
-      }
-
-      if (sessions.any((session) => session.id == restoredSessionId)) {
-        await _applySessionSelection(restoredSessionId, gen);
-        _completePending(requestId, sessions);
-        return;
-      }
-    }
-
-    // Auto-load the most recent session's messages so the user sees
-    // the latest conversation instead of an empty chat.
-    // 仅当此响应属于当前 generation 时才自动加载，防止过期响应覆盖用户输入。
-    // 串台修复: 若手机已在浏览某个会话 (currentSessionId != null)，不自动跳转，
-    // 避免桌面切换/新建会话时强制覆盖手机用户当前视图。
-    if (sessions.isNotEmpty && gen == _fetchGeneration) {
-      await _applySessionSelection(sessions.first.id, gen);
-    }
-
-    // Resolve pending request if any
+    _isLoading = false;
+    _loadingController.add(false);
     _completePending(requestId, sessions);
   }
 
@@ -541,7 +442,7 @@ class SessionSyncService {
     _workspaceInfoController.add(_workspaceInfo);
 
     if (_hasSelectedDesktopTarget) {
-      fetchSessions();
+      refreshLocalSessions();
     }
   }
 
@@ -562,8 +463,12 @@ class SessionSyncService {
 
     _activeSessionId = sessionId;
     _activeSessionController.add(_activeSessionId);
-
-    // 串台防护：仅在手机未主动切换到其他会话，或本就在该会话时，才同步 ChatStore。
+    // Option A：索引条目刷新活跃时间（列表排序贴合真实使用）
+    unawaited(
+      PhoneSessionIndex.instance.touch(sessionId).then((_) {
+        if (_hasSelectedDesktopTarget) refreshLocalSessions();
+      }),
+    );
     // 竞争窗口：手机发消息 → 用户立刻切走 → session:active 到达，
     // 若此时无条件 syncSessionId，会把 _currentSessionId 改回 A，
     // 导致 A 的流式事件通过 _isWrongSession 写入 B 的视图。
@@ -617,22 +522,8 @@ class SessionSyncService {
     if (data is! Map) return;
     final requestId = data['requestId'] as String? ?? '';
     final sessionData = data['session'];
-    if (sessionData is Map) {
-      final session = SessionMeta(
-        id: sessionData['id'] as String? ?? '',
-        title: sessionData['title'] as String? ?? 'New Session',
-        createdAt: (sessionData['createdAt'] as num?)?.toInt() ??
-            DateTime.now().millisecondsSinceEpoch,
-        updatedAt: (sessionData['updatedAt'] as num?)?.toInt() ??
-            DateTime.now().millisecondsSinceEpoch,
-        messageCount: (sessionData['messageCount'] as num?)?.toInt() ?? 0,
-        workspacePath: _workspaceInfo?.workspacePath ?? '',
-        workspaceName: _workspaceInfo?.workspaceName ?? '',
-      );
-      _sessions.insert(0, session);
-      _sessionsController.add(List.unmodifiable(_sessions));
-      ChatDatabase.instance.upsertSessions([session]);
-    }
+    // Option A：新建会话的索引写入由 startNewConversation 统一负责
+    //（首条消息发出时），此处仅完成挂起请求。
     _completePending(requestId, sessionData);
   }
 
@@ -750,20 +641,29 @@ class SessionSyncService {
 
   // -- Public API --
 
-  /// Request session list from the connected desktop.
+  /// 请求引擎的 session/list（旧事件语义保留）。
+  ///
+  /// Option A 后这不是抽屉列表的数据源——仅被「从引擎导入」「工作区发现」
+  /// 等显式入口使用；结果通过 [fetchEngineSessions] 的返回值消费。
   void fetchSessions() {
+    unawaited(fetchEngineSessions());
+  }
+
+  /// 拉取引擎侧会话列表并返回（供「从引擎导入」选择器使用）。
+  Future<List<SessionMeta>> fetchEngineSessions(
+      {Duration timeout = const Duration(seconds: 8),}) async {
     if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
-      return;
+      return const <SessionMeta>[];
     }
     // Dedup: skip if a request is already inflight.
-    if (_isLoading) return;
+    if (_isLoading) return const <SessionMeta>[];
     _fetchGeneration++; // 递增使过期响应可被检测
 
     _isLoading = true;
     _loadingController.add(true);
     final requestId = _nextRequestId();
-    _currentListRequestId = requestId; // 记录最新发出的请求 ID，用于拒绝过期响应
+    _currentListRequestId = requestId;
     // Bug3修复: 先注册 Completer，再发送消息，避免极速响应到达时找不到对应 requestId
     _pendingRequests[requestId] = Completer<dynamic>();
     _transport.send(
@@ -774,17 +674,166 @@ class SessionSyncService {
         },
       ),
     );
-    // Timeout — also clean up pending request
-    Future.delayed(const Duration(seconds: 5), () {
-      if (_isLoading) {
-        _isLoading = false;
-        _loadingController.add(false);
-        final completer = _pendingRequests.remove(requestId);
-        if (completer != null && !completer.isCompleted) {
-          completer.completeError('Timeout fetching sessions');
-        }
+    try {
+      final future = _pendingRequests[requestId]!.future;
+      final result = await future.timeout(timeout);
+      return result is List<SessionMeta> ? result : const <SessionMeta>[];
+    } catch (_) {
+      return const <SessionMeta>[];
+    } finally {
+      // 超时/异常路径兜底清理（正常路径已由响应处理器完成）
+      _pendingRequests.remove(requestId);
+      if (_currentListRequestId == requestId) _currentListRequestId = null;
+      _isLoading = false;
+      _loadingController.add(false);
+    }
+  }
+
+  // -- 手机本地会话索引（Option A「会话独立」）--
+
+  /// 用手机本地索引刷新会话列表（连接成功 / 切换设备 / 索引变更 /
+  /// 引擎 session:changed 都走这里，不再向引擎拉 session/list）。
+  Future<void> refreshLocalSessions() async {
+    final desktopId = _transport.selectedDesktopId;
+    if (desktopId == null) return;
+    final gen = ++_fetchGeneration;
+    final entries =
+        await PhoneSessionIndex.instance.sessionsForDevice(desktopId);
+    if (gen != _fetchGeneration) return; // 期间已有新刷新
+    _sessions = [
+      for (final e in entries)
+        SessionMeta(
+          id: e.sessionId,
+          title: e.title,
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+          messageCount: 0,
+          workspacePath: e.workspacePath ?? '',
+          workspaceName: _wsBasename(e.workspacePath),
+        ),
+    ];
+    // 工作区展示以本地每设备记忆为准（引擎推送值仅在没有记忆时作废回填）
+    final ws = await PhoneSessionIndex.instance.workspaceFor(desktopId);
+    if (gen != _fetchGeneration) return;
+    if (ws != null) {
+      _workspaceInfo = WorkspaceInfo(
+        workspaceName: ws.displayName,
+        workspacePath: ws.workspacePath,
+        activeSessionId: _activeSessionId,
+        sessionCount: _sessions.length,
+      );
+      _workspaceInfoController.add(_workspaceInfo);
+      AppRestoreState.setLastWorkspacePath(ws.workspacePath);
+    }
+    _isLoading = false;
+    _sessionsController.add(List.unmodifiable(_sessions));
+    _loadingController.add(false);
+    await _applyLocalSelection(gen);
+  }
+
+  /// 本地列表加载后的视图选择（仅限手机自己的会话）：
+  /// 已在会话中则保持（不因索引缺条目而踢出——引擎会话/导入前会话
+  /// 可能尚不在索引里）；否则恢复上次浏览；再否则停在欢迎态。
+  Future<void> _applyLocalSelection(int gen) async {
+    if (gen != _fetchGeneration) return;
+    final currentSessionId = ChatStore.instance.currentSessionId;
+    if (currentSessionId != null) {
+      _activeSessionId = currentSessionId;
+      _activeSessionController.add(_activeSessionId);
+      return;
+    }
+    final desktopId = _transport.selectedDesktopId;
+    if (desktopId == null) return;
+    final restoreState =
+        await AppRestoreState.getLastViewedSession(desktopId: desktopId);
+    if (gen != _fetchGeneration) return;
+    if (restoreState.hasSavedSelection) {
+      final restored = restoreState.sessionId;
+      if (restored == null) {
+        _activeSessionId = null;
+        _activeSessionController.add(null);
+        return;
       }
-    });
+      if (_sessions.any((s) => s.id == restored)) {
+        await _applySessionSelection(restored, gen);
+        return;
+      }
+    }
+    // 没有恢复目标时停在欢迎态（「新任务」页），不自动跳进旧会话
+    _activeSessionId = null;
+    _activeSessionController.add(null);
+  }
+
+  static String _wsBasename(String? path) {
+    if (path == null || path.isEmpty) return '';
+    final seg = path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty);
+    return seg.isEmpty ? path : seg.last;
+  }
+
+  /// 进入「新建任务」欢迎态：清空视图与恢复点，不创建引擎会话——
+  /// 引擎会话在首条消息发出时才创建（参考 ZCode 移动端「新任务」页）。
+  Future<void> enterNewConversation() async {
+    setActiveSession(null);
+    ChatStore.instance.resetSessionScope();
+    final desktopId = _transport.selectedDesktopId;
+    if (desktopId != null) {
+      await AppRestoreState.setLastViewedSession(
+          desktopId: desktopId, sessionId: null,);
+    }
+  }
+
+  /// 新建任务并发送首条消息：引擎建会话 → 写本地索引 → 切换视图 → 发消息。
+  /// 返回 false = 创建失败（调用方提示用户）。
+  Future<bool> startNewConversation(String firstMessage) async {
+    if (_transport.state != WsConnectionState.connected ||
+        !_hasSelectedDesktopTarget) {
+      return false;
+    }
+    final result = await createSession();
+    final sessionId = result?['id'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return false;
+    final desktopId = _transport.selectedDesktopId!;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ws = await PhoneSessionIndex.instance.workspaceFor(desktopId);
+    await PhoneSessionIndex.instance.upsert(
+      PhoneSessionEntry(
+        sessionId: sessionId,
+        deviceSid: desktopId,
+        title: PhoneSessionIndex.deriveTitle(firstMessage),
+        firstMessage: firstMessage,
+        createdAt: now,
+        updatedAt: now,
+        workspaceKey: ws?.workspaceKey,
+        workspacePath: ws?.workspacePath ?? _workspaceInfo?.workspacePath,
+      ),
+    );
+    setActiveSession(sessionId);
+    await ChatStore.instance.switchToSession(sessionId, userInitiated: true);
+    // 新会话无历史，关闭切换骨架屏；空列表会推进 _clearGeneration，
+    // 随后 sendMessage 设置的 _lastUserMsgGen 更大，用户消息不会被覆盖。
+    ChatStore.instance.loadFetchedMessages(sessionId, const []);
+    unawaited(refreshLocalSessions());
+    ChatStore.instance.sendMessage(firstMessage);
+    return true;
+  }
+
+  /// 从引擎导入一条会话到本地索引（兜底入口：打开桌面端创建过的会话）。
+  Future<bool> importEngineSession(SessionMeta meta) async {
+    final desktopId = _transport.selectedDesktopId;
+    if (desktopId == null || meta.id.isEmpty) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await PhoneSessionIndex.instance.upsert(
+      PhoneSessionEntry(
+        sessionId: meta.id,
+        deviceSid: desktopId,
+        title: meta.title.isNotEmpty ? meta.title : '（无标题会话）',
+        createdAt: meta.createdAt > 0 ? meta.createdAt : now,
+        updatedAt: meta.updatedAt > 0 ? meta.updatedAt : now,
+        workspacePath: meta.workspacePath.isNotEmpty ? meta.workspacePath : null,
+      ),
+    );
+    await refreshLocalSessions();
+    return true;
   }
 
   /// Load messages for a session from the desktop (with pagination).
@@ -1020,6 +1069,11 @@ class SessionSyncService {
   }
 
   Future<void> _onAppForegroundedImpl(String sessionId) async {
+    // 清空会话后的冷却期（5 秒）：前台刷新不得立刻回填刚清掉的内容
+    final inCooldown = _clearedSessionId == sessionId &&
+        _clearedAt != null &&
+        DateTime.now().difference(_clearedAt!).inSeconds < 5;
+    if (inCooldown) return;
     final messages =
         await loadAllSessionMessages(sessionId, forceRefresh: true);
     // 推到 ChatStore UI — 如果用户在加载期间切换了会话，不覆盖
@@ -1061,80 +1115,28 @@ class SessionSyncService {
     }
   }
 
-  /// Delete a session on the desktop.
+  /// 删除会话 —— Option A：仅删手机本地索引与消息缓存，引擎侧副本保留。
   Future<bool> deleteSession(String sessionId) async {
-    if (_transport.state != WsConnectionState.connected ||
-        !_hasSelectedDesktopTarget) {
-      return false;
+    await PhoneSessionIndex.instance.remove(sessionId);
+    _sessions.removeWhere((s) => s.id == sessionId);
+    _sessionsController.add(List.unmodifiable(_sessions));
+    ChatDatabase.instance.deleteSessionAndMessages(sessionId);
+    // BUG-6 修复：删除的是当前会话 → 切换到空状态，避免显示僵尸 UI
+    if (sessionId == ChatStore.instance.currentSessionId) {
+      await enterNewConversation();
     }
-    final requestId = _nextRequestId();
-    final completer = Completer<dynamic>();
-    _pendingRequests[requestId] = completer;
-
-    _transport.send(
-      WsMessage(
-        event: WsEvents.sessionDeleteRequest,
-        data: {'requestId': requestId, 'sessionId': sessionId},
-      ),
-    );
-
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!completer.isCompleted) {
-        _pendingRequests.remove(requestId);
-        completer.completeError('Timeout deleting session');
-      }
-    });
-
-    try {
-      final result = await completer.future;
-      final success = result is Map && (result['success'] as bool? ?? false);
-      if (success) {
-        // 本地清理
-        _sessions.removeWhere((s) => s.id == sessionId);
-        _sessionsController.add(List.unmodifiable(_sessions));
-        ChatDatabase.instance.deleteSessionAndMessages(sessionId);
-        // BUG-6 修复：删除的是当前会话 → 切换到空状态，避免显示僵尸 UI
-        if (sessionId == ChatStore.instance.currentSessionId) {
-          await ChatStore.instance.switchToSession(null);
-        }
-      }
-      return success;
-    } catch (_) {
-      return false;
-    }
+    return true;
   }
 
-  /// Rename a session on the desktop.
+  /// 重命名会话 —— Option A：本地索引改名，不触碰引擎侧标题。
   Future<bool> renameSession(String sessionId, String title) async {
-    if (_transport.state != WsConnectionState.connected ||
-        !_hasSelectedDesktopTarget) {
-      return false;
+    await PhoneSessionIndex.instance.rename(sessionId, title);
+    final idx = _sessions.indexWhere((s) => s.id == sessionId);
+    if (idx != -1) {
+      _sessions[idx] = _sessions[idx].copyWith(title: title);
+      _sessionsController.add(List.unmodifiable(_sessions));
     }
-    final requestId = _nextRequestId();
-    final completer = Completer<dynamic>();
-    _pendingRequests[requestId] = completer;
-
-    _transport.send(
-      WsMessage(
-        event: WsEvents.sessionRenameRequest,
-        data: {'requestId': requestId, 'sessionId': sessionId, 'title': title},
-      ),
-    );
-
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!completer.isCompleted) {
-        _pendingRequests.remove(requestId);
-        completer.completeError('Timeout renaming session');
-      }
-    });
-
-    try {
-      final result = await completer.future;
-      if (result is Map) return result['success'] as bool? ?? false;
-      return false;
-    } catch (_) {
-      return false;
-    }
+    return true;
   }
 
   /// Fetch list of recent workspaces from the desktop.
@@ -1190,10 +1192,10 @@ class SessionSyncService {
 
   // -- Local cache --
   Future<void> _loadCachedSessions() async {
-    final cached = await ChatDatabase.instance.getSessions();
-    if (_hasSelectedDesktopTarget && cached.isNotEmpty && _sessions.isEmpty) {
-      _sessions = cached;
-      _sessionsController.add(List.unmodifiable(_sessions));
+    // Option A：启动时直接读手机本地索引（不再读引擎会话的 DB 缓存，
+    // 避免桌面端旧会话闪现后又被本地列表顶掉）
+    if (_hasSelectedDesktopTarget) {
+      await refreshLocalSessions();
     }
   }
 

@@ -27,6 +27,7 @@ import '../widgets/project_drawer.dart';
 import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
+import '../widgets/workspace_switcher_sheet.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -212,9 +213,30 @@ class _ChatPageState extends State<ChatPage> {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
     if (ConnectionManager.instance.state != WsConnectionState.connected) return;
+    // Option A：没有活动会话 = 处于「新任务」欢迎态，首条消息触发建会话
+    if (ChatStore.instance.currentSessionId == null) {
+      _startNewConversation(text);
+      return;
+    }
     ChatStore.instance.sendMessage(text);
     _inputController.clear();
     _scrollToBottom();
+  }
+
+  /// 新任务首条消息：引擎建会话 → 写本地索引 → 发送。
+  Future<void> _startNewConversation(String text) async {
+    _inputController.clear();
+    _scrollToBottom();
+    final ok = await SessionSyncService.instance.startNewConversation(text);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('创建会话失败，请检查连接后重试'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
 
@@ -332,27 +354,13 @@ class _ChatPageState extends State<ChatPage> {
         ),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
-          // 新对话：在桌面端创建新会话并切换
-          StreamBuilder<String?>(
-            stream: SessionSyncService.instance.activeSessionStream,
-            initialData: SessionSyncService.instance.activeSessionId,
-            builder: (context, snapshot) {
-              return IconButton(
-                icon: const Icon(Icons.add_comment_outlined),
-                tooltip: '新对话',
-                onPressed: () async {
-                  _inputFocusNode.unfocus();
-                  final result =
-                      await SessionSyncService.instance.createSession();
-                  if (result != null) {
-                    final sessionId = result['id'] as String?;
-                    if (sessionId != null) {
-                      SessionSyncService.instance.setActiveSession(sessionId);
-                      ChatStore.instance.switchToSession(sessionId, userInitiated: true);
-                    }
-                  }
-                },
-              );
+          // 新对话：进入「新任务」欢迎态（引擎会话等首条消息发出时才创建）
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: '新任务',
+            onPressed: () async {
+              _inputFocusNode.unfocus();
+              await SessionSyncService.instance.enterNewConversation();
             },
           ),
           IconButton(
@@ -467,12 +475,181 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // ── Welcome（新任务）─────────────────────────────────────────────────
+
+  /// 按当前小时返回问候语（参考 ZCode 移动端「晚上好呀，今天辛苦啦」）
+  static String _greetingForNow() {
+    final hour = DateTime.now().hour;
+    if (hour >= 5 && hour < 11) return '早上好呀，开始新任务吧';
+    if (hour >= 11 && hour < 13) return '中午好呀，忙里偷闲搞定它';
+    if (hour >= 13 && hour < 18) return '下午好呀，继续推进吧';
+    if (hour >= 18 && hour < 23) return '晚上好呀，今天辛苦啦';
+    return '夜深了，搞完这单就休息吧';
+  }
+
+  static const _quickPrompts = [
+    ('🐞', '报错修复'),
+    ('📝', '代码审查'),
+    ('🧹', '重构建议'),
+  ];
+
+  /// 「新任务」欢迎页：问候 + 大 Z 水印 + 工作区 chip + 快捷提示。
+  /// 首条消息发出时才在引擎创建会话（见 _startNewConversation）。
+  Widget _buildWelcomeView(AppColors colors) {
+    return Stack(
+      children: [
+        // 背景水印
+        Positioned(
+          top: 24,
+          right: -18,
+          child: IgnorePointer(
+            child: Text(
+              'Z',
+              style: TextStyle(
+                fontSize: 220,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                color: colors.textPrimary.withValues(alpha: 0.05),
+                height: 1.0,
+              ),
+            ),
+          ),
+        ),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  _greetingForNow(),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildWorkspaceChip(colors),
+                const SizedBox(height: 36),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    for (final (icon, label) in _quickPrompts)
+                      _buildQuickPrompt(colors, icon, label),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 当前工作区 chip：点按弹切换器；工作区来自本地每设备记忆
+  Widget _buildWorkspaceChip(AppColors colors) {
+    return StreamBuilder<WorkspaceInfo?>(
+      stream: SessionSyncService.instance.workspaceInfoStream,
+      initialData: SessionSyncService.instance.workspaceInfo,
+      builder: (context, snap) {
+        final wsName = snap.data?.workspaceName ?? '';
+        final hasWs = wsName.isNotEmpty;
+        return InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => showWorkspaceSwitcherSheet(context),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: colors.bgTertiary,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colors.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  hasWs ? Icons.folder_outlined : Icons.folder_off_outlined,
+                  size: 15,
+                  color: hasWs ? colors.accent : colors.textMuted,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  hasWs ? wsName : '选择工作区',
+                  style: TextStyle(
+                    color: hasWs ? colors.textPrimary : colors.textMuted,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: colors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 快捷提示 pill：点按填充输入框（不直接发送，用户可改可发）
+  Widget _buildQuickPrompt(AppColors colors, String icon, String label) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        final prompt = switch (label) {
+          '报错修复' => '帮我分析并修复下面的报错：\n\n（粘贴报错信息）',
+          '代码审查' => '审查当前工作区的最近改动，指出问题和风险',
+          '重构建议' => '看看我当前的项目结构，给出可落地的重构建议',
+          _ => label,
+        };
+        _inputController.text = prompt;
+        _inputController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _inputController.text.length),
+        );
+        _inputFocusNode.requestFocus();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.bgTertiary,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 14)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessageList() {
     final colors = AppColors.of(context);
     if (_displayMessages.isEmpty && !_isWaiting) {
       // 正在切换会话、等待桌面端回传数据时显示骨架屏
       if (_isSessionLoading) {
         return _buildSessionLoadingSkeleton(colors);
+      }
+      // Option A：已连接且无活动会话 → 「新任务」欢迎页
+      //（参考 ZCode 移动端：问候 + 工作区选择 + 快捷入口）
+      if (_visibleConnectionState == WsConnectionState.connected &&
+          ChatStore.instance.currentSessionId == null) {
+        return _buildWelcomeView(colors);
       }
       return Center(
         child: Text('暂无消息',

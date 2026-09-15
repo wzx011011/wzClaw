@@ -32,6 +32,7 @@ import '../zcode/zcode_pairing.dart';
 import '../zcode/zcode_model_heal.dart';
 import '../models/goal_snapshot.dart';
 import 'pairing_store.dart';
+import 'phone_session_index.dart';
 import 'session_sync_service.dart';
 import 'ws_transport.dart';
 import '../zcode/zcode_relay_client.dart';
@@ -642,6 +643,12 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       _selectedWsKey = hit.key;
       _wsKey = hit.key;
       _wsPath = hit.path;
+      // Option A：用户显式切换工作区 → 记入本地每设备记忆，新建会话复用
+      final sid = _pairing?.sid ?? '';
+      if (sid.isNotEmpty) {
+        unawaited(PhoneSessionIndex.instance
+            .setDeviceWorkspace(sid, hit.key, hit.path));
+      }
       _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
         'requestId': requestId,
         'success': true,
@@ -712,8 +719,16 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   Future<void> _respondCreate(ZcodeRelayClient client, Map<String, dynamic> d) async {
     final requestId = d['requestId']?.toString() ?? '';
-    // 工作区缓存为空（连接后直接新建，未经过 list/switch）时兜底：
-    // 拉一次列表取选中（或最新活跃）工作区
+    final sid = _pairing?.sid ?? '';
+    // 工作区解析顺序（Option A）：连接期间缓存 → 手机本地每设备记忆
+    // → 一次 session/list 发现（发现结果回写本地记忆，之后不再拉）
+    if (_wsKey == null || _wsPath == null) {
+      final remembered = await PhoneSessionIndex.instance.workspaceFor(sid);
+      if (remembered != null) {
+        _wsKey = remembered.workspaceKey;
+        _wsPath = remembered.workspacePath;
+      }
+    }
     if (_wsKey == null || _wsPath == null) {
       try {
         final result = await client.request('session/list');
@@ -735,6 +750,11 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       final result = await client.request('session/create', {
         'workspace': {'workspaceKey': _wsKey, 'workspacePath': _wsPath},
       });
+      // 记住本设备工作区：下次新建会话免发现
+      if (sid.isNotEmpty) {
+        unawaited(PhoneSessionIndex.instance
+            .setDeviceWorkspace(sid, _wsKey!, _wsPath!));
+      }
       final events = responseToWsMessages('session/create', result, const {});
       for (final e in events) {
         _messageController.add(WsMessage(
