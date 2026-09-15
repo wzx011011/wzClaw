@@ -470,6 +470,35 @@ void main() {
       expect(h.server.messages.first['role'], 'probe');
     });
 
+    test('relay error 帧 CAPACITY：下一跳退避顶到长档（等 relay 陈旧回收腾槽）', () async {
+      // 背景：probe 槽被半开连接占满时 relay 回 CAPACITY；槽位要等
+      // ping 30s × 1.5 = 45s 陈旧判定后才释放。按「多等」原则客户端把
+      // 下一跳顶到 50s 长档，短档反复撞墙只会白刷拒绝日志。
+      final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
+      final client = await h.connectMatched();
+
+      h.server.send({'type': 'error', 'code': 'CAPACITY', 'message': 'Request rejected'});
+      await settle();
+
+      final d = client.debugScheduledReconnectDelay;
+      expect(d, isNotNull);
+      // 50s ± 1/6 对称抖动 → [41.7s, 58.3s]
+      expect(d!.inMilliseconds, inInclusiveRange(41000, 59000));
+    });
+
+    test('relay error 帧（非 CAPACITY）：退避维持短档，不吃长档地板', () async {
+      final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
+      final client = await h.connectMatched();
+
+      h.server.send({'type': 'error', 'code': 'AUTH_FAILED', 'message': 'auth failed'});
+      await settle();
+
+      final d = client.debugScheduledReconnectDelay;
+      expect(d, isNotNull);
+      // attempts=1 → 基数 30ms×2=60ms ± 抖动，与长档地板无关
+      expect(d!.inMilliseconds, lessThan(1000));
+    });
+
     test('服务端断开：pending 全部失败、状态 closed、自动重连', () async {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
       final client = await h.connectMatched();

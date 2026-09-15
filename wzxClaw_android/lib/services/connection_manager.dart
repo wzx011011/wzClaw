@@ -22,6 +22,7 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/app_config.dart';
 import '../models/connection_state.dart';
@@ -44,6 +45,15 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   static final ConnectionManager _instance = ConnectionManager._();
   static ConnectionManager get instance => _instance;
+
+  /// 仅测试使用：构造独立实例（生产走 [instance] 单例）
+  @visibleForTesting
+  static ConnectionManager createForTest() => ConnectionManager._();
+
+  /// 仅测试使用：注入给内部 ZcodeRelayClient 的连接工厂
+  ///（null = 生产直连）。测试借此计数建连、扮演 relay 服务端。
+  @visibleForTesting
+  static WebSocketChannel Function(Uri url)? debugSocketFactory;
 
   // ---- 对外流（签名与 f25b231 一致）----
 
@@ -150,9 +160,14 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   void _connectPairing() {
     final pairing = _pairing;
     if (pairing == null) return;
+    // 防御性关闭：任何路径到达这里都不得遗留旧 client——泄漏的旧连接既把
+    // 同一份推送流重复投进消息流（正文交错重复渲染），又占着 relay 的
+    // probe 槽（重连风暴下 3 槽打满触发 CAPACITY 拒绝）
+    _client?.close();
     _setState(WsConnectionState.connecting);
     final client = ZcodeRelayClient(
       pairing: pairing,
+      socketFactory: debugSocketFactory,
       onStateChange: _onZcodeState,
       onNotify: _onZcodeNotify,
       onRequest: _onZcodeReverse,
@@ -886,12 +901,22 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   // ---- 生命周期 ----
 
+  // cFSC 互斥标志：入口守卫（状态检查）到 _connectPairing 之间隔着两个
+  // await，并发触发（回前台双触发）会双双穿过得各自建连——互斥标志挡住
+  // 同入口重入，两个 await 之后再复查状态挡住跨入口（点按桌面切换）穿插
+  bool _restoringConfig = false;
+
   Future<void> connectFromSavedConfiguration() async {
-    if (_stateNow != WsConnectionState.disconnected) return;
+    if (_stateNow != WsConnectionState.disconnected || _restoringConfig) return;
+    _restoringConfig = true;
     try {
       final stored = await PairingStore.instance.loadAll();
+      // await 窗口内状态可能已被其它入口改变（回前台双触发、点按桌面切换）。
+      // 不复查会把窗口内新建的 client 无 close 覆盖——正是上面注释里的泄漏源
+      if (_stateNow != WsConnectionState.disconnected) return;
       if (stored.isNotEmpty) {
         final active = await PairingStore.instance.activeSid();
+        if (_stateNow != WsConnectionState.disconnected) return;
         final hit = stored.where((s) => s.info.sid == active).firstOrNull ??
             stored.first;
         _desktopName = hit.info.desktopName;
@@ -910,6 +935,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       connect(serverUrl);
     } catch (e) {
       _errorController.add('恢复连接配置失败: $e');
+    } finally {
+      _restoringConfig = false;
     }
   }
 

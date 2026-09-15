@@ -121,6 +121,14 @@ class ZcodeRelayClient {
   // ---- 重连退避 ----
   int _reconnectAttempts = 0;
 
+  /// 下一跳延迟地板（毫秒）：relay 错误帧按码设置，消费一次后清零
+  int _nextDelayFloorMs = 0;
+
+  /// 当前已排程的重连延迟（测试观测；未排程时为 null）
+  @visibleForTesting
+  Duration? get debugScheduledReconnectDelay => _scheduledReconnectDelay;
+  Duration? _scheduledReconnectDelay;
+
   // ---------- 公共 API ----------
 
   /// 连接并完成配对认证（幂等）
@@ -263,9 +271,14 @@ class ZcodeRelayClient {
     switch (msg['type']) {
       case 'error':
         {
-          // relay 拒绝（认证失败/房间失效/未配对等）：上浮原因后关闭，交给重连流程
+          // relay 拒绝（认证失败/房间失效/未配对等）：上浮原因后关闭，交给重连流程。
+          // CAPACITY = 同房间 probe 槽（默认 3）被网络切换留下的半开连接占满，
+          // relay 要等一个陈旧回收周期（ping 30s × 1.5 = 45s）才能腾位：按「多等」
+          // 原则把下一跳顶到长档，短档反复撞墙只会白刷拒绝日志。
+          final code = msg['code']?.toString() ?? 'UNKNOWN';
+          if (code == 'CAPACITY') _nextDelayFloorMs = 50 * 1000;
           _onRelayError?.call(
-            msg['code']?.toString() ?? 'UNKNOWN',
+            code,
             (msg['message'] ?? '请求被拒绝').toString(),
           );
           try {
@@ -412,14 +425,16 @@ class ZcodeRelayClient {
   }
 
   /// 安排重连；close() 手动关闭或延迟为 0 时不重连。
-  /// 延迟 = 指数退避（基数 * 2^attempt，上限 60s）+ 抖动（±1/3），
+  /// 延迟 = 指数退避（基数 * 2^attempt，上限 60s）+ 抖动（±1/6），
   /// 参考 services/connection_manager.dart 的既有实现。
   void _scheduleReconnect() {
     if (_closedByUser || _reconnectTimer != null) return;
     if (_reconnectDelay <= Duration.zero) return; // 0 = 不自动重连（与 TS 版一致）
     final delay = _nextReconnectDelay();
+    _scheduledReconnectDelay = delay;
     _reconnectAttempts++;
     _reconnectTimer = Timer(delay, () {
+      _scheduledReconnectDelay = null;
       _reconnectTimer = null;
       connect();
     });
@@ -430,10 +445,11 @@ class ZcodeRelayClient {
   Duration _nextReconnectDelay() {
     final baseMs = _reconnectDelay.inMilliseconds;
     final shift = _reconnectAttempts < 16 ? _reconnectAttempts : 16; // 防溢出
-    final expMs = baseMs * (1 << shift);
-    final cappedMs = expMs < baseMs
-        ? baseMs
-        : (expMs > _kMaxReconnectMs ? _kMaxReconnectMs : expMs);
+    var cappedMs = baseMs * (1 << shift);
+    if (cappedMs < baseMs) cappedMs = baseMs;
+    if (cappedMs > _kMaxReconnectMs) cappedMs = _kMaxReconnectMs;
+    if (cappedMs < _nextDelayFloorMs) cappedMs = _nextDelayFloorMs;
+    _nextDelayFloorMs = 0; // 地板只消费一次
     final jitterMs = cappedMs ~/ 6;
     if (jitterMs == 0) return Duration(milliseconds: cappedMs);
     return Duration(
@@ -520,6 +536,8 @@ class ZcodeRelayClient {
     _state = state;
     if (state == ZcodeRelayState.waiting || state == ZcodeRelayState.matched) {
       _reconnectAttempts = 0; // 连接+认证成功：退避归零
+      _nextDelayFloorMs = 0;
+      _scheduledReconnectDelay = null;
       _startKeepalive();
     } else {
       _stopKeepalive();
