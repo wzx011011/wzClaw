@@ -38,8 +38,9 @@ NAS relay
 > `relay/server.js`、`relay/lib/`，部署套件 Dockerfile/compose/nginx/test 等）
 > 已于 2026-09-15 按用户指示删除，`relay/` 下现仅存 `zcode/`；tracked 删除可
 > 通过 `git restore` 恢复，brain-adapter 测试所需的旧 relay 副本迁至
-> `relay/zcode/test/fixtures/old-relay/`，NAS 上仍在运行的旧 relay 容器不受
-> 影响（跑的是 NAS 侧自己的副本）。
+> `relay/zcode/test/fixtures/old-relay/`。NAS 侧旧 relay 容器 `wzxclaw-relay`
+> 同日已下线（停容器、删镜像与网络；`/volume1/docker/wzxclaw-relay/` 目录
+> 暂留未删）。
 
 ## 常用命令
 
@@ -103,7 +104,8 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 ## 外部服务
 
 - NAS relay（v3 大脑网络）：`wss://5945.top/relay/`（token 房间；
-  本地源码已删除、仍靠 git 历史可恢复，线上容器跑的是 NAS 侧副本）
+  **已于 2026-09-15 下线**——本地源码与 NAS 容器均已删除，恢复需从 git 历史
+  取源码并用 `relay/zcode/test/fixtures/old-relay/` 对照）
 - NAS relay（v2 配对流）：`wss://zcode.5945.top/ws`（容器 wzxclaw-zcode-relay）
 - 模型：智谱编码计划（`builtin:bigmodel-coding-plan`），凭据在 `~/.zcode/`，
   计费随 key/端点走（Flash 免费政策适用范围未实测，见会话记录）
