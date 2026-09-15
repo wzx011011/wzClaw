@@ -31,15 +31,19 @@ NAS relay
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `relay/zcode/brain-adapter.js` | 旧 WsEvents 协议 ↔ app-server 帧适配器（v3 大脑节点核心） |
-| `relay/zcode/test/` | 63 项测试（node --test） |
-| `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎从 packages/brain 换绑 app-server（尚未开始） |
-| `packages/`、`mobile/`、`relay/server.js+lib` | 归档候选（P0.1，待用户确认后处理） |
+| `relay/zcode/test/` | 68 项测试（node --test） |
+| `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
+
+> 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 源码（`relay/server.js` + `relay/lib/`）
+> 已于 2026-09-15 按用户指示删除；tracked 删除可通过 `git restore` 恢复，
+> brain-adapter 测试所需的旧 relay 副本迁至 `relay/zcode/test/fixtures/old-relay/`，
+> NAS 上仍在运行的旧 relay 容器不受影响（跑的是 NAS 侧自己的副本）。
 
 ## 常用命令
 
 ```bash
-# relay 侧测试（63 项；涉及子进程/长连接的套件必须 force-exit）
-cd relay/zcode && node --test --test-force-exit test/
+# relay 侧测试（68 项；涉及子进程/长连接的套件必须 force-exit）
+cd relay/zcode && npm test   # = node --test --test-force-exit "test/*.test.js"
 
 # 协议 schema 探针（只读，跑真实链路；改协议后先跑探针再动手）
 node relay/zcode/probe-methods.js   # 9 个高级接口 schema
@@ -48,7 +52,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 # 手机端
 cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
-flutter test           # 198 项
+flutter test           # 366 项
 
 # companion（PC 常驻节点）
 node relay/zcode/companion.js --relay wss://zcode.5945.top/ws --cwd <工作目录>
@@ -96,7 +100,8 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 
 ## 外部服务
 
-- NAS relay（v3 大脑网络）：`wss://5945.top/relay/`（token 房间）
+- NAS relay（v3 大脑网络）：`wss://5945.top/relay/`（token 房间；
+  本地源码已删除、仍靠 git 历史可恢复，线上容器跑的是 NAS 侧副本）
 - NAS relay（v2 配对流）：`wss://zcode.5945.top/ws`（容器 wzxclaw-zcode-relay）
 - 模型：智谱编码计划（`builtin:bigmodel-coding-plan`），凭据在 `~/.zcode/`，
   计费随 key/端点走（Flash 免费政策适用范围未实测，见会话记录）
