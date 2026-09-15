@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -93,6 +94,12 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Uri? _parseAndValidateServerUrl(String raw) {
+    // 配对链接（https://…/pair?sid=..&hash=..）与扫码结果同构：
+    // 先归一化升级为 wss 再校验，手动粘贴不再被「只认 wss」误拒
+    if (!raw.trimLeft().toLowerCase().startsWith('ws')) {
+      final normalized = normalizeQrScanToServerUrl(raw);
+      if (normalized != null) raw = normalized;
+    }
     final uri = Uri.tryParse(raw);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       _showConnectionError('服务器地址格式不正确');
@@ -759,13 +766,48 @@ class _QrScannerPage extends StatefulWidget {
 
 class _QrScannerPageState extends State<_QrScannerPage> {
   final MobileScannerController _controller = MobileScannerController();
+  final ImagePicker _imagePicker = ImagePicker();
   bool _torchOn = false;
   bool _scanned = false;
+  bool _pickingFromGallery = false;
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  /// 从相册选图识别二维码（mobile_scanner analyzeImage）。
+  /// analyzeImage 不经过相机流的 onDetect，直接取返回值并按同一出口出页。
+  Future<void> _pickFromGallery() async {
+    if (_pickingFromGallery) return;
+    _pickingFromGallery = true;
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+      );
+      if (image == null) return;
+      final capture = await _controller.analyzeImage(image.path);
+      final value = capture?.barcodes
+          .firstWhere((b) => b.rawValue != null, orElse: () => const Barcode())
+          .rawValue;
+      if (!mounted) return;
+      if (value == null || value.isEmpty) {
+        _showToast('未在图片中识别到二维码');
+        return;
+      }
+      Navigator.pop(context, value);
+    } catch (_) {
+      if (mounted) _showToast('相册识别失败');
+    } finally {
+      _pickingFromGallery = false;
+    }
+  }
+
+  void _showToast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
   }
 
   @override
@@ -781,6 +823,11 @@ class _QrScannerPageState extends State<_QrScannerPage> {
         backgroundColor: colors.bgSecondary,
         foregroundColor: colors.textPrimary,
         actions: [
+          IconButton(
+            icon: Icon(Icons.photo_library_outlined, color: colors.textSecondary),
+            onPressed: _pickFromGallery,
+            tooltip: '从相册选择',
+          ),
           IconButton(
             icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off,
                 color: colors.textSecondary,),
