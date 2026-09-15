@@ -1,0 +1,63 @@
+{
+  "name": "wzxclaw-companion-app",
+  "productName": "wzxClaw Companion",
+  "version": "1.0.0",
+  "description": "wzxClaw Windows 大脑节点：内嵌 companion，自动连接 NAS relay，扫码配对",
+  "main": "main.js",
+  "author": "wzx",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable",
+    "dist:dir": "electron-builder --win nsis portable --dir"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^31.7.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "top.w5945.wzxclaw.companion",
+    "productName": "wzxClaw Companion",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "cclient/**",
+      "assets/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon-256.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "runAfterFinish": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "wzxClawCompanion-Portable-${version}.exe"
+    }
+  }
+}

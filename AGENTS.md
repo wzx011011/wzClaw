@@ -31,6 +31,7 @@ NAS relay
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `relay/zcode/brain-adapter.js` | 旧 WsEvents 协议 ↔ app-server 帧适配器（v3 大脑节点核心） |
+| `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
 | `relay/zcode/test/` | 69 项测试（node --test） |
 | `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
 
