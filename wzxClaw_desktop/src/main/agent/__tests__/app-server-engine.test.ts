@@ -3,11 +3,13 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { AppServerEngine } from '../app-server-engine'
-import { translateEnginePayload } from '../app-server-translate'
+import { translateEngineEvent } from '../app-server-translate'
 
 // 引擎子进程夹具：FAKE_MODE 控制行为
 // - normal：响应 session/list（固定结果）+ session/boom（错误帧），
-//   启动即发一条 session/event text_delta 通知；未知方法静默（测超时）
+//   启动即发实测形状 session/event 通知 + server-N 反向请求
+//   （runtimePrefs 期待代答；interaction/test 期待 error 帧拒绝）；
+//   未知方法静默（测超时）
 // - crash-once：<marker> 文件不存在则立即退出；存在则正常响应
 //   （验证崩溃自动重启）
 function writeFakeEngine(dir: string): string {
@@ -24,7 +26,12 @@ if (mode === 'crash-once' && marker && !fs.existsSync(marker)) {
 }
 let buf = '';
 const send = (f) => process.stdout.write(JSON.stringify(f) + '\\n');
-send({ method: 'session/event', params: { sessionId: 'sess_x', events: [{ payload: { kind: 'text_delta', delta: 'hello' } }] } });
+// 实测形状：单事件 type/payload 在 params 顶层（APP-SERVER.md）
+send({ method: 'session/event', params: { sessionId: 'sess_x', eventId: 'e1', seq: 1, type: 'model.streaming', payload: { kind: 'text_delta', delta: 'hello', done: false } } });
+// 反向请求：runtimePrefs 期待被代答；答对后回执探针通知
+send({ id: 'server-1', method: 'session/requestRuntimePreferences', params: { scope: 'runtime-materialization' } });
+// 未知反向请求：期待 error 帧安全拒绝
+send({ id: 'server-2', method: 'interaction/test', params: {} });
 process.stdin.on('data', (chunk) => {
   buf += chunk.toString();
   let i;
@@ -36,6 +43,10 @@ process.stdin.on('data', (chunk) => {
       send({ id: f.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
     } else if (f.method === 'session/boom') {
       send({ id: f.id, error: { code: -32031, message: 'boom' } });
+    } else if (f.id === 'server-1') {
+      send({ method: 'fake/runtime-prefs', params: { answered: f.result != null && f.result.nativeSearchEnhancementsEnabled === false } });
+    } else if (f.id === 'server-2') {
+      send({ method: f.error !== undefined ? 'fake/interaction-denied' : 'fake/interaction-answered', params: {} });
     }
     // 其它方法：静默（由请求超时兜底）
   }
@@ -58,7 +69,7 @@ describe('AppServerEngine', () => {
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略 */ }
   })
 
-  it('roundtrip：请求/响应 + 通知事件 + 错误帧透传', async () => {
+  it('roundtrip：请求/响应 + 通知事件 + 反向请求应答 + 错误帧透传', async () => {
     const engine = new AppServerEngine({
       command: process.execPath,
       args: [fakeEngine],
@@ -67,15 +78,32 @@ describe('AppServerEngine', () => {
       requestTimeoutMs: 3000,
     })
     const notifications: unknown[] = []
+    const reverseRequests: Array<{ id: string | number; method?: string }> = []
     engine.on('notification', (frame) => notifications.push(frame))
+    engine.on('reverseRequest', (frame) => {
+      reverseRequests.push(frame)
+      // runtimePrefs 代答；未知请求安全拒绝
+      if (frame.method === 'session/requestRuntimePreferences') {
+        engine.respond(frame.id as string, { nativeSearchEnhancementsEnabled: false })
+      } else {
+        engine.respondError(frame.id as string, -32000, 'denied')
+      }
+    })
 
     engine.start()
     const list = await engine.request('session/list')
     expect(
       (list.result as { sessions: Array<{ sessionId: string }> }).sessions[0].sessionId,
     ).toBe('sess_mock')
-    // 引擎启动通知已被转发
+    // 实测形状通知已被转发
     expect(notifications.length).toBeGreaterThanOrEqual(1)
+    // 两条启动期反向请求都被识别并转给订阅者
+    expect(reverseRequests.map((r) => r.method)).toEqual([
+      'session/requestRuntimePreferences',
+      'interaction/test',
+    ])
+    // fixture 收到应答后回执探针通知（denied 名区分 error 帧）
+    await new Promise((r) => setTimeout(r, 200))
 
     const boom = await engine.request('session/boom')
     expect(boom.error?.code).toBe(-32031)
@@ -141,48 +169,75 @@ describe('AppServerEngine', () => {
     expect(engine.restartCount).toBe(1)
     await engine.stop()
   })
+
+  it('feed 注入：reverse-request 字符串 id 不误配数字 pending', () => {
+    const engine = new AppServerEngine({ command: 'node', cwd: dir })
+    const reverse: Array<{ id: string | number }> = []
+    engine.on('reverseRequest', (frame) => reverse.push(frame))
+    // 字符串 id + method = 反向请求；数字 id + result = 应答
+    engine.feed('{"id":"server-9","method":"interaction/requestPermission","params":{}}\n')
+    engine.feed('{"id":1,"result":{"ok":true}}\n')
+    expect(reverse.length).toBe(1)
+    expect(reverse[0].id).toBe('server-9')
+  })
 })
 
-describe('translateEnginePayload（翻译表）', () => {
-  it('text_delta → stream:agent:text', () => {
-    const frames = translateEnginePayload('s1', { kind: 'text_delta', delta: 'hello' })
+describe('translateEngineEvent（实测词典翻译表）', () => {
+  it('model.streaming text_delta → stream:agent:text（实测单事件形状）', () => {
+    const frames = translateEngineEvent('s1', 'model.streaming', { kind: 'text_delta', delta: 'hello', done: false })
     expect(frames).toEqual([
       { event: 'stream:agent:text', data: { sessionId: 's1', content: 'hello' } },
     ])
   })
 
-  it('reasoning_delta → stream:agent:thinking', () => {
-    const frames = translateEnginePayload('s1', { kind: 'reasoning_delta', delta: 'thinking…' })
+  it('model.streaming reasoning_delta → stream:agent:thinking', () => {
+    const frames = translateEngineEvent('s1', 'model.streaming', { kind: 'reasoning_delta', delta: 'thinking…' })
     expect(frames[0].event).toBe('stream:agent:thinking')
     expect(frames[0].data).toMatchObject({ sessionId: 's1', content: 'thinking…' })
   })
 
-  it('tool.call / tool.result → tool_call / tool_result', () => {
-    const call = translateEnginePayload('s1', {
-      kind: 'tool.call', callId: 'c1', tool: 'bash', input: { cmd: 'echo' },
+  it('tool.updated 轨迹：scheduled→tool_call；result→tool_result（content/success）', () => {
+    const call = translateEngineEvent('s1', 'tool.updated', {
+      toolCallId: 'c1', toolName: 'Bash', kind: 'scheduled', inputOmitted: true,
     })
     expect(call[0].event).toBe('stream:agent:tool_call')
-    expect(call[0].data).toMatchObject({ sessionId: 's1', toolCallId: 'c1', toolName: 'bash' })
+    expect(call[0].data).toMatchObject({ sessionId: 's1', toolCallId: 'c1', toolName: 'Bash' })
 
-    const result = translateEnginePayload('s1', { kind: 'tool.result', callId: 'c1', output: 'echo' })
+    const result = translateEngineEvent('s1', 'tool.updated', {
+      toolCallId: 'c1', kind: 'result', result: { success: true, content: 'echo 输出' }, duration: 12,
+    })
     expect(result[0].event).toBe('stream:agent:tool_result')
-    expect(result[0].data).toMatchObject({ sessionId: 's1', toolCallId: 'c1', isError: false })
+    expect(result[0].data).toMatchObject({ sessionId: 's1', toolCallId: 'c1', output: 'echo 输出', isError: false })
+
+    const failed = translateEngineEvent('s1', 'tool.updated', {
+      toolCallId: 'c1', kind: 'result', result: { success: false, content: 'boom' },
+    })
+    expect(failed[0].data).toMatchObject({ isError: true })
+    // progress/batch：旧协议无对应 → 空数组（调用方留观测）
+    expect(translateEngineEvent('s1', 'tool.updated', { toolCallId: 'c1', kind: 'progress' })).toEqual([])
+    expect(translateEngineEvent('s1', 'tool.updated', { kind: 'batch', toolCallIds: ['c1'] })).toEqual([])
   })
 
-  it('turn.terminal → turn_end + done 两帧', () => {
-    const frames = translateEnginePayload('s1', { kind: 'turn.terminal', status: 'completed' })
+  it('turn.started → running；turn.completed → turn_end + done', () => {
+    expect(translateEngineEvent('s1', 'turn.started', {})[0].event).toBe('stream:agent:running')
+    const frames = translateEngineEvent('s1', 'turn.completed', {
+      response: '全文', resultType: 'completed', tokenCount: 5, duration: 100, toolCallCount: 0,
+    })
     expect(frames.map((f) => f.event)).toEqual(['stream:agent:turn_end', 'stream:agent:done'])
     expect(frames[1].data).toMatchObject({ sessionId: 's1', status: 'completed' })
   })
 
-  it('model.error → stream:agent:error', () => {
-    const frames = translateEnginePayload('s1', { kind: 'model.error', message: 'quota' })
-    expect(frames[0].event).toBe('stream:agent:error')
-    expect(frames[0].data).toMatchObject({ sessionId: 's1', error: 'quota' })
+  it('permission.resolved → stream:agent:permission_resolved', () => {
+    const frames = translateEngineEvent('s1', 'permission.resolved', {
+      requestId: 'perm_1', toolCallId: 'call_p', decision: 'allow', reason: 'Approved once',
+    })
+    expect(frames[0].event).toBe('stream:agent:permission_resolved')
+    // 词典不含 reason（与手机端 zcode_protocol_translate.dart 一致）
+    expect(frames[0].data).toEqual({ sessionId: 's1', requestId: 'perm_1', toolCallId: 'call_p', decision: 'allow' })
   })
 
-  it('null kind 按 text_delta 直通；无关 payload 返回空', () => {
-    expect(translateEnginePayload('s1', { delta: 'x' })[0].event).toBe('stream:agent:text')
-    expect(translateEnginePayload('s1', { projection: {} })).toEqual([])
+  it('model.error → stream:agent:error；未识别 type → 空', () => {
+    expect(translateEngineEvent('s1', 'model.error', { error: 'quota' })[0].data).toMatchObject({ error: 'quota' })
+    expect(translateEngineEvent('s1', 'session.updated', { title: 'x' })).toEqual([])
   })
 })

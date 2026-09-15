@@ -96,6 +96,7 @@ import { registerAgentIpcHandlers } from './agent/agent-ipc-handlers'
 import { registerBrowserIpcHandlers } from './browser/browser-ipc-handlers'
 import { registerMobileIpcHandlers } from './mobile/mobile-ipc-handlers'
 import { registerMobileRelayHandler } from './mobile/mobile-relay-handler'
+import { stopBrainBridge } from './mobile/mobile-app-server-bridge'
 import { getMobileSessionTransition, isPathWithinWorkspace } from './mobile/mobile-session-utils'
 import { ensureAppDirs, ensureMcpConfig } from './paths'
 import { cleanOldDebugFiles, cleanOldMediaFiles } from './utils/debug-logger'
@@ -657,6 +658,8 @@ app.on('before-quit', () => {
   }
   terminalManager.dispose()
   workspaceManager.dispose()
+  // 停大脑模式桥（杀 app-server 引擎子进程，防退出后残留）
+  stopBrainBridge()
   // 断开所有 SSH 连接
   sshManager?.disconnectAll()
   browserManager.close().catch(() => {})

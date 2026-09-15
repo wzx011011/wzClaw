@@ -44,6 +44,21 @@ interface PendingRequest {
   timer: NodeJS.Timeout
 }
 
+/**
+ * 帧分类（语义与 relay/zcode/lib/protocol.js classifyFrame 一致）：
+ * request = 数字 id + method（服务端不应发出）；reverse-request = 字符串 id +
+ * method（服务端反向请求，必须应答原 id）；response = id + result/error；
+ * notification = method 无 id。
+ */
+function classifyFrame(frame: AppServerFrame): 'request' | 'reverse-request' | 'response' | 'notification' | null {
+  const hasMethod = typeof frame.method === 'string'
+  const hasId = frame.id !== null && frame.id !== undefined
+  if (hasMethod && hasId) return typeof frame.id === 'string' ? 'reverse-request' : 'request'
+  if (hasMethod) return 'notification'
+  if (hasId && (frame.result !== undefined || frame.error !== undefined)) return 'response'
+  return null
+}
+
 export class AppServerEngine extends EventEmitter {
   static readonly DEFAULT_REQUEST_TIMEOUT_MS = 30000
 
@@ -60,6 +75,8 @@ export class AppServerEngine extends EventEmitter {
   private buffer = ''
   private restarts = 0
   private stopped = false
+  /** 重启排程中（防 error/exit 双触发排两个定时器） */
+  private restarting = false
   private readonly pending = new Map<number, PendingRequest>()
   private nextId = 1
 
@@ -87,6 +104,7 @@ export class AppServerEngine extends EventEmitter {
 
   start(): void {
     this.stopped = false
+    this.restarting = false
     this.spawnChild()
   }
 
@@ -98,24 +116,31 @@ export class AppServerEngine extends EventEmitter {
     })
     this.child = child
     this.buffer = ''
+    this.restarting = false
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => this.feed(chunk))
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => this.logger('engine-stderr', chunk.slice(0, 500)))
+    // 进程死后写入 stdin 会 EPIPE：挂 error 监听防未处理异常崩掉主进程
+    child.stdin?.on('error', (error: NodeJS.ErrnoException) => {
+      this.logger('engine-stdin-error', error.code || error.message)
+    })
     child.on('error', (error: NodeJS.ErrnoException) => {
-      this.logger('engine-spawn-error', error.code || error.message)
+      // spawn 失败（ENOENT 等）只发 'error' 不发 'exit'：不置空 child 会让
+      // 下面的重启守卫 `child === null` 永远为假 → 进程已成尸仍不重启
+      if (this.child === child) this.child = null
       this.scheduleRestart(`spawn-error:${error.code || error.message}`)
     })
     child.on('exit', (code) => {
-      this.child = null
+      if (this.child === child) this.child = null
       this.scheduleRestart(`exit=${code}`)
     })
     this.logger('engine-started', '')
   }
 
   private scheduleRestart(why: string): void {
-    if (this.stopped) return
-    if (this.child !== null) return
+    if (this.stopped || this.restarting) return
+    this.restarting = true
     if (this.restarts >= this.maxRestarts) {
       this.logger('engine-dead', why)
       this.emit('dead', why)
@@ -142,18 +167,58 @@ export class AppServerEngine extends EventEmitter {
       try {
         frame = JSON.parse(line) as AppServerFrame
       } catch {
-        this.logger('engine-bad-line', '')
+        this.logger('engine-bad-line', line.slice(0, 120))
         continue
       }
-      const id = frame.id
-      if (id !== null && id !== undefined && this.pending.has(id as number)) {
-        const entry = this.pending.get(id as number)!
-        this.pending.delete(id as number)
-        clearTimeout(entry.timer)
-        entry.resolve(frame)
+      const kind = classifyFrame(frame)
+      if (kind === 'response') {
+        const id = frame.id
+        if (id !== null && id !== undefined && this.pending.has(id as number)) {
+          const entry = this.pending.get(id as number)!
+          this.pending.delete(id as number)
+          clearTimeout(entry.timer)
+          entry.resolve(frame)
+        } else {
+          // 无法配对的应答：留观测（静默丢弃 = 缺陷）
+          this.logger('engine-unmatched-response', `id=${String(id).slice(0, 24)}`)
+        }
         continue
       }
-      if (frame.method) this.emit('notification', frame)
+      if (kind === 'reverse-request') {
+        // 服务端反向请求（字符串 id + method）：必须应答原 id，转给订阅者
+        this.emit('reverseRequest', frame)
+        continue
+      }
+      if (kind === 'notification') {
+        this.emit('notification', frame)
+        continue
+      }
+      // request 形状（数字 id + method）不该由服务端发出：留观测
+      this.logger('engine-bad-frame', JSON.stringify(frame).slice(0, 120))
+    }
+  }
+
+  /** 反向请求应答：result 原文回传（带原字符串 id） */
+  respond(id: string | number, result: unknown): void {
+    this.writeRaw({ id, result })
+  }
+
+  /** 反向请求拒绝（code 沿用 ERR_UNHANDLED = -32000 语义） */
+  respondError(id: string | number, code: number, message: string): void {
+    this.writeRaw({ id, error: { code, message } })
+  }
+
+  private writeRaw(frame: AppServerFrame): boolean {
+    if (!this.child || !this.child.stdin || !this.child.stdin.writable) {
+      this.logger('engine-write-dropped', JSON.stringify(frame).slice(0, 80))
+      return false
+    }
+    try {
+      this.child.stdin.write(`${JSON.stringify(frame)}\n`)
+      return true
+    } catch (error) {
+      this.logger('engine-write-error', String(error).slice(0, 120))
+      return false
     }
   }
 
@@ -203,6 +268,7 @@ export class AppServerEngine extends EventEmitter {
     this.pending.clear()
     if (!child) return
     child.removeAllListeners('exit')
+    child.removeAllListeners('error') // 主动停止不触发 scheduleRestart
     await new Promise<void>((resolve) => {
       child.once('exit', () => resolve())
       setTimeout(() => {
