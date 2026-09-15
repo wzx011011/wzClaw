@@ -1017,10 +1017,114 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ),
+            // 消息操作行（对齐官方尾部）：复制/展开/时长。
+            // 👍👎 不做：反馈接口协议不存在（session/feedback 等候选全 -32601，
+            // 官方发往其云端），不做假按钮。
+            if (!msg.isStreaming)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  children: [
+                    _msgActionIcon(colors, Icons.copy_outlined, '复制',
+                        () => _copyMessage(msg),),
+                    const SizedBox(width: 16),
+                    _msgActionIcon(colors, Icons.open_in_full, '展开',
+                        () => _expandMessage(msg),),
+                    const SizedBox(width: 16),
+                    if (msg.durationMs != null)
+                      Text(
+                        _formatClock(msg.durationMs!),
+                        style: TextStyle(color: colors.textMuted, fontSize: 10),
+                      ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _msgActionIcon(
+    AppColors colors,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Icon(icon, size: 15, color: colors.textMuted, semanticLabel: tooltip),
+      ),
+    );
+  }
+
+  void _copyMessage(ChatMessage msg) {
+    Clipboard.setData(ClipboardData(text: msg.content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已复制'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// 全屏展开：大段回复可滚动、可选中复制
+  void _expandMessage(ChatMessage msg) {
+    final colors = AppColors.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: colors.bgPrimary,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: Icon(Icons.close, color: colors.textPrimary),
+                    tooltip: '关闭',
+                  ),
+                  Expanded(
+                    child: Text(
+                      '消息详情',
+                      style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,),
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(
+                    msg.content,
+                    style: TextStyle(
+                        color: colors.textPrimary, fontSize: 14, height: 1.6,),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 时长 mm:ss（官方消息尾部样式）
+  String _formatClock(int ms) {
+    final total = (ms / 1000).round();
+    final minutes = total ~/ 60;
+    final seconds = total % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Widget _buildMarkdownBody(String rawContent, {bool isStreaming = false}) {
