@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
+import 'qr_scanner_page.dart';
 import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
 import '../services/push_wake_service.dart';
 import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
+import '../services/zcode_protocol_translate.dart' show normalizeQrScanToServerUrl;
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -92,6 +93,12 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Uri? _parseAndValidateServerUrl(String raw) {
+    // 配对链接（https://…/pair?sid=..&hash=..）与扫码结果同构：
+    // 先归一化升级为 wss 再校验，手动粘贴不再被「只认 wss」误拒
+    if (!raw.trimLeft().toLowerCase().startsWith('ws')) {
+      final normalized = normalizeQrScanToServerUrl(raw);
+      if (normalized != null) raw = normalized;
+    }
     final uri = Uri.tryParse(raw);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       _showConnectionError('服务器地址格式不正确');
@@ -175,7 +182,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _scanQrCode() async {
     final result = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (context) => const _QrScannerPage()),
+      MaterialPageRoute(builder: (context) => const QrScannerPage()),
     );
     if (result != null && result.isNotEmpty && mounted) {
       final isWebSocket = result.startsWith('wss://') || result.startsWith('ws://');
@@ -190,6 +197,19 @@ class _SettingsPageState extends State<SettingsPage> {
         return;
       }
       try {
+        // 新配对链接（sid+hash）：scheme 升级后原样填入地址栏，链接即完整
+        // 凭据，不走旧 token 提取/剥参（剥掉 sid/hash 会直接配对失败）
+        final pairingUrl = normalizeQrScanToServerUrl(result);
+        if (pairingUrl != null) {
+          final validated = _parseAndValidateServerUrl(pairingUrl);
+          if (validated == null) return;
+          _serverUrlController.text = pairingUrl;
+          _tokenController.text = '';
+          setState(() {});
+          _saveValues();
+          _connect();
+          return;
+        }
         final uri = Uri.parse(result);
         // Extract token from QR code URL query params
         final token = uri.queryParameters['token'] ?? '';
@@ -546,7 +566,12 @@ class _SettingsPageState extends State<SettingsPage> {
                       builder: (context, identitySnap) {
                         final identity = identitySnap.data;
                         final desktops = ConnectionManager.instance.desktops;
-                        final desktop = desktops.isNotEmpty ? desktops.first : null;
+                        // 多配对下优先展示当前在线桌面
+                        final desktop = desktops.isNotEmpty
+                            ? (desktops.any((d) => d.online)
+                                ? desktops.firstWhere((d) => d.online)
+                                : desktops.first)
+                            : null;
                         return Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -733,153 +758,4 @@ class _SettingsPageState extends State<SettingsPage> {
         return Colors.red;
     }
   }
-}
-
-/// Full-screen QR scanner page with scan frame overlay and torch toggle.
-class _QrScannerPage extends StatefulWidget {
-  const _QrScannerPage();
-
-  @override
-  State<_QrScannerPage> createState() => _QrScannerPageState();
-}
-
-class _QrScannerPageState extends State<_QrScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
-  bool _torchOn = false;
-  bool _scanned = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    final size = MediaQuery.of(context).size;
-    final scanSize = size.width * 0.7;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('扫描二维码'),
-        backgroundColor: colors.bgSecondary,
-        foregroundColor: colors.textPrimary,
-        actions: [
-          IconButton(
-            icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off,
-                color: colors.textSecondary,),
-            onPressed: () {
-              setState(() => _torchOn = !_torchOn);
-              _controller.toggleTorch();
-            },
-            tooltip: '手电筒',
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_scanned) return;
-              if (capture.barcodes.isEmpty) return;
-              final barcode = capture.barcodes.first;
-              if (barcode.rawValue != null) {
-                _scanned = true;
-                _controller.stop();
-                Navigator.pop(context, barcode.rawValue);
-              }
-            },
-          ),
-          // Dimmed overlay with transparent scan window
-          ColorFiltered(
-            colorFilter: ColorFilter.mode(
-                Colors.black.withValues(alpha: 0.5), BlendMode.srcOut,),
-            child: Stack(
-              children: [
-                Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black,
-                    backgroundBlendMode: BlendMode.dstOut,
-                  ),
-                ),
-                Center(
-                  child: Container(
-                    width: scanSize,
-                    height: scanSize,
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Scan frame corners
-          Center(
-            child: SizedBox(
-              width: scanSize,
-              height: scanSize,
-              child: CustomPaint(
-                  painter: _ScanFramePainter(color: colors.accent),),
-            ),
-          ),
-          // Hint text
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: size.height * 0.2,
-            child: Text(
-              '将二维码放入框内自动扫描',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: colors.textSecondary, fontSize: 14),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Paints four corner brackets for the scan frame.
-class _ScanFramePainter extends CustomPainter {
-  final Color color;
-  const _ScanFramePainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const cornerLen = 24.0;
-    const strokeWidth = 3.0;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    // Top-left
-    canvas.drawLine(const Offset(0, cornerLen), Offset.zero, paint);
-    canvas.drawLine(Offset.zero, const Offset(cornerLen, 0), paint);
-    // Top-right
-    canvas.drawLine(
-        Offset(size.width - cornerLen, 0), Offset(size.width, 0), paint,);
-    canvas.drawLine(
-        Offset(size.width, 0), Offset(size.width, cornerLen), paint,);
-    // Bottom-left
-    canvas.drawLine(
-        Offset(0, size.height), Offset(0, size.height - cornerLen), paint,);
-    canvas.drawLine(
-        Offset(0, size.height), Offset(cornerLen, size.height), paint,);
-    // Bottom-right
-    canvas.drawLine(Offset(size.width, size.height - cornerLen),
-        Offset(size.width, size.height), paint,);
-    canvas.drawLine(Offset(size.width - cornerLen, size.height),
-        Offset(size.width, size.height), paint,);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ScanFramePainter oldDelegate) =>
-      color != oldDelegate.color;
 }

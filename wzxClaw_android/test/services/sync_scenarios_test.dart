@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/models/chat_message.dart';
 import 'package:wzxclaw_android/models/connection_state.dart';
 import 'package:wzxclaw_android/models/ws_message.dart';
+import 'package:wzxclaw_android/services/phone_session_index.dart';
 
 import '../harness/sync_harness.dart';
 
@@ -56,13 +57,16 @@ void main() {
       addTearDown(h.dispose);
       await h.settle();
 
-      // 1. 手机请求会话列表
-      h.sessionSync.fetchSessions();
+      // 1. 显式拉引擎会话（Option A：仅「从引擎导入」等入口使用）
+      final fetchFuture = h.sessionSync.fetchEngineSessions();
       await h.settle();
 
       // 2. 桌面端返回 1 个会话 s1
       h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
-        'requestId': h.transport.sentMessages.first.message.data['requestId'],
+        'requestId': h.transport.sentMessages
+            .lastWhere((m) => m.message.event == WsEvents.sessionListRequest)
+            .message
+            .data['requestId'],
         'workspacePath': '/ws',
         'workspaceName': 'ws',
         'activeSessionId': 's1',
@@ -76,10 +80,8 @@ void main() {
           },
         ],
       });
-      await h.settle();
-
-      expect(h.sessionSync.sessions.length, 1);
-      expect(h.sessionSync.sessions.first.id, 's1');
+      final engineList = await fetchFuture;
+      expect(engineList.single.id, 's1');
 
       // 3. 清空发送记录，模拟桌面流式 agent 文本
       h.transport.clearSent();
@@ -288,8 +290,8 @@ void main() {
     );
   });
 
-  group('S7: 桌面创建新会话推送 → 列表更新但 chatStore 视图不变', () {
-    test('session:changed 事件触发 fetchSessions，但不切 chatStore', () async {
+  group('S7: 引擎会话变动 → 只刷本地索引，视图不动', () {
+    test('session:changed 不再向引擎拉列表，也不切 chatStore', () async {
       final h = SyncTestHarness.fresh();
       addTearDown(h.dispose);
       await h.settle();
@@ -302,13 +304,13 @@ void main() {
       h.transport.pumpFromDesktop('session:changed', {});
       await h.settle();
 
-      // 手机会请求新的会话列表
+      // Option A：session:changed 只触发本地索引刷新（无网络请求）
       final listReqs = h.transport.sentMessages
           .where((m) => m.message.event == WsEvents.sessionListRequest);
       expect(
         listReqs,
-        isNotEmpty,
-        reason: 'session:changed 应触发 fetchSessions',
+        isEmpty,
+        reason: 'session:changed 不应再触发引擎 session/list',
       );
 
       // 但 chatStore 仍在 s1
@@ -359,7 +361,25 @@ void main() {
       h.transport.setSelectedDesktop('desktop-1');
       await h.settle();
 
-      // 桌面返回工作区信息与会话列表
+      // Option A：会话列表来自手机本地索引——先种入两条会话
+      await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
+        sessionId: 's1',
+        deviceSid: 'desktop-1',
+        title: 'S1',
+        createdAt: 1,
+        updatedAt: 1,
+      ),);
+      await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
+        sessionId: 's2',
+        deviceSid: 'desktop-1',
+        title: 'S2',
+        createdAt: 2,
+        updatedAt: 2,
+      ),);
+      await h.sessionSync.refreshLocalSessions();
+      await h.settle();
+
+      // 桌面端推送工作区信息（仅更新 workspaceInfo 展示）
       h.transport.pumpFromDesktop(WsEvents.sessionWorkspaceInfo, {
         'workspaceName': 'ws',
         'workspacePath': '/ws',
@@ -368,37 +388,9 @@ void main() {
       });
       await h.settle();
 
-      final listReqId = h.transport.sentMessages
-          .lastWhere((m) => m.message.event == WsEvents.sessionListRequest)
-          .message
-          .data['requestId'] as String;
-      h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
-        'requestId': listReqId,
-        'workspacePath': '/ws',
-        'workspaceName': 'ws',
-        'activeSessionId': 's1',
-        'sessions': [
-          {
-            'id': 's1',
-            'title': 'S1',
-            'createdAt': 1,
-            'updatedAt': 1,
-            'messageCount': 1,
-          },
-          {
-            'id': 's2',
-            'title': 'S2',
-            'createdAt': 2,
-            'updatedAt': 2,
-            'messageCount': 1,
-          },
-        ],
-      });
-      await h.settle();
-
       expect(h.sessionSync.workspaceInfo?.workspacePath, '/ws');
       expect(
-          h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']));
+          h.sessionSync.sessions.map((s) => s.id), containsAll(['s1', 's2']),);
 
       // 拉取并进入 s1
       final s1Future =
@@ -427,7 +419,7 @@ void main() {
       await h.settle();
       expect(h.chatStore.currentSessionId, 's1');
       expect(h.chatStore.messages.map((m) => m.content).join('\n'),
-          contains('from-s1'));
+          contains('from-s1'),);
 
       // 切到 s2，确保展示内容来自 s2，不残留 s1
       final s2Future =
@@ -605,7 +597,7 @@ void main() {
       final cached = await h.db.getSessionMessages('s1');
       expect(cached.map((m) => m.role), everyElement(MessageRole.assistant));
       expect(cached.map((m) => m.content).join('\n'),
-          isNot(contains('old tool result')));
+          isNot(contains('old tool result')),);
     });
   });
 
@@ -674,15 +666,27 @@ void main() {
       addTearDown(h.dispose);
       await h.settle();
 
-      h.sessionSync.fetchSessions();
+      // Option A：本地索引种入 s1 作为列表数据源
+      await PhoneSessionIndex.instance.upsert(const PhoneSessionEntry(
+        sessionId: 's1',
+        deviceSid: 'desktop-fake',
+        title: 'S1',
+        createdAt: 1,
+        updatedAt: 1,
+      ),);
+      await h.sessionSync.refreshLocalSessions();
       await h.settle();
-      final requestId = h.transport.sentMessages
-          .firstWhere((m) => m.message.event == WsEvents.sessionListRequest)
-          .message
-          .data['requestId'] as String;
+      h.sessionSync.setActiveSession('s1');
+      await h.chatStore.switchToSession('s1', userInitiated: true);
 
+      // 引擎快照（导入路径消费）应融合 taskStatuses 的运行态
+      final fetchFuture = h.sessionSync.fetchEngineSessions();
+      await h.settle();
       h.transport.pumpFromDesktop(WsEvents.sessionListResponse, {
-        'requestId': requestId,
+        'requestId': h.transport.sentMessages
+            .lastWhere((m) => m.message.event == WsEvents.sessionListRequest)
+            .message
+            .data['requestId'],
         'workspacePath': '/ws',
         'workspaceName': 'ws',
         'activeSessionId': 's1',
@@ -707,17 +711,11 @@ void main() {
           },
         ],
       });
-      await h.settle();
+      final engineList = await fetchFuture;
 
-      expect(h.sessionSync.sessions.single.isRunning, isTrue);
-      expect(h.sessionSync.sessions.single.taskState?.status, 'running');
+      expect(engineList.single.isRunning, isTrue);
+      expect(engineList.single.taskState?.status, 'running');
 
-        final initialLoadRequestId = h.transport.sentMessages
-          .lastWhere((m) => m.message.event == WsEvents.sessionLoadRequest)
-          .message
-          .data['requestId'] as String;
-
-      await h.chatStore.switchToSession('s1', userInitiated: true);
       h.transport.clearSent();
       h.transport.pumpFromDesktop(WsEvents.sessionTaskStatus, {
         'sessionId': 's1',
@@ -729,22 +727,6 @@ void main() {
         'updatedAt': 2000,
         'completedAt': 2000,
         'persistedMessageCount': 2,
-      });
-      await h.settle();
-
-      h.transport.pumpFromDesktop(WsEvents.sessionLoadResponse, {
-        'requestId': initialLoadRequestId,
-        'sessionId': 's1',
-        'messages': [
-          {
-            'role': 'assistant',
-            'content': 'before-complete',
-            'timestamp': 1000,
-          },
-        ],
-        'total': 1,
-        'offset': 0,
-        'hasMore': false,
       });
       await h.settle();
 

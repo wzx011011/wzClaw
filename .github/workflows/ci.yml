@@ -46,10 +46,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
-      - name: Install relay dependencies (forked by E2E harness)
-        working-directory: relay
-        run: npm install --no-audit --no-fund
-
+      # 旧 relay 已迁为桌面端测试夹具（e2e-session/harness/old-relay/），
+      # ws 依赖由 desktop node_modules 提供，无需单独安装 relay 依赖
       - name: Install desktop dependencies
         working-directory: wzxClaw_desktop
         run: npm install --legacy-peer-deps

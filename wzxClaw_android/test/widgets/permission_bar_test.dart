@@ -15,14 +15,14 @@ void main() {
   group('PermissionBar', () {
     testWidgets('renders tool name and input preview', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PermissionBar(
+        const PermissionBar(
           request: PermissionRequest(
             toolCallId: 'tc-1',
             toolName: 'Bash',
             input: {'command': 'ls -la'},
           ),
         ),
-      ));
+      ),);
 
       expect(find.textContaining('Bash'), findsOneWidget);
       expect(find.textContaining('ls -la'), findsOneWidget);
@@ -30,14 +30,14 @@ void main() {
 
     testWidgets('renders approve and deny buttons', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PermissionBar(
+        const PermissionBar(
           request: PermissionRequest(
             toolCallId: 'tc-2',
             toolName: 'FileWrite',
             input: {'path': '/tmp/test.txt'},
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Deny'), findsOneWidget);
       expect(find.text('Approve'), findsOneWidget);
@@ -45,42 +45,42 @@ void main() {
 
     testWidgets('renders "wants to execute" label', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PermissionBar(
+        const PermissionBar(
           request: PermissionRequest(
             toolCallId: 'tc-3',
             toolName: 'Bash',
             input: {},
           ),
         ),
-      ));
+      ),);
 
       expect(find.textContaining('wants to execute'), findsOneWidget);
     });
 
     testWidgets('renders Permission Request header', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PermissionBar(
+        const PermissionBar(
           request: PermissionRequest(
             toolCallId: 'tc-3',
             toolName: 'Bash',
             input: {},
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Permission Request'), findsOneWidget);
     });
 
     testWidgets('handles empty input map without input preview', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        PermissionBar(
+        const PermissionBar(
           request: PermissionRequest(
             toolCallId: 'tc-5',
             toolName: 'Grep',
             input: {},
           ),
         ),
-      ));
+      ),);
 
       expect(find.textContaining('Grep'), findsOneWidget);
       // Empty input should not show the input preview container

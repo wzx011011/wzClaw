@@ -9,6 +9,8 @@
 // ============================================================
 
 import { fork, type ChildProcess } from 'child_process'
+import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import net from 'net'
 
@@ -60,13 +62,12 @@ async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
  */
 export async function startRelay(): Promise<RelayHandle> {
   const port = await pickFreePort()
-  // Path to repo-root relay/server.js. This file lives at
-  //   wzxClaw_desktop/src/main/__tests__/e2e-session/harness/
-  // so we go up six levels to repo root.
-  const serverPath = path.resolve(
-    __dirname,
-    '../../../../../../relay/server.js',
-  )
+  // 旧 relay（token 房间）源码已从 relay/ 根迁入本目录 old-relay/ 夹具
+  // （2026-09-15 清理归档；brain-adapter 测试同款处理）。原路径：
+  //   repo-root relay/server.js（本文件需上溯六级）
+  const serverPath = path.resolve(__dirname, './old-relay/server.js')
+  // 房间离线队列持久化目录重定向到临时目录：默认会写到夹具自身目录旁
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wzxclaw-e2e-relay-'))
 
   const proc = fork(serverPath, [], {
     env: {
@@ -75,6 +76,7 @@ export async function startRelay(): Promise<RelayHandle> {
       // Force dev-mode auth: any non-empty token accepted
       AUTH_TOKEN: '',
       RELAY_ALLOW_DEV_AUTH: '1',
+      RELAY_DATA_DIR: dataDir,
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -102,6 +104,8 @@ export async function startRelay(): Promise<RelayHandle> {
       setTimeout(() => {
         if (proc.exitCode === null) proc.kill('SIGKILL')
       }, 2000)
+    }).then(() => {
+      fs.rmSync(dataDir, { recursive: true, force: true })
     })
   }
 

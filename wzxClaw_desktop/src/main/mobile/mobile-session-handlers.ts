@@ -7,6 +7,7 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type { MobileRelayContext, MobileRelayMessage } from './mobile-relay-context'
+import { brainEngineEnabled, getBrainBridge } from './mobile-app-server-bridge'
 
 /**
  * 处理会话相关的移动端消息。
@@ -17,6 +18,12 @@ export async function handleSessionMessage(
   ctx: MobileRelayContext
 ): Promise<boolean> {
   const { broadcastToMobile } = ctx
+
+  // -- M3 大脑模式：会话路径由 app-server 引擎供数（env 开关，默认关） --
+  if (brainEngineEnabled()) {
+    const bridge = getBrainBridge(ctx)
+    if (bridge && (await bridge.handleMessage(msg.event, msg.data))) return true
+  }
 
   // -- Session sync: list sessions --
   if (msg.event === 'session:list:request') {

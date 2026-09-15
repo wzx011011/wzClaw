@@ -93,7 +93,7 @@ void main() {
     });
 
     test('ToolCallInfo JSON matches protocol wire format', () {
-      final info = ToolCallInfo(
+      const info = ToolCallInfo(
         toolCallId: 'tc-100',
         toolName: 'file_read',
         inputSummary: '/src/main.ts',

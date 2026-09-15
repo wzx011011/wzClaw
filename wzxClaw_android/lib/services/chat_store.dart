@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
+import '../models/goal_snapshot.dart' show SubagentThread;
 import '../models/session_task_state.dart';
 import '../models/ws_message.dart';
 import 'app_restore_state.dart';
@@ -13,33 +14,14 @@ import 'chat_database.dart';
 import 'connection_manager.dart';
 import 'ws_transport.dart';
 
-/// Permission request from the desktop agent.
-class PermissionRequest {
-  final String toolCallId;
-  final String toolName;
-  final Map<String, dynamic> input;
-
-  const PermissionRequest({
-    required this.toolCallId,
-    required this.toolName,
-    required this.input,
-  });
-}
-
-/// AskUserQuestion request from the desktop agent.
-class AskUserQuestion {
-  final String questionId;
-  final String question;
-  final List<Map<String, String>> options; // [{label, description}]
-  final bool multiSelect;
-
-  const AskUserQuestion({
-    required this.questionId,
-    required this.question,
-    required this.options,
-    this.multiSelect = false,
-  });
-}
+// PermissionRequest / AskUserQuestion 已迁移至 zcode 层
+// （zcode/zcode_reverse_models.dart）。此处 import 供本文件内部使用 +
+// re-export 过渡：现有 `import ...chat_store.dart show PermissionRequest,
+// AskUserQuestion` 继续编译；旧栈退役（chat_store 删除）时一并移除。
+import '../zcode/zcode_notifier.dart';
+import '../zcode/zcode_reverse_models.dart';
+export '../zcode/zcode_reverse_models.dart'
+    show PermissionRequest, AskUserQuestion;
 
 class ChatStore {
   static ChatStore _instance = ChatStore._();
@@ -103,8 +85,7 @@ class ChatStore {
   List<ChatMessage> _cachedDisplayMessages = const [];
   int _cachedMessagesLength = -1;
   StreamSubscription<WsMessage>? _wsSubscription;
-  String? _currentSessionId;
-  bool _isBrowsingHistory = false; // true when viewing a historical session
+    bool _isBrowsingHistory = false; // true when viewing a historical session
   bool _isWaitingForResponse = false;
   String? _lastErrorText;
   DateTime? _lastErrorTime;
@@ -154,14 +135,46 @@ class ChatStore {
   bool get isStreaming => _isStreaming;
   bool get isWaitingForResponse => _isWaitingForResponse;
   SessionTaskState? get currentTaskState =>
-      _currentSessionId == null ? null : _taskStates[_currentSessionId];
-  String? get currentSessionId => _currentSessionId;
-  set currentSessionId(String? id) => _currentSessionId = id;
+      currentSessionId == null ? null : _taskStates[currentSessionId];
+  /// 当前会话 id（旧 UI 直接读写）
+  String? currentSessionId;
   bool get isBrowsingHistory => _isBrowsingHistory;
   bool get userManuallySwitched => _userManuallySwitched;
 
+  /// 统一可见性过滤：系统注入提醒 + 空助手占位行
+  static bool _renderable(ChatMessage m) =>
+      !m.isSystemInjected && !m.isEmptyAssistant;
+
+  /// 历史加载的助手消息可能内嵌 toolCalls（引擎 JSONL 单行同时含 tool part），
+  /// 而实时路径是独立 tool 消息——展开成同构消息序列，复用 ToolCallGroup 折叠渲染；
+  /// 纯工具行（无正文）展开后不再保留，避免只剩 token 统计的空气泡。
+  static List<ChatMessage> _expandEmbeddedToolCalls(List<ChatMessage> messages) {
+    final out = <ChatMessage>[];
+    for (final m in messages) {
+      final calls = m.toolCalls;
+      if (m.role == MessageRole.assistant && calls != null && calls.isNotEmpty) {
+        for (final tc in calls) {
+          out.add(ChatMessage(
+            role: MessageRole.tool,
+            content: tc.toolName,
+            toolName: tc.toolName,
+            toolCallId: tc.toolCallId,
+            toolInput: tc.inputSummary,
+            toolOutput: tc.outputSummary,
+            toolStatus: tc.isError ? ToolCallStatus.error : tc.status,
+            createdAt: m.createdAt,
+          ),);
+        }
+        if (m.content.trim().isNotEmpty) out.add(m);
+      } else {
+        out.add(m);
+      }
+    }
+    return out;
+  }
+
   List<ChatMessage> get messages =>
-      List.unmodifiable(_messages.where((m) => !m.isSystemInjected));
+      List.unmodifiable(_messages.where((m) => _renderable(m)));
 
   List<ChatMessage> get displayMessages {
     final hasStreaming = _streamingMessage != null;
@@ -174,12 +187,12 @@ class ChatStore {
     _cachedMessagesLength = msgLen;
     if (hasStreaming) {
       _cachedDisplayMessages = [
-        ..._messages.where((m) => !m.isSystemInjected),
-        if (!_streamingMessage!.isSystemInjected) _streamingMessage!,
+        ..._messages.where((m) => _renderable(m)),
+        if (_renderable(_streamingMessage!)) _streamingMessage!,
       ];
     } else {
       _cachedDisplayMessages = List.unmodifiable(
-        _messages.where((m) => !m.isSystemInjected),
+        _messages.where((m) => _renderable(m)),
       );
     }
     return _cachedDisplayMessages;
@@ -291,6 +304,7 @@ class ChatStore {
         content: content,
         createdAt: DateTime.now(),
         isStreaming: true,
+        agent: _agentOf(data),
       );
       _isStreaming = true;
       _notifyListeners();
@@ -337,13 +351,28 @@ class ChatStore {
             toolCallId: toolCallId,
             toolInput: inputSummary,
             createdAt: DateTime.now(),
-          ));
+          ),);
       return;
     }
 
     // Finalize any in-progress streaming text
     _finalizeStreamingMessage();
     _setWaiting(false);
+
+    // 同一 toolCallId 可能推多次（tool_input_start 建卡 → tool_call 补全
+    // input），按 id upsert：已有卡片只补全摘要，避免重复气泡
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      if (_messages[i].role == MessageRole.tool &&
+          _messages[i].toolCallId == toolCallId) {
+        _messages[i] = _messages[i].copyWith(
+          toolName: toolName,
+          toolInput: inputSummary ?? _messages[i].toolInput,
+        );
+        ChatDatabase.instance.updateMessage(_messages[i]);
+        _notifyListeners();
+        return;
+      }
+    }
 
     final toolMsg = ChatMessage(
       role: MessageRole.tool,
@@ -353,11 +382,12 @@ class ChatStore {
       toolCallId: toolCallId,
       toolInput: inputSummary,
       createdAt: DateTime.now(),
+      agent: _agentOf(data),
     );
     _messages.add(toolMsg);
     ChatDatabase.instance.insertMessage(
       toolMsg,
-      sessionId: _currentSessionId,
+      sessionId: currentSessionId,
       desktopId: _transport.selectedDesktopId,
     );
     _notifyListeners();
@@ -406,16 +436,16 @@ class ChatStore {
     if (data is! Map<String, dynamic>) return;
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null) return;
-    // 串台防护：仅在用户未主动切换到其他会话时才同步 _currentSessionId。
+    // 串台防护：仅在用户未主动切换到其他会话时才同步 currentSessionId。
     // 若强制覆盖，后续属于桌面会话 A 的流式事件会通过 _isWrongSession 检查，
     // 错误地被追加到手机正在显示的会话 B 的消息列表中。
     if (!_userManuallySwitched) {
-      _currentSessionId = sessionId;
+      currentSessionId = sessionId;
     }
     // 仅在事件属于当前会话时才更新 _isStreaming。
     // 若来自后台会话 B（用户正在看 A），_isStreaming 不应被污染，
     // 否则会话 A 的界面会错误地显示 loading spinner。
-    if (sessionId == _currentSessionId) {
+    if (sessionId == currentSessionId) {
       _isStreaming = true;
       _streamingController.add(true);
     } else {
@@ -432,7 +462,7 @@ class ChatStore {
     if (state.sessionId.isEmpty) return;
     _taskStates[state.sessionId] = state;
 
-    if (state.sessionId == _currentSessionId) {
+    if (state.sessionId == currentSessionId) {
       final active = state.isActive;
       _isStreaming = active;
       _streamingController.add(active);
@@ -463,14 +493,16 @@ class ChatStore {
         role: MessageRole.user,
         content: content,
         createdAt: DateTime.now(),
-      ));
+      ),);
       state.isWaiting = true;
       return;
     }
     // 若最后一条消息已经是相同内容的用户气泡（手机会话加载时可能已存在），则跳过
     if (_messages.isNotEmpty &&
         _messages.last.role == MessageRole.user &&
-        _messages.last.content == content) return;
+        _messages.last.content == content) {
+      return;
+    }
     final msg = ChatMessage(
       role: MessageRole.user,
       content: content,
@@ -483,6 +515,30 @@ class ChatStore {
 
   // ── stream:agent:done ──────────────────────────────────────────────
   void _handleAgentDone(dynamic data) {
+    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+    // 任务完成本地通知：主会话与后台会话的回合结束都提醒，
+    // 前台守卫（用户正看着界面时跳过）在 notifier 内部处理
+    final usageForNotify = map['usage'] as Map<String, dynamic>?;
+    int? tokens;
+    if (usageForNotify != null) {
+      final total = usageForNotify['totalTokens'];
+      final input = usageForNotify['inputTokens'];
+      final output = usageForNotify['outputTokens'];
+      tokens = total is num
+          ? total.toInt()
+          : (input is num && output is num)
+              ? input.toInt() + output.toInt()
+              : null;
+    }
+    final notifySessionId = map['sessionId']?.toString() ?? '';
+    final notifyStatus = map['status']?.toString() ?? '';
+    ZcodeNotifier.instance.showTaskDone(
+      status: notifyStatus.isEmpty ? 'success' : notifyStatus,
+      tokens: tokens,
+      sessionId:
+          notifySessionId.isNotEmpty ? notifySessionId : currentSessionId,
+    );
+
     final inactiveSessionId = _inactiveSessionId(data);
     if (inactiveSessionId != null) {
       _finalizeInactiveStreamingMessage(inactiveSessionId);
@@ -499,7 +555,9 @@ class ChatStore {
     if (data is Map<String, dynamic>) {
       final usageMap = data['usage'] as Map<String, dynamic>?;
       final modelName = data['model'] as String?;
-      if ((usageMap != null || modelName != null) && _messages.isNotEmpty) {
+      final durationMs = data['durationMs'] is num ? (data['durationMs'] as num).toInt() : null;
+      if ((usageMap != null || modelName != null || durationMs != null) &&
+          _messages.isNotEmpty) {
         TokenUsage? usage;
         if (usageMap != null) {
           usage = TokenUsage(
@@ -507,12 +565,13 @@ class ChatStore {
             outputTokens: (usageMap['outputTokens'] as num?)?.toInt() ?? 0,
           );
         }
-        // Attach usage + model to the last assistant message
+        // Attach usage + model + duration to the last assistant message
         for (int i = _messages.length - 1; i >= 0; i--) {
           if (_messages[i].role == MessageRole.assistant) {
             _messages[i] = _messages[i].copyWith(
               usage: usage,
               model: modelName,
+              durationMs: durationMs,
             );
             ChatDatabase.instance.updateMessage(_messages[i]);
             break;
@@ -570,7 +629,7 @@ class ChatStore {
       _messages.add(completed);
       ChatDatabase.instance.insertMessage(
         completed,
-        sessionId: _currentSessionId,
+        sessionId: currentSessionId,
         desktopId: _transport.selectedDesktopId,
       );
       _streamingMessage = null;
@@ -604,7 +663,7 @@ class ChatStore {
     _messages.add(msg);
     ChatDatabase.instance.insertMessage(
       msg,
-      sessionId: _currentSessionId,
+      sessionId: currentSessionId,
       desktopId: _transport.selectedDesktopId,
     );
     _notifyListeners();
@@ -647,7 +706,7 @@ class ChatStore {
 
   /// 轻量级同步 sessionId（不重置消息列表），用于 session:active 事件。
   void syncSessionId(String? sessionId) {
-    _currentSessionId = sessionId;
+    currentSessionId = sessionId;
   }
 
   /// Send a permission response back to the desktop.
@@ -781,7 +840,7 @@ class ChatStore {
     _transport.send(WsMessage(
       event: WsEvents.permissionGetModeRequest,
       data: {'requestId': '${DateTime.now().millisecondsSinceEpoch}'},
-    ));
+    ),);
   }
 
   /// Set permission mode on desktop.
@@ -792,7 +851,7 @@ class ChatStore {
         'requestId': '${DateTime.now().millisecondsSinceEpoch}',
         'mode': mode,
       },
-    ));
+    ),);
     _permissionMode = mode;
     _notifyListeners();
   }
@@ -812,11 +871,11 @@ class ChatStore {
   /// Pass null to return to the live/default chat.
   /// [userInitiated]: true 当且仅当用户从 UI 主动点击了会话，false 表示系统自动切换。
   Future<void> switchToSession(String? sessionId,
-      {bool userInitiated = false}) async {
+      {bool userInitiated = false,}) async {
     // 用户主动切换时立即更新标志（即使 same-session 提前返回也需生效）
     if (userInitiated) _userManuallySwitched = true;
 
-    if (sessionId == _currentSessionId) return;
+    if (sessionId == currentSessionId) return;
 
     // 切走运行中的会话时不要落库未完成 assistant；先暂存，之后切回来继续显示。
     if (_isStreaming) {
@@ -844,7 +903,7 @@ class ChatStore {
     }
     _thinkingController.add('');
 
-    _currentSessionId = sessionId;
+    currentSessionId = sessionId;
     _messages.clear();
     _persistSessionView(sessionId);
 
@@ -861,7 +920,8 @@ class ChatStore {
         sessionId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => !m.isSystemInjected));
+      _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
       _restoreLiveSessionState(sessionId);
       _notifyListeners();
     } else {
@@ -870,7 +930,8 @@ class ChatStore {
         desktopId: _transport.selectedDesktopId,
         limit: 100,
       );
-      _messages.addAll(messages.where((m) => !m.isSystemInjected));
+      _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
     }
     _notifyListeners();
   }
@@ -884,7 +945,7 @@ class ChatStore {
   /// 旧请求的响应如果 sessionId 不匹配当前会话，直接忽略。
   void loadFetchedMessages(String sessionId, List<ChatMessage> messages) {
     // 丢弃过期响应：用户已切换到其他会话
-    if (sessionId != _currentSessionId) return;
+    if (sessionId != currentSessionId) return;
     if (messages.isEmpty) {
       _clearGeneration++;
       _messages.clear();
@@ -894,8 +955,8 @@ class ChatStore {
     }
     // 用户在清空后已发过消息 → 不覆盖
     if (_lastUserMsgGen > _clearGeneration) return;
-    final visibleMessages =
-        messages.where((m) => !m.isSystemInjected).toList(growable: false);
+    final visibleMessages = _expandEmbeddedToolCalls(
+        messages.where((m) => _renderable(m)).toList(growable: false),);
     _messages.clear();
     _messages.addAll(visibleMessages);
     _restoreLiveSessionState(sessionId);
@@ -906,7 +967,7 @@ class ChatStore {
   /// Reset desktop-scoped chat state when the selected desktop/workspace is cleared.
   void resetSessionScope() {
     _clearGeneration++;
-    _currentSessionId = null;
+    currentSessionId = null;
     _isBrowsingHistory = false;
     _setWaiting(false);
     _isStreaming = false;
@@ -951,7 +1012,7 @@ class ChatStore {
     _messages.add(msg);
     await ChatDatabase.instance.insertMessage(
       msg,
-      sessionId: _currentSessionId,
+      sessionId: currentSessionId,
       desktopId: _transport.selectedDesktopId,
     );
     _pendingMessageIds[messageId] = true;
@@ -965,7 +1026,7 @@ class ChatStore {
         data: {
           'content': text,
           'messageId': messageId,
-          if (_currentSessionId != null) 'sessionId': _currentSessionId,
+          if (currentSessionId != null) 'sessionId': currentSessionId,
         },
       ),
       priority: 10,
@@ -977,8 +1038,8 @@ class ChatStore {
   void stopGeneration() {
     _transport.send(WsMessage(
       event: WsEvents.commandStop,
-      data: {if (_currentSessionId != null) 'sessionId': _currentSessionId},
-    ));
+      data: {if (currentSessionId != null) 'sessionId': currentSessionId},
+    ),);
     _finalizeStreamingMessage();
     _isStreaming = false;
     _setWaiting(false);
@@ -996,14 +1057,14 @@ class ChatStore {
 
   /// 清空当前会话的消息（仅本地，桌面端由 WS 事件单独通知）
   Future<void> clearCurrentSessionMessages() async {
-    if (_currentSessionId != null) {
-      await ChatDatabase.instance.clearSessionMessages(_currentSessionId!);
+    if (currentSessionId != null) {
+      await ChatDatabase.instance.clearSessionMessages(currentSessionId!);
     }
     _messages.clear();
     _streamingMessage = null;
     _isStreaming = false;
-    if (_currentSessionId != null) {
-      _liveSessions.remove(_currentSessionId);
+    if (currentSessionId != null) {
+      _liveSessions.remove(currentSessionId);
     }
     _notifyListeners();
   }
@@ -1014,16 +1075,17 @@ class ChatStore {
       desktopId: _transport.selectedDesktopId,
       limit: 100,
     );
-    _messages.addAll(messages.where((m) => !m.isSystemInjected));
+    _messages.addAll(
+        _expandEmbeddedToolCalls(messages.where((m) => _renderable(m)).toList()),);
     _cleanupStaleTools();
     _notifyListeners();
   }
 
   Future<void> loadMoreMessages() async {
     List<ChatMessage> older;
-    if (_currentSessionId != null) {
+    if (currentSessionId != null) {
       older = await ChatDatabase.instance.getSessionMessages(
-        _currentSessionId!,
+        currentSessionId!,
         limit: 100,
         offset: _messages.length,
       );
@@ -1035,11 +1097,21 @@ class ChatStore {
       );
     }
     if (older.isEmpty) return;
-    _messages.insertAll(0, older.where((m) => !m.isSystemInjected));
+    _messages.insertAll(
+        0, _expandEmbeddedToolCalls(older.where((m) => _renderable(m)).toList()),);
     _notifyListeners();
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
+
+  /// 事件数据中的子智能体归属（翻译层透传引擎 payload.agent）。
+  /// 主 agent/缺失 → null（主时间线）。实测当前引擎工具/文本事件
+  /// 多数不带该字段，归属以回合结束后的权威刷新为准。
+  static String? _agentOf(dynamic data) {
+    final a = data is Map ? data['agent'] : null;
+    if (a is! String || a.isEmpty || a == SubagentThread.mainAgent) return null;
+    return a;
+  }
 
   void _setWaiting(bool value) {
     if (_isWaitingForResponse == value) return;
@@ -1126,7 +1198,7 @@ class ChatStore {
       _messages.add(completed);
       ChatDatabase.instance.insertMessage(
         completed,
-        sessionId: _currentSessionId,
+        sessionId: currentSessionId,
         desktopId: _transport.selectedDesktopId,
       );
       _streamingMessage = null;
@@ -1208,14 +1280,14 @@ class ChatStore {
         content: state.streamingMessage!.content +
             (errorText.isNotEmpty ? '\n\n⚠ Error: $errorText' : ''),
         isStreaming: false,
-      ));
+      ),);
       state.streamingMessage = null;
     } else {
       _liveStateFor(sessionId).messages.add(ChatMessage(
         role: MessageRole.assistant,
         content: '⚠ Error: $errorText',
         createdAt: DateTime.now(),
-      ));
+      ),);
     }
     _liveStateFor(sessionId).isStreaming = false;
     _liveStateFor(sessionId).isWaiting = false;
@@ -1230,11 +1302,11 @@ class ChatStore {
       );
       _textBuffer.clear();
     }
-    if (_currentSessionId == null || _streamingMessage == null) {
+    if (currentSessionId == null || _streamingMessage == null) {
       _finalizeStreamingMessage();
       return;
     }
-    final state = _liveStateFor(_currentSessionId!);
+    final state = _liveStateFor(currentSessionId!);
     state.streamingMessage = _streamingMessage;
     state.isStreaming = true;
     state.isWaiting = _isWaitingForResponse;
@@ -1274,15 +1346,15 @@ class ChatStore {
   bool _isWrongSession(dynamic data) {
     if (data is! Map) return false;
     final incoming = data['sessionId'] as String?;
-    if (incoming == null || _currentSessionId == null) return false;
-    return incoming != _currentSessionId;
+    if (incoming == null || currentSessionId == null) return false;
+    return incoming != currentSessionId;
   }
 
   String? _inactiveSessionId(dynamic data) {
     if (data is! Map) return null;
     final incoming = data['sessionId'] as String?;
-    if (incoming == null || _currentSessionId == null) return null;
-    return incoming == _currentSessionId ? null : incoming;
+    if (incoming == null || currentSessionId == null) return null;
+    return incoming == currentSessionId ? null : incoming;
   }
 
   /// Build a human-readable one-line summary of tool input.
@@ -1344,7 +1416,7 @@ class ChatStore {
     unawaited(AppRestoreState.setLastViewedSession(
       desktopId: desktopId,
       sessionId: sessionId,
-    ));
+    ),);
   }
 
   void dispose() {

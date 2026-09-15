@@ -87,7 +87,7 @@ void main() {
             role: MessageRole.user,
             content: 'hack',
             createdAt: DateTime.now(),
-          )), throwsA(anything));
+          ),), throwsA(anything),);
     });
 
     test('messages is a List<ChatMessage>', () {
@@ -107,7 +107,7 @@ void main() {
       final first = store.displayMessages;
       final second = store.displayMessages;
       expect(identical(first, second), isTrue,
-          reason: 'Cached list should be the same object when nothing changed');
+          reason: 'Cached list should be the same object when nothing changed',);
     });
 
     test('displayMessages length matches messages length when not streaming', () {
@@ -152,6 +152,65 @@ void main() {
       expect(store.messages.last.content, equals('Welcome back!'));
     });
 
+    test('历史内嵌 toolCalls 的助手行展开为独立 tool 消息（与实时路径同构）', () {
+      final store = ChatStore.instance;
+      store.loadFetchedMessages('test-session', []);
+
+      final now = DateTime.now();
+      final fetched = [
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: '',
+          toolCalls: [
+            const ToolCallInfo(
+              toolCallId: 'c1',
+              toolName: 'Bash',
+              inputSummary: 'echo hi',
+              status: ToolCallStatus.done,
+            ),
+            const ToolCallInfo(
+              toolCallId: 'c2',
+              toolName: 'Read',
+              inputSummary: '/tmp/a.txt',
+              status: ToolCallStatus.error,
+              isError: true,
+            ),
+          ],
+          createdAt: now,
+        ),
+        ChatMessage(
+          role: MessageRole.assistant,
+          content: '执行完成，共两步。',
+          toolCalls: [
+            const ToolCallInfo(
+              toolCallId: 'c3',
+              toolName: 'Grep',
+              inputSummary: 'pattern',
+              status: ToolCallStatus.done,
+            ),
+          ],
+          createdAt: now,
+        ),
+      ];
+      store.loadFetchedMessages('test-session', fetched);
+
+      final msgs = store.messages.toList();
+      // 纯工具行展开为 2 条 tool 消息；带正文的行展开为 1 条 tool + 1 条正文 assistant
+      expect(msgs.length, equals(4));
+      expect(msgs[0].role, equals(MessageRole.tool));
+      expect(msgs[0].toolName, equals('Bash'));
+      expect(msgs[0].toolCallId, equals('c1'));
+      expect(msgs[0].toolInput, equals('echo hi'));
+      expect(msgs[0].toolStatus, equals(ToolCallStatus.done));
+      expect(msgs[1].role, equals(MessageRole.tool));
+      expect(msgs[1].toolName, equals('Read'));
+      expect(msgs[1].toolStatus, equals(ToolCallStatus.error));
+      expect(msgs[2].role, equals(MessageRole.tool));
+      expect(msgs[2].toolName, equals('Grep'));
+      expect(msgs[3].role, equals(MessageRole.assistant));
+      expect(msgs[3].content, equals('执行完成，共两步。'));
+    });
+
     test('clear guard: non-empty messages rejected after clear + sendMessage + another clear', () async {
       // This tests the generation-based guard indirectly.
       // Pattern: clear -> sendMessage (sets _lastUserMsgGen = _clearGeneration) ->
@@ -188,7 +247,7 @@ void main() {
 
       expect(store.messages, isNotEmpty);
       expect(store.messages.any((m) => m.content == 'Fresh response after clear'),
-          isTrue);
+          isTrue,);
     });
 
     test('clear guard: messages rejected when user sent message without intermediate clear', () async {
@@ -255,7 +314,7 @@ void main() {
       final store = ChatStore.instance;
       final todos = store.todos;
       expect(() => (todos as List).add({'content': 'hack', 'status': 'pending', 'activeForm': ''}),
-          throwsA(anything));
+          throwsA(anything),);
     });
   });
 
@@ -343,7 +402,7 @@ void main() {
       final store = ChatStore.instance;
       store.respondToAskUser('q-1', ['Option A']);
       store.respondToAskUser('q-2', ['Option A', 'Option B'],
-          customText: 'Custom input');
+          customText: 'Custom input',);
     });
   });
 
@@ -407,7 +466,7 @@ void main() {
       }
 
       expect(store.userManuallySwitched, isFalse,
-          reason: 'System-initiated switch must not set userManuallySwitched');
+          reason: 'System-initiated switch must not set userManuallySwitched',);
     });
 
     test('becomes true when switchToSession called with userInitiated: true', () async {
@@ -421,7 +480,7 @@ void main() {
       }
 
       expect(store.userManuallySwitched, isTrue,
-          reason: 'User-initiated switch must set userManuallySwitched');
+          reason: 'User-initiated switch must set userManuallySwitched',);
     });
 
     test('reset to false after resetSessionScope', () async {
@@ -452,7 +511,7 @@ void main() {
         await store.switchToSession('sys-session-B');
       } catch (_) {}
       expect(store.userManuallySwitched, isFalse,
-          reason: 'System switch must clear userManuallySwitched so desktop can lead again');
+          reason: 'System switch must clear userManuallySwitched so desktop can lead again',);
     });
   });
 

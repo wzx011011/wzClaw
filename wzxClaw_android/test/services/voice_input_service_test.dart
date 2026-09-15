@@ -75,7 +75,7 @@ void main() {
           VoiceError.noSpeechDetected,
           VoiceError.notAvailable,
           VoiceError.permissionDenied,
-        ]));
+        ]),);
       });
     });
 

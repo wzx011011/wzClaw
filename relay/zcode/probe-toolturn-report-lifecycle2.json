@@ -1,0 +1,376 @@
+{
+  "tmpCwd": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-dTxU2x",
+  "mode": "none",
+  "create": {
+    "ok": true,
+    "session": {
+      "createdAt": 1789349257565,
+      "mode": "build",
+      "model": {
+        "modelId": "glm-5.3",
+        "providerId": "builtin:bigmodel-coding-plan"
+      },
+      "traceId": "17a6f7d4-d52a-434a-8d4b-7cef42886f84",
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "sessionKind": "interactive",
+      "status": "idle",
+      "target": null,
+      "title": "",
+      "updatedAt": 1789349257565,
+      "workspace": {
+        "workspacePath": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-dTxU2x",
+        "workspaceKey": "C:_Users_67376_AppData_Local_Temp_zcode-probe-toolturn-dTxU2x"
+      }
+    }
+  },
+  "subscribe": {
+    "ok": true,
+    "eventSeq": 0
+  },
+  "experiments": [
+    {
+      "label": "result-valid-deny",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "done": true,
+      "stoppedForSafety": false,
+      "sendResp": true,
+      "sawReverseRequest": false,
+      "permissionEvents": [],
+      "turnCompletedPayload": "{\"response\":\"命令已执行，输出为 `lifecycle-probe`（另外代理提示 127.0.0.1:7897 已开启）。\",\"tokenCount\":27721,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":2,\"inputTokens\":27664,\"outputTokens\":57,\"totalTokens\":27721,\"cacheReadTokens\":13952,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":1,\"historyRoundCount\":2,\"duration\":47052,\"resultType\":\"success\",\"cacheStats\":",
+      "stderrNew": [
+        "ProviderBusinessError: [1302][您的账户已达到速率限制，请您控制请求频率][202609140927415c0eb96381104b4e]",
+        "    at detectProviderBusinessError (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1738:9096)",
+        "    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)",
+        "    at async C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1738:8593",
+        "    at async C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1729:21405",
+        "    at async postToApi (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1684:22163)",
+        "    at async Sfo.doStream (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1685:50884)",
+        "    at async fn (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1769:15441)",
+        "    at async C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1764:964",
+        "    at async _retryWithExponentialBackoff (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1764:5140)",
+        "    at async streamStep (C:\\Users\\67376\\AppData\\Local\\Programs\\ZCode\\resources\\glm\\zcode.cjs:1769:14565) {",
+        "  code: 'PROVIDER_BUSINESS_ERROR',",
+        "  isProviderBusinessError: true,",
+        "  providerCode: '1302',",
+        "  providerId: 'builtin:bigmodel-coding-plan',",
+        "  providerKind: 'anthropic',",
+        "  providerMessage: '[1302][您的账户已达到速率限制，请您控制请求频率][202609140927415c0eb96381104b4e]',",
+        "  providerRequestId: '202609140927415c0eb96381104b4e',",
+        "  responseBodySummary: {",
+        "    keys: [ 'type', 'error', 'request_id' ],"
+      ],
+      "eventsThisTurn": [
+        "session.titleUpdated",
+        "turn.started",
+        "session.updated",
+        "model.streaming",
+        "tool.updated",
+        "streamRecovery.updated",
+        "turn.completed"
+      ]
+    }
+  ],
+  "reverseRequests": [],
+  "eventByType": {
+    "session.titleUpdated": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"18ba76c0-6fcb-4e32-bec3-8fdb72181996\",\"payload\":{\"previousTitle\":\"\",\"source\":\"first_input\",\"title\":\"请使用 Bash（Shell）工具执行命令：echo lifecycle-probe。必须调用工具执行。\"},\"seq\":1,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349259248,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"session.titleUpdated\"}}"
+    },
+    "turn.started": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"e3c962ce-8540-4260-b7f2-d477c906c001\",\"payload\":{\"turnNumber\":0,\"input\":\"请使用 Bash（Shell）工具执行命令：echo lifecycle-probe。必须调用工具执行。\",\"messageId\":\"msg_mu0kcksz_6d8df718-06a8-458f-ac9f-e87e453e6e04\",\"foregroundExecutionId\":\"runtime_command_1\",\"queryId\":\"query_6269cb17-00a5-469e-b98d-0e4779abf37a\"},\"seq\":2,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349259347,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"turn.started\"}}"
+    },
+    "session.updated": {
+      "count": 20,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"0a8b12c0-6c64-4fd9-801d-d4b20ea8150f\",\"payload\":{\"messageCount\":6,\"model\":\"builtin:bigmodel-coding-plan/glm-5.3\",\"modelRef\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\"},\"toolCount\":24,\"iteration\":0},\"seq\":3,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349260849,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"session.updated\"}}"
+    },
+    "model.streaming": {
+      "count": 7,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"436415dc-10af-4fc3-801a-4621b67e56e9\",\"payload\":{\"assistantMessageId\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da\",\"delta\":\"\",\"done\":false,\"kind\":\"tool_input_start\",\"toolCallId\":\"call_45f57fb226c74c608a263a50\",\"toolName\":\"Bash\"},\"seq\":18,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349290190,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"model.streaming\"}}"
+    },
+    "tool.updated": {
+      "count": 6,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"58ef1e96-35f9-4fe5-8d49-5529389508c3\",\"payload\":{\"toolCallId\":\"call_45f57fb226c74c608a263a50\",\"assistantMessageId\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da\",\"toolName\":\"Bash\",\"dependencies\":[],\"parallelGroupIndex\":0,\"canRunParallel\":false,\"schedule\":{\"parallelGroups\":[[\"call_45f57fb226c74c608a263a50\"]],\"executionOrder\":[\"call_45f57fb226c74c608a263a50\"]},\"kind\":\"scheduled\",\"inputByteLength\":71,\"inputOmitted\":true,\"inputRef\":\"model_stream\"},\"seq\":24,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349290219,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"tool.updated\"}}"
+    },
+    "streamRecovery.updated": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"672631aa-9dc0-4113-8b76-81763618aaae\",\"payload\":{\"anchorId\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da:call_45f57fb226c74c608a263a50:tool-result\",\"attemptId\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da:end-of-stream\",\"kind\":\"tool_result\",\"assistantMessageId\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da\",\"toolCallId\":\"call_45f57fb226c74c608a263a50\",\"toolName\":\"Bash\",\"resultPartId\":\"part_mu0kd8mc_ff97e35c-979c-4343-8b84-e6f38de4fdaa\",\"committedToolCallIds\":[\"call_45f57fb226c74c608a263a50\"],\"committedAt\":\"2026-09-14T01:28:23.907Z\"},\"seq\":30,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349303930,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"streamRecovery.updated\"}}"
+    },
+    "turn.completed": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"ff7fbc58-1998-4bb0-85ff-eef751687cdf\",\"payload\":{\"response\":\"命令已执行，输出为 `lifecycle-probe`（另外代理提示 127.0.0.1:7897 已开启）。\",\"tokenCount\":27721,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":2,\"inputTokens\":27664,\"outputTokens\":57,\"totalTokens\":27721,\"cacheReadTokens\":13952,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":1,\"historyRoundCount\":2,\"duration\":47052,\"resultType\":\"success\",\"cacheStats\":{\"totalMessages\":9,\"cachedMessages\":8,\"lastCacheHit\":true,\"cacheReadTokens\":13760}},\"seq\":38,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"timestamp\":1789349305813,\"traceId\":\"17a6f7d4-d52a-434a-8d4b-7cef42886f84\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"type\":\"turn.completed\"}}"
+    }
+  },
+  "telemetryByKind": {
+    "turn.started": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"e3c962ce-8540-4260-b7f2-d477c906c001\",\"eventSeq\":2,\"occurredAt\":1789349259347,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"turn.started\"}}"
+    },
+    "model.request.status": {
+      "count": 27,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"e491d564-6071-4547-9ec1-86f5cda4cd84\",\"eventSeq\":4,\"occurredAt\":1789349259473,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"model.request.status\",\"requestId\":\"5b03fee2-b25c-4ce5-9d01-17bef4a3f304\",\"status\":\"model_request_started\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"transport\":\"http\",\"querySource\":\"session_title\",\"queryId\":\"query_6269cb17-00a5-469e-b98d-0e4779abf37a\",\"a"
+    },
+    "usage.delta": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"e4c4eeca-894a-4a06-b790-f682e483b4f4\",\"eventSeq\":38,\"occurredAt\":1789349290201,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"usage.delta\",\"requestId\":\"7c789048-948c-47dd-8e1e-b8d0c9557a15\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"inputTokens\":13806,\"outputTokens\":24,\"totalTokens\":13830,\"reasoningTokens\":0,\"cacheReadTokens\":192,\"cacheWriteTokens\":0}}"
+    },
+    "tool.lifecycle": {
+      "count": 5,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"58ef1e96-35f9-4fe5-8d49-5529389508c3\",\"eventSeq\":40,\"occurredAt\":1789349290219,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"tool.lifecycle\",\"phase\":\"scheduled\",\"toolCallId\":\"call_45f57fb226c74c608a263a50\",\"toolName\":\"Bash\"}}"
+    },
+    "stream.chunk": {
+      "count": 29,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"7de13d16-56ae-4417-99ce-f5c0f701a1ba\",\"eventSeq\":54,\"occurredAt\":1789349305345,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"stream.chunk\",\"channel\":\"text\",\"chunkLength\":2,\"firstChunk\":true,\"assistantMessageId\":\"msg_mu0kdj82_4acbc040-1817-4ad8-b2f6-f3a3678b4815\"}}"
+    },
+    "turn.terminal": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"ff7fbc58-1998-4bb0-85ff-eef751687cdf\",\"eventSeq\":87,\"occurredAt\":1789349305813,\"sessionId\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"turnId\":\"turn_a1372366-1c09-450a-811b-b04ff016bc73\",\"kind\":\"turn.terminal\",\"status\":\"success\",\"resultType\":\"success\",\"durationMs\":47052,\"tokenCount\":27721,\"toolCallCount\":1}}"
+    }
+  },
+  "statePatches": [
+    {
+      "reason": "prompt_started",
+      "patchKeys": [
+        "status"
+      ],
+      "status": "running",
+      "modeRaw": null,
+      "permissionRaw": null,
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_completed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "modeRaw": "{\"current\":\"build\"}",
+      "permissionRaw": "{\"mode\":\"build\"}",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    }
+  ],
+  "toolUpdatedAll": [
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallId": "call_45f57fb226c74c608a263a50",
+        "assistantMessageId": "msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da",
+        "toolName": "Bash",
+        "dependencies": [],
+        "parallelGroupIndex": 0,
+        "canRunParallel": false,
+        "schedule": {
+          "parallelGroups": [
+            [
+              "call_45f57fb226c74c608a263a50"
+            ]
+          ],
+          "executionOrder": [
+            "call_45f57fb226c74c608a263a50"
+          ]
+        },
+        "kind": "scheduled",
+        "inputByteLength": 71,
+        "inputOmitted": true,
+        "inputRef": "model_stream"
+      }
+    },
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallId": "call_45f57fb226c74c608a263a50",
+        "toolName": "Bash",
+        "startedAt": 1789349290238,
+        "kind": "started"
+      }
+    },
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallId": "call_45f57fb226c74c608a263a50",
+        "toolName": "Bash",
+        "elapsedMs": 12536,
+        "pid": 36708,
+        "stdoutBytes": 0,
+        "stderrBytes": 0,
+        "outputBytes": 0,
+        "kind": "progress"
+      }
+    },
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallId": "call_45f57fb226c74c608a263a50",
+        "toolName": "Bash",
+        "elapsedMs": 13549,
+        "pid": 36708,
+        "stdoutBytes": 0,
+        "stderrBytes": 0,
+        "outputBytes": 0,
+        "kind": "progress"
+      }
+    },
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallId": "call_45f57fb226c74c608a263a50",
+        "result": {
+          "success": true,
+          "content": "✓ 代理已开启: 127.0.0.1:7897\nlifecycle-probe",
+          "perf": {
+            "totalMs": 13674,
+            "detail": {
+              "kind": "command",
+              "command": {
+                "runMs": 13657,
+                "noOutputMs": 13657,
+                "exitCode": 0,
+                "timedOut": false,
+                "outputBytes": 52,
+                "category": "other",
+                "count": 1,
+                "name": "echo",
+                "status": "completed",
+                "hash": "2faf2e8c78848b76"
+              }
+            }
+          },
+          "truncated": false,
+          "originalBytes": 51,
+          "returnedBytes": 51,
+          "budgetStrategy": "artifact"
+        },
+        "duration": 13668,
+        "kind": "result"
+      }
+    },
+    {
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "payload": {
+        "toolCallIds": [
+          "call_45f57fb226c74c608a263a50"
+        ],
+        "successCount": 1,
+        "errorCount": 0,
+        "kind": "batch"
+      }
+    }
+  ],
+  "toolLifecycleAll": [
+    {
+      "version": 1,
+      "eventId": "58ef1e96-35f9-4fe5-8d49-5529389508c3",
+      "eventSeq": 40,
+      "occurredAt": 1789349290219,
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "kind": "tool.lifecycle",
+      "phase": "scheduled",
+      "toolCallId": "call_45f57fb226c74c608a263a50",
+      "toolName": "Bash"
+    },
+    {
+      "version": 1,
+      "eventId": "611cee0f-7e05-4a41-bbe0-af564a8bcdac",
+      "eventSeq": 43,
+      "occurredAt": 1789349290238,
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "kind": "tool.lifecycle",
+      "phase": "started",
+      "toolCallId": "call_45f57fb226c74c608a263a50",
+      "toolName": "Bash"
+    },
+    {
+      "version": 1,
+      "eventId": "7f563da2-00b0-43e7-9b04-5e2176793551",
+      "eventSeq": 44,
+      "occurredAt": 1789349302780,
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "kind": "tool.lifecycle",
+      "phase": "progress",
+      "toolCallId": "call_45f57fb226c74c608a263a50",
+      "toolName": "Bash"
+    },
+    {
+      "version": 1,
+      "eventId": "abdaf8b2-63dc-4284-b2fe-3c3e3ef4b426",
+      "eventSeq": 45,
+      "occurredAt": 1789349303793,
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "kind": "tool.lifecycle",
+      "phase": "progress",
+      "toolCallId": "call_45f57fb226c74c608a263a50",
+      "toolName": "Bash"
+    },
+    {
+      "version": 1,
+      "eventId": "359d2808-8274-4c52-8672-c50db6131c87",
+      "eventSeq": 46,
+      "occurredAt": 1789349303907,
+      "sessionId": "sess_2b169560-412c-4fcd-8e61-492c1a9888fe",
+      "turnId": "turn_a1372366-1c09-450a-811b-b04ff016bc73",
+      "kind": "tool.lifecycle",
+      "phase": "completed",
+      "toolCallId": "call_45f57fb226c74c608a263a50",
+      "toolName": "Bash",
+      "durationMs": 13668,
+      "performance": {
+        "totalMs": 13674,
+        "commandRunMs": 13657,
+        "noOutputMs": 13657,
+        "exitCode": 0,
+        "timedOut": false,
+        "outputBytes": 52,
+        "commandCategory": "other",
+        "commandName": "echo",
+        "commandCount": 1,
+        "commandStatus": "completed"
+      }
+    }
+  ],
+  "stderrZodHints": [],
+  "authoritativeMessages": [
+    {
+      "role": "user",
+      "id": "msg_mu0kcksz_6d8df718-06a8-458f-ac9f-e87e453e6e04",
+      "partTypes": [
+        "text"
+      ],
+      "toolPartRaw": [],
+      "textHead": "请使用 Bash（Shell）工具执行命令：echo lifecycle-probe。必须调用工具执行。"
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da",
+      "partTypes": [
+        "step-start",
+        "tool",
+        "step-finish"
+      ],
+      "toolPartRaw": [
+        "{\"type\":\"tool\",\"callID\":\"call_45f57fb226c74c608a263a50\",\"tool\":\"Bash\",\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"echo lifecycle-probe\",\"description\":\"Echo lifecycle-probe\"},\"output\":\"✓ 代理已开启: 127.0.0.1:7897\\nlifecycle-probe\",\"title\":\"Bash\",\"metadata\":{\"schemaVersion\":1,\"serialization\":{\"truncated\":false,\"originalBytes\":51,\"returnedBytes\":51,\"budgetStrategy\":\"artifact\"}},\"time\":{\"start\":1789349290238,\"end\":1789349303907}},\"id\":\"part_mu0kd8mc_ff97e35c-979c-4343-8b84-e6f38de4fdaa\",\"sessionID\":\"sess_2b169560-412c-4fcd-8e61-492c1a9888fe\",\"messageID\":\"msg_mu0kclwu_1b0e7948-3b8d-4bbb-aba4-eab451b264da\"}"
+      ],
+      "textHead": ""
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0kdj82_4acbc040-1817-4ad8-b2f6-f3a3678b4815",
+      "partTypes": [
+        "step-start",
+        "text",
+        "step-finish"
+      ],
+      "toolPartRaw": [],
+      "textHead": "命令已执行，输出为 `lifecycle-probe`（另外代理提示 127.0.0.1:7897 已开启）。"
+    }
+  ],
+  "tmpDirLeftovers": []
+}

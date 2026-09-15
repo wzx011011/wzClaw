@@ -5,9 +5,10 @@ import '../models/connection_state.dart';
 import '../models/session_meta.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
+import '../services/phone_session_index.dart';
 import '../services/session_sync_service.dart';
 import 'session_list_tile.dart';
-import 'workspace_picker_card.dart';
+import 'workspace_switcher_sheet.dart';
 
 /// Drawer widget displaying the current desktop workspace and its sessions.
 class ProjectDrawer extends StatefulWidget {
@@ -36,6 +37,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 Divider(color: colors.border, height: 1),
                 _buildSessionSection(context, colors),
                 Divider(color: colors.border, height: 1),
+                _buildGoalPanelEntry(context, colors),
                 _buildFileBrowseEntry(context, colors),
               ],
             ),
@@ -266,89 +268,9 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  /// 弹出工作区切换选择器
+  /// 弹出工作区切换选择器（共享实现，欢迎页同款）
   void _showWorkspaceSwitcher(AppColors colors) {
-    SessionSyncService.instance.fetchWorkspaces();
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                    Text('切换工作区',
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(ctx),
-                    child: Text('关闭',
-                    style: TextStyle(color: colors.textMuted, fontSize: 13,),),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            StreamBuilder<List<WorkspaceItem>>(
-              stream: SessionSyncService.instance.workspacesStream,
-              initialData: SessionSyncService.instance.workspaces,
-              builder: (context, snapshot) {
-                final workspaces = snapshot.data ?? [];
-                if (workspaces.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Text('暂无工作区',
-                    style: TextStyle(color: colors.textMuted, fontSize: 14,),),
-                  );
-                }
-                return ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(ctx).size.height * 0.55,
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: workspaces.length,
-                    itemBuilder: (ctx, i) {
-                      final ws = workspaces[i];
-                      return WorkspacePickerCard(
-                        workspace: ws,
-                        colors: colors,
-                        onWorkspaceTap: () {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                        },
-                        onSessionTap: (sessionId) {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                          SessionSyncService.instance.setActiveSession(sessionId);
-                        },
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
+    showWorkspaceSwitcherSheet(context);
   }
 
   /// Workspace section — 显示当前工作区及切换按钮。
@@ -458,6 +380,23 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
+  /// 任务面板（悬浮窗还原：目标/进程/计划/智能体）
+  Widget _buildGoalPanelEntry(BuildContext context, AppColors colors) {
+    return ListTile(
+      leading: Icon(Icons.monitor_heart_outlined,
+          color: colors.textSecondary, size: 20,),
+      title: Text(
+        '任务面板',
+        style: TextStyle(color: colors.textSecondary, fontSize: 14),
+      ),
+      dense: true,
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.pushNamed(context, '/goal-panel');
+      },
+    );
+  }
+
   Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
     return ListTile(
       leading: Icon(Icons.folder_open, color: colors.textSecondary, size: 20),
@@ -473,18 +412,15 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
+  /// 会话区 —— Option A：数据源为手机本地索引（只含手机创建/导入的
+  /// 会话），引擎 session/list 仅在「从引擎导入」时显式拉取。
   Widget _buildSessionSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final hasWorkspace = wsSnap.data != null;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
           child: Row(
             children: [
               Icon(Icons.history, size: 16, color: colors.textSecondary),
@@ -498,24 +434,29 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 ),
               ),
               const Spacer(),
+              // 新任务：进入欢迎态（首条消息时才建引擎会话）
               Builder(
                 builder: (context) => GestureDetector(
                   onTap: () async {
-                    final result =
-                        await SessionSyncService.instance.createSession();
-                    if (result != null) {
-                      final sessionId = result['id'] as String?;
-                      if (sessionId != null) {
-                        SessionSyncService.instance.setActiveSession(sessionId);
-                        ChatStore.instance.switchToSession(sessionId, userInitiated: true);
-                        if (context.mounted) Navigator.pop(context);
-                      }
-                    }
+                    await SessionSyncService.instance.enterNewConversation();
+                    if (context.mounted) Navigator.pop(context);
                   },
                   child: Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child:
                         Icon(Icons.add, size: 16, color: colors.textMuted),
+                  ),
+                ),
+              ),
+              // 从引擎导入：兜底入口（打开桌面端创建过的会话）
+              GestureDetector(
+                onTap: () => _showImportSheet(colors),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    Icons.file_download_outlined,
+                    size: 16,
+                    color: colors.textMuted,
                   ),
                 ),
               ),
@@ -528,7 +469,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                     onTap: isLoading
                         ? null
                         : () =>
-                            SessionSyncService.instance.fetchSessions(),
+                            SessionSyncService.instance.refreshLocalSessions(),
                     child: isLoading
                         ? SizedBox(
                             width: 14,
@@ -549,15 +490,6 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             ],
           ),
         ),
-        if (!hasWorkspace)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Text(
-              '请先选择工作区',
-              style: TextStyle(color: colors.textMuted, fontSize: 13),
-            ),
-          )
-        else
         StreamBuilder<List<SessionMeta>>(
           stream: SessionSyncService.instance.sessionsStream,
           initialData: SessionSyncService.instance.sessions,
@@ -569,7 +501,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Text(
-                  '暂无会话记录',
+                  '暂无会话记录\n点击右上 ↧ 可从桌面端导入',
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
@@ -595,8 +527,21 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             );
           },
         ),
-          ],
-        );
+      ],
+    );
+  }
+
+  /// 「从引擎导入」底部弹层：一次性拉引擎 session/list，点选后写入本地索引。
+  void _showImportSheet(AppColors colors) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        return _ImportSheet(colors: colors);
       },
     );
   }
@@ -669,5 +614,163 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
       case WsConnectionState.disconnected:
         return Colors.red;
     }
+  }
+}
+
+/// 「从引擎导入」弹层内容：拉一次引擎 session/list，点选写入本地索引。
+class _ImportSheet extends StatefulWidget {
+  final AppColors colors;
+  const _ImportSheet({required this.colors});
+
+  @override
+  State<_ImportSheet> createState() => _ImportSheetState();
+}
+
+class _ImportSheetState extends State<_ImportSheet> {
+  List<SessionMeta>? _engineSessions;
+  bool _loading = true;
+  Set<String> _importedIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    final imported = desktopId == null
+        ? const <PhoneSessionEntry>[]
+        : await PhoneSessionIndex.instance.sessionsForDevice(desktopId);
+    final sessions = await SessionSyncService.instance.fetchEngineSessions();
+    if (!mounted) return;
+    setState(() {
+      _importedIds = imported.map((e) => e.sessionId).toSet();
+      _engineSessions = sessions;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Row(
+              children: [
+                Text(
+                  '从桌面端导入会话',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Text(
+                    '关闭',
+                    style: TextStyle(color: colors.textMuted, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else if (_engineSessions == null || _engineSessions!.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Text(
+                '桌面端暂无会话',
+                style: TextStyle(color: colors.textMuted, fontSize: 14),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.55,
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _engineSessions!.length,
+                itemBuilder: (ctx, i) {
+                  final s = _engineSessions![i];
+                  final imported = _importedIds.contains(s.id);
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      imported ? Icons.check_circle : Icons.chat_bubble_outline,
+                      size: 20,
+                      color: imported ? colors.success : colors.textSecondary,
+                    ),
+                    title: Text(
+                      s.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: imported ? colors.textMuted : colors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: s.updatedAt > 0
+                        ? Text(
+                            _relativeTime(s.updatedAt),
+                            style: TextStyle(
+                              color: colors.textMuted,
+                              fontSize: 11,
+                            ),
+                          )
+                        : null,
+                    trailing: imported
+                        ? Text(
+                            '已导入',
+                            style: TextStyle(
+                              color: colors.textMuted,
+                              fontSize: 12,
+                            ),
+                          )
+                        : Icon(
+                            Icons.add_circle_outline,
+                            size: 20,
+                            color: colors.accent,
+                          ),
+                    onTap: imported
+                        ? null
+                        : () async {
+                            await SessionSyncService.instance
+                                .importEngineSession(s);
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          },
+                  );
+                },
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  String _relativeTime(int epochMs) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    final diff = DateTime.now().difference(dt);
+    if (diff.inDays > 30) {
+      final m = (diff.inDays / 30).floor();
+      return '$m 个月前';
+    }
+    if (diff.inDays > 0) return '${diff.inDays} 天前';
+    if (diff.inHours > 0) return '${diff.inHours} 小时前';
+    if (diff.inMinutes > 0) return '${diff.inMinutes} 分钟前';
+    return '刚刚';
   }
 }

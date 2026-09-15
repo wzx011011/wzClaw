@@ -82,6 +82,14 @@ class ChatMessage {
   final String? toolResultSummary;
   final String? model;
 
+  /// 产出该消息的 agent（引擎 info.agent；null/主 agent = 主时间线）。
+  /// 子智能体消息按此字段折叠渲染；仅运行时，不持久化。
+  final String? agent;
+
+  /// 本回合耗时（引擎 turn.completed duration 毫秒）→「已工作 X 分 X 秒」。
+  /// 仅运行时，不持久化。
+  final int? durationMs;
+
   ChatMessage({
     this.id,
     required this.role,
@@ -97,18 +105,45 @@ class ChatMessage {
     this.toolOutput,
     this.toolResultSummary,
     this.model,
+    this.agent,
+    this.durationMs,
   });
+
+  /// 主 agent 名（引擎实测 zcode-agent）；null 视为主时间线（旧数据兼容）
+  bool get isSubagentMessage =>
+      agent != null && agent!.isNotEmpty && agent != 'zcode-agent';
 
   /// 桌面端注入给 agent 的系统提醒会以 user-role 存进 JSONL，
   /// 但聊天 UI 不应把它们当成用户消息展示。
+  /// 实测（桌面端引擎包）：除 <system-reminder> 包裹外，todo 提醒以裸文本
+  /// 「The TodoWrite tool hasn't been used recently.」直接入库。
   bool get isSystemInjected {
     final text = content.trimLeft();
-    return text.startsWith('<system-reminder>') || text.startsWith('[System]');
+    if (text.startsWith('<system-reminder>') || text.startsWith('[System]')) {
+      return true;
+    }
+    if (text.startsWith("The TodoWrite tool hasn't been used recently")) {
+      return true;
+    }
+    if (text.contains('This is a gentle reminder - ignore if not applicable.')) {
+      return true;
+    }
+    return false;
   }
+
+  /// 空助手行（无文本/无工具/无输出）——历史同步或旧版本写入的占位垃圾，
+  /// 渲染成只带「In: 0 · Out: 0」的空气泡，不展示。
+  bool get isEmptyAssistant =>
+      role == MessageRole.assistant &&
+      content.trim().isEmpty &&
+      (toolCalls == null || toolCalls!.isEmpty) &&
+      (toolOutput == null || toolOutput!.isEmpty);
 
   ChatMessage copyWith({
     int? id,
     String? content,
+    String? toolName,
+    String? toolInput,
     ToolCallStatus? toolStatus,
     bool? isStreaming,
     List<ToolCallInfo>? toolCalls,
@@ -116,22 +151,26 @@ class ChatMessage {
     String? toolOutput,
     String? toolResultSummary,
     String? model,
+    String? agent,
+    int? durationMs,
   }) =>
       ChatMessage(
         id: id ?? this.id,
         role: role,
         content: content ?? this.content,
-        toolName: toolName,
+        toolName: toolName ?? this.toolName,
         toolStatus: toolStatus ?? this.toolStatus,
         createdAt: createdAt,
         isStreaming: isStreaming ?? this.isStreaming,
         toolCalls: toolCalls ?? this.toolCalls,
         usage: usage ?? this.usage,
         toolCallId: toolCallId,
-        toolInput: toolInput,
+        toolInput: toolInput ?? this.toolInput,
         toolOutput: toolOutput ?? this.toolOutput,
         toolResultSummary: toolResultSummary ?? this.toolResultSummary,
         model: model ?? this.model,
+        agent: agent ?? this.agent,
+        durationMs: durationMs ?? this.durationMs,
       );
 
   Map<String, dynamic> toDbMap() => {

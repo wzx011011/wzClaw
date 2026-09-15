@@ -15,21 +15,21 @@ void main() {
   group('AskUserBar', () {
     testWidgets('renders question text', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-1',
             question: 'Which approach do you prefer?',
             options: [],
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Which approach do you prefer?'), findsOneWidget);
     });
 
     testWidgets('renders option cards for single select', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-2',
             question: 'Pick one:',
@@ -39,7 +39,7 @@ void main() {
             ],
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Option A'), findsOneWidget);
       expect(find.text('Option B'), findsOneWidget);
@@ -49,7 +49,7 @@ void main() {
 
     testWidgets('renders multi-select with checkbox icons', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-3',
             question: 'Select all:',
@@ -60,7 +60,7 @@ void main() {
             multiSelect: true,
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Feature 1'), findsOneWidget);
       expect(find.text('Feature 2'), findsOneWidget);
@@ -71,7 +71,7 @@ void main() {
 
     testWidgets('renders Other option', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-4',
             question: 'Choose:',
@@ -80,21 +80,21 @@ void main() {
             ],
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('补充回答...'), findsOneWidget);
     });
 
     testWidgets('renders with empty options list', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-5',
             question: 'Enter your answer:',
             options: [],
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('Enter your answer:'), findsOneWidget);
       expect(find.text('补充回答...'), findsOneWidget);
@@ -102,14 +102,14 @@ void main() {
 
     testWidgets('renders Question header', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
+        const AskUserBar(
           question: AskUserQuestion(
             questionId: 'q-6',
             question: 'Test?',
             options: [],
           ),
         ),
-      ));
+      ),);
 
       expect(find.text('需要你的确认'), findsOneWidget);
     });

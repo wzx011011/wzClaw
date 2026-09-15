@@ -8,8 +8,12 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
-import '../services/secure_settings.dart';
+import '../services/pairing_store.dart';
 import '../services/session_sync_service.dart';
+import '../services/zcode_protocol_translate.dart'
+    show normalizeQrScanToServerUrl, parsePairingUrlAny;
+import '../zcode/zcode_relay_client.dart';
+import 'qr_scanner_page.dart';
 import '../widgets/workspace_picker_card.dart';
 
 class LandingPage extends StatefulWidget {
@@ -20,10 +24,16 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   WsConnectionState _state = WsConnectionState.disconnected;
   List<DesktopInfo> _desktops = [];
   String? _serverHost;
+
+  // 多配对：probe 在线探测结果（sid → 是否在线）与进行中标记；
+  // 切换连接后匹配成功自动进入的目标桌面
+  final Map<String, bool> _probeStatus = {};
+  final Set<String> _probingSids = {};
+  String? _pendingAutoSelectSid;
 
   StreamSubscription<WsConnectionState>? _stateSub;
   StreamSubscription<List<DesktopInfo>>? _desktopsSub;
@@ -37,6 +47,7 @@ class _LandingPageState extends State<LandingPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _pulseController = AnimationController(
       vsync: this,
@@ -52,17 +63,41 @@ class _LandingPageState extends State<LandingPage>
 
     _stateSub = ConnectionManager.instance.stateStream.listen((s) {
       if (mounted) setState(() => _state = s);
+      // 切换连接后：新桌面匹配成功 → 自动走工作区选择进入聊天
+      if (s == WsConnectionState.connected && _pendingAutoSelectSid != null) {
+        final sid = _pendingAutoSelectSid!;
+        _pendingAutoSelectSid = null;
+        if (mounted &&
+            ConnectionManager.instance.selectedDesktopId == sid) {
+          _onSelectDesktop(DesktopInfo(desktopId: sid, connectedAt: 0));
+        }
+      }
     });
 
     _desktopsSub = ConnectionManager.instance.desktopsStream.listen((list) {
       if (mounted) setState(() => _desktops = list);
     });
 
+    // 多配对：设备列表持久常驻 + 探测其余桌面在线状态
+    unawaited(ConnectionManager.instance.refreshDesktops().then((_) {
+      if (mounted) _refreshOnlineStatus();
+    }),);
+
     _autoConnect();
+  }
+
+  /// 回前台重探在线状态：后台期间探测结果全部过期（Android 冻结定时器，
+  /// 连接也多半被回收），继续显示旧「在线/离线」就是假状态
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _refreshOnlineStatus();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _stateSub?.cancel();
     _desktopsSub?.cancel();
@@ -74,22 +109,14 @@ class _LandingPageState extends State<LandingPage>
     final serverUrl = prefs.getString('server_url');
     _savedWorkspacePath = await AppRestoreState.getLastWorkspacePath();
     if (serverUrl != null && serverUrl.isNotEmpty) {
-      final token = await SecureSettings.getAuthToken();
       try {
-        final uri = Uri.parse(serverUrl);
-        setState(() {
-          _serverHost = uri.host;
-        });
-        if (ConnectionManager.instance.state == WsConnectionState.disconnected) {
-          final params = Map<String, String>.from(uri.queryParameters);
-          params['role'] = 'mobile';
-          if (token.isNotEmpty) params['token'] = token;
-          final fullUrl = uri.replace(queryParameters: params).toString();
-          ConnectionManager.instance.connect(fullUrl);
-        }
-      } catch (e) {
-        debugPrint('[LandingPage] auto-connect failed: $e');
-      }
+        final host = Uri.parse(serverUrl).host;
+        if (mounted) setState(() => _serverHost = host);
+      } catch (_) {}
+    }
+    // 恢复上次活动桌面（多配对存储优先，旧 server_url 兜底）
+    if (ConnectionManager.instance.state == WsConnectionState.disconnected) {
+      unawaited(ConnectionManager.instance.connectFromSavedConfiguration());
     }
   }
 
@@ -148,7 +175,11 @@ class _LandingPageState extends State<LandingPage>
     if (_didNavigate) return;
     _didNavigate = true;
     AppRestoreState.setLastRoute('/chat');
-    Navigator.pushNamed(context, '/chat');
+    Navigator.pushNamed(context, '/chat').then((_) {
+      // 从聊天返回设备列表：恢复可进入状态并刷新在线探测
+      _didNavigate = false;
+      if (mounted) _refreshOnlineStatus();
+    });
   }
 
   void _showWorkspacePicker(List<WorkspaceItem> workspaces) {
@@ -172,7 +203,7 @@ class _LandingPageState extends State<LandingPage>
                       style: TextStyle(
                           color: colors.textPrimary,
                           fontSize: 16,
-                          fontWeight: FontWeight.bold)),
+                          fontWeight: FontWeight.bold,),),
                   const Spacer(),
                   GestureDetector(
                     onTap: () {
@@ -180,7 +211,7 @@ class _LandingPageState extends State<LandingPage>
                       _navigateToChat();
                     },
                     child: Text('跳过',
-                        style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                        style: TextStyle(color: colors.textMuted, fontSize: 13),),
                   ),
                 ],
               ),
@@ -195,10 +226,10 @@ class _LandingPageState extends State<LandingPage>
                     Icon(Icons.folder_off_outlined, size: 40, color: colors.textMuted),
                     const SizedBox(height: 12),
                     Text('暂无工作区',
-                        style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                        style: TextStyle(color: colors.textSecondary, fontSize: 14),),
                     const SizedBox(height: 6),
                     Text('请在桌面端打开项目后重试',
-                        style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                        style: TextStyle(color: colors.textMuted, fontSize: 12),),
                   ],
                 ),
               )
@@ -256,7 +287,7 @@ class _LandingPageState extends State<LandingPage>
         backgroundColor: colors.bgElevated,
         title: Text('断开连接', style: TextStyle(color: colors.textPrimary)),
         content: Text('确定要断开 Relay 服务器连接吗？',
-            style: TextStyle(color: colors.textSecondary)),
+            style: TextStyle(color: colors.textSecondary),),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -274,6 +305,86 @@ class _LandingPageState extends State<LandingPage>
         ConnectionManager.instance.disconnect();
       }
     });
+  }
+
+  /// 中继条统一入口：与设备卡片同一口径 —— 已连接 / 连接中 / 未连接
+  Widget _buildRelayChip(AppColors colors) {
+    if (_isConnected) return _buildRelayStatusChip(colors);
+    if (_isConnecting) return _buildRelayConnectingChip(colors);
+    return _buildRelayOfflineChip(colors);
+  }
+
+  /// 连接/重连中的中继条：橙点 + 主机名；重连由客户端自动进行，
+  /// 不提供「重连」按钮（点击会和进行中的重连互踩）
+  Widget _buildRelayConnectingChip(AppColors colors) {
+    final host = _serverHost ?? 'relay';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration:
+                const BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Text('连接中',
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text('· $host',
+                style: TextStyle(color: colors.textMuted, fontSize: 12),
+                overflow: TextOverflow.ellipsis,),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 未连接态的中继条：灰点 + 重连活动桌面入口
+  Widget _buildRelayOfflineChip(AppColors colors) {
+    final host = _serverHost ?? 'relay';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration:
+                BoxDecoration(color: colors.textMuted, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Text('未连接',
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text('· $host',
+                style: TextStyle(color: colors.textMuted, fontSize: 12),
+                overflow: TextOverflow.ellipsis,),
+          ),
+          GestureDetector(
+            onTap: () => unawaited(
+                ConnectionManager.instance.connectFromSavedConfiguration(),),
+            child:
+                Text('重连', style: TextStyle(color: colors.accent, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── 判断当前状态 ────────────────────────────────────────────────────
@@ -316,22 +427,22 @@ class _LandingPageState extends State<LandingPage>
   }
 
   Widget _buildBody(AppColors colors) {
-    // 状态 B：连接中
+    // 状态 D：有已保存桌面 —— 列表常驻（含离线），点按连接/切换
+    if (_desktops.isNotEmpty) {
+      return _buildDesktopListState(colors);
+    }
+
+    // 状态 B：连接中（尚未有任何配对）
     if (_isConnecting) {
       return _buildConnectingState(colors);
     }
 
-    // 状态 D：已连接，有桌面
-    if (_isConnected && _desktops.isNotEmpty) {
-      return _buildDesktopListState(colors);
-    }
-
-    // 状态 C：已连接，无桌面
-    if (_isConnected && _desktops.isEmpty) {
+    // 状态 C：已连接但无桌面（边界）
+    if (_isConnected) {
       return _buildNoDesktopState(colors);
     }
 
-    // 状态 A：未配置/未连接
+    // 状态 A：未配置
     return _buildUnconfiguredState(colors);
   }
 
@@ -353,10 +464,10 @@ class _LandingPageState extends State<LandingPage>
             const SizedBox(height: 16),
             Text('wzxClaw',
                 style: TextStyle(color: colors.textPrimary, fontSize: 28,
-                    fontWeight: FontWeight.bold)),
+                    fontWeight: FontWeight.bold,),),
             const SizedBox(height: 6),
             Text('AI 编程助手',
-                style: TextStyle(color: colors.textSecondary, fontSize: 14)),
+                style: TextStyle(color: colors.textSecondary, fontSize: 14),),
             const SizedBox(height: 48),
             Text(
               '扫描桌面端的二维码\n快速连接到你的工作站',
@@ -375,7 +486,7 @@ class _LandingPageState extends State<LandingPage>
                   backgroundColor: colors.accent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
+                      borderRadius: BorderRadius.circular(16),),
                 ),
               ),
             ),
@@ -389,7 +500,7 @@ class _LandingPageState extends State<LandingPage>
                   foregroundColor: colors.textSecondary,
                   side: BorderSide(color: colors.border),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
+                      borderRadius: BorderRadius.circular(16),),
                 ),
                 child: const Text('手动配置'),
               ),
@@ -424,11 +535,11 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(height: 24),
           Text('正在连接 Relay 服务器',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
           const SizedBox(height: 6),
           if (_serverHost != null)
             Text(_serverHost!,
-                style: TextStyle(color: colors.textMuted, fontSize: 13)),
+                style: TextStyle(color: colors.textMuted, fontSize: 13),),
           const SizedBox(height: 32),
           TextButton(
             onPressed: () => ConnectionManager.instance.disconnect(),
@@ -457,20 +568,20 @@ class _LandingPageState extends State<LandingPage>
                     style: TextStyle(
                         color: colors.textPrimary,
                         fontSize: 16,
-                        fontWeight: FontWeight.bold)),
+                        fontWeight: FontWeight.bold,),),
                 const SizedBox(height: 8),
                 Text('请在电脑上打开 wzxClaw',
-                    style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 13),),
                 const SizedBox(height: 24),
                 OutlinedButton.icon(
                   onPressed: () => Navigator.pushNamed(context, '/settings'),
                   icon: Icon(Icons.qr_code_scanner, color: colors.textSecondary),
                   label: Text('重新扫码',
-                      style: TextStyle(color: colors.textSecondary)),
+                      style: TextStyle(color: colors.textSecondary),),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: colors.border),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),),
                   ),
                 ),
               ],
@@ -484,23 +595,33 @@ class _LandingPageState extends State<LandingPage>
   // ── 状态 D：有桌面列表 ─────────────────────────────────────────────
 
   Widget _buildDesktopListState(AppColors colors) {
+    // 与卡片同一口径（_statusFor）：probe 探到在线的也计入，
+    // 否则会出现「0/2 在线」但 NAS 卡片显示「在线」的自相矛盾
+    final onlineCount =
+        _desktops.where((d) => _statusFor(d) == _DeviceStatus.online).length;
     return Column(
       key: const ValueKey('state_d'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildRelayStatusChip(colors),
+        _buildRelayChip(colors),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
             children: [
-              Text('桌面端',
+              Text('设备',
                   style: TextStyle(
                       color: colors.textSecondary,
                       fontSize: 13,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,),),
               const Spacer(),
-              Text('${_desktops.length} 台在线',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12)),
+              IconButton(
+                onPressed: _refreshOnlineStatus,
+                icon: Icon(Icons.refresh, size: 18, color: colors.textMuted),
+                tooltip: '刷新在线状态',
+                visualDensity: VisualDensity.compact,
+              ),
+              Text('$onlineCount/${_desktops.length} 在线',
+                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
             ],
           ),
         ),
@@ -508,12 +629,17 @@ class _LandingPageState extends State<LandingPage>
           child: ListView.builder(
             padding: const EdgeInsets.only(bottom: 80),
             itemCount: _desktops.length,
-            itemBuilder: (context, i) => _DesktopCard(
-              desktop: _desktops[i],
-              onTap: () => _onSelectDesktop(_desktops[i]),
-              colors: colors,
-              index: i,
-            ),
+            itemBuilder: (context, i) {
+              final d = _desktops[i];
+              return _DesktopCard(
+                desktop: d,
+                status: _statusFor(d),
+                onTap: () => _onDeviceTap(d),
+                onLongPress: () => _showDeviceActions(d),
+                colors: colors,
+                index: i,
+              );
+            },
           ),
         ),
         Align(
@@ -521,16 +647,183 @@ class _LandingPageState extends State<LandingPage>
           child: Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: TextButton.icon(
-              onPressed: () => Navigator.pushNamed(context, '/settings'),
+              onPressed: _addDesktopViaScan,
               icon: Icon(Icons.qr_code_scanner,
-                  size: 16, color: colors.textMuted),
+                  size: 16, color: colors.textMuted,),
               label: Text('扫码添加桌面',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
             ),
           ),
         ),
       ],
     );
+  }
+
+  // ── 多配对：连接/切换/探测/管理 ────────────────────────────────────
+
+  /// 设备行点击：在线 → 进入；连接中 → 取消；其余 → 切换连接
+  void _onDeviceTap(DesktopInfo d) {
+    if (d.online) {
+      _onSelectDesktop(d);
+      return;
+    }
+    final isCurrent =
+        ConnectionManager.instance.selectedDesktopId == d.desktopId;
+    if (isCurrent && _isConnecting) {
+      _pendingAutoSelectSid = null;
+      ConnectionManager.instance.disconnect();
+      return;
+    }
+    _switchTo(d.desktopId);
+  }
+
+  void _switchTo(String sid) {
+    _pendingAutoSelectSid = sid;
+    unawaited(ConnectionManager.instance.connectToStored(sid));
+  }
+
+  /// 扫码添加桌面：新码入库并自动连接切换；重扫已有桌面直接切换
+  Future<void> _addDesktopViaScan() async {
+    final raw = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const QrScannerPage()),
+    );
+    if (raw == null || raw.isEmpty || !mounted) return;
+    final pairingUrl = normalizeQrScanToServerUrl(raw);
+    final parsed = pairingUrl != null ? parsePairingUrlAny(pairingUrl) : null;
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('不是桌面端配对二维码'),
+        duration: Duration(seconds: 2),
+      ),);
+      return;
+    }
+    _pendingAutoSelectSid = parsed.sid;
+    final switched =
+        await ConnectionManager.instance.connectToStored(parsed.sid);
+    if (!switched) {
+      // 新桌面：connect() 会入库并连接
+      ConnectionManager.instance.connect(pairingUrl!);
+    }
+  }
+
+  /// 长按设备：连接/进入 + 删除
+  void _showDeviceActions(DesktopInfo d) {
+    final colors = AppColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: Icon(d.online ? Icons.login : Icons.link,
+                  color: colors.accent,),
+              title: Text(d.online ? '进入此桌面' : '连接此桌面',
+                  style: TextStyle(color: colors.textPrimary),),
+              onTap: () {
+                Navigator.pop(ctx);
+                _onDeviceTap(d);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colors.error),
+              title:
+                  Text('删除此桌面', style: TextStyle(color: colors.error)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmRemovePairing(d);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmRemovePairing(DesktopInfo d) {
+    final colors = AppColors.of(context);
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.bgElevated,
+        title: Text('删除桌面', style: TextStyle(color: colors.textPrimary)),
+        content: Text('将移除「${d.name ?? '桌面 ZCode'}」的配对，需要重新扫码才能再连接。确定删除吗？',
+            style: TextStyle(color: colors.textSecondary),),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('取消', style: TextStyle(color: colors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('删除', style: TextStyle(color: colors.error)),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed != true) return;
+      unawaited(ConnectionManager.instance.removePairing(d.desktopId)
+          .then((_) {
+        if (mounted) setState(() => _probeStatus.remove(d.desktopId));
+      }),);
+    });
+  }
+
+  /// probe 其余桌面：每条配对一个短连 probe，waiting=离线 / matched=在线
+  Future<void> _refreshOnlineStatus() async {
+    final stored = await PairingStore.instance.loadAll();
+    if (!mounted) return;
+    final currentSid = ConnectionManager.instance.selectedDesktopId;
+    for (final sp in stored) {
+      final sid = sp.info.sid;
+      if (sid == currentSid) continue; // 当前桌面状态跟随连接本身
+      if (_probingSids.contains(sid)) continue;
+      _probingSids.add(sid);
+      unawaited(_probeOne(sp).whenComplete(() => _probingSids.remove(sid)));
+    }
+  }
+
+  Future<void> _probeOne(StoredPairing sp) async {
+    final completer = Completer<bool>();
+    final client = ZcodeRelayClient(
+      pairing: sp.info,
+      onStateChange: (state, paired) {
+        if (completer.isCompleted) return;
+        if (state == ZcodeRelayState.matched) completer.complete(true);
+        if (state == ZcodeRelayState.waiting) completer.complete(false);
+      },
+    );
+    // 超时视为离线（relay 不可达/网络异常/凭据失效）
+    Timer(const Duration(seconds: 6), () {
+      if (!completer.isCompleted) completer.complete(false);
+    });
+    try {
+      client.connect();
+      final online = await completer.future;
+      client.close();
+      if (mounted) setState(() => _probeStatus[sp.info.sid] = online);
+    } catch (_) {
+      client.close();
+      if (mounted) setState(() => _probeStatus[sp.info.sid] = false);
+    }
+  }
+
+  _DeviceStatus _statusFor(DesktopInfo d) {
+    if (d.online) return _DeviceStatus.online;
+    final isCurrent =
+        ConnectionManager.instance.selectedDesktopId == d.desktopId;
+    if (isCurrent && _isConnecting) return _DeviceStatus.connecting;
+    final probed = _probeStatus[d.desktopId];
+    if (probed == true) return _DeviceStatus.online;
+    if (probed == false) return _DeviceStatus.offline;
+    return _DeviceStatus.unknown;
   }
 
   // ── RelayStatusChip ────────────────────────────────────────────────
@@ -554,17 +847,17 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(width: 10),
           Text('Relay 已连接',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
           const SizedBox(width: 4),
           Expanded(
             child: Text('· $host',
                 style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis),
+                overflow: TextOverflow.ellipsis,),
           ),
           GestureDetector(
             onTap: _onDisconnect,
             child: Text('断开',
-                style: TextStyle(color: colors.error, fontSize: 12)),
+                style: TextStyle(color: colors.error, fontSize: 12),),
           ),
         ],
       ),
@@ -577,13 +870,17 @@ class _LandingPageState extends State<LandingPage>
 class _DesktopCard extends StatefulWidget {
   const _DesktopCard({
     required this.desktop,
+    required this.status,
     required this.onTap,
+    required this.onLongPress,
     required this.colors,
     required this.index,
   });
 
   final DesktopInfo desktop;
+  final _DeviceStatus status;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
   final AppColors colors;
   final int index;
 
@@ -646,7 +943,30 @@ class _DesktopCardState extends State<_DesktopCard>
   Widget build(BuildContext context) {
     final d = widget.desktop;
     final colors = widget.colors;
+    final status = widget.status;
     final label = d.name ?? '桌面端 ${widget.index + 1}';
+
+    final badgeColor = switch (status) {
+      _DeviceStatus.online => colors.success,
+      _DeviceStatus.connecting => Colors.orange,
+      _DeviceStatus.offline => colors.textMuted,
+      _DeviceStatus.unknown => colors.textMuted,
+    };
+    final badgeText = switch (status) {
+      _DeviceStatus.online => '在线',
+      _DeviceStatus.connecting => '连接中…',
+      _DeviceStatus.offline => '离线',
+      _DeviceStatus.unknown => '未连接',
+    };
+    final subtitle = switch (status) {
+      _DeviceStatus.online =>
+        ConnectionManager.instance.selectedDesktopId == d.desktopId
+            ? _formatConnectedAt(d.connectedAt)
+            : '在线 · 点按切换',
+      _DeviceStatus.connecting => '点按取消',
+      _DeviceStatus.offline => '桌面端不在线 · 点按连接',
+      _DeviceStatus.unknown => '已配对 · 点按连接',
+    };
 
     return FadeTransition(
       opacity: _fadeAnim,
@@ -655,12 +975,15 @@ class _DesktopCardState extends State<_DesktopCard>
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: colors.border),
+          side: BorderSide(
+              color:
+                  status == _DeviceStatus.online ? colors.accent : colors.border,),
         ),
         color: colors.bgSecondary,
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -683,15 +1006,37 @@ class _DesktopCardState extends State<_DesktopCard>
                           style: TextStyle(
                               color: colors.textPrimary,
                               fontSize: 15,
-                              fontWeight: FontWeight.bold)),
+                              fontWeight: FontWeight.bold,),),
                       const SizedBox(height: 4),
-                      Text(_formatConnectedAt(d.connectedAt),
+                      Text(subtitle,
                           style:
-                              TextStyle(color: colors.textMuted, fontSize: 12)),
+                              TextStyle(color: colors.textMuted, fontSize: 12),),
                     ],
                   ),
                 ),
-                Icon(Icons.arrow_forward_ios, size: 14, color: colors.textMuted),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration:
+                            BoxDecoration(color: badgeColor, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(badgeText,
+                          style:
+                              TextStyle(color: badgeColor, fontSize: 11),),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -700,3 +1045,6 @@ class _DesktopCardState extends State<_DesktopCard>
     );
   }
 }
+
+/// 设备行的展示状态
+enum _DeviceStatus { online, connecting, offline, unknown }
