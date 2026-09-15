@@ -34,10 +34,12 @@ NAS relay
 | `relay/zcode/test/` | 68 项测试（node --test） |
 | `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
 
-> 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 源码（`relay/server.js` + `relay/lib/`）
-> 已于 2026-09-15 按用户指示删除；tracked 删除可通过 `git restore` 恢复，
-> brain-adapter 测试所需的旧 relay 副本迁至 `relay/zcode/test/fixtures/old-relay/`，
-> NAS 上仍在运行的旧 relay 容器不受影响（跑的是 NAS 侧自己的副本）。
+> 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
+> `relay/server.js`、`relay/lib/`，部署套件 Dockerfile/compose/nginx/test 等）
+> 已于 2026-09-15 按用户指示删除，`relay/` 下现仅存 `zcode/`；tracked 删除可
+> 通过 `git restore` 恢复，brain-adapter 测试所需的旧 relay 副本迁至
+> `relay/zcode/test/fixtures/old-relay/`，NAS 上仍在运行的旧 relay 容器不受
+> 影响（跑的是 NAS 侧自己的副本）。
 
 ## 常用命令
 
