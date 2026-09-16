@@ -107,6 +107,8 @@ export interface BrainBridgeOptions {
   /** 测试注入引擎替身 */
   engine?: EngineLike
   logger?: (event: string, detail?: string) => void
+  /** 权限反向请求超时（与 companion 长档同口径，可注入短值供测试） */
+  permissionTimeoutMs?: number
 }
 
 /** 大脑模式桥：管理引擎并翻译手机事件 */
@@ -122,6 +124,9 @@ export class MobileAppServerBridge {
   private activeSessionId: string | null = null
   /** 等待手机应答的反向请求：engine 帧 id（server-N）-> 原帧。id 会从头复用，须及时清理 */
   private readonly pendingPermission = new Map<string | number, EngineFrame>()
+  /** 权限反向请求超时看护（id -> timer），与 companion 两档口径的长档对齐 */
+  private readonly permissionTimers = new Map<string | number, ReturnType<typeof setTimeout>>()
+  private readonly permissionTimeoutMs: number
   private stopped = false
 
   constructor(options: BrainBridgeOptions) {
@@ -132,6 +137,7 @@ export class MobileAppServerBridge {
     this.engineArgs = options.engineArgs
     this.apiKey = options.apiKey
     this.logger = options.logger ?? (() => {})
+    this.permissionTimeoutMs = options.permissionTimeoutMs ?? 120000
     if (options.engine) {
       this.engine = options.engine
       // 注入引擎（测试）同样接收事件：翻译表与广播路径一致
@@ -166,7 +172,19 @@ export class MobileAppServerBridge {
     created.on('reverseRequest', (frame: { id?: number | string; method?: string; params?: unknown }) => {
       this._onEngineReverseRequest(frame)
     })
-    created.on('dead', (why: string) => this.logger('brain-engine-dead', why))
+    created.on('dead', (why: string) => {
+      // 预算耗尽：置空引用让下一条手机消息重新走 ensureEngine 整体重试
+      // （否则 this.engine 恒非空、永远 'engine not running'，只能重启桌面）
+      this.logger('brain-engine-dead', why)
+      this.engine = null
+      // 引擎已不在，挂起的权限反向请求无人能答：作废并留观测（id 复用防串台）
+      if (this.pendingPermission.size > 0) {
+        this.logger('brain-permission-pending-dropped', String(this.pendingPermission.size))
+        this.pendingPermission.clear()
+      }
+      for (const timer of this.permissionTimers.values()) clearTimeout(timer)
+      this.permissionTimers.clear()
+    })
     created.start()
     this.engine = created as unknown as EngineLike
     return this.engine
@@ -177,6 +195,8 @@ export class MobileAppServerBridge {
     if (this.stopped && !this.engine) return
     this.stopped = true
     this.pendingPermission.clear()
+    for (const timer of this.permissionTimers.values()) clearTimeout(timer)
+    this.permissionTimers.clear()
     const engine = this.engine
     this.engine = null
     if (engine) await engine.stop()
@@ -363,7 +383,10 @@ export class MobileAppServerBridge {
         const rec = asRecord(ev)
         if (!rec) continue
         const type = str(rec.type)
-        for (const out of translateEngineEvent(str(rec.sessionId) || sessionId, type, rec.payload !== undefined ? rec.payload : rec)) {
+        const outs = translateEngineEvent(str(rec.sessionId) || sessionId, type, rec.payload !== undefined ? rec.payload : rec)
+        // 静默丢弃=缺陷：未知事件/未翻译 kind 必须留观测（铁律 4）
+        if (outs.length === 0) this.logger('brain-event-untranslated', type)
+        for (const out of outs) {
           this.broadcast(out.event, out.data)
         }
       }
@@ -377,11 +400,26 @@ export class MobileAppServerBridge {
       const key = str(payload.requestId) || str(payload.toolCallId)
       for (const [id, frame] of this.pendingPermission) {
         const p = asRecord(frame.params) ?? {}
-        if (str(p.requestId) === key || str(p.toolCallId) === key) this.pendingPermission.delete(id)
+        if (str(p.requestId) === key || str(p.toolCallId) === key) {
+          this.pendingPermission.delete(id)
+          const timer = this.permissionTimers.get(id)
+          if (timer) { clearTimeout(timer); this.permissionTimers.delete(id) }
+        }
       }
     }
-    for (const out of translateEngineEvent(sessionId, type, params.payload)) {
-      this.broadcast(out.event, out.data)
+    if (type !== 'permission.resolved') {
+      const outs = translateEngineEvent(sessionId, type, params.payload)
+      // permission.resolved 已在上方专门清理待答表（其翻译产物照常广播）；
+      // 其余事件 0 帧即未翻译，必须留观测（静默丢弃=缺陷）
+      if (outs.length === 0) this.logger('brain-event-untranslated', type)
+      for (const out of outs) {
+        this.broadcast(out.event, out.data)
+      }
+    } else {
+      const outs = translateEngineEvent(sessionId, type, params.payload)
+      for (const out of outs) {
+        this.broadcast(out.event, out.data)
+      }
     }
   }
 
@@ -399,6 +437,18 @@ export class MobileAppServerBridge {
     if (frame.method === 'interaction/requestPermission') {
       const toolCallId = str(params.toolCallId) || str(params.requestId) || String(id)
       this.pendingPermission.set(id, frame)
+      // 超时看护（与 companion 长档 120s 同口径）：手机离线/永不回答时
+      // 代答 -32022，维持「每个转发的反向请求最终必有应答」不变量，
+      // 防止 app-server 回合无限挂起
+      const timer = setTimeout(() => {
+        if (this.pendingPermission.delete(id)) {
+          this.logger('brain-permission-timeout', String(id))
+          this.engine?.respondError?.(id, -32022, 'Permission request timed out')
+        }
+        this.permissionTimers.delete(id)
+      }, this.permissionTimeoutMs)
+      if (typeof timer.unref === 'function') timer.unref()
+      this.permissionTimers.set(id, timer)
       this.broadcast('stream:agent:permission_request', {
         requestId: str(params.requestId) || toolCallId,
         toolCallId,
@@ -431,6 +481,8 @@ export class MobileAppServerBridge {
     }
     const frame = this.pendingPermission.get(frameId)!
     this.pendingPermission.delete(frameId)
+    const answeredTimer = this.permissionTimers.get(frameId)
+    if (answeredTimer) { clearTimeout(answeredTimer); this.permissionTimers.delete(frameId) }
     const approved = d.approved === true
     // 语义映射（手机旧 UI 档位 → app-server optionId）：批准且 remember →
     // allow_project（服务端 kind=allow_always，语义近似）；批准 → allow_once；

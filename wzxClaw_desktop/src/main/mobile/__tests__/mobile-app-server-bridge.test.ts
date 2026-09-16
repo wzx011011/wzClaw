@@ -385,3 +385,73 @@ describe('MobileAppServerBridge', () => {
 
 // 保持 vi 引入（stubEnv 备用）
 void vi
+
+// 权限反向请求超时看护：手机离线/永不回答时代答 -32022（与 companion 长档
+// 同口径），维持「每个转发的反向请求最终必有应答」不变量
+describe('MobileAppServerBridge > permission 超时看护', () => {
+  it('超时后 respondError(-32022) 并清待答表；之后手机的应答按迟到丢弃', async () => {
+    vi.useFakeTimers()
+    try {
+      const log: Array<{ event: string; data?: string }> = []
+      const engine = new FakeEngine()
+      const bridge = new MobileAppServerBridge({
+        cwd: '/tmp/ws',
+        brainName: 'brain-test',
+        apiKey: 'k',
+        broadcast: () => {},
+        engine,
+        logger: (event, detail) => log.push({ event, detail }),
+        permissionTimeoutMs: 50,
+      })
+
+      engine.emitReverseRequest({
+        id: 'srv-t1',
+        method: 'interaction/requestPermission',
+        params: PERMISSION_PARAMS,
+      })
+      expect(engine.responses).toHaveLength(0) // 未超时前不代答
+
+      await vi.advanceTimersByTimeAsync(60)
+
+      const dropped = engine.responses.find((r) => r.id === 'srv-t1')
+      expect(dropped?.frame.error).toMatchObject({ code: -32022 })
+      expect(log.some((l) => l.event === 'brain-permission-timeout')).toBe(true)
+
+      // 迟到的手机应答：待答表已清 → 按迟到丢弃，不再 respond
+      await bridge.handleMessage('permission:response', { toolCallId: 'call_p', approved: true })
+      expect(engine.responses.filter((r) => r.id === 'srv-t1')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('正常应答后定时器被清：不会二次 respondError', async () => {
+    vi.useFakeTimers()
+    try {
+      const engine = new FakeEngine()
+      const broadcastLog: Array<{ event: string; data: unknown }> = []
+      const bridge = new MobileAppServerBridge({
+        cwd: '/tmp/ws',
+        brainName: 'brain-test',
+        apiKey: 'k',
+        broadcast: (event, data) => broadcastLog.push({ event, data }),
+        engine,
+        logger: () => {},
+        permissionTimeoutMs: 50,
+      })
+
+      engine.emitReverseRequest({
+        id: 'srv-t2',
+        method: 'interaction/requestPermission',
+        params: PERMISSION_PARAMS,
+      })
+      await bridge.handleMessage('permission:response', { toolCallId: 'call_p', approved: true })
+      expect(engine.responses.filter((r) => r.id === 'srv-t2')).toHaveLength(1)
+
+      await vi.advanceTimersByTimeAsync(100)
+      expect(engine.responses.filter((r) => r.id === 'srv-t2')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
