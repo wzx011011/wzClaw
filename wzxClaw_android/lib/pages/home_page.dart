@@ -14,6 +14,7 @@ import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
+import '../services/node_catalog_service.dart';
 import '../services/session_sync_service.dart';
 import '../services/voice_input_service.dart';
 import '../services/git_service.dart';
@@ -1957,26 +1958,27 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 模型弹层：只列 resume 实测可用目录（settings.model.available），按
-  /// Provider 分组。历史会话里用过的模型不代表现在可用——把它们当选项
-  /// 回填会让用户选中后再吃一次「模型不可用」，故不降级 sessionModels。
+  /// 模型弹层：优先节点目录（x/model/catalog，引擎实测可用 + 导入快照，
+  /// 标记默认模型，支持「设为节点默认」）；旧 companion 无该扩展时回退
+  /// 引擎 resume 目录（会话内切换）。快照独有模型标注「快照」——可用性
+  /// 未经引擎证实，点选走既有 setModel 链路失败会显性提示。
   /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
   Future<void> _showModelPopup({String? retryContent}) async {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
-    final modelsFuture = ChatRuntimeService.instance.availableModels(sessionId);
+    final catalogFuture = NodeCatalogService.instance.modelCatalog();
     await _showToolbarPopup<String>(
       key: _modelBtnKey,
-      estimatedHeight: 240,
+      estimatedHeight: 320,
       items: [
         PopupMenuItem<String>(
           enabled: false,
           child: SizedBox(
-            width: 240,
-            child: FutureBuilder<List<SessionModelUse>>(
-              future: modelsFuture,
+            width: 264,
+            child: FutureBuilder<NodeModelCatalog>(
+              future: catalogFuture,
               builder: (ctx, snap) {
                 Widget body;
                 if (snap.connectionState != ConnectionState.done) {
@@ -1986,26 +1988,33 @@ class _ChatPageState extends State<ChatPage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   );
-                } else if (snap.hasError || (snap.data?.isEmpty ?? true)) {
+                } else if (snap.hasError || (snap.data?.models.isEmpty ?? true)) {
                   body = Padding(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Text(
                       snap.hasError
-                          ? '模型列表获取失败，请检查与大脑节点的连接'
+                          ? '模型目录获取失败，请检查与大脑节点的连接'
                           : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
                       style: TextStyle(color: colors.textMuted, fontSize: 12),
                     ),
                   );
                 } else {
-                  // 按 Provider 分组（组头不可点，仅作分隔）
-                  final groups = <String, List<SessionModelUse>>{};
-                  for (final m in snap.data!) {
+                  final catalog = snap.data!;
+                  final groups = <String, List<NodeModelEntry>>{};
+                  for (final m in catalog.models) {
                     (groups[m.providerId] ??= []).add(m);
                   }
                   body = Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (catalog.degraded)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('引擎目录暂不可用，仅显示导入快照',
+                              style: TextStyle(
+                                  color: colors.warning, fontSize: 11,),),
+                        ),
                       for (final entry in groups.entries) ...[
                         Padding(
                           padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
@@ -2017,14 +2026,33 @@ class _ChatPageState extends State<ChatPage> {
                           InkWell(
                             onTap: () async {
                               Navigator.of(ctx).pop();
-                              await _applyModelChoice(sessionId, m, retryContent);
+                              await _applyModelChoice(
+                                sessionId,
+                                SessionModelUse(
+                                    providerId: m.providerId,
+                                    modelId: m.modelId,),
+                                retryContent,
+                                alsoSetDefault: catalog.defaultModel == null
+                                    || catalog.defaultModel!.key != m.key,
+                              );
                             },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 7),
-                              child: Text(m.modelId,
-                                  style: TextStyle(
-                                      color: colors.textPrimary,
-                                      fontSize: 13,),),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(m.modelId,
+                                        style: TextStyle(
+                                            color: colors.textPrimary,
+                                            fontSize: 13,),),
+                                  ),
+                                  if (catalog.defaultModel != null
+                                      && catalog.defaultModel!.key == m.key)
+                                    _modelTag(colors, '默认', colors.accent)
+                                  else if (m.source == 'imported')
+                                    _modelTag(colors, '快照', colors.warning),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -2040,18 +2068,41 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 应用模型选择：setModel（对象形式）→ 提示 → [retryContent] 非空时重发原文
+  Widget _modelTag(AppColors colors, String label, Color color) => Container(
+        margin: const EdgeInsets.only(left: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(label,
+            style: TextStyle(color: color, fontSize: 10,),),
+      );
+
+  /// 应用模型选择：会话内 setModel →（可选）设为节点默认 → 提示 →
+  /// [retryContent] 非空时重发原文。设默认失败不回滚会话内切换（两者语义独立）。
   Future<void> _applyModelChoice(
     String sessionId,
     SessionModelUse m,
-    String? retryContent,
-  ) async {
+    String? retryContent, {
+    bool alsoSetDefault = false,
+  }) async {
     try {
       await ChatRuntimeService.instance
           .setModel(sessionId, m.providerId, m.modelId,);
+      if (alsoSetDefault) {
+        try {
+          await NodeCatalogService.instance.configureDefault(
+              providerId: m.providerId, modelId: m.modelId,);
+        } catch (e) {
+          debugPrint('[model] 设为节点默认失败（不影响本会话）: $e');
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已切换到 ${m.modelId}'),
+          content: Text(alsoSetDefault
+              ? '已切换到 ${m.modelId}，并设为节点默认'
+              : '已切换到 ${m.modelId}',),
           duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),);

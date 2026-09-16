@@ -1045,6 +1045,96 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
     'x/* 方法不得转发给 app-server');
 });
 
+test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落盘/扩展摘要', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xmodel-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xmodel-state-'));
+  // 预置导入快照：引擎目录（glm-x）+ 快照独有（glm-imported-only）
+  fs.writeFileSync(path.join(stateDir, 'import-snapshot.json'), JSON.stringify({
+    schemaVersion: 1,
+    importedAt: '2026-09-16T10:00:00.000Z',
+    categories: {
+      models: { selectedModel: 'builtin:p1/glm-x', providers: [
+        { id: 'builtin:p1', name: 'P1', hasCredential: false, modelIds: ['glm-x', 'glm-imported-only'] },
+      ] },
+      extensions: { skills: ['skill-a'], plugins: ['plugin-b'], commands: [], mcpCount: 3 },
+    },
+  }));
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+
+  const ask = (id, method, params) =>
+    client.send({ type: 'data', payload: { id, method, params } });
+
+  // x/model/catalog：引擎实测两条（available）+ 快照独有一条（imported）；
+  // 引擎与快照重合的 glm-x 不得重复出现
+  ask(20, 'x/model/catalog', {});
+  const cat = await client.next((m) => m.type === 'data' && m.payload.id === 20);
+  const models = cat.payload.result.models;
+  assert.equal(models.length, 3, `catalog: ${JSON.stringify(models)}`);
+  const byKey = new Map(models.map((m) => [`${m.providerId}/${m.modelId}`, m]));
+  assert.equal(byKey.get('builtin:p1/glm-x').source, 'engine');
+  assert.equal(byKey.get('builtin:p1/glm-x').available, true);
+  assert.equal(byKey.get('builtin:p1/glm-mini').available, true);
+  assert.equal(byKey.get('builtin:p1/glm-imported-only').source, 'imported');
+  assert.equal(byKey.get('builtin:p1/glm-imported-only').available, false);
+  assert.equal(cat.payload.result.default, null);
+  assert.equal(cat.payload.result.degraded, false);
+
+  // x/model/configure：默认模型落盘（0600）+ 对活跃会话即时 setModel
+  ask(21, 'x/model/configure', { providerId: 'builtin:p1', modelId: 'glm-x' });
+  const conf = await client.next((m) => m.type === 'data' && m.payload.id === 21);
+  assert.equal(conf.payload.result.ok, true);
+  assert.equal(conf.payload.result.appliedToActive, true);
+  const defaultFile = path.join(stateDir, 'model-default.json');
+  const saved = JSON.parse(fs.readFileSync(defaultFile, 'utf8'));
+  assert.deepEqual([saved.providerId, saved.modelId], ['builtin:p1', 'glm-x']);
+  // Windows 上 writeFileSync 的 mode 不剥离组/其他位（0o600 → 0o666），
+  // 0600 语义只在 POSIX 生效：断言属主读写位存在即可
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(defaultFile).mode & 0o777, 0o600);
+  }
+
+  // 落盘后目录回读 default；参数校验失败回数值错误码
+  ask(22, 'x/model/catalog', {});
+  const cat2 = await client.next((m) => m.type === 'data' && m.payload.id === 22);
+  assert.deepEqual(cat2.payload.result.default,
+    { providerId: 'builtin:p1', modelId: 'glm-x' });
+  ask(23, 'x/model/configure', { providerId: 'builtin:p1/x', modelId: 'm' });
+  const bad = await client.next((m) => m.type === 'data' && m.payload.id === 23);
+  assert.equal(bad.payload.error.code, -32100);
+
+  // x/extensions/list：快照摘要如实返回
+  ask(24, 'x/extensions/list', {});
+  const ext = await client.next((m) => m.type === 'data' && m.payload.id === 24);
+  assert.deepEqual(ext.payload.result.skills, ['skill-a']);
+  assert.deepEqual(ext.payload.result.plugins, ['plugin-b']);
+  assert.equal(ext.payload.result.mcpCount, 3);
+  assert.equal(ext.payload.result.importedAt, '2026-09-16T10:00:00.000Z');
+});
+
 
 test('x/git/status：有 upstream 的分支名必须剥掉 ...tracking 段（本仓库实测踩坑）', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);

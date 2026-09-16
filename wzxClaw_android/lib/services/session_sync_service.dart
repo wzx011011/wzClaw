@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'node_catalog_service.dart';
+
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/session_meta.dart';
@@ -782,8 +784,9 @@ class SessionSyncService {
     }
   }
 
-  /// 新建任务并发送首条消息：引擎建会话 → 写本地索引 → 切换视图 → 发消息。
-  /// 返回 false = 创建失败（调用方提示用户）。
+  /// 新建任务并发送首条消息：引擎建会话 → 应用节点默认模型（companion
+  /// x/model/configure 落盘的偏好；失败不阻断建会话，引擎用其自身默认）→
+  /// 写本地索引 → 切换视图 → 发消息。返回 false = 创建失败（调用方提示用户）。
   Future<bool> startNewConversation(String firstMessage) async {
     if (_transport.state != WsConnectionState.connected ||
         !_hasSelectedDesktopTarget) {
@@ -792,6 +795,7 @@ class SessionSyncService {
     final result = await createSession();
     final sessionId = result?['id'] as String?;
     if (sessionId == null || sessionId.isEmpty) return false;
+    await _applyNodeDefaultModel(sessionId);
     final desktopId = _transport.selectedDesktopId!;
     final now = DateTime.now().millisecondsSinceEpoch;
     final ws = await PhoneSessionIndex.instance.workspaceFor(desktopId);
@@ -815,6 +819,25 @@ class SessionSyncService {
     unawaited(refreshLocalSessions());
     ChatStore.instance.sendMessage(firstMessage);
     return true;
+  }
+
+  /// 把节点默认模型应用到新建会话。旧 companion 无 x/model/* 扩展或目录
+  /// 拉取失败时静默跳过（引擎自身默认仍可用），只留观测日志。
+  Future<void> _applyNodeDefaultModel(String sessionId) async {
+    try {
+      final catalog = await NodeCatalogService.instance.modelCatalog();
+      final def = catalog.defaultModel;
+      if (def == null) return;
+      await ConnectionManager.instance.zcodeRequest('session/setModel', {
+        'sessionId': sessionId,
+        'model': {
+          'providerId': def.providerId,
+          'modelId': def.modelId,
+        },
+      });
+    } catch (e) {
+      debugPrint('[session-sync] 应用节点默认模型失败（继续用引擎默认）: $e');
+    }
   }
 
   /// 从引擎导入一条会话到本地索引（兜底入口：打开桌面端创建过的会话）。

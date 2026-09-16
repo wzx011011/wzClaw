@@ -241,6 +241,40 @@ function startCompanion(snapshot) {
 
 const preloadPath = () => path.join(__dirname, 'preload.js');
 
+// renderer 黑窗取证（2026-09-16 间歇复现两次）：加载失败/进程死亡必须有
+// 落盘日志与运行日志，不允许静默黑屏；同时做有限自愈（最多重载 2 次）。
+function logRendererFault(kind, detail) {
+  const line = `${new Date().toISOString()} ${kind} ${detail}`;
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), `${line}\n`);
+  } catch { /* 尽力取证 */ }
+  pushLog(kind, String(detail).slice(0, 200));
+}
+
+function attachRendererDiagnostics(win) {
+  const wc = win.webContents;
+  let reloads = 0;
+  const boundedReload = (reason) => {
+    if (reloads >= 2) return;
+    reloads += 1;
+    logRendererFault('renderer-reload', `${reason} 第${reloads}次`);
+    setTimeout(() => { try { wc.reload(); } catch { /* 窗口已销毁 */ } }, 800);
+  };
+  wc.on('did-fail-load', (_e, code, description, _url, isMainFrame) => {
+    if (!isMainFrame) return;
+    logRendererFault('renderer-load-failed', `${code}:${description}`);
+    boundedReload(`load-failed ${code}`);
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    logRendererFault('renderer-gone', `${details.reason} exit=${details.exitCode}`);
+    if (details.reason !== 'clean-exit') boundedReload(`gone ${details.reason}`);
+  });
+  wc.on('did-finish-load', () => pushLog('renderer-loaded', ''));
+  wc.on('console-message', (_e, _level, message) => {
+    pushLog('renderer-console', String(message).slice(0, 200));
+  });
+}
+
 function createFull() {
   fullWin = new BrowserWindow({
     width: 900,
@@ -255,6 +289,7 @@ function createFull() {
       nodeIntegration: false,
     },
   });
+  attachRendererDiagnostics(fullWin);
   fullWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   // 关窗 = 缩到托盘（退出走托盘菜单）
   fullWin.on('close', (e) => {
@@ -282,6 +317,7 @@ function createPet() {
       nodeIntegration: false,
     },
   });
+  attachRendererDiagnostics(petWin);
   petWin.setAlwaysOnTop(true, 'screen-saver');
   petWin.loadFile(path.join(__dirname, 'renderer', 'pet.html'));
 }

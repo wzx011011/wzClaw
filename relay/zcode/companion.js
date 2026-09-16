@@ -451,6 +451,9 @@ function createCompanion(options = {}) {
     bridge.onRespawn = () => {
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
+      // 本地扩展请求同样作废（等价语义：旧进程的应答不会再有）
+      for (const entry of localPending.values()) { clearTimeout(entry.timer); entry.resolve(null); }
+      localPending.clear();
     };
     bridge.start();
     log('bridge-started', '');
@@ -492,6 +495,8 @@ function createCompanion(options = {}) {
   // 转发给手机端应答并做超时看护（默认长档，见 lib/protocol.js 失败模式
   // 分析）：仅白名单快速方法走短档；超时代答 -32022 拒绝。
   function handleAppServerFrame(frame) {
+    // 本地扩展请求的应答（x/model/* 等经桥请求）：不透传给手机
+    if (frame.id != null && !frame.method && feedLocalResponse(frame)) return;
     if (frame.method && frame.id != null) {
       if (frame.method === RUNTIME_PREFERENCES_METHOD) {
         bridge.write({ id: frame.id, result: RUNTIME_PREFERENCES_RESULT });
@@ -561,6 +566,113 @@ function createCompanion(options = {}) {
   // 结尾 .lock（git 保留）、空白与控制字符。覆盖个人项目的实际分支命名。
   const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
   const branchAllowed = (name) => BRANCH_RE.test(name) && !name.includes('..') && !name.endsWith('.lock');
+
+  // ---- 模型目录/默认模型（x/model/*）----
+  // 职责拆分：
+  // - 可用模型来自引擎（session/list → 活跃会话 resume → settings.model.
+  //   available，实测唯一可信目录源）；导入快照（companion_app 的
+  //   import-snapshot.json）作为目录补充展示，标记 unavailable=false 待引擎证实。
+  // - 默认模型是 companion 自己的配置（model-default.json，0600），绝不写
+  //   ~/.zcode；新会话由手机端在建会后先 setModel 应用。
+  const modelDefaultFile = path.join(path.dirname(midFile), 'model-default.json');
+  let engineModelCatalog = []; // [{providerId,modelId}] 引擎实测可用
+  let engineCatalogAt = 0;
+
+  function readModelDefault() {
+    try {
+      const v = JSON.parse(fs.readFileSync(modelDefaultFile, 'utf8'));
+      if (v && typeof v === 'object' && typeof v.providerId === 'string'
+        && typeof v.modelId === 'string' && v.providerId && v.modelId) return v;
+    } catch { /* 缺失/损坏视为未设置 */ }
+    return null;
+  }
+
+  function writeModelDefault(providerId, modelId) {
+    const tmp = `${modelDefaultFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ providerId, modelId, updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, modelDefaultFile);
+  }
+
+  // 读 companion_app 导入快照里的模型目录（快照与 CLI companion 共用数据目录）。
+  // 结构见 zcode-importer.applyImport；缺失/损坏返回空（不算错误）。
+  function readImportedModelCatalog() {
+    try {
+      const snap = JSON.parse(fs.readFileSync(
+        path.join(path.dirname(midFile), 'import-snapshot.json'), 'utf8',));
+      const models = snap && snap.categories && snap.categories.models;
+      if (!models || typeof models !== 'object') return [];
+      const providers = Array.isArray(models.providers) ? models.providers : [];
+      return providers.flatMap((p) => (p && Array.isArray(p.modelIds)
+        ? p.modelIds.map((m) => ({ providerId: p.id, modelId: m }))
+        : []));
+    } catch {
+      return [];
+    }
+  }
+
+  // 拉引擎可用目录：单飞 + 60s 缓存（目录基本静态，每请求拉一次太重）。
+  // 通道：对活跃会话 resume。无活跃会话（如刚启动）时目录为空并返回
+  // imported 作为兜底——手机端 UI 两种来源都展示。
+  async function fetchEngineModelCatalog() {
+    if (engineModelCatalog.length && Date.now() - engineCatalogAt < 60000) {
+      return engineModelCatalog;
+    }
+    const list = await bridgeRequest({ id: nextLocalId(), method: 'session/list' });
+    const sessions = list && list.result && Array.isArray(list.result.sessions)
+      ? list.result.sessions : [];
+    const active = sessions.find((s) => s && typeof s.sessionId === 'string');
+    if (!active) {
+      engineModelCatalog = [];
+      engineCatalogAt = Date.now();
+      return engineModelCatalog;
+    }
+    const resume = await bridgeRequest({
+      id: nextLocalId(), method: 'session/resume',
+      params: { sessionId: active.sessionId },
+    });
+    if (!resume || resume.error) throw safeError('X_MODEL_BRIDGE_DOWN');
+    const settings = resume && resume.result && resume.result.settings;
+    const available = settings && settings.model && Array.isArray(settings.model.available)
+      ? settings.model.available : [];
+    engineModelCatalog = available
+      .map((e) => e && e.ref ? { providerId: e.ref.providerId, modelId: e.ref.modelId } : null)
+      .filter((v) => v && v.providerId && v.modelId);
+    engineCatalogAt = Date.now();
+    return engineModelCatalog;
+  }
+
+  let localIdSeq = 0;
+  function nextLocalId() { localIdSeq += 1; return `x-${localIdSeq}`; }
+  const localPending = new Map();
+
+  // 经既有桥发一帧并等应答（带 20s 看护；桥死/引擎重启作废时 reject）。
+  // respawn 作废路径 resolve(null)：这里统一转成错误，调用方只需处理 reject。
+  function bridgeRequest(frame) {
+    return new Promise((resolve, reject) => {
+      if (!bridge) { reject(safeError('X_MODEL_BRIDGE_DOWN')); return; }
+      const timer = setTimeout(() => {
+        localPending.delete(frame.id);
+        reject(safeError('X_MODEL_TIMEOUT'));
+      }, 20000);
+      localPending.set(frame.id, { timer,
+        resolve: (r) => (r && (r.result !== undefined || r.error !== undefined)
+          ? resolve(r)
+          : reject(safeError('X_MODEL_BRIDGE_DOWN'))) });
+      if (!bridge.write(frame)) {
+        clearTimeout(timer); localPending.delete(frame.id);
+        reject(safeError('X_MODEL_BRIDGE_DOWN'));
+      }
+    });
+  }
+
+  function feedLocalResponse(frame) {
+    const entry = localPending.get(frame.id);
+    if (!entry) return false;
+    localPending.delete(frame.id);
+    clearTimeout(entry.timer);
+    entry.resolve(frame);
+    return true;
+  }
 
   function validateDir(rawPath) {
     if (typeof rawPath !== 'string' || !rawPath.length || rawPath.length > 500) {
@@ -651,14 +763,92 @@ function createCompanion(options = {}) {
           } });
           return;
         }
+        case 'x/model/catalog': {
+          // 可用目录：引擎实测（settings.model.available，唯一可信源）+
+          // 导入快照补充（标记 imported，未经引擎证实可用性）
+          let engine = [];
+          let degraded = false;
+          try {
+            engine = await fetchEngineModelCatalog();
+          } catch {
+            degraded = true; // 桥未起/未登录：仍返回导入目录，UI 提示降级
+          }
+          const imported = readImportedModelCatalog();
+          const engineKeys = new Set(engine.map((m) => `${m.providerId}/${m.modelId}`));
+          const models = [
+            ...engine.map((m) => ({ ...m, available: true, source: 'engine' })),
+            ...imported
+              .filter((m) => !engineKeys.has(`${m.providerId}/${m.modelId}`))
+              .map((m) => ({ ...m, available: false, source: 'imported' })),
+          ];
+          const def = readModelDefault();
+          reply({ id: frame.id, result: {
+            models,
+            default: def ? { providerId: def.providerId, modelId: def.modelId } : null,
+            degraded,
+          } });
+          return;
+        }
+        case 'x/model/configure': {
+          const p = frame.params || {};
+          if (typeof p.providerId !== 'string' || typeof p.modelId !== 'string'
+            || !p.providerId || !p.modelId
+            || /[/\s]/.test(p.providerId) || /[/\s]/.test(p.modelId)) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          writeModelDefault(p.providerId, p.modelId);
+          // 对活跃会话即时生效：setModel 失败不回滚默认值（新会话仍会应用），
+          // 如实返回 appliedToActive 供 UI 提示
+          let appliedToActive = false;
+          try {
+            const list = await bridgeRequest({ id: nextLocalId(), method: 'session/list' });
+            const sessions = list && list.result && Array.isArray(list.result.sessions)
+              ? list.result.sessions : [];
+            const active = sessions.find((s) => s && typeof s.sessionId === 'string');
+            if (active) {
+              const r = await bridgeRequest({
+                id: nextLocalId(), method: 'session/setModel',
+                params: { sessionId: active.sessionId,
+                  model: { providerId: p.providerId, modelId: p.modelId } },
+              });
+              appliedToActive = Boolean(r && !r.error);
+            }
+          } catch { /* 桥不可用：默认值已落盘，新会话会应用 */ }
+          reply({ id: frame.id, result: {
+            ok: true, appliedToActive,
+            default: { providerId: p.providerId, modelId: p.modelId },
+          } });
+          return;
+        }
+        case 'x/extensions/list': {
+          // 导入快照的扩展摘要（只读）；快照缺失时如实返回 empty 而非报错
+          let summary = null;
+          let importedAt = null;
+          try {
+            const snap = JSON.parse(fs.readFileSync(
+              path.join(path.dirname(midFile), 'import-snapshot.json'), 'utf8',));
+            summary = snap && snap.categories && snap.categories.extensions;
+            importedAt = snap && snap.importedAt || null;
+          } catch { /* 未导入 */ }
+          reply({ id: frame.id, result: {
+            skills: summary && Array.isArray(summary.skills) ? summary.skills : [],
+            plugins: summary && Array.isArray(summary.plugins) ? summary.plugins : [],
+            commands: summary && Array.isArray(summary.commands) ? summary.commands : [],
+            mcpCount: summary && typeof summary.mcpCount === 'number' ? summary.mcpCount : 0,
+            importedAt,
+          } });
+          return;
+        }
         default:
           reply({ id: frame.id, error: { code: ERR_UNHANDLED, message: `companion 未实现该扩展方法: ${frame.method}` } });
       }
     } catch (err) {
-      const reason = err.code || 'X_GIT_FAILED';
+      const reason = err.code || '';
       const code = reason === 'X_BAD_PARAMS' ? ERR_X_BAD_PARAMS
-        : reason === 'X_GIT_TIMEOUT' ? ERR_X_GIT_TIMEOUT : ERR_X_GIT_FAILED;
-      reply({ id: frame.id, error: { code, message: String(err.message || err), data: { reason } } });
+        : reason === 'X_GIT_TIMEOUT' ? ERR_X_GIT_TIMEOUT
+        : reason === 'X_MODEL_TIMEOUT' ? ERR_TIMEOUT
+        : ERR_X_GIT_FAILED;
+      reply({ id: frame.id, error: { code, message: String(err.message || err), data: { reason: reason || 'X_GIT_FAILED' } } });
     }
   }
 

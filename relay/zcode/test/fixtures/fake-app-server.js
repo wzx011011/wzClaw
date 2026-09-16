@@ -34,6 +34,22 @@ process.stdin.on('data', (chunk) => {
       send({ method: 'fake/runtime-prefs', params: { answered: frame.result != null && frame.result.nativeSearchEnhancementsEnabled === false } });
     } else if (frame.id === 'server-2') {
       send({ method: 'fake/interaction-relay', params: { ok: frame.result !== undefined || frame.error !== undefined } });
+    } else if (String(frame.id).startsWith('x-')) {
+      // companion 本地扩展（x/model/*）经桥发起的请求：直接回 result，
+      // 不落 x/ 泄漏哨兵（方法名不带 x/ 前缀，但 id 带 x- 前缀）
+      if (frame.method === 'session/resume') {
+        send({ id: frame.id, result: { messages: [], session: {},
+          settings: { model: { available: [
+            { ref: { providerId: 'builtin:p1', modelId: 'glm-x' } },
+            { ref: { providerId: 'builtin:p1', modelId: 'glm-mini' } },
+          ] } } } });
+      } else if (frame.method === 'session/list') {
+        send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
+      } else if (frame.method === 'session/setModel') {
+        send({ id: frame.id, result: { ok: true } });
+      } else {
+        send({ id: frame.id, result: { ok: true } });
+      }
     } else if (frame.method === 'session/resume') {
       // 截断测试：返回超 1MiB 的消息历史（40 条 × ~40KB）
       const big = Array.from({ length: 40 }, (_, i) => ({
