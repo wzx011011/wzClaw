@@ -993,9 +993,24 @@ class _ChatPageState extends State<ChatPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () {
-                    // 与输入 /clear 完全同路径：由引擎创建新会话
-                    ChatStore.instance.sendMessage('/clear');
+                  onPressed: () async {
+                    // 坏会话里连 /clear 都走 session/send、同样被 -32031 拒
+                    // （2026-09-16 用户实测死循环）。必须经 session/create
+                    // 建新会话：有被阻塞原文时随新会话一并重发，一步迁移。
+                    final content = ChatStore.instance.lastModelBlockedContent;
+                    if (content == null || content.isEmpty) {
+                      await SessionSyncService.instance.enterNewConversation();
+                      return;
+                    }
+                    final ok = await SessionSyncService.instance
+                        .startNewConversation(content,);
+                    if (!ok && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('新建会话失败，请检查与大脑节点的连接'),
+                        duration: Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
+                      ),);
+                    }
                   },
                   icon: const Icon(Icons.post_add_outlined, size: 15),
                   label: const Text('新建会话', style: TextStyle(fontSize: 12)),
