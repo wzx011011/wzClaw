@@ -22,7 +22,6 @@ import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/git_branch_sheet.dart';
-import '../widgets/mic_button.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/plan_mode_bar.dart';
 import '../widgets/project_drawer.dart';
@@ -1017,7 +1016,7 @@ class _ChatPageState extends State<ChatPage> {
   /// 被阻塞的原文。原文缺失（进程重建等）时降级为普通打开面板。
   void _retryModelUnavailable() {
     final content = ChatStore.instance.lastModelBlockedContent;
-    _showModelSheet(retryContent: content);
+    _showModelPopup(retryContent: content);
   }
 
   // ── User bubble ────────────────────────────────────────────────────
@@ -1526,6 +1525,14 @@ class _ChatPageState extends State<ChatPage> {
 
   // ── Input bar ──────────────────────────────────────────────────────
 
+  // ── Input bar（V3 容器式：输入整行在上、工具栏在下；弹层自按钮向上展开） ──
+
+  final GlobalKey _plusBtnKey = GlobalKey();
+  final GlobalKey _modeBtnKey = GlobalKey();
+  final GlobalKey _usageBtnKey = GlobalKey();
+  final GlobalKey _modelBtnKey = GlobalKey();
+  final GlobalKey _effortBtnKey = GlobalKey();
+
   Widget _buildInputBar() {
     return StreamBuilder<WsConnectionState>(
       stream: ConnectionManager.instance.stateStream,
@@ -1542,19 +1549,17 @@ class _ChatPageState extends State<ChatPage> {
             ? keyboardInset
             : MediaQuery.paddingOf(context).bottom;
 
+        final busy = _isStreaming || _isWaiting;
+
         return AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
-          padding: EdgeInsets.fromLTRB(8, 6, 8, 6 + bottomInset),
-          decoration: BoxDecoration(
-            color: colors.bgSecondary,
-            border: Border(top: BorderSide(color: colors.border, width: 0.5)),
-          ),
+          padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
           child: Column(children: [
-            // 顶行：工作区 chip + git 分支 chip（对齐官方 ZCode 输入区样式）
-            if (isConnected)
+            // 工作区/分支胶囊行：生成中收起（V3 规格）
+            if (isConnected && !busy)
               Padding(
-                padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
                 child: Row(
                   children: [
                     _buildWorkspaceChip(colors),
@@ -1565,215 +1570,521 @@ class _ChatPageState extends State<ChatPage> {
               ),
             // 消息排队条：流式期间发送的内容在此排队（↑立即/编辑/删除/拖拽）
             _buildSendQueueStrip(colors),
-            Row(
-              children: [
-                // Permission mode dropdown（措辞对齐官方：变更前确认/自动编辑/计划模式/完全访问）
-                if (isConnected)
-                  SizedBox(
-                    width: 36,
-                    height: 36,
-                    child: IconButton(
-                      onPressed: () {
-                        const modes = ['always-ask', 'accept-edits', 'plan', 'bypass'];
-                        const labels = ['变更前确认', '自动编辑', '计划模式', '完全访问'];
-                        const subtitles = [
-                          '改文件前先问我。',
-                          '自动编辑文件。',
-                          '编辑前先出计划。',
-                          '减少确认次数。',
-                        ];
-                        final current = ChatStore.instance.permissionMode;
-                        // Get button position for popup placement
-                        final renderBox = context.findRenderObject() as RenderBox;
-                        final size = MediaQuery.of(context).size;
-                        final position = RelativeRect.fromLTRB(
-                          0,
-                          renderBox.localToGlobal(Offset.zero).dy - 180,
-                          size.width - renderBox.localToGlobal(Offset.zero).dx - renderBox.size.width,
-                          0,
-                        );
-                        showMenu<String>(
-                          context: context,
-                          position: position,
-                          items: List.generate(modes.length, (i) {
-                            final selected = modes[i] == current;
-                            return PopupMenuItem<String>(
-                              value: modes[i],
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    const [
-                                      Icons.pan_tool_outlined,
-                                      Icons.shield_outlined,
-                                      Icons.checklist_outlined,
-                                      Icons.lock_open_outlined,
-                                    ][i],
-                                    size: 16,
-                                    color: selected ? colors.accent : colors.textSecondary,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        labels[i],
-                                        style: TextStyle(
-                                          color: selected ? colors.accent : colors.textPrimary,
-                                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      Text(
-                                        subtitles[i],
-                                        style: TextStyle(
-                                          color: colors.textMuted,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                        ).then((value) {
-                          // Prevent keyboard from appearing when popup dismisses
-                          _inputFocusNode.unfocus();
-                          if (value != null) {
-                            ChatStore.instance.setPermissionMode(value);
-                          }
-                        });
-                      },
-                      icon: Icon(
-                        Icons.security_outlined,
-                        color: ChatStore.instance.permissionMode == 'bypass'
-                            ? colors.error
-                            : colors.textSecondary,
-                        size: 20,
-                      ),
-                      padding: EdgeInsets.zero,
-                      tooltip: '权限模式',
-                    ),
-                  ),
-                if (isConnected) const SizedBox(width: 2),
-                // Command menu button
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: IconButton(
-                    onPressed: isConnected ? _showCommandSheet : null,
-                    icon: Icon(
-                      Icons.add_circle_outline,
-                      color: isConnected ? colors.textSecondary : colors.textMuted,
-                      size: 22,
-                    ),
-                    padding: EdgeInsets.zero,
-                    tooltip: '命令',
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Expanded(
-                  child: TextField(
-                    controller: _inputController,
-                    focusNode: _inputFocusNode,
-                    enabled: isConnected,
-                    style: TextStyle(color: colors.textPrimary, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: !isConnected
-                          ? '未连接'
-                          : (_isStreaming || _isWaiting)
-                              ? '继续输入以排队后续修改'
-                              : '向 ZCode 提问...',
-                      hintStyle: TextStyle(color: colors.textMuted),
-                      filled: true,
-                      fillColor:
-                          isConnected ? colors.bgInput : colors.bgPrimary,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8,),
-                    ),
-                    maxLines: 5,
-                    minLines: 1,
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    onChanged: _onInputChanged,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                if (isConnected) ...[
-                  // 上下文用量环：弹层展示 session/usage 实测数据
-                  SizedBox(
-                    width: 34,
-                    height: 36,
-                    child: IconButton(
-                      onPressed: _showUsageSheet,
-                      icon: Icon(Icons.donut_large,
-                          size: 19, color: colors.textSecondary,),
-                      padding: EdgeInsets.zero,
-                      tooltip: '上下文用量',
-                    ),
-                  ),
-                  // 模型：弹层列本会话历史模型（协议无目录接口，不做假目录）
-                  SizedBox(
-                    width: 34,
-                    height: 36,
-                    child: IconButton(
-                      onPressed: _showModelSheet,
-                      icon: Icon(Icons.view_in_ar_outlined,
-                          size: 19, color: colors.textSecondary,),
-                      padding: EdgeInsets.zero,
-                      tooltip: '模型',
-                    ),
-                  ),
-                  // 思考档位：低/中/高/最高（枚举未实测，错误显性上浮）
-                  SizedBox(
-                    width: 34,
-                    height: 36,
-                    child: IconButton(
-                      onPressed: _showThoughtSheet,
-                      icon: Icon(Icons.psychology_outlined,
-                          size: 20, color: colors.textSecondary,),
-                      padding: EdgeInsets.zero,
-                      tooltip: '思考档位',
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 4),
-                MicButton(
-                  onResult: (text) {
-                    _inputController.text = text;
-                    _inputController.selection = TextSelection.fromPosition(
-                      TextPosition(offset: _inputController.text.length),
-                    );
-                  },
-                  isConnected: isConnected,
-                  isStreaming: _isStreaming,
-                ),
-                const SizedBox(width: 4),
-                if (_isStreaming)
-                  IconButton(
-                    onPressed: () => ChatStore.instance.stopGeneration(),
-                    icon:
-                        Icon(Icons.stop_circle, color: colors.error, size: 28),
-                    tooltip: '停止生成',
-                  )
-                else
-                  IconButton(
-                    onPressed: isConnected ? _sendMessage : null,
-                    icon: Icon(
-                      Icons.send,
-                      color: isConnected ? colors.accent : colors.textMuted,
-                    ),
-                  ),
-              ],
-            ),
+            _buildComposerContainer(colors, isConnected),
           ],),
         );
       },
     );
+  }
+
+  /// 容器式输入区：单容器包住输入与工具栏（对齐官方 ZCode 输入区）。
+  Widget _buildComposerContainer(AppColors colors, bool isConnected) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      decoration: BoxDecoration(
+        color: colors.bgSecondary,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(children: [
+        // 输入内容独占上方整行；生成中不锁输入，提示切换为排队语
+        TextField(
+          controller: _inputController,
+          focusNode: _inputFocusNode,
+          enabled: isConnected,
+          style: TextStyle(color: colors.textPrimary, fontSize: 14.5),
+          decoration: InputDecoration(
+            hintText: !isConnected
+                ? '未连接'
+                : (_isStreaming || _isWaiting)
+                    ? '继续输入以排队后续修改'
+                    : '提出后续修改要求',
+            hintStyle: TextStyle(color: colors.textMuted, fontSize: 14),
+            border: InputBorder.none,
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          ),
+          maxLines: 6,
+          minLines: 1,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          onChanged: _onInputChanged,
+        ),
+        const SizedBox(height: 8),
+        _buildComposerToolbar(colors, isConnected),
+      ],),
+    );
+  }
+
+  /// 工具栏：左「+ · 权限模式」，右「用量 · 模型 · 档位 · 发送/停止」。
+  /// 窄屏收纳：宽度不足时模式名收起为纯盾形图标（V3：图标组与发送永不移除）。
+  Widget _buildComposerToolbar(AppColors colors, bool isConnected) {
+    // 官方样式：完全访问激活色
+    const modeOrange = Color(0xFFE8A33D);
+    final busy = _isStreaming || _isWaiting;
+    final modelBlocked =
+        (ChatStore.instance.lastModelBlockedContent ?? '').isNotEmpty;
+
+    Widget iconBtn({
+      required GlobalKey key,
+      required String tip,
+      required IconData icon,
+      required VoidCallback? onTap,
+      Color? color,
+    }) =>
+        SizedBox(
+          key: key,
+          width: 30,
+          height: 30,
+          child: IconButton(
+            onPressed: onTap,
+            icon: Icon(icon, size: 20, color: color ?? colors.textSecondary),
+            padding: EdgeInsets.zero,
+            tooltip: tip,
+          ),
+        );
+
+    return LayoutBuilder(builder: (context, cons) {
+      // 容器内宽 <310 时收起模式名文字，仅保留盾形图标
+      final showModeText = cons.maxWidth >= 310;
+      final mode = ChatStore.instance.permissionMode;
+      const modeNames = {
+        'always-ask': '变更前确认',
+        'accept-edits': '自动编辑',
+        'plan': '计划模式',
+        'bypass': '完全访问',
+      };
+      final modeColor = mode == 'bypass' ? modeOrange : colors.textSecondary;
+
+      return Row(children: [
+        iconBtn(
+          key: _plusBtnKey,
+          tip: '附加',
+          icon: Icons.add,
+          onTap: isConnected ? _showAttachPopup : null,
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          key: _modeBtnKey,
+          height: 30,
+          child: IconButton(
+            onPressed: isConnected ? _showPermissionPopup : null,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tooltip: '权限模式',
+            icon: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.security_outlined, size: 18, color: modeColor),
+              if (showModeText) ...[
+                const SizedBox(width: 5),
+                Text(modeNames[mode] ?? '权限模式',
+                    style: TextStyle(
+                        color: modeColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,),),
+                const SizedBox(width: 2),
+                Icon(Icons.expand_more, size: 13, color: modeColor),
+              ],
+            ],),
+          ),
+        ),
+        const Spacer(),
+        iconBtn(
+          key: _usageBtnKey,
+          tip: '上下文用量',
+          icon: Icons.donut_large,
+          onTap: isConnected ? _showUsagePopup : null,
+        ),
+        const SizedBox(width: 2),
+        iconBtn(
+          key: _modelBtnKey,
+          tip: modelBlocked ? '模型不可用' : '模型',
+          icon: Icons.view_in_ar_outlined,
+          onTap: isConnected ? _showModelPopup : null,
+          color: modelBlocked ? colors.error : null,
+        ),
+        const SizedBox(width: 2),
+        iconBtn(
+          key: _effortBtnKey,
+          tip: '思考档位',
+          icon: Icons.psychology_outlined,
+          onTap: isConnected ? _showEffortPopup : null,
+        ),
+        const SizedBox(width: 8),
+        // 发送/停止：浅色圆角方块（V3：空闲 ↑ 箭头、生成中实心方块）
+        SizedBox(
+          width: 30,
+          height: 30,
+          child: IconButton(
+            onPressed: busy
+                ? () => ChatStore.instance.stopGeneration()
+                : (isConnected ? _sendMessage : null),
+            style: IconButton.styleFrom(
+              backgroundColor:
+                  isConnected ? const Color(0xFFE8E8E8) : colors.bgTertiary,
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+            ),
+            padding: EdgeInsets.zero,
+            tooltip: busy ? '停止生成' : '发送',
+            icon: Icon(
+              busy ? Icons.stop : Icons.arrow_upward,
+              size: 18,
+              color: isConnected ? const Color(0xFF17181A) : colors.textMuted,
+            ),
+          ),
+        ),
+      ],);
+    },);
+  }
+
+  /// 统一的「自按钮向上弹出」定位（V3 输入区交互：弹层锚在对应按钮上方）
+  Future<T?> _showToolbarPopup<T>({
+    required GlobalKey key,
+    required double estimatedHeight,
+    required List<PopupMenuEntry<T>> items,
+  }) {
+    final box = key.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return Future<T?>.value();
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final boxOrigin = box.localToGlobal(Offset.zero);
+    return showMenu<T>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        boxOrigin.dx,
+        (boxOrigin.dy - estimatedHeight - 8).clamp(0.0, double.infinity).toDouble(),
+        overlay.size.width - boxOrigin.dx - box.size.width,
+        0,
+      ),
+      items: items,
+    );
+  }
+
+  /// 「+」附加菜单：对齐官方四项。当前链路仅「/ 选择能力」真实可用，
+  /// 其余显式标注暂不支持，不做假入口（设计原则：不做假的成功响应）。
+  Future<void> _showAttachPopup() async {
+    _inputFocusNode.unfocus();
+    await _showToolbarPopup<String>(
+      key: _plusBtnKey,
+      estimatedHeight: 190,
+      items: [
+        _attachItem('添加附件', '暂不支持'),
+        _attachItem('使用 @ 添加上下文', '暂不支持'),
+        _attachItem('使用 / 选择能力', null),
+        _attachItem('使用 \$ 选择技能', '暂不支持'),
+      ],
+    ).then((value) {
+      if (value == 'commands') _showCommandSheet();
+    });
+  }
+
+  PopupMenuItem<String> _attachItem(String label, String? note) {
+    final colors = AppColors.of(context);
+    final enabled = note == null;
+    return PopupMenuItem<String>(
+      enabled: enabled,
+      value: enabled ? 'commands' : null,
+      child: Row(children: [
+        Text(label,
+            style: TextStyle(
+                color: enabled ? colors.textPrimary : colors.textMuted,
+                fontSize: 13,),),
+        if (note != null) ...[
+          const SizedBox(width: 6),
+          Text('（$note）',
+              style: TextStyle(color: colors.textMuted, fontSize: 11),),
+        ],
+      ],),
+    );
+  }
+
+  /// 权限模式菜单：图标+名称+说明，当前项 ✓（措辞沿用既有四档映射）
+  Future<void> _showPermissionPopup() async {
+    _inputFocusNode.unfocus();
+    const modes = ['always-ask', 'accept-edits', 'plan', 'bypass'];
+    const labels = ['变更前确认', '自动编辑', '计划模式', '完全访问'];
+    const subtitles = [
+      '改文件前先问我。',
+      '自动编辑文件。',
+      '编辑前先出计划。',
+      '减少确认次数。',
+    ];
+    const icons = [
+      Icons.pan_tool_outlined,
+      Icons.shield_outlined,
+      Icons.checklist_outlined,
+      Icons.lock_open_outlined,
+    ];
+    final colors = AppColors.of(context);
+    final current = ChatStore.instance.permissionMode;
+    await _showToolbarPopup<String>(
+      key: _modeBtnKey,
+      estimatedHeight: 232,
+      items: [
+        for (var i = 0; i < modes.length; i++)
+          PopupMenuItem<String>(
+            value: modes[i],
+            child: Row(children: [
+              Icon(icons[i],
+                  size: 17,
+                  color: modes[i] == current
+                      ? colors.accent
+                      : colors.textSecondary,),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(labels[i],
+                        style: TextStyle(
+                            color: modes[i] == current
+                                ? colors.accent
+                                : colors.textPrimary,
+                            fontWeight: modes[i] == current
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            fontSize: 13.5,),),
+                    Text(subtitles[i],
+                        style:
+                            TextStyle(color: colors.textMuted, fontSize: 11),),
+                  ],
+                ),
+              ),
+              if (modes[i] == current)
+                Icon(Icons.check, size: 16, color: colors.accent),
+            ],),
+          ),
+      ],
+    ).then((value) {
+      if (value != null) ChatStore.instance.setPermissionMode(value);
+    });
+  }
+
+  /// 上下文用量弹层：session/usage 实测数据（协议无 contextWindow，不显示百分比）
+  Future<void> _showUsagePopup() async {
+    final sessionId = ChatStore.instance.currentSessionId;
+    if (sessionId == null) return;
+    _inputFocusNode.unfocus();
+    final colors = AppColors.of(context);
+    // future 只构造一次（弹层构建期间不会重发请求）
+    final usageFuture = ChatRuntimeService.instance.usage(sessionId);
+    await _showToolbarPopup<String>(
+      key: _usageBtnKey,
+      estimatedHeight: 264,
+      items: [
+        PopupMenuItem<String>(
+          enabled: false,
+          child: SizedBox(
+            width: 250,
+            child: FutureBuilder<ChatUsageInfo>(
+              future: usageFuture,
+              builder: (ctx, snap) {
+                Widget body;
+                if (snap.connectionState != ConnectionState.done) {
+                  body = const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                } else if (snap.hasError) {
+                  body = Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text(
+                      '用量获取失败（协议未提供上下文窗口时无法显示百分比）',
+                      style: TextStyle(color: colors.textMuted, fontSize: 12),
+                    ),
+                  );
+                } else {
+                  final u = snap.data!;
+                  final rows = [
+                    ('总 Token', _fmtTokens(u.totalTokens)),
+                    ('输入', _fmtTokens(u.inputTokens)),
+                    ('输出', _fmtTokens(u.outputTokens)),
+                    ('推理', _fmtTokens(u.reasoningTokens)),
+                    ('缓存读', _fmtTokens(u.cacheReadTokens)),
+                    ('模型请求次数', '${u.modelRequestCount}'),
+                  ];
+                  body = Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('会话用量',
+                          style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,),),
+                      const SizedBox(height: 8),
+                      for (final (label, value) in rows)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(children: [
+                            Text(label,
+                                style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontSize: 12.5,),),
+                            const Spacer(),
+                            Text(value,
+                                style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,),),
+                          ],),
+                        ),
+                    ],
+                  );
+                }
+                return body;
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 模型弹层：只列 resume 实测可用目录（settings.model.available），按
+  /// Provider 分组。历史会话里用过的模型不代表现在可用——把它们当选项
+  /// 回填会让用户选中后再吃一次「模型不可用」，故不降级 sessionModels。
+  /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
+  Future<void> _showModelPopup({String? retryContent}) async {
+    final sessionId = ChatStore.instance.currentSessionId;
+    if (sessionId == null) return;
+    _inputFocusNode.unfocus();
+    final colors = AppColors.of(context);
+    final modelsFuture = ChatRuntimeService.instance.availableModels(sessionId);
+    await _showToolbarPopup<String>(
+      key: _modelBtnKey,
+      estimatedHeight: 240,
+      items: [
+        PopupMenuItem<String>(
+          enabled: false,
+          child: SizedBox(
+            width: 240,
+            child: FutureBuilder<List<SessionModelUse>>(
+              future: modelsFuture,
+              builder: (ctx, snap) {
+                Widget body;
+                if (snap.connectionState != ConnectionState.done) {
+                  body = const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                } else if (snap.hasError || (snap.data?.isEmpty ?? true)) {
+                  body = Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text(
+                      snap.hasError
+                          ? '模型列表获取失败，请检查与大脑节点的连接'
+                          : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
+                      style: TextStyle(color: colors.textMuted, fontSize: 12),
+                    ),
+                  );
+                } else {
+                  // 按 Provider 分组（组头不可点，仅作分隔）
+                  final groups = <String, List<SessionModelUse>>{};
+                  for (final m in snap.data!) {
+                    (groups[m.providerId] ??= []).add(m);
+                  }
+                  body = Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final entry in groups.entries) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
+                          child: Text(entry.key,
+                              style: TextStyle(
+                                  color: colors.textMuted, fontSize: 11,),),
+                        ),
+                        for (final m in entry.value)
+                          InkWell(
+                            onTap: () async {
+                              Navigator.of(ctx).pop();
+                              await _applyModelChoice(sessionId, m, retryContent);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 7),
+                              child: Text(m.modelId,
+                                  style: TextStyle(
+                                      color: colors.textPrimary,
+                                      fontSize: 13,),),
+                            ),
+                          ),
+                      ],
+                    ],
+                  );
+                }
+                return body;
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 应用模型选择：setModel（对象形式）→ 提示 → [retryContent] 非空时重发原文
+  Future<void> _applyModelChoice(
+    String sessionId,
+    SessionModelUse m,
+    String? retryContent,
+  ) async {
+    try {
+      await ChatRuntimeService.instance
+          .setModel(sessionId, m.providerId, m.modelId,);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已切换到 ${m.modelId}'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),);
+      }
+      // 从「模型不可用」卡片进入：切完立即重发被阻塞的原文；仍被拒会再次
+      // 触发链上自动自愈并回卡片
+      if (retryContent != null && retryContent.isNotEmpty) {
+        await ChatStore.instance.sendMessage(retryContent);
+      }
+    } catch (e) {
+      if (mounted) _runtimeErrorSnack(e);
+    }
+  }
+
+  /// 思考档位弹层：低/高/最高（对齐官方三档；枚举未实测，失败显性提示）
+  Future<void> _showEffortPopup() async {
+    final sessionId = ChatStore.instance.currentSessionId;
+    if (sessionId == null) return;
+    _inputFocusNode.unfocus();
+    final colors = AppColors.of(context);
+    const levels = [('低', 'low'), ('高', 'high'), ('最高', 'max')];
+    await _showToolbarPopup<String>(
+      key: _effortBtnKey,
+      estimatedHeight: 156,
+      items: [
+        for (final (label, value) in levels)
+          PopupMenuItem<String>(
+            value: value,
+            child: Text(label,
+                style:
+                    TextStyle(color: colors.textPrimary, fontSize: 13.5),),
+          ),
+      ],
+    ).then((value) async {
+      if (value == null) return;
+      try {
+        await ChatRuntimeService.instance.setThoughtLevel(sessionId, value);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('思考档位已设为 $value'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),);
+        }
+      } catch (e) {
+        if (mounted) _runtimeErrorSnack(e);
+      }
+    });
   }
 
   void _runtimeErrorSnack(Object e) {
@@ -1784,249 +2095,10 @@ class _ChatPageState extends State<ChatPage> {
     ),);
   }
 
-  /// 上下文用量弹层：session/usage 实测数据（协议无 contextWindow，不显示百分比）
-  Future<void> _showUsageSheet() async {
-    final sessionId = ChatStore.instance.currentSessionId;
-    if (sessionId == null) return;
-    final colors = AppColors.of(context);
-    // future 只构造一次（builder 内重建会反复重发请求）
-    final usageFuture = ChatRuntimeService.instance.usage(sessionId);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: FutureBuilder<ChatUsageInfo>(
-          future: usageFuture,
-          builder: (ctx, snap) {
-            final rows = <(String, String)>[];
-            if (snap.hasData) {
-              final u = snap.data!;
-              rows.addAll([
-                ('总 Token', _fmtTokens(u.totalTokens)),
-                ('输入', _fmtTokens(u.inputTokens)),
-                ('输出', _fmtTokens(u.outputTokens)),
-                ('推理', _fmtTokens(u.reasoningTokens)),
-                ('缓存读', _fmtTokens(u.cacheReadTokens)),
-                ('模型请求次数', '${u.modelRequestCount}'),
-              ]);
-            }
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '会话用量',
-                    style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),
-                  ),
-                  const SizedBox(height: 12),
-                  if (snap.connectionState != ConnectionState.done)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 18),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  else if (snap.hasError)
-                    Text(
-                      '用量获取失败（协议未提供上下文窗口大小时无法显示百分比）',
-                      style: TextStyle(color: colors.textMuted, fontSize: 13),
-                    )
-                  else
-                    for (final (label, value) in rows)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          children: [
-                            Text(label,
-                                style: TextStyle(
-                                    color: colors.textSecondary,
-                                    fontSize: 13,),),
-                            const Spacer(),
-                            Text(value,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,),),
-                          ],
-                        ),
-                      ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
   String _fmtTokens(int n) {
     if (n >= 10000) return '${(n / 10000).toStringAsFixed(1)} 万';
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
     return '$n';
-  }
-
-  /// 模型弹层：只列 resume 实测可用目录（settings.model.available）。
-  /// 历史会话里用过的模型不代表现在可用——把它们当选项回填会让用户
-  /// 选中后再吃一次「模型不可用」，故不再降级 sessionModels。
-  /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
-  Future<void> _showModelSheet({String? retryContent}) async {
-    final sessionId = ChatStore.instance.currentSessionId;
-    if (sessionId == null) return;
-    final colors = AppColors.of(context);
-    final modelsFuture = ChatRuntimeService.instance.availableModels(sessionId);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: FutureBuilder<List<SessionModelUse>>(
-          future: modelsFuture,
-          builder: (ctx, snap) {
-            Widget body;
-            if (snap.connectionState != ConnectionState.done) {
-              body = const Center(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 22),
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              );
-            } else if (snap.hasError || (snap.data?.isEmpty ?? true)) {
-              body = Padding(
-                padding: const EdgeInsets.symmetric(vertical: 22),
-                child: Text(
-                  snap.hasError
-                      ? '模型列表获取失败，请检查与大脑节点的连接'
-                      : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
-                  style: TextStyle(color: colors.textMuted, fontSize: 13),
-                ),
-              );
-            } else {
-              final models = snap.data!;
-              body = Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final m in models)
-                    ListTile(
-                      dense: true,
-                      leading: Icon(Icons.view_in_ar_outlined,
-                          size: 18, color: colors.accent,),
-                      title: Text(m.modelId,
-                          style: TextStyle(
-                              color: colors.textPrimary, fontSize: 14,),),
-                      subtitle: Text(m.providerId,
-                          style: TextStyle(
-                              color: colors.textMuted, fontSize: 11,),),
-                      onTap: () async {
-                        Navigator.pop(ctx);
-                        try {
-                          await ChatRuntimeService.instance
-                              .setModel(sessionId, m.providerId, m.modelId,);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                              content: Text('已切换到 ${m.modelId}'),
-                              duration: const Duration(seconds: 2),
-                              behavior: SnackBarBehavior.floating,
-                            ),);
-                          }
-                          // 从「模型不可用」卡片进入：切完立即重发被阻塞的
-                          // 原文；仍被拒会再次触发链上自动自愈并回卡片
-                          if (retryContent != null && retryContent.isNotEmpty) {
-                            await ChatStore.instance.sendMessage(retryContent);
-                          }
-                        } catch (e) {
-                          if (mounted) _runtimeErrorSnack(e);
-                        }
-                      },
-                    ),
-                ],
-              );
-            }
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '模型',
-                    style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '来自桌面端可用模型目录（resume 实测）',
-                    style: TextStyle(color: colors.textMuted, fontSize: 11),
-                  ),
-                  body,
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  /// 思考档位弹层：低/中/高/最高（枚举未实测，失败显性提示）
-  Future<void> _showThoughtSheet() async {
-    final sessionId = ChatStore.instance.currentSessionId;
-    if (sessionId == null) return;
-    final colors = AppColors.of(context);
-    const levels = [('低', 'low'), ('中', 'medium'), ('高', 'high'), ('最高', 'max')];
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 14, 8, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final (label, value) in levels)
-                ListTile(
-                  dense: true,
-                  leading: Icon(Icons.psychology_outlined,
-                      size: 18, color: colors.textSecondary,),
-                  title: Text(label,
-                      style:
-                          TextStyle(color: colors.textPrimary, fontSize: 14,),),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    try {
-                      await ChatRuntimeService.instance
-                          .setThoughtLevel(sessionId, value);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('思考档位已设为 $label'),
-                          duration: const Duration(seconds: 2),
-                          behavior: SnackBarBehavior.floating,
-                        ),);
-                      }
-                    } catch (e) {
-                      if (mounted) _runtimeErrorSnack(e);
-                    }
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   /// git 分支 chip：显示当前工作区分支；点按弹分支选择器（companion x/* 扩展）
