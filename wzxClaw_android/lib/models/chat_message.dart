@@ -90,6 +90,11 @@ class ChatMessage {
   /// 仅运行时，不持久化。
   final int? durationMs;
 
+  /// 终端错误种类（仅运行时，不持久化）。'model-unavailable' = 模型不可用
+  /// 且自动自愈失败；UI 据此渲染「选择可用模型重试 / 新建会话」操作卡片，
+  /// 不再让用户面对一条无从下手的纯文本报错。
+  final String? errorKind;
+
   ChatMessage({
     this.id,
     required this.role,
@@ -107,6 +112,7 @@ class ChatMessage {
     this.model,
     this.agent,
     this.durationMs,
+    this.errorKind,
   });
 
   /// 主 agent 名（引擎实测 zcode-agent）；null 视为主时间线（旧数据兼容）
@@ -153,6 +159,7 @@ class ChatMessage {
     String? model,
     String? agent,
     int? durationMs,
+    String? errorKind,
   }) =>
       ChatMessage(
         id: id ?? this.id,
@@ -171,6 +178,7 @@ class ChatMessage {
         model: model ?? this.model,
         agent: agent ?? this.agent,
         durationMs: durationMs ?? this.durationMs,
+        errorKind: errorKind ?? this.errorKind,
       );
 
   Map<String, dynamic> toDbMap() => {

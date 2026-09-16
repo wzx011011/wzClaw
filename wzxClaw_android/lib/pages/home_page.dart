@@ -929,11 +929,95 @@ class _ChatPageState extends State<ChatPage> {
       case MessageRole.user:
         return _buildUserBubble(msg);
       case MessageRole.assistant:
+        // 模型不可用且自愈失败：渲染可操作卡片而非纯文本报错
+        if (msg.errorKind == 'model-unavailable') {
+          return _buildModelErrorCard(msg);
+        }
         return _buildAssistantBlock(msg);
       case MessageRole.tool:
         // Should not reach here — tools are grouped by _groupMessages
         return ToolCallGroup(tools: [msg]);
     }
+  }
+
+  /// 「模型不可用」操作卡片：说明 + 选择可用模型重试 + 新建会话。
+  /// 自动自愈成功时不会产生此类消息；出现即代表需要用户介入。
+  Widget _buildModelErrorCard(ChatMessage msg) {
+    final colors = AppColors.of(context);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.assistantBubble,
+        border: Border.all(color: colors.error.withValues(alpha: 0.45)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  size: 16, color: colors.error,),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text('历史任务使用的模型已不可用',
+                    style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,),),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            msg.content,
+            style: TextStyle(color: colors.textSecondary, fontSize: 12, height: 1.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _retryModelUnavailable,
+                  icon: const Icon(Icons.view_in_ar_outlined, size: 15),
+                  label: const Text('选择可用模型重试',
+                      style: TextStyle(fontSize: 12),),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    // 与输入 /clear 完全同路径：由引擎创建新会话
+                    ChatStore.instance.sendMessage('/clear');
+                  },
+                  icon: const Icon(Icons.post_add_outlined, size: 15),
+                  label: const Text('新建会话', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textSecondary,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 错误卡片「重试」：打开模型面板（只列实测可用模型），选中后自动重发
+  /// 被阻塞的原文。原文缺失（进程重建等）时降级为普通打开面板。
+  void _retryModelUnavailable() {
+    final content = ChatStore.instance.lastModelBlockedContent;
+    _showModelSheet(retryContent: content);
   }
 
   // ── User bubble ────────────────────────────────────────────────────
@@ -1789,15 +1873,15 @@ class _ChatPageState extends State<ChatPage> {
     return '$n';
   }
 
-  /// 模型弹层：优先 resume 的可用模型目录（实测形状），失败降级本会话历史
-  Future<void> _showModelSheet() async {
+  /// 模型弹层：只列 resume 实测可用目录（settings.model.available）。
+  /// 历史会话里用过的模型不代表现在可用——把它们当选项回填会让用户
+  /// 选中后再吃一次「模型不可用」，故不再降级 sessionModels。
+  /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
+  Future<void> _showModelSheet({String? retryContent}) async {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
     final colors = AppColors.of(context);
-    // future 只构造一次；目录优先（resume settings.model.available），失败降级历史
-    final modelsFuture = ChatRuntimeService.instance
-        .availableModels(sessionId)
-        .catchError((_) => ChatRuntimeService.instance.sessionModels(sessionId));
+    final modelsFuture = ChatRuntimeService.instance.availableModels(sessionId);
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.bgSecondary,
@@ -1820,7 +1904,9 @@ class _ChatPageState extends State<ChatPage> {
               body = Padding(
                 padding: const EdgeInsets.symmetric(vertical: 22),
                 child: Text(
-                  snap.hasError ? '模型列表获取失败' : '本会话还没有模型记录',
+                  snap.hasError
+                      ? '模型列表获取失败，请检查与大脑节点的连接'
+                      : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
@@ -1851,6 +1937,11 @@ class _ChatPageState extends State<ChatPage> {
                               duration: const Duration(seconds: 2),
                               behavior: SnackBarBehavior.floating,
                             ),);
+                          }
+                          // 从「模型不可用」卡片进入：切完立即重发被阻塞的
+                          // 原文；仍被拒会再次触发链上自动自愈并回卡片
+                          if (retryContent != null && retryContent.isNotEmpty) {
+                            await ChatStore.instance.sendMessage(retryContent);
                           }
                         } catch (e) {
                           if (mounted) _runtimeErrorSnack(e);

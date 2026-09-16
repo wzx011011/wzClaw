@@ -89,6 +89,11 @@ class ChatStore {
   bool _isWaitingForResponse = false;
   String? _lastErrorText;
   DateTime? _lastErrorTime;
+
+  /// 最近一次因「模型不可用且自愈失败」被阻塞的用户消息原文（仅运行时）。
+  /// 「选择可用模型重试」卡片据此一键重发；新发送会把清空。
+  String? _lastModelBlockedContent;
+  String? get lastModelBlockedContent => _lastModelBlockedContent;
   final Map<String, bool> _pendingMessageIds = {}; // messageId tracking for ack
 
   // -- Clear guard: 防止 fetchSessions 延迟响应覆盖用户消息 --
@@ -202,6 +207,10 @@ class ChatStore {
     _wsSubscription = _transport.incoming.listen(_handleWsMessage);
     _transport.stateStream.listen(_handleConnectionState);
   }
+
+  /// 仅测试使用：把旧协议事件直接注入内部处理管线（绕过 transport）。
+  @visibleForTesting
+  void debugHandleWsMessage(WsMessage wsMsg) => _handleWsMessage(wsMsg);
 
   void _handleConnectionState(WsConnectionState state) {
     if (state == WsConnectionState.disconnected) {
@@ -598,6 +607,12 @@ class ChatStore {
     final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final errorText = map['error'] as String? ?? data.toString();
     final recoverable = map['recoverable'] as bool? ?? false;
+    final errorKind = map['errorKind'] as String?;
+    // 模型不可用且自愈失败：暂存原文供「选择可用模型重试」一键重发
+    if (errorKind == 'model-unavailable') {
+      final blocked = map['content'] as String? ?? '';
+      _lastModelBlockedContent = blocked.isEmpty ? null : blocked;
+    }
 
     final inactiveSessionId = _inactiveSessionId(data);
     if (inactiveSessionId != null) {
@@ -625,6 +640,7 @@ class ChatStore {
         content: _streamingMessage!.content +
             (errorText.isNotEmpty ? '\n\n⚠ Error: $errorText' : ''),
         isStreaming: false,
+        errorKind: errorKind,
       );
       _messages.add(completed);
       ChatDatabase.instance.insertMessage(
@@ -639,6 +655,7 @@ class ChatStore {
         role: MessageRole.assistant,
         content: '⚠ Error: $errorText',
         createdAt: DateTime.now(),
+        errorKind: errorKind,
       );
       _messages.add(errorMsg);
     }
@@ -996,6 +1013,8 @@ class ChatStore {
     if (_isBrowsingHistory) {
       _isBrowsingHistory = false;
     }
+    // 新发送生效即解除上一次的模型阻塞记录（重试卡片重发也会走到这里）
+    _lastModelBlockedContent = null;
 
     // 记录用户发消息时的 generation，防止后续 fetch 响应覆盖
     // +1 确保 > 判断真正生效（= 永远不大于自身）
