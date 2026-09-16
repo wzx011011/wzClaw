@@ -133,18 +133,6 @@ Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
                                       .switchWorkspace(path);
                                 }
                               },
-                              onSessionTap: (sessionId) {
-                                Navigator.pop(ctx);
-                                // 统一入口：活跃位+切窗+全量拉取三件套——
-                                // 只 setActiveSession 会造成半切换（标题换了、
-                                // 消息和发送目标还在旧会话）
-                                SessionSyncService.instance.openSession(sessionId);
-                                final path = ws.primaryPath;
-                                if (path != null && path.isNotEmpty) {
-                                  SessionSyncService.instance
-                                      .switchWorkspace(path);
-                                }
-                              },
                             );
                           },
                         ),

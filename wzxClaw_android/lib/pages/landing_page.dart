@@ -254,15 +254,6 @@ class _LandingPageState extends State<LandingPage>
                       }
                       _navigateToChat();
                     },
-                    onSessionTap: (sessionId) {
-                      Navigator.pop(ctx);
-                      final path = ws.primaryPath;
-                      if (path != null && path.isNotEmpty) {
-                        SessionSyncService.instance.switchWorkspace(path);
-                      }
-                      SessionSyncService.instance.setActiveSession(sessionId);
-                      _navigateToChat();
-                    },
                   );
                 },
               ),
