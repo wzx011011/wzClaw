@@ -6,7 +6,8 @@ const send = (frame) => process.stdout.write(`${JSON.stringify(frame)}\n`);
 
 // runtime 预检也复用本替身：模拟独立 CLI 的 version/doctor 两个无副作用命令。
 if (process.argv.includes('--version')) {
-  process.stdout.write('zcode 0.16.5\n');
+  // 官方 Windows CLI 实测将版本写到 stderr；预检必须能解析又不得泄漏日志。
+  process.stderr.write('zcode 0.16.5\n');
   process.exit(0);
 }
 if (process.argv.includes('doctor')) {

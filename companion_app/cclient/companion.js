@@ -64,7 +64,7 @@ function runtimeProcessEnv(resolved, env = process.env) {
 
 function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = process.env } = {}) {
   return new Promise((resolve) => {
-    let child; let settled = false; let stdout = ''; let stderrBytes = 0;
+    let child; let settled = false; let stdout = ''; let stderr = ''; let stderrBytes = 0;
     const finish = (result) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
@@ -80,10 +80,15 @@ function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = proc
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(0, 16 * 1024); });
       // 只排空并计量，不返回/记录原文，避免凭据或会话内容进入 UI 日志。
-      child.stderr.on('data', (chunk) => { stderrBytes = Math.min(stderrBytes + chunk.length, 16 * 1024); });
+      child.stderr.on('data', (chunk) => {
+        stderrBytes = Math.min(stderrBytes + chunk.length, 16 * 1024);
+        // 某些官方 CLI 把 --version 写到 stderr；只在内存中限长保留供版本解析，
+        // 不向日志/UI/调用方公开原文。
+        stderr = (stderr + chunk).slice(0, 16 * 1024);
+      });
       child.on('error', (error) => finish({ ok: false, code: error.code || 'SPAWN_ERROR' }));
       child.on('exit', (code) => finish(code === 0
-        ? { ok: true, stdout: stdout.trim() }
+        ? { ok: true, stdout: stdout.trim(), versionText: `${stdout}\n${stderr}`.trim() }
         : { ok: false, code: `EXIT_${code ?? 'UNKNOWN'}`, stderrPresent: stderrBytes > 0 }));
     } catch (error) { finish({ ok: false, code: error.code || 'SPAWN_ERROR' }); }
   });
@@ -140,7 +145,7 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
   if (resolved.category !== 'resolved') return { category: resolved.category, source: null, version: null, detailCode: null };
   const version = await runRuntimeCommand(resolved, ['--version'], { env });
   if (!version.ok) return { category: version.code === 'ENOENT' ? 'not-installed' : 'version-failed', source: resolved.source, version: null, detailCode: version.code };
-  const versionText = version.stdout.match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
+  const versionText = (version.versionText || version.stdout).match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
   if (!versionText) return { category: 'version-failed', source: resolved.source, version: null, detailCode: 'BAD_VERSION' };
   const doctor = await runRuntimeCommand(resolved, ['doctor'], { timeoutMs: 10000, env });
   if (!doctor.ok) {
