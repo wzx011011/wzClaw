@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('api', {
   detectZCode: () => ipcRenderer.invoke('detect-zcode'),
   applyFirstRun: (setup) => ipcRenderer.invoke('apply-first-run', setup),
   dismissFirstRun: () => ipcRenderer.invoke('dismiss-first-run'),
+  retryRuntime: () => ipcRenderer.invoke('retry-runtime'),
   onEvent: (cb) => ipcRenderer.on('companion-ev', (_e, ev) => cb(ev)),
 });

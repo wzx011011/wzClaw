@@ -15,7 +15,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require
 const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
-const { createCompanion, readRegistrationSecretFile } = require('./cclient/companion');
+const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime } = require('./cclient/companion');
 const { detectZcode, normalizeImportSelection } = require('./zcode-integration');
 
 // 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
@@ -48,6 +48,8 @@ let fullWin = null;
 let petWin = null;
 let tray = null;
 let quitting = false;
+let runtimeStatus = { category: 'checking', source: null, version: null, detailCode: null };
+let runtimeCheck = null;
 const logTail = [];
 
 // ---- 配置 ----
@@ -137,6 +139,41 @@ function broadcast(type, payload) {
 }
 
 // ---- companion 生命周期 ----
+
+function publicRuntimeStatus(status = runtimeStatus) {
+  return {
+    category: status.category,
+    source: status.source || null,
+    version: status.version || null,
+    detailCode: status.detailCode || null,
+    doctorWarning: status.doctorWarning || null,
+  };
+}
+
+async function ensureRuntimeThenStart() {
+  if (runtimeCheck) return runtimeCheck;
+  runtimeStatus = { category: 'checking', source: null, version: null, detailCode: null };
+  broadcast('runtime-status', publicRuntimeStatus());
+  runtimeCheck = probeZcodeRuntime({ cwd: cfg.cwd })
+    .then((status) => {
+      runtimeStatus = status;
+      broadcast('runtime-status', publicRuntimeStatus());
+      if (status.category === 'ready') startCompanion();
+      else {
+        lastState = 'runtime-unavailable';
+        updateTray();
+        pushLog('runtime-preflight-failed', status.category);
+      }
+      return publicRuntimeStatus();
+    })
+    .catch(() => {
+      runtimeStatus = { category: 'app-server-failed', source: null, version: null, detailCode: 'UNEXPECTED' };
+      broadcast('runtime-status', publicRuntimeStatus());
+      return publicRuntimeStatus();
+    })
+    .finally(() => { runtimeCheck = null; });
+  return runtimeCheck;
+}
 
 function startCompanion() {
   if (companion) {
@@ -262,7 +299,7 @@ function updateTray() {
     { label: '完整形态', click: showFull },
     { label: '桌面宠物形态', click: showPet },
     { type: 'separator' },
-    { label: '重启连接', click: () => startCompanion() },
+    { label: '重试运行时', click: () => { void ensureRuntimeThenStart(); } },
     {
       label: '开机自启',
       type: 'checkbox',
@@ -305,11 +342,12 @@ function registerIpc() {
     config: { relayUrl: cfg.relayUrl, cwd: cfg.cwd },
     autoStart: app.getLoginItemSettings().openAtLogin,
     logs: logTail.slice(-200),
+    runtime: publicRuntimeStatus(),
     companionError: null,
   }));
   ipcMain.handle('get-first-run-status', () => firstRunSnapshot());
   ipcMain.handle('detect-zcode', () => safeDetectionSnapshot());
-  ipcMain.handle('apply-first-run', (_e, next) => {
+  ipcMain.handle('apply-first-run', async (_e, next) => {
     const valid = validateCompanionSetup(next || {});
     if (!valid.ok) return valid;
     try {
@@ -330,8 +368,8 @@ function registerIpc() {
       };
       persistConfig();
       app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
-      startCompanion();
-      return { ok: true, firstRun: firstRunSnapshot() };
+      await ensureRuntimeThenStart();
+      return { ok: true, firstRun: firstRunSnapshot(), runtime: publicRuntimeStatus() };
     } catch {
       return { ok: false, error: '保存首启设置失败，未修改 ZCode 配置' };
     }
@@ -345,11 +383,12 @@ function registerIpc() {
       return { ok: false, error: '保存首启状态失败' };
     }
   });
+  ipcMain.handle('retry-runtime', () => ensureRuntimeThenStart());
   ipcMain.handle('switch-mode', (_e, m) => (m === 'pet' ? showPet() : showFull()));
   ipcMain.handle('pet-menu', (_e, x, y) => {
     const menu = Menu.buildFromTemplate([
       { label: '完整形态', click: showFull },
-      { label: '重启连接', click: () => startCompanion() },
+      { label: '重试运行时', click: () => { void ensureRuntimeThenStart(); } },
       {
         label: '退出',
         click: () => {
@@ -368,15 +407,15 @@ function registerIpc() {
     });
     return r.canceled ? null : r.filePaths[0];
   });
-  ipcMain.handle('save-config', (_e, next) => {
+  ipcMain.handle('save-config', async (_e, next) => {
     const valid = validateCompanionSetup(next || {});
     if (!valid.ok) return valid;
     cfg.relayUrl = valid.relayUrl;
     cfg.cwd = valid.cwd;
     saveConfig();
     app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
-    startCompanion(); // 换 relay/目录后重启连接（配对凭据不变则码不变）
-    return { ok: true };
+    await ensureRuntimeThenStart(); // 换 relay/目录后先验证 runtime，再恢复连接
+    return { ok: true, runtime: publicRuntimeStatus() };
   });
 }
 
@@ -401,7 +440,7 @@ if (!gotLock) {
     }
     tray = new Tray(trayIcon(16));
     updateTray();
-    startCompanion();
+    void ensureRuntimeThenStart();
   });
   app.on('window-all-closed', () => {
     // 托盘常驻：不随窗口关闭退出

@@ -4,6 +4,16 @@
 let buf = '';
 const send = (frame) => process.stdout.write(`${JSON.stringify(frame)}\n`);
 
+// runtime 预检也复用本替身：模拟独立 CLI 的 version/doctor 两个无副作用命令。
+if (process.argv.includes('--version')) {
+  process.stdout.write('zcode 0.16.5\n');
+  process.exit(0);
+}
+if (process.argv.includes('doctor')) {
+  process.stdout.write('zcode doctor\nversion: 0.16.5\n');
+  process.exit(0);
+}
+
 // 启动即报告 env 注入情况（只报有无，绝不输出 token 值）。
 send({ method: 'fake/env', params: { tokenPresent: typeof process.env.ANTHROPIC_API_KEY === 'string' && process.env.ANTHROPIC_API_KEY.length > 0 } });
 // 反向请求 1：runtime preferences —— 期待 companion 代答。

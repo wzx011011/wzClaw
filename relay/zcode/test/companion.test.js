@@ -10,7 +10,7 @@ const { createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
-const { createCompanion, readRegistrationSecretFile } = require('../companion');
+const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime, resolveZcodeRuntime } = require('../companion');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -77,6 +77,35 @@ function phone(url) {
     close() { ws.close(); },
   };
 }
+
+test('runtime probe：独立 app-server 的 session/list 握手通过后才报告 ready', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wzxclaw-runtime-probe-'));
+  const config = path.join(dir, 'v2-config.json');
+  fs.writeFileSync(config, JSON.stringify({
+    provider: { 'builtin:bigmodel-coding-plan': { options: { apiKey: 'test-token' } } },
+  }));
+  const result = await probeZcodeRuntime({
+    cwd: dir,
+    v2ConfigPath: config,
+    env: { ...process.env, ZCODE_BIN: FAKE_APP_SERVER },
+  });
+  assert.equal(result.category, 'ready');
+  assert.equal(result.source, 'environment');
+  assert.match(result.version, /\d+\.\d+/);
+  // Windows 上 kill 后 stdout 句柄释放与 exit 事件存在极短竞态。
+  await delay(120);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('runtime resolver：失效 ZCODE_BIN 必须明确报错而非回退', () => {
+  const original = process.env.ZCODE_BIN;
+  process.env.ZCODE_BIN = path.join(os.tmpdir(), 'does-not-exist-zcode');
+  try { assert.equal(resolveZcodeRuntime().category, 'invalid-override'); }
+  finally {
+    if (original === undefined) delete process.env.ZCODE_BIN;
+    else process.env.ZCODE_BIN = original;
+  }
+});
 
 function writeV2Config(dir, token) {
   const file = path.join(dir, 'v2-config.json');

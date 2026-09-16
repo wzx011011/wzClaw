@@ -41,6 +41,101 @@ function defaultZcodeCommand() {
   return { command: 'zcode', args: [] };
 }
 
+// 运行时预检只产生脱敏的状态码，绝不向调用者返回命令行、token 或原始 stderr。
+function resolveZcodeRuntime(env = process.env) {
+  const local = path.join(env.LOCALAPPDATA || '', 'Programs/ZCode/resources/glm/zcode.cjs');
+  if (env.ZCODE_BIN) {
+    if (!fs.existsSync(env.ZCODE_BIN)) return { category: 'invalid-override' };
+    return { category: 'resolved', source: 'environment', command: process.execPath, args: [env.ZCODE_BIN] };
+  }
+  if (fs.existsSync(local)) return { category: 'resolved', source: 'installed', command: process.execPath, args: [local] };
+  return { category: 'resolved', source: 'path', command: 'zcode', args: [] };
+}
+
+function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = process.env } = {}) {
+  return new Promise((resolve) => {
+    let child; let settled = false; let stdout = '';
+    const finish = (result) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      if (child) try { child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy(); child.kill(); } catch { /* 已退出 */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
+    try {
+      child = spawn(resolved.command, [...resolved.args, ...commandArgs], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(0, 16 * 1024); });
+      child.on('error', (error) => finish({ ok: false, code: error.code || 'SPAWN_ERROR' }));
+      child.on('exit', (code) => finish(code === 0
+        ? { ok: true, stdout: stdout.trim() }
+        : { ok: false, code: `EXIT_${code ?? 'UNKNOWN'}` }));
+    } catch (error) { finish({ ok: false, code: error.code || 'SPAWN_ERROR' }); }
+  });
+}
+
+function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
+  return new Promise((resolve) => {
+    let child; let settled = false; let buffer = '';
+    const finish = (result) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      if (child) try { child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy(); child.kill(); } catch { /* 已退出 */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
+    try {
+      child = spawn(resolved.command, [...resolved.args, 'app-server', '--cwd', cwd], { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env });
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        buffer += chunk;
+        if (Buffer.byteLength(buffer) > 32 * 1024) return finish({ ok: false, code: 'OUTPUT_LIMIT' });
+        let index;
+        while ((index = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, index).trim(); buffer = buffer.slice(index + 1);
+          if (!line) continue;
+          let frame;
+          try { frame = JSON.parse(line); } catch { return finish({ ok: false, code: 'BAD_RESPONSE' }); }
+          if (frame.method && frame.id != null) {
+            const response = frame.method === RUNTIME_PREFERENCES_METHOD
+              ? { id: frame.id, result: RUNTIME_PREFERENCES_RESULT }
+              : { id: frame.id, error: { code: ERR_UNHANDLED, message: 'runtime probe does not handle this request' } };
+            try { child.stdin.write(`${JSON.stringify(response)}\n`); } catch { return finish({ ok: false, code: 'WRITE_FAILED' }); }
+          } else if (frame.id === 'runtime-probe-1') {
+            return Array.isArray(frame.result?.sessions)
+              ? finish({ ok: true })
+              : finish({ ok: false, code: frame.error ? 'APP_SERVER_ERROR' : 'BAD_RESPONSE' });
+          }
+        }
+      });
+      child.on('error', (error) => finish({ ok: false, code: error.code || 'SPAWN_ERROR' }));
+      child.on('exit', (code) => finish({ ok: false, code: `EXIT_${code ?? 'UNKNOWN'}` }));
+      child.stdin.on('error', () => finish({ ok: false, code: 'WRITE_FAILED' }));
+      child.stdin.write('{"id":"runtime-probe-1","method":"session/list","params":{}}\n');
+    } catch (error) { finish({ ok: false, code: error.code || 'SPAWN_ERROR' }); }
+  });
+}
+
+async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = process.env } = {}) {
+  const resolved = resolveZcodeRuntime(env);
+  if (resolved.category !== 'resolved') return { category: resolved.category, source: null, version: null, detailCode: null };
+  const version = await runRuntimeCommand(resolved, ['--version'], { env });
+  if (!version.ok) return { category: version.code === 'ENOENT' ? 'not-installed' : 'version-failed', source: resolved.source, version: null, detailCode: version.code };
+  const versionText = version.stdout.match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
+  if (!versionText) return { category: 'version-failed', source: resolved.source, version: null, detailCode: 'BAD_VERSION' };
+  const doctor = await runRuntimeCommand(resolved, ['doctor'], { timeoutMs: 10000, env });
+  let token;
+  try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
+  catch (error) { return { category: error.code === 'NOT_LOGGED_IN' ? 'not-logged-in' : 'auth-store-unreadable', source: resolved.source, version: versionText, detailCode: error.code, doctorWarning: doctor.ok ? null : doctor.code }; }
+  const probe = await probeAppServer(resolved, {
+    cwd,
+    env: { ...env, ANTHROPIC_API_KEY: token, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+  });
+  return probe.ok
+    ? { category: 'ready', source: resolved.source, version: versionText, detailCode: null, doctorWarning: doctor.ok ? null : doctor.code }
+    : { category: probe.code === 'TIMEOUT' ? 'app-server-timeout' : 'app-server-failed', source: resolved.source, version: versionText, detailCode: probe.code, doctorWarning: doctor.ok ? null : doctor.code };
+}
+
 // 读取桌面端已登录的 coding-plan token（只返回，不打印）。
 function readModelAuth(v2ConfigPath) {
   let parsed;
@@ -720,7 +815,8 @@ function readRegistrationSecretFile(homeDir = os.homedir()) {
   }
 }
 
-module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand, readRegistrationSecretFile };
+module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand,
+  resolveZcodeRuntime, runRuntimeCommand, probeAppServer, probeZcodeRuntime, readRegistrationSecretFile };
 // 把配对二维码渲染成 PNG + 纯文本链接，写到固定位置（数据目录 + 可选额外路径）。
 // 口令/房间号均持久化且确定性派生：二维码内容几乎永不变化——
 // 用户永远去同一个固定路径取最新码，无需每次找。

@@ -28,8 +28,28 @@ function setPairing(url, qr) {
   $('pairUrl').textContent = url || '';
 }
 
+function renderRuntime(status) {
+  const ready = status.category === 'ready';
+  const checking = status.category === 'checking';
+  const messages = {
+    ready: `运行时可用：ZCode ${status.version || ''}（${status.source || '本机'}）`,
+    checking: '正在检查本机 ZCode runtime…',
+    'not-installed': '未找到可用的 ZCode runtime。请先安装官方 ZCode，然后重试。',
+    'invalid-override': 'ZCODE_BIN 指向的 runtime 不存在。请修正环境变量后重试。',
+    'not-logged-in': 'ZCode runtime 可用，但未检测到登录态。请先在官方 ZCode 中登录。',
+    'auth-store-unreadable': '无法读取本机 ZCode 登录态。请打开官方 ZCode 完成登录或修复配置。',
+    'version-failed': 'ZCode runtime 无法返回有效版本。请更新或重新安装官方 ZCode。',
+    'app-server-timeout': 'ZCode 启动后未响应 app-server 健康检查。请关闭残留进程后重试。',
+    'app-server-failed': 'ZCode app-server 健康检查失败。请更新或打开官方 ZCode 完成修复。',
+  };
+  const node = $('runtimeStatus');
+  node.className = `status ${ready ? 'good' : checking ? 'warn' : 'bad'}`;
+  node.textContent = messages[status.category] || 'ZCode runtime 状态未知，请重试。';
+}
+
 function applySnapshot(s) {
   setState(s.state, s.stateText);
+  renderRuntime(s.runtime || { category: 'checking' });
   setPairing(s.pairingUrl, s.qrDataUrl);
   $('relayUrl').value = s.config.relayUrl;
   $('cwd').value = s.config.cwd;
@@ -91,6 +111,7 @@ window.api.onEvent((ev) => {
     case 'log': pushLog(ev.payload.event, ev.payload.detail); break;
     case 'pairing': setPairing(ev.payload.url, ev.payload.qr); break;
     case 'state': setState(ev.payload.state); break;
+    case 'runtime-status': renderRuntime(ev.payload); break;
     default: break;
   }
 });
@@ -108,6 +129,7 @@ $('btnSave').addEventListener('click', async () => {
   const r = await window.api.saveConfig({ relayUrl: $('relayUrl').value, cwd: $('cwd').value, autoStart: $('autoStart').checked });
   if (!r.ok) $('cfgMsg').textContent = r.error || '保存失败';
 });
+$('btnRetryRuntime').addEventListener('click', async () => { renderRuntime({ category: 'checking' }); renderRuntime(await window.api.retryRuntime()); });
 $('btnImport').addEventListener('click', openImportWizard);
 $('btnRescan').addEventListener('click', async () => { $('importMsg').textContent = ''; renderDetection(await window.api.detectZCode()); });
 $('btnSkipImport').addEventListener('click', async () => {
