@@ -338,17 +338,12 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => item.text = newText);
   }
 
-  /// 排队条：流式期间显示在输入框上方（拖拽排序 + ↑立即 + 编辑 + 删除）
+  /// 排队条：流式期间显示在输入框上方。对齐官方样式：每条排队消息一张
+  /// 独立圆角卡片（消息文本 + ↑立即 + 编辑 + 删除），支持拖拽排序。
   Widget _buildSendQueueStrip(AppColors colors) {
     if (_sendQueue.isEmpty) return const SizedBox.shrink();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      decoration: BoxDecoration(
-        color: colors.bgTertiary,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
       child: ReorderableListView(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -369,29 +364,41 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildQueuedTile(AppColors colors, _QueuedSend item, int index) {
-    return ListTile(
+    return Container(
       key: ValueKey(item.id),
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      leading: ReorderableDragStartListener(
-        index: index,
-        child: Icon(Icons.drag_indicator, size: 18, color: colors.textMuted),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
       ),
-      title: Text(
-        item.text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: colors.textPrimary, fontSize: 13),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Icon(Icons.drag_indicator,
+                  size: 18, color: colors.textMuted,),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              item.text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: 8),
           // ↑ 立即：不等当前 turn 结束
           InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () => _sendQueuedNow(item),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: colors.bgInput,
                 borderRadius: BorderRadius.circular(8),
@@ -399,22 +406,23 @@ class _ChatPageState extends State<ChatPage> {
               child: Row(children: [
                 Icon(Icons.north, size: 11, color: colors.textPrimary),
                 const SizedBox(width: 3),
-                Text(
-                  '立即',
-                  style: TextStyle(color: colors.textPrimary, fontSize: 12),
-                ),
+                Text('立即',
+                    style: TextStyle(
+                        color: colors.textPrimary, fontSize: 12,),),
               ],),
             ),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.edit_outlined, size: 17, color: colors.textSecondary),
+            icon: Icon(Icons.edit_outlined,
+                size: 17, color: colors.textSecondary,),
             tooltip: '编辑',
             onPressed: () => _editQueued(item),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.delete_outline, size: 17, color: colors.textSecondary),
+            icon: Icon(Icons.delete_outline,
+                size: 17, color: colors.textSecondary,),
             tooltip: '删除',
             onPressed: () => setState(() => _sendQueue.remove(item)),
           ),
