@@ -73,7 +73,13 @@ function phone(url) {
       const proof = createHmac('sha256', hash).update(`${challenge.nonce}|probe|${sid}`).digest('base64url');
       this.send({ type: 'auth_response', device_sid: sid, proof });
       const ack = await this.next((m) => m.type === 'auth_ack');
-      assert.equal(ack.pair_status, 'matched');
+      // 重连接管时 relay 可先回 waiting，随后 device 完成认证才广播 matched。
+      // 断言最终房间状态，不把合法握手中间态误判成失败。
+      if (ack.pair_status === 'waiting') {
+        await this.next((m) => m.type === 'pair_status_ack' && m.pair_status === 'matched');
+      } else {
+        assert.equal(ack.pair_status, 'matched');
+      }
     },
     close() { ws.close(); },
   };

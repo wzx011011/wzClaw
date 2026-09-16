@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
@@ -27,6 +28,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loading = true;
   bool _pushEnabled = true;
   bool _backgroundKeepAliveEnabled = false;
+  String _appVersion = '';
 
   static const _serverUrlKey = 'server_url';
   static const _pushEnabledKey = 'push_notifications_enabled';
@@ -47,11 +49,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadSavedValues() async {
     final prefs = await SharedPreferences.getInstance();
+    final package = await PackageInfo.fromPlatform();
     _serverUrlController.text = prefs.getString(_serverUrlKey) ?? '';
     _pushEnabled = prefs.getBool(_pushEnabledKey) ?? true;
     _backgroundKeepAliveEnabled =
       prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
-    setState(() => _loading = false);
+    if (!mounted) return;
+    setState(() {
+      _appVersion = '${package.version}+${package.buildNumber}';
+      _loading = false;
+    });
   }
 
   Future<void> _saveValues() async {
@@ -668,7 +675,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 // -- Version info --
                 Center(
                   child: Text(
-                    'wzxClaw Android v2.0',
+                    _appVersion.isEmpty
+                        ? 'wzxClaw Android'
+                        : 'wzxClaw Android v$_appVersion',
                     style: TextStyle(color: colors.textMuted, fontSize: 12),
                   ),
                 ),
