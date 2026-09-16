@@ -455,6 +455,8 @@ waiting-pairing);事后 `/health` 仍 `rooms:1, devices:1`;R3 全程监控未复
 - 引擎 cwd 必须与 `--cwd`（代理工作区）分离：CLI 从 `<引擎cwd>/app-server`
   解析内部实现；cwd 指向挂载工作区时报 `Cannot find module '/workspace/app-server'`。
   brain-adapter 以 `ENGINE_CWD` 环境变量显式指定（默认 = WORKSPACE）。
+  （brain-adapter 已于 2026-09-17 退役删除，本节为历史实测记录；cwd 与
+  `--cwd` 必须分离这一结论对任何无头节点形态仍然有效。）
 - 连接 relay 必须请求 `wzxclaw-<token>` 子协议（与旧桌面客户端一致），
   否则 ws 客户端报 "Server sent a subprotocol but none was requested" 后 1006 断开。
 - PC（node 24 win32）同 bundle + 同参数直接可用；容器内 engine 启动后

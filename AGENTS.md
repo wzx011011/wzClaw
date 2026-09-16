@@ -11,13 +11,12 @@
 
 ```
 手机 App（Flutter，纯遥控器）
-   │ WSS（两条链路，见下）
+   │ WSS
    ▼
 NAS relay
-   ├─ /relay（旧 token 房间模型）← v3 大脑网络（旧 UI + brain-adapter）
-   └─ zcode.5945.top/ws（sid/hash 房间模型）← v2 配对流（现有 APK 兼容期）
+   └─ zcode.5945.top/ws（sid/hash 房间模型）← v2 配对流（生产；UI 经手机端翻译壳接线）
    ▼
-大脑节点 = brain-adapter / companion ＋ zcode app-server 子进程
+大脑节点 = companion ＋ zcode app-server 子进程
    └─ 工具执行发生在节点所在机器（运行时本地性）
 ```
 
@@ -26,27 +25,26 @@ NAS relay
 | 路径 | 职责 |
 |---|---|
 | `wzxClaw_android/lib/zcode/` | 手机端核心：ZcodeChatStore（每会话状态容器/同步层/反向请求/通知）、ZcodeDesktopRegistry（多桌面注册表）、relay 客户端、权限组件、SQLite 缓存 |
-| `wzxClaw_android/lib/services/` | 旧协议栈（v3 恢复，供大脑网络远程页使用） |
-| `wzxClaw_android/lib/pages/remote_control_page.dart` | 大脑网络远程控制页（token 房间） |
+| `wzxClaw_android/lib/services/` | 翻译壳：WsEvents 形状协议栈（换芯不换壳的产物；现用 home_page 的数据源经 `zcode_protocol_translate` 接引擎帧；退役条件 = 聊天页换接线到 `lib/zcode` 直连栈） |
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
-| `relay/zcode/brain-adapter.js` | 旧 WsEvents 协议 ↔ app-server 帧适配器（v3 大脑节点核心） |
 | `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
-| `relay/zcode/test/` | 75 项测试（node --test） |
+| `relay/zcode/test/` | 79 项测试（node --test） |
 | `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
 
 > 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
 > `relay/server.js`、`relay/lib/`，部署套件 Dockerfile/compose/nginx/test 等）
 > 已于 2026-09-15 按用户指示删除，`relay/` 下现仅存 `zcode/`；tracked 删除可
-> 通过 `git restore` 恢复，brain-adapter 测试所需的旧 relay 副本迁至
-> `relay/zcode/test/fixtures/old-relay/`。NAS 侧旧 relay 容器 `wzxclaw-relay`
-> 同日已下线（停容器、删镜像与网络；`/volume1/docker/wzxclaw-relay/` 目录
-> 暂留未删）。
+> 通过 `git restore` 恢复。v3 大脑网络支线（brain-adapter + 测试与
+> old-relay/fake-brain 夹具 + Dockerfile.brain + remote_control_page）已于
+> 2026-09-17 退役删除，恢复一律从 git 历史取源码。NAS 侧旧 relay 容器
+> `wzxclaw-relay` 已于 2026-09-15 下线（停容器、删镜像与网络；
+> `/volume1/docker/wzxclaw-relay/` 目录暂留未删）。
 
 ## 常用命令
 
 ```bash
-# relay 侧测试（68 项；涉及子进程/长连接的套件必须 force-exit）
+# relay 侧测试（79 项；涉及子进程/长连接的套件必须 force-exit）
 cd relay/zcode && npm test   # = node --test --test-force-exit "test/*.test.js"
 
 # 协议 schema 探针（只读，跑真实链路；改协议后先跑探针再动手）
@@ -111,6 +109,11 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **双栈现状（2026-09-16 记录）**：`lib/zcode` 目标栈与 `services/` 换芯栈并存，
   新 UI 直发通道走 ConnectionManager.zcodeRequest；旧 WsEvents 壳的退役条件
   = zcode 聊天页落地接线。改动共享组件时两栈回归面都要跑。
+- **UI/协议分层表述纪律（2026-09-17 定）**：UI 是稳定层，做好就不变；
+  演进只发生在网络与协议层。文档与讨论一律说「UI ＋ 当前接线的协议栈」
+  （如：页面接 WsEvents 栈 → 改接 app-server 直连栈），
+  **不再用「旧 UI / 新 UI」的说法**——历史文档里的「旧 UI（恢复）」
+  指恢复自 U7 之前的那套界面，按本条理解为「现用 UI」即可。
 - **APK 发布纪律**：编译好的手机端 release APK 一律放 NAS `/volume1/share/zcode/`
   （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`；
   每次出包 patch 版本 +1（pubspec 带 +N 保 versionCode 递增），文件名带
@@ -118,9 +121,10 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 
 ## 外部服务
 
-- NAS relay（v3 大脑网络）：`wss://5945.top/relay/`（token 房间；
-  **已于 2026-09-15 下线**——本地源码与 NAS 容器均已删除，恢复需从 git 历史
-  取源码并用 `relay/zcode/test/fixtures/old-relay/` 对照）
+- NAS relay（v3 大脑网络）：`wss://5945.top/relay/`（token 房间）——
+  **整条支线已退役**：NAS 容器与旧 relay 源码 2026-09-15 删除；
+  brain-adapter / 夹具 / Dockerfile.brain / remote_control_page 2026-09-17 删除；
+  恢复需从 git 历史取源码
 - NAS relay（v2 配对流）：`wss://zcode.5945.top/ws`（容器 wzxclaw-zcode-relay）
 - 模型：智谱编码计划（`builtin:bigmodel-coding-plan`），凭据在 `~/.zcode/`，
   计费随 key/端点走（Flash 免费政策适用范围未实测，见会话记录）

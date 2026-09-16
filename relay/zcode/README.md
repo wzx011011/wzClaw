@@ -145,26 +145,9 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
 `permissionRequestTimeoutMs`（默认 120000，权限/确认/AskUser 类，按 method 含
 permission/confirm/approval/askUser/interaction 判定），两档超时后代答 `-32022` 拒绝。
 
-## 大脑网络（v3 P2/P3）：brain-adapter 与无头节点
+## 大脑网络（v3 P2/P3）：已退役
 
-`brain-adapter.js` 把旧 WsEvents 协议（wzxClaw 手机端/relay token 房间）
-翻译成 app-server 帧协议（stdio），使任意环境（PC / NAS Docker / VPS）
-都能成为一个可被手机遥控的大脑节点。
-
-```bash
-# 本地/服务器直接运行
-RELAY_URL=wss://5945.top/relay \
-RELAY_TOKEN=<房间token> \
-BRAIN_NAME=<节点名> \
-ZCODE_BIN=node \
-ENGINE_ARGS=<zcode.cjs路径> \
-WORKSPACE=<工作目录> \
-node brain-adapter.js
-```
-
-Docker 形态见 `Dockerfile.brain`（挂载 zcode CLI 与工作区，
-注入 `ANTHROPIC_API_KEY` / `RELAY_TOKEN` 等环境变量）。
-
-测试：`node --test --test-force-exit test/brain-adapter.test.js`
-（端到端：旧 relay + fake engine + 旧协议手机仿真，覆盖发现/列表/加载/
-流式翻译/降级）。
+`brain-adapter.js`（旧 WsEvents 协议 ↔ app-server 帧的节点侧翻译网关）及其
+测试、old-relay/fake-brain 夹具、`Dockerfile.brain` 已于 2026-09-17 随
+token 房间 relay 支线一并退役删除，恢复需从 git 历史取源码。
+现役节点形态 = `companion.js`（哑转发，不翻译）。
