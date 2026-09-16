@@ -16,7 +16,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
 const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime } = require('./cclient/companion');
-const { detectZcode, normalizeImportSelection } = require('./zcode-integration');
+const { detectZcode, normalizeImportSelection, buildImportManifest } = require('./zcode-integration');
+const { applyImport, snapshotSummary } = require('./zcode-importer');
 const { createRuntimeGate } = require('./runtime-gate');
 
 // 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
@@ -109,6 +110,16 @@ function safeDetectionSnapshot() {
     metadata: detected.metadata,
     credentials: detected.credentials,
   };
+}
+
+// ---- 导入快照（Companion 自己的 userData，绝不写 ~/.zcode） ----
+
+function importSnapshotPath() {
+  return path.join(app.getPath('userData'), 'import-snapshot.json');
+}
+
+function importSnapshotSummary() {
+  return snapshotSummary(importSnapshotPath());
 }
 
 function firstRunSnapshot() {
@@ -356,10 +367,32 @@ function registerIpc() {
     portable: isPortable(),
     logs: logTail.slice(-200),
     runtime: publicRuntimeStatus(),
+    lastImport: importSnapshotSummary(),
     companionError: null,
   }));
   ipcMain.handle('get-first-run-status', () => firstRunSnapshot());
   ipcMain.handle('detect-zcode', () => safeDetectionSnapshot());
+  // 导入预览：本机 ZCode 配置的脱敏清单 + 已有快照摘要。
+  // 清单只含模型 ID/provider 名、工作区路径、白名单偏好与扩展名；
+  // API Key 等凭据从 zcode-integration 边界内就不会出现。
+  ipcMain.handle('zcode-import:preview', () => ({
+    manifest: buildImportManifest(),
+    snapshot: importSnapshotSummary(),
+  }));
+  ipcMain.handle('zcode-import:apply', (_e, selection) => {
+    const receipt = applyImport({
+      manifest: buildImportManifest(),
+      selection,
+      snapshotPath: importSnapshotPath(),
+    });
+    if (receipt.ok) {
+      pushLog('zcode-import-applied',
+        Object.entries(receipt.counts || {}).map(([k, v]) => `${k}:${v}`).join(' '),);
+      cfg.lastImport = { importedAt: receipt.importedAt, counts: receipt.counts };
+      saveConfig();
+    }
+    return receipt;
+  });
   ipcMain.handle('apply-first-run', async (_e, next) => {
     const valid = validateCompanionSetup(next || {});
     if (!valid.ok) return valid;

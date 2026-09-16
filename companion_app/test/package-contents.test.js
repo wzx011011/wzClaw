@@ -11,6 +11,7 @@ const requiredFiles = [
   '/preload.js',
   '/runtime-gate.js',
   '/zcode-integration.js',
+  '/zcode-importer.js',
   '/renderer/index.html',
   '/renderer/renderer.js',
   '/cclient/companion.js',

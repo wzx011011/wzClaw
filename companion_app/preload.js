@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('api', {
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
   getFirstRunStatus: () => ipcRenderer.invoke('get-first-run-status'),
   detectZCode: () => ipcRenderer.invoke('detect-zcode'),
+  previewZcodeImport: () => ipcRenderer.invoke('zcode-import:preview'),
+  applyZcodeImport: (selection) => ipcRenderer.invoke('zcode-import:apply', selection),
   applyFirstRun: (setup) => ipcRenderer.invoke('apply-first-run', setup),
   dismissFirstRun: () => ipcRenderer.invoke('dismiss-first-run'),
   retryRuntime: () => ipcRenderer.invoke('retry-runtime'),
