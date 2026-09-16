@@ -78,7 +78,13 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --legacy-peer-deps && exit 0
+            echo "Desktop native dependency install failed (attempt $attempt/3); retrying…"
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Run tests
         run: npm test
@@ -103,7 +109,13 @@ jobs:
       # ws 依赖由 desktop node_modules 提供，无需单独安装 relay 依赖
       - name: Install desktop dependencies
         working-directory: wzxClaw_desktop
-        run: npm ci --legacy-peer-deps
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --legacy-peer-deps && exit 0
+            echo "Desktop native dependency install failed (attempt $attempt/3); retrying…"
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Run E2E session sync suite
         working-directory: wzxClaw_desktop
@@ -130,7 +142,13 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --legacy-peer-deps && exit 0
+            echo "Desktop native dependency install failed (attempt $attempt/3); retrying…"
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Build (vite compile check)
         run: npx electron-vite build

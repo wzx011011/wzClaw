@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/runtime-gate.test.js test/zcode-integration.test.js",
     "test:package": "node --test test/package-contents.test.js",
     "dist": "electron-builder --win nsis portable",
     "dist:dir": "electron-builder --win --dir"
