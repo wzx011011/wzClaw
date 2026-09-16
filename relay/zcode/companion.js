@@ -32,33 +32,39 @@ const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
 const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
 
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
-function defaultZcodeCommand() {
-  const local = path.join(process.env.LOCALAPPDATA || '', 'Programs/ZCode/resources/glm/zcode.cjs');
-  if (process.env.ZCODE_BIN && fs.existsSync(process.env.ZCODE_BIN)) {
-    return { command: process.execPath, args: [process.env.ZCODE_BIN] };
-  }
-  if (fs.existsSync(local)) return { command: process.execPath, args: [local] };
+// 必须与 runtime 预检复用同一解析结果，否则预检与长期 bridge 的运行时宿主可能不一致。
+function defaultZcodeCommand(env = process.env) {
+  const resolved = resolveZcodeRuntime(env);
+  if (resolved.category === 'resolved') return { command: resolved.command, args: resolved.args };
   return { command: 'zcode', args: [] };
 }
 
 // 运行时预检只产生脱敏的状态码，绝不向调用者返回命令行、token 或原始 stderr。
 function resolveZcodeRuntime(env = process.env) {
   const local = path.join(env.LOCALAPPDATA || '', 'Programs/ZCode/resources/glm/zcode.cjs');
+  const host = path.join(env.LOCALAPPDATA || '', 'Programs/ZCode/ZCode.exe');
+  const commandForRuntime = (runtime) => {
+    // 打包 Companion 的 Electron 不能代替官方 ZCode host 执行其 cjs runtime。
+    // 本机独立安装完整时必须使用同安装目录官方 host；CLI 保持 Node 自身路径。
+    if (process.versions.electron && fs.existsSync(host)) return host;
+    return process.execPath;
+  };
   if (env.ZCODE_BIN) {
     if (!fs.existsSync(env.ZCODE_BIN)) return { category: 'invalid-override' };
-    return { category: 'resolved', source: 'environment', command: process.execPath, args: [env.ZCODE_BIN] };
+    return { category: 'resolved', source: 'environment', command: commandForRuntime(env.ZCODE_BIN), args: [env.ZCODE_BIN] };
   }
-  if (fs.existsSync(local)) return { category: 'resolved', source: 'installed', command: process.execPath, args: [local] };
+  if (fs.existsSync(local)) return { category: 'resolved', source: 'installed', command: commandForRuntime(local), args: [local] };
   return { category: 'resolved', source: 'path', command: 'zcode', args: [] };
 }
 
 function runtimeProcessEnv(resolved, env = process.env) {
-  // packaged Electron 通过自身 exe 执行 zcode.cjs 时必须切 Node 模式；直接 PATH CLI
-  // 不应携带该变量。按 resolved 形状判断，而不是只看宿主全局，便于测试和复用。
-  const viaHostExecutable = resolved.command === process.execPath && resolved.args.length > 0;
+  // Electron host（包括独立安装的 ZCode.exe）执行 cjs runtime 时必须切 Node 模式；
+  // 直接 PATH CLI 与其他可执行文件参数均不携带该变量。
+  const runtimeScript = resolved.args[0];
+  const runsCjsRuntime = typeof runtimeScript === 'string' && runtimeScript.toLowerCase().endsWith('.cjs');
   return {
     ...env,
-    ...(viaHostExecutable && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    ...(runsCjsRuntime && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   };
 }
 

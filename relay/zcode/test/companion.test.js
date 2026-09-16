@@ -11,7 +11,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
 const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime, resolveZcodeRuntime,
-  runtimeProcessEnv } = require('../companion');
+  defaultZcodeCommand, runtimeProcessEnv } = require('../companion');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -104,17 +104,44 @@ test('runtime probe：独立 app-server 的 session/list 握手通过后才报�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('runtime process env：仅 Electron 宿主执行 cjs 时启用 Node 模式', () => {
+test('runtime process env：Electron 执行 runtime cjs 时启用 Node 模式', () => {
   const original = process.versions.electron;
   Object.defineProperty(process.versions, 'electron', { value: '31.7.0', configurable: true });
   try {
     const cjs = runtimeProcessEnv({ command: process.execPath, args: ['C:/zcode.cjs'] }, { SAFE: '1' });
     assert.equal(cjs.ELECTRON_RUN_AS_NODE, '1');
+    const officialHost = runtimeProcessEnv({
+      command: 'C:/Users/test/AppData/Local/Programs/ZCode/ZCode.exe',
+      args: ['C:/Users/test/AppData/Local/Programs/ZCode/resources/glm/zcode.cjs'],
+    }, { SAFE: '1' });
+    assert.equal(officialHost.ELECTRON_RUN_AS_NODE, '1');
     const pathCli = runtimeProcessEnv({ command: 'zcode', args: [] }, { SAFE: '1' });
     assert.equal(pathCli.ELECTRON_RUN_AS_NODE, undefined);
+    const nonCjs = runtimeProcessEnv({ command: 'C:/tool.exe', args: ['C:/tool.js'] }, { SAFE: '1' });
+    assert.equal(nonCjs.ELECTRON_RUN_AS_NODE, undefined);
   } finally {
     if (original === undefined) delete process.versions.electron;
     else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
+  }
+});
+
+test('runtime resolver：打包 Electron 用同安装目录官方 ZCode.exe 承载 cjs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-install-'));
+  const runtime = path.join(root, 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs');
+  const host = path.join(root, 'Programs', 'ZCode', 'ZCode.exe');
+  fs.mkdirSync(path.dirname(runtime), { recursive: true });
+  fs.writeFileSync(runtime, '');
+  fs.writeFileSync(host, '');
+  const original = process.versions.electron;
+  Object.defineProperty(process.versions, 'electron', { value: '31.7.0', configurable: true });
+  try {
+    const resolved = resolveZcodeRuntime({ LOCALAPPDATA: root });
+    assert.deepEqual(resolved, { category: 'resolved', source: 'installed', command: host, args: [runtime] });
+    assert.deepEqual(defaultZcodeCommand({ LOCALAPPDATA: root }), { command: host, args: [runtime] });
+  } finally {
+    if (original === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
