@@ -16,6 +16,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
 const { createCompanion, readRegistrationSecretFile } = require('./cclient/companion');
+const { detectZcode, normalizeImportSelection } = require('./zcode-integration');
 
 // 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
 // spawn/重启逻辑自身有状态机，未处理异常多来自已防护边界的偶发竞态。
@@ -56,9 +57,11 @@ function loadConfig() {
   fs.mkdirSync(dir, { recursive: true });
   configPath = path.join(dir, 'config.json');
   const defaults = {
+    schemaVersion: 2,
     relayUrl: DEFAULT_RELAY_URL,
     cwd: app.getPath('home'),
     mode: 'full',
+    firstRun: { completed: false },
   };
   try {
     cfg = { ...defaults, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
@@ -66,13 +69,54 @@ function loadConfig() {
     cfg = defaults;
   }
   if (!RELAY_RE.test(cfg.relayUrl)) cfg.relayUrl = DEFAULT_RELAY_URL;
+  if (!cfg.firstRun || typeof cfg.firstRun !== 'object') cfg.firstRun = { completed: false };
+  cfg.schemaVersion = 2;
   mode = cfg.mode === 'pet' ? 'pet' : 'full';
+}
+
+function persistConfig() {
+  cfg.mode = mode;
+  const tempPath = `${configPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  fs.renameSync(tempPath, configPath);
+}
+
+function validateCompanionSetup(next) {
+  if (!RELAY_RE.test(String(next.relayUrl || ''))) {
+    return { ok: false, error: 'relay 地址必须是 wss://…/ws 形式' };
+  }
+  const cwd = String(next.cwd || '');
+  try {
+    if (!cwd || !fs.statSync(cwd).isDirectory()) {
+      return { ok: false, error: '工作目录不存在' };
+    }
+  } catch {
+    return { ok: false, error: '工作目录不存在' };
+  }
+  return { ok: true, relayUrl: next.relayUrl.trim(), cwd };
+}
+
+function safeDetectionSnapshot() {
+  const detected = detectZcode();
+  // renderer 只需要状态和计数；启动路径、文件名、原始配置均留在主进程。
+  return {
+    installation: { status: detected.installation.status, source: detected.installation.source },
+    metadata: detected.metadata,
+    credentials: detected.credentials,
+  };
+}
+
+function firstRunSnapshot() {
+  return {
+    completed: cfg.firstRun.completed === true,
+    selection: normalizeImportSelection({ selection: cfg.firstRun.selection }),
+    detected: safeDetectionSnapshot(),
+  };
 }
 
 function saveConfig() {
   try {
-    cfg.mode = mode;
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+    persistConfig();
   } catch {
     /* 配置写失败不致命：下次启动用默认值 */
   }
@@ -263,6 +307,44 @@ function registerIpc() {
     logs: logTail.slice(-200),
     companionError: null,
   }));
+  ipcMain.handle('get-first-run-status', () => firstRunSnapshot());
+  ipcMain.handle('detect-zcode', () => safeDetectionSnapshot());
+  ipcMain.handle('apply-first-run', (_e, next) => {
+    const valid = validateCompanionSetup(next || {});
+    if (!valid.ok) return valid;
+    try {
+      const selection = normalizeImportSelection(next);
+      const detected = safeDetectionSnapshot();
+      cfg.relayUrl = valid.relayUrl;
+      cfg.cwd = valid.cwd;
+      cfg.firstRun = {
+        completed: true,
+        completedAt: new Date().toISOString(),
+        selection,
+        // 仅存枚举状态，绝不落盘 provider、路径、配置内容或凭据状态细节。
+        detected: {
+          installation: detected.installation.status,
+          metadata: detected.metadata.status,
+          credentials: detected.credentials.status,
+        },
+      };
+      persistConfig();
+      app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
+      startCompanion();
+      return { ok: true, firstRun: firstRunSnapshot() };
+    } catch {
+      return { ok: false, error: '保存首启设置失败，未修改 ZCode 配置' };
+    }
+  });
+  ipcMain.handle('dismiss-first-run', () => {
+    try {
+      cfg.firstRun = { completed: true, completedAt: new Date().toISOString(), selection: {} };
+      persistConfig();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: '保存首启状态失败' };
+    }
+  });
   ipcMain.handle('switch-mode', (_e, m) => (m === 'pet' ? showPet() : showFull()));
   ipcMain.handle('pet-menu', (_e, x, y) => {
     const menu = Menu.buildFromTemplate([
@@ -287,19 +369,10 @@ function registerIpc() {
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('save-config', (_e, next) => {
-    if (!RELAY_RE.test(String(next.relayUrl || ''))) {
-      return { ok: false, error: 'relay 地址必须是 wss://…/ws 形式' };
-    }
-    const cwd = String(next.cwd || '');
-    try {
-      if (!cwd || !fs.statSync(cwd).isDirectory()) {
-        return { ok: false, error: '工作目录不存在' };
-      }
-    } catch {
-      return { ok: false, error: '工作目录不存在' };
-    }
-    cfg.relayUrl = next.relayUrl.trim();
-    cfg.cwd = cwd;
+    const valid = validateCompanionSetup(next || {});
+    if (!valid.ok) return valid;
+    cfg.relayUrl = valid.relayUrl;
+    cfg.cwd = valid.cwd;
     saveConfig();
     app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
     startCompanion(); // 换 relay/目录后重启连接（配对凭据不变则码不变）

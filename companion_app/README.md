@@ -25,6 +25,11 @@ NAS relay**（`wss://zcode.5945.top/ws` 烧入为默认值，可在设置里改�
   同目录单实例锁 `companion.lock` 保证与旧实例互斥。
 - **与旧计划任务二选一**：如果 `wzxClawZcodeCompanion` 计划任务还在跑，本 App
   启动会报 `ALREADY_RUNNING`（日志可见）。用本 App 前先停用/删除该计划任务。
+- **首启 ZCode 检测**：完整窗口首次启动会只读检测本机 ZCode 与 `~/.zcode`
+  的安全摘要。用户可选择确认使用模型/Profile 元数据、非安全偏好、工作区历史
+  和扩展声明；默认不会选择工作区与扩展。API Key、OAuth、SSH/MCP 登录态、
+  配对信息、远程工作区、会话和日志绝不导入、展示或经 relay 传输。该流程不会
+  改写 ZCode 文件，Companion 仍直接使用本机已安装 ZCode 的运行时配置。
 
 ## 开发与打包
 
