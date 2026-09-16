@@ -998,6 +998,15 @@ class SessionSyncService {
       if (!hasMore || pageMessages.isEmpty) break;
       offset += pageMessages.length;
       page++;
+      // 分页提供方无视 offset（换芯栈尾窗语义：响应 offset 恒 0）时，
+      // 继续翻页只会把同一个最新窗口反复累积成重复时间线——立即终止。
+      // 内容在第 0 页已入库，无需补写。真分页待 afterMessageId 实测后另接。
+      if (!fromCache && responseOffset != offset) {
+        // ignore: avoid_print
+        print('[SyncDiag] loadAll aborted: provider ignored offset '
+            '($offset != $responseOffset) for $sessionId');
+        break;
+      }
       // 安全护栏：避免无限循环
       if (page > 200) {
         // ignore: avoid_print
@@ -1009,6 +1018,23 @@ class SessionSyncService {
       await ChatDatabase.instance.markSessionSynced(sessionId);
     }
     return all;
+  }
+
+  /// 打开会话（统一入口）：活跃位 → 立即切窗（骨架屏）→ 全量分页拉取。
+  /// 抽屉与工作区弹层两条「点会话」入口共用——只 setActiveSession 不切内容
+  /// 会造成标题是新会话、消息与发送目标还是旧会话的半切换（回归锚：
+  /// project_drawer._onSessionTap 与 workspace_switcher_sheet.onSessionTap）。
+  Future<void> openSession(String sessionId) async {
+    setActiveSession(sessionId);
+    ChatStore.instance.switchToSession(sessionId, userInitiated: true);
+    try {
+      final messages =
+          await loadAllSessionMessages(sessionId, forceRefresh: true);
+      ChatStore.instance.loadFetchedMessages(sessionId, messages);
+    } catch (_) {
+      // 拉取失败也要关掉骨架屏，避免 loading 永久显示
+      ChatStore.instance.loadFetchedMessages(sessionId, []);
+    }
   }
 
   /// Set the active session ID (when user taps a session).

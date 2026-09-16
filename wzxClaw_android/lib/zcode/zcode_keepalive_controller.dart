@@ -30,15 +30,45 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
   bool _enabled = false;
   bool _initialized = false;
 
+  /// 链路存活判定（生产由 ConnectionManager 注入；未注入时视为不活——
+  /// v3 注册表接线后其 store 也可独立满足条件）。
+  /// 曾因数据源只查「有意未接线」的 registry 导致 _shouldRun 恒 false、
+  /// 前台服务在产线一次都启动不了（假开关）——判定必须是双数据源。
+  static bool Function()? linkedProvider;
+
+  /// 仅测试使用：平台覆盖（测试环境 Platform.isAndroid 恒 false）
+  @visibleForTesting
+  static bool debugAndroidOverride = false;
+
+  /// 仅测试使用：前台服务调用记录（'start' / 'stop'）
+  @visibleForTesting
+  final List<String> debugForegroundCalls = <String>[];
+
   /// 全部桌面 store（多桌面：每个桌面独立连接与状态）
   Iterable<ZcodeChatStore> get _stores => ZcodeDesktopRegistry.instance.stores;
 
-  /// 是否应运行前台服务：Android + 开关开 + 任一桌面已配对且连接未彻底 idle
-  bool get _shouldRun =>
-      Platform.isAndroid &&
-      _enabled &&
-      _stores.any((s) =>
-          s.pairing != null && s.connState != ZcodeConnState.idle,);
+  bool get _isAndroid => debugAndroidOverride || Platform.isAndroid;
+
+  bool get _linked => linkedProvider?.call() ?? false;
+
+  /// 是否应运行前台服务：Android + 开关开 +（活跃链路存活 或 任一 v3 桌面已配对）
+  bool get _shouldRun {
+    if (!_isAndroid || !_enabled) return false;
+    if (_linked) return true;
+    return _stores.any(
+      (s) => s.pairing != null && s.connState != ZcodeConnState.idle,
+    );
+  }
+
+  Future<void> _fgStart() async {
+    debugForegroundCalls.add('start');
+    await AndroidForegroundKeepAlive.instance.start();
+  }
+
+  Future<void> _fgStop() async {
+    debugForegroundCalls.add('stop');
+    await AndroidForegroundKeepAlive.instance.stop();
+  }
 
   /// 读 pref 并注册生命周期观察（幂等；App 启动时调用一次）
   Future<void> initialize() async {
@@ -61,7 +91,7 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
       await prefs.setBool(_prefKey, enabled);
     } catch (_) {}
     if (!enabled) {
-      await AndroidForegroundKeepAlive.instance.stop();
+      await _fgStop();
     }
   }
 
@@ -70,11 +100,11 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.paused:
         if (_shouldRun) {
-          unawaited(AndroidForegroundKeepAlive.instance.start());
+          unawaited(_fgStart());
         }
         break;
       case AppLifecycleState.resumed:
-        unawaited(AndroidForegroundKeepAlive.instance.stop());
+        unawaited(_fgStop());
         // 任一桌面已配对但连接不健康 → 立即重连（不等退避计时器）
         for (final store in _stores) {
           if (store.pairing != null &&

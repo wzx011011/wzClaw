@@ -329,7 +329,6 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
       ];
 
     case 'session/messages':
-      const limit = 200; // 与 ConnectionManager 请求一致
       final rows = (result is Map ? result['messages'] : null) as List? ?? [];
       final mapped = <Map<String, dynamic>>[];
       String? sessionId;
@@ -345,8 +344,12 @@ List<WsMessage> responseToWsMessages(String method, dynamic result, Map<String, 
           'messages': mapped,
           'total': mapped.length,
           'offset': 0,
-          // 尾窗语义：返回条数==limit 即可能还有更旧消息
-          'hasMore': rows.length >= limit,
+          // 尾窗语义诚实化：engine 的 session/resume / session/messages 只给
+          // 最新 N 条滑窗，没有全量序列的 offset 锚点——旧协议的「hasMore+
+          // offset 翻页」在此无法成立（曾致 ≥200 条会话翻页循环、时间线整片
+          // 重复）。hasMore 恒 false，终止翻页；真分页待 afterMessageId 实测
+          // 后另接（APP-SERVER.md 已支持 afterMessageId，未实测形状）。
+          'hasMore': false,
         },),
       ];
 

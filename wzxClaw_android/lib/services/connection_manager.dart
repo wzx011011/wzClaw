@@ -42,6 +42,9 @@ import 'zcode_protocol_translate.dart';
 class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   ConnectionManager._() {
     WidgetsBinding.instance.addObserver(this);
+    // 保活判定的链路数据源注入（依赖倒置：controller 不反向 import 本类）
+    ZcodeKeepAliveController.linkedProvider =
+        () => _stateNow != WsConnectionState.disconnected;
   }
 
   static final ConnectionManager _instance = ConnectionManager._();
@@ -280,8 +283,13 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       // 事件不下发，UI 卡片由超时兜底/用户点击自然清除
       if (e.event == 'stream:agent:permission_resolved') {
         final d = e.data is Map ? e.data as Map : const {};
-        final rid = (d['requestId'] ?? d['toolCallId'])?.toString();
-        if (rid != null && rid.isNotEmpty) _pendingReverse.remove(rid);
+        // 引擎侧 requestId 与 toolCallId 不是同一命名空间，登记键可能用其一
+        // （_registerReverse 用 questionId ?? toolCallId）——清理双键都试，
+        // 防单键不匹配导致待答表滞留（小型泄漏 + 陈旧应答源）
+        for (final k in ['requestId', 'toolCallId', 'questionId']) {
+          final key = d[k]?.toString();
+          if (key != null && key.isNotEmpty) _pendingReverse.remove(key);
+        }
         continue;
       }
       _messageController.add(e);
@@ -443,13 +451,19 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     while (_sendQueue.isNotEmpty) {
       final entry = _sendQueue.removeAt(0);
       final client = _client;
-      if (client == null) break;
+      if (client == null) {
+        // 连接已不在：这条排队消息丢弃但要有观测（铁律 4）
+        debugPrint('[ConnectionManager] flush 丢弃（无连接）: ${entry.json}');
+        break;
+      }
       try {
         final decoded = jsonDecode(entry.json);
         if (decoded is Map<String, dynamic>) {
           unawaited(_dispatch(WsMessage.fromJson(decoded), client));
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[ConnectionManager] flush 解码失败: $e');
+      }
     }
   }
 
@@ -580,6 +594,12 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       case 'file:tree:request':
       case 'file:read:request':
         return;
+
+      default:
+        // 静默丢弃=缺陷（铁律 4）：未知出站事件（含 plan:decision——计划模式
+        // 批准/拒绝，新栈尚无对应引擎方法）必须留痕，否则就是「点了没反应」
+        // 的无头案
+        debugPrint('[ConnectionManager] 未处理的出站事件: ${message.event}');
     }
   }
 

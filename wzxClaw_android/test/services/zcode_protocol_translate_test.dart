@@ -419,7 +419,9 @@ void main() {
       expect((msgs.single as Map)['tool_calls'], isNotNull);
     });
 
-    test('hasMore 按返回条数==limit 推算', () {
+    test('hasMore 恒 false（尾窗语义诚实化——返回条数与 limit 无关）', () {
+      // 回归锚：曾按「条数==limit」推算 hasMore=true，叠加响应 offset 恒 0，
+      // 导致 ≥200 条会话在 loadAll 中无限翻页、时间线整片重复
       final events = responseToWsMessages('session/messages', {
         'messages': List.generate(200, (i) => {
               'info': {'role': 'user', 'time': {'created': i}},
@@ -428,7 +430,20 @@ void main() {
               ],
             },),
       }, const {},);
-      expect((events.single.data as Map)['hasMore'], true);
+      expect((events.single.data as Map)['hasMore'], false);
+
+      // 少量消息同样 false
+      final small = responseToWsMessages('session/messages', {
+        'messages': [
+          {
+            'info': {'role': 'user', 'time': {'created': 1}},
+            'parts': [
+              {'type': 'text', 'text': 'only'},
+            ],
+          },
+        ],
+      }, const {},);
+      expect((small.single.data as Map)['hasMore'], false);
     });
 
     test('info.agent 透传到消息行（子智能体归属）', () {

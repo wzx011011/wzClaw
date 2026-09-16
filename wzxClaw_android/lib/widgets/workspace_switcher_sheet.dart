@@ -15,6 +15,9 @@ import 'workspace_picker_card.dart';
 Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
   final colors = AppColors.of(context);
   SessionSyncService.instance.fetchWorkspaces();
+  // exists 探测的 memo（按 workspaces 实例失效）：builder 每帧重建时不得重发
+  List<WorkspaceItem>? probedWorkspaces;
+  Future<List<bool>>? existsFuture;
 
   await showModalBottomSheet(
     context: context,
@@ -64,11 +67,21 @@ Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
                   ),
                 );
               }
-              // 过滤已不存在的目录：x/fs/exists 批量探测；探测中/失败展示全量
+              // 过滤已不存在的目录：x/fs/exists 批量探测；探测中/失败展示全量。
+              // future 按 workspaces 实例 memoize——builder 每帧重建时不得
+              // 反复重发探测请求
+              if (!identical(probedWorkspaces, workspaces)) {
+                probedWorkspaces = workspaces;
+                existsFuture = GitService.instance
+                    .existingDirs(
+                      [for (final w in workspaces) w.primaryPath ?? ''],
+                    )
+                    .catchError(
+                        (_) => List<bool>.filled(workspaces.length, true),);
+              }
+              final currentExistsFuture = existsFuture;
               return FutureBuilder<List<bool>>(
-                future: GitService.instance.existingDirs(
-                  [for (final w in workspaces) w.primaryPath ?? ''],
-                ).catchError((_) => List<bool>.filled(workspaces.length, true)),
+                future: currentExistsFuture,
                 builder: (context, exSnap) {
                   final exists = exSnap.data;
                   final visible = (exists == null)
@@ -122,13 +135,15 @@ Future<void> showWorkspaceSwitcherSheet(BuildContext context) async {
                               },
                               onSessionTap: (sessionId) {
                                 Navigator.pop(ctx);
+                                // 统一入口：活跃位+切窗+全量拉取三件套——
+                                // 只 setActiveSession 会造成半切换（标题换了、
+                                // 消息和发送目标还在旧会话）
+                                SessionSyncService.instance.openSession(sessionId);
                                 final path = ws.primaryPath;
                                 if (path != null && path.isNotEmpty) {
                                   SessionSyncService.instance
                                       .switchWorkspace(path);
                                 }
-                                SessionSyncService.instance
-                                    .setActiveSession(sessionId);
                               },
                             );
                           },

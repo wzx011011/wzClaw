@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
 import '../models/session_meta.dart';
-import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/phone_session_index.dart';
 import '../services/session_sync_service.dart';
@@ -547,21 +547,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
   }
 
   Future<void> _onSessionTap(BuildContext context, SessionMeta session) async {
-    SessionSyncService.instance.setActiveSession(session.id);
-    // 先切换（立即显示骨架屏），再异步拉取消息，避免切换后 loading 永远不关闭
-    ChatStore.instance.switchToSession(session.id, userInitiated: true);
-
+    // 统一入口（openSession = 活跃位 + 切窗 + 全量拉取），与工作区弹层共用；
+    // 抽屉先收起，拉取在后台继续
+    unawaited(SessionSyncService.instance.openSession(session.id));
     if (context.mounted) Navigator.pop(context);
-
-    try {
-      // 修复：长会话超过 50 条时只取首页会丢消息；改用全量分页拉取
-      final messages = await SessionSyncService.instance
-          .loadAllSessionMessages(session.id, forceRefresh: true);
-      ChatStore.instance.loadFetchedMessages(session.id, messages);
-    } catch (_) {
-      // 拉取失败也要关闭 loading，避免骨架屏永久显示
-      ChatStore.instance.loadFetchedMessages(session.id, []);
-    }
   }
 
   Widget _buildFooter(AppColors colors) {

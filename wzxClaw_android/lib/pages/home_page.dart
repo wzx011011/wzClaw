@@ -136,6 +136,10 @@ class _ChatPageState extends State<ChatPage> {
       if (mounted) setState(() => _isSessionLoading = loading);
     });
     _isSessionLoading = ChatStore.instance.isSessionLoading;
+    // 回种流式/等待初值：重进页面时若回合正在跑，否则发送按钮形态短暂错误、
+    // 消息会直发而非入队
+    _isStreaming = ChatStore.instance.isStreaming;
+    _isWaiting = ChatStore.instance.isWaitingForResponse;
 
     _permissionSub = ChatStore.instance.permissionStream.listen((req) {
       if (mounted) setState(() => _permissionRequest = req);
@@ -242,7 +246,7 @@ class _ChatPageState extends State<ChatPage> {
   void _sendQueuedNow(_QueuedSend item) {
     setState(() => _sendQueue.remove(item));
     if (ChatStore.instance.currentSessionId == null) {
-      _startNewConversation(item.text);
+      _startNewConversation(item.text, requeueOnFailure: item);
       return;
     }
     ChatStore.instance.sendMessage(item.text);
@@ -259,12 +263,36 @@ class _ChatPageState extends State<ChatPage> {
       final item = _sendQueue.removeAt(0);
       setState(() {});
       if (ChatStore.instance.currentSessionId == null) {
-        _startNewConversation(item.text);
+        _startNewConversation(item.text, requeueOnFailure: item);
       } else {
         ChatStore.instance.sendMessage(item.text);
         _scrollToBottom();
       }
     });
+  }
+
+  Future<void> _startNewConversation(
+    String text, {
+    _QueuedSend? requeueOnFailure,
+  }) async {
+    _inputController.clear();
+    _scrollToBottom();
+    final ok = await SessionSyncService.instance.startNewConversation(text);
+    if (!ok && mounted) {
+      // 失败不蒸发：排队来源回插队首（保持原顺序），输入来源回填输入框
+      if (requeueOnFailure != null) {
+        setState(() => _sendQueue.insert(0, requeueOnFailure));
+      } else {
+        _inputController.text = text;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('创建会话失败，请检查连接后重试'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _editQueued(_QueuedSend item) async {
@@ -394,23 +422,6 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
   }
-
-  /// 新任务首条消息：引擎建会话 → 写本地索引 → 发送。
-  Future<void> _startNewConversation(String text) async {
-    _inputController.clear();
-    _scrollToBottom();
-    final ok = await SessionSyncService.instance.startNewConversation(text);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('创建会话失败，请检查连接后重试'),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
 
   void _showMessageActions(ChatMessage msg) {
     final colors = AppColors.of(context);
@@ -1694,6 +1705,8 @@ class _ChatPageState extends State<ChatPage> {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
     final colors = AppColors.of(context);
+    // future 只构造一次（builder 内重建会反复重发请求）
+    final usageFuture = ChatRuntimeService.instance.usage(sessionId);
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.bgSecondary,
@@ -1702,7 +1715,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       builder: (ctx) => SafeArea(
         child: FutureBuilder<ChatUsageInfo>(
-          future: ChatRuntimeService.instance.usage(sessionId),
+          future: usageFuture,
           builder: (ctx, snap) {
             final rows = <(String, String)>[];
             if (snap.hasData) {
@@ -1776,11 +1789,15 @@ class _ChatPageState extends State<ChatPage> {
     return '$n';
   }
 
-  /// 模型弹层：本会话历史模型（协议无目录接口，实测 -32601，不做假目录）
+  /// 模型弹层：优先 resume 的可用模型目录（实测形状），失败降级本会话历史
   Future<void> _showModelSheet() async {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
     final colors = AppColors.of(context);
+    // future 只构造一次；目录优先（resume settings.model.available），失败降级历史
+    final modelsFuture = ChatRuntimeService.instance
+        .availableModels(sessionId)
+        .catchError((_) => ChatRuntimeService.instance.sessionModels(sessionId));
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.bgSecondary,
@@ -1789,7 +1806,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       builder: (ctx) => SafeArea(
         child: FutureBuilder<List<SessionModelUse>>(
-          future: ChatRuntimeService.instance.sessionModels(sessionId),
+          future: modelsFuture,
           builder: (ctx, snap) {
             Widget body;
             if (snap.connectionState != ConnectionState.done) {
@@ -1850,7 +1867,7 @@ class _ChatPageState extends State<ChatPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '模型（本会话历史）',
+                    '模型',
                     style: TextStyle(
                         color: colors.textPrimary,
                         fontSize: 16,
@@ -1858,7 +1875,7 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '协议未提供模型目录，仅列出本会话用过的模型',
+                    '来自桌面端可用模型目录（resume 实测）',
                     style: TextStyle(color: colors.textMuted, fontSize: 11),
                   ),
                   body,
