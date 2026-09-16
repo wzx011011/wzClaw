@@ -32,7 +32,7 @@ NAS relay
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `relay/zcode/brain-adapter.js` | 旧 WsEvents 协议 ↔ app-server 帧适配器（v3 大脑节点核心） |
 | `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
-| `relay/zcode/test/` | 69 项测试（node --test） |
+| `relay/zcode/test/` | 75 项测试（node --test） |
 | `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
 
 > 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
@@ -56,7 +56,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 # 手机端
 cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
-flutter test           # 378 项
+flutter test           # 382 项
 
 # 手机端 release APK（2026-09-16 定）：
 # 1. 每次出包前 pubspec.yaml 的 patch 版本 +1 并带 +N（如 1.2.5+5 → 1.2.6+6），
@@ -108,6 +108,9 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **确定性房间号**：房间 id 由 (pass_hash, mid) 派生、口令落盘
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
+- **双栈现状（2026-09-16 记录）**：`lib/zcode` 目标栈与 `services/` 换芯栈并存，
+  新 UI 直发通道走 ConnectionManager.zcodeRequest；旧 WsEvents 壳的退役条件
+  = zcode 聊天页落地接线。改动共享组件时两栈回归面都要跑。
 - **APK 发布纪律**：编译好的手机端 release APK 一律放 NAS `/volume1/share/zcode/`
   （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`；
   每次出包 patch 版本 +1（pubspec 带 +N 保 versionCode 递增），文件名带
