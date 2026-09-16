@@ -4,6 +4,7 @@ const http = require('node:http');
 const { createHmac, randomBytes, randomUUID } = require('node:crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const { verifyProof, verifyRegisterProof } = require('./lib/proof');
+const { classifyFrame } = require('./lib/protocol');
 const MAX_PAYLOAD = 1024 * 1024;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -19,7 +20,11 @@ function createRelay(options = {}) {
   }
   const config = { authTimeoutMs: 10000, roomTtlMs: 60000, sweepIntervalMs: 1000,
     pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16, maxProbes: 3,
-    rateLimit: 120, rateWindowMs: 10000, ...options };
+    rateLimit: 120, rateWindowMs: 10000,
+    // 流式 data 独立配额：不能沿用控制帧 120/10s 把正常回合掐断，也不能无限豁免。
+    // 16 个满帧/窗口：单次 session/resume 截断回复可接近 1MiB，必须容纳；
+    // 持续占用仍受字节总量和帧数双重限制。
+    dataRateLimit: 2000, dataRateBytes: 16 * MAX_PAYLOAD, ...options };
   delete config.registrationSecret;
   const logger = typeof config.logger === 'function' ? config.logger : () => {};
   delete config.logger;
@@ -69,6 +74,19 @@ function createRelay(options = {}) {
     if (state.role === 'probe') room.probes.delete(state.ws);
     else if (room[state.role] === state) room[state.role] = null;
     if (room.owner === state) room.owner = null;
+    // 清理路由归属，避免断线后 id 重用串到新连接。device 换代时旧内部
+    // 命名空间整体失效；probe 离席时仅移除属于该 probe 的记录。
+    if (state.role === 'device') {
+      room.requestRoutes.clear();
+      room.reverseRoutes.clear();
+    } else {
+      for (const [id, route] of room.requestRoutes) {
+        if (route.probe === state) room.requestRoutes.delete(id);
+      }
+      for (const [id, probe] of room.reverseRoutes) {
+        if (probe === state) room.reverseRoutes.delete(id);
+      }
+    }
     state.room = null;
     if (!room.device && room.probes.size === 0 && !room.owner && room.inactiveAt === null) room.inactiveAt = Date.now();
     notify(room);
@@ -100,6 +118,7 @@ function createRelay(options = {}) {
     const state = { ws, mid: url.searchParams.get('mid'), headerMid: req.headers['x-device-id'],
       role: null, room: null, nonce: null, authenticated: false, failed: false,
       lastPongAt: Date.now(), rateStart: Date.now(), rateCount: 0,
+      dataRateStart: Date.now(), dataRateCount: 0, dataRateBytes: 0,
       openAt: Date.now(), ip: req.socket.remoteAddress || '-' };
     sockets.set(ws, state);
     // 连接级诊断（排查手机端断线重连）：只记 IP 与时刻，不含任何标识值
@@ -121,11 +140,16 @@ function createRelay(options = {}) {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return fail(state); }
       if (!isObject(msg)) return fail(state);
-      // 限流只计认证/控制类消息：已配对成员的 data 帧是流式负载（app-server 每个
-      // NDJSON 行一帧，实测每个输出字符可达 2 帧），计入会掐断正常回合。
-      // 滥用防护由认证、帧大小上限与坏帧 fail 承担。
-      const exempt = state.authenticated && msg.type === 'data' && state.room && matched(state.room);
-      if (!exempt && ++state.rateCount > config.rateLimit) return fail(state, 'RATE_LIMITED');
+      const dataFrame = state.authenticated && msg.type === 'data' && state.room && matched(state.room);
+      if (dataFrame) {
+        if (Date.now() - state.dataRateStart >= config.rateWindowMs) {
+          state.dataRateStart = Date.now(); state.dataRateCount = 0; state.dataRateBytes = 0;
+        }
+        state.dataRateCount += 1; state.dataRateBytes += raw.length;
+        if (state.dataRateCount > config.dataRateLimit || state.dataRateBytes > config.dataRateBytes) {
+          return fail(state, 'DATA_RATE_LIMITED');
+        }
+      } else if (++state.rateCount > config.rateLimit) return fail(state, 'RATE_LIMITED');
       handleMessage(state, msg);
     });
   });
@@ -161,7 +185,9 @@ function createRelay(options = {}) {
       }
       if (rooms.size >= config.maxRooms
         || [...rooms.values()].filter((room) => room.device || room.owner).length >= config.maxDevices) return fail(state, 'CAPACITY');
-      const room = { sid, secret: msg.pass_hash, owner: state, device: null, probes: new Map(), inactiveAt: null };
+      const room = { sid, secret: msg.pass_hash, owner: state, device: null, probes: new Map(), inactiveAt: null,
+        // relay 内部 ID 命名空间：probe 的同号请求改写后交给 device，响应再还原。
+        nextRequestId: 1, requestRoutes: new Map(), reverseRoutes: new Map() };
       rooms.set(sid, room); state.room = room;
       send(ws, { type: 'device_register_ack', device_sid: sid }); return;
     }
@@ -242,14 +268,37 @@ function createRelay(options = {}) {
       // app-server 尾流数据，踢掉会迫使其重注册轮换 sid/hash，手机端配对全部失效。
       if (!matched(state.room)) return;
       if (state.role === 'device') {
-        // device 下行广播给全体 probe（多手机同房间，各自收到完整流）。
-        // v1 已知限制：广播不区分 probe，且手机端请求 id 各自从 1 起编号，
-        // 双手机同时在线时可能出现 RPC id 冲突串台与反向请求扇出双重应答；
-        // 后续由 companion/Dart 侧引入 per-probe id 命名空间解决，relay 层不改协议。
-        for (const probe of state.room.probes.values()) send(probe.ws, msg);
+        const kind = classifyFrame(msg.payload);
+        if (kind === 'response' && typeof msg.payload.id === 'number') {
+          const route = state.room.requestRoutes.get(msg.payload.id);
+          if (!route) { logger('route-unmatched-response', String(msg.payload.id)); return; }
+          state.room.requestRoutes.delete(msg.payload.id);
+          send(route.probe.ws, { type: 'data', payload: { ...msg.payload, id: route.sourceId } });
+        } else if (kind === 'reverse-request') {
+          // 反向请求只能由一个手机回答。稳定选择第一个健康 probe，避免双允许。
+          const probe = [...state.room.probes.values()].find((p) => !isStale(p));
+          if (!probe) { logger('route-no-probe', String(msg.payload.id)); return; }
+          state.room.reverseRoutes.set(msg.payload.id, probe);
+          send(probe.ws, msg);
+        } else {
+          // 无 id 的通知/流式事件可安全广播，保留多手机旁观能力。
+          for (const probe of state.room.probes.values()) send(probe.ws, msg);
+        }
       } else {
-        // probe 上行只发给 device，probe 之间不互通。
-        send(state.room.device.ws, msg);
+        const kind = classifyFrame(msg.payload);
+        if (kind === 'request' && typeof msg.payload.id === 'number') {
+          const wireId = state.room.nextRequestId++;
+          state.room.requestRoutes.set(wireId, { probe: state, sourceId: msg.payload.id });
+          send(state.room.device.ws, { type: 'data', payload: { ...msg.payload, id: wireId } });
+        } else if (kind === 'response' && state.room.reverseRoutes.get(msg.payload.id) === state) {
+          state.room.reverseRoutes.delete(msg.payload.id);
+          send(state.room.device.ws, msg);
+        } else if (kind === 'response') {
+          logger('route-rejected-response', String(msg.payload.id));
+        } else {
+          // probe 通知保持上行；普通响应必须有明确反向请求归属。
+          send(state.room.device.ws, msg);
+        }
       }
     } else fail(state);
   }

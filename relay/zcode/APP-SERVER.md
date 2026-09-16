@@ -492,7 +492,9 @@ app-server 实现；无头容器部署需让引擎 cwd 指向一个含 `app-serv
 | `x/git/checkout` | `{path, branch, create?}` | `{ok:true, branch}` | create=true 时 `-b` 新建；分支名白名单 `[A-Za-z0-9][A-Za-z0-9._/-]{0,119}` 且禁 `..`、结尾 `.lock`（防选项注入，禁止前导 `-`）；**不得加 `--` 分隔符**（checkout 语义中 `--` 后一律按 pathspec 处理） |
 | `x/fs/exists` | `{paths:[≤50]}` | `{exists:[bool]}` | 目录存在性（工作区列表过滤已删除路径用） |
 
-错误帧：`X_BAD_PARAMS`（参数/路径非法）、`X_GIT_FAILED`（git 非零退出，message
-为 stderr 首行）、未知 x/ 方法 `-32000`（ERR_UNHANDLED）。已知限制：companion
-进程的 PATH 需含 git（计划任务环境实测可用；若无 git 报 X_GIT_FAILED/ENOENT，
-显性失败不静默）。
+错误帧的 `error.code` 一律为数字（Android 客户端按数值解析）：`-32100`
+（`data.reason=X_BAD_PARAMS`，参数/路径非法）、`-32101`
+（`data.reason=X_GIT_TIMEOUT`，git 10 秒超时）、`-32102`
+（`data.reason=X_GIT_FAILED`，git 非零退出或启动失败，message 为 stderr 首行）；未知
+x/ 方法为 `-32000`（ERR_UNHANDLED）。已知限制：companion 进程的 PATH 需含 git
+（计划任务环境实测可用；若无 git 报数值失败码，显性失败不静默）。

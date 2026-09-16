@@ -9,7 +9,7 @@ const { WebSocket } = require('ws');
 const { createRelay, MAX_PAYLOAD } = require('../server');
 const { deriveProof, deriveRegisterProof, verifyProof } = require('../lib/proof');
 const { classifyFrame, ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
-  isFastMethod,
+  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod,
   isPermissionLikeMethod } = require('../lib/protocol');
 const { runProbe } = require('../probe');
 const { spawn } = require('node:child_process');
@@ -536,38 +536,62 @@ test('room expires by TTL only after the device and all probes have left', async
   assert.equal((await late.next('error')).code, 'AUTH_FAILED');
 });
 
-test('device broadcast reaches every probe while probe upstream goes to device only', async (t) => {
+test('per-probe RPC routes isolate colliding ids while notifications still broadcast', async (t) => {
   const f = await fixture(t);
   const d = await device(t, f.url);
   const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
   const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
-  const down = { type: 'data', payload: { broadcast: true } };
-  d.send(down);
-  assert.deepEqual(await p1.next('data'), down);
-  assert.deepEqual(await p2.next('data'), down);
-  p1.send({ type: 'data', payload: { from: 'p1' } });
-  assert.deepEqual((await d.next('data')).payload, { from: 'p1' });
-  p2.send({ type: 'data', payload: { from: 'p2' } });
-  assert.deepEqual((await d.next('data')).payload, { from: 'p2' });
+
+  // 两部手机都从 id=1 起：relay 必须改写 device 侧内部 id，不能串响应。
+  p1.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const d1 = await d.next('data');
+  p2.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const d2 = await d.next('data');
+  assert.notEqual(d1.payload.id, d2.payload.id);
+  d.send({ type: 'data', payload: { id: d2.payload.id, result: { owner: 'p2' } } });
+  d.send({ type: 'data', payload: { id: d1.payload.id, error: { code: -32601, message: 'p1 only' } } });
+  assert.deepEqual((await p2.next('data')).payload, { id: 1, result: { owner: 'p2' } });
+  assert.deepEqual((await p1.next('data')).payload, { id: 1, error: { code: -32601, message: 'p1 only' } });
   await delay(30);
-  // probe 之间不互通：p2 收不到 p1 的上行，p1 收不到 p2 的上行
-  assert.equal(p2.messages.some((m) => m.type === 'data' && m.payload.from === 'p1'), false);
-  assert.equal(p1.messages.some((m) => m.type === 'data' && m.payload.from === 'p2'), false);
+  assert.equal(p1.messages.some((m) => m.type === 'data' && m.payload.result?.owner === 'p2'), false);
+  assert.equal(p2.messages.some((m) => m.type === 'data' && m.payload.error?.message === 'p1 only'), false);
+
+  // 无 id 的流/通知仍可被两个观察端同时收到。
+  const notification = { type: 'data', payload: { method: 'session/event', params: { seq: 1 } } };
+  d.send(notification);
+  assert.deepEqual(await p1.next('data'), notification);
+  assert.deepEqual(await p2.next('data'), notification);
 });
 
-test('matched data frames are exempt from the per-socket rate limit', async (t) => {
-  const f = await fixture(t, { rateLimit: 20, rateWindowMs: 10000 });
+test('reverse request is routed to one probe and rejects duplicate responders', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  const request = { type: 'data', payload: { id: 'server-1', method: 'interaction/requestPermission', params: {} } };
+  d.send(request);
+  assert.deepEqual(await p1.next('data'), request);
+  await delay(30);
+  assert.equal(p2.messages.some((m) => m.type === 'data' && m.payload.id === 'server-1'), false);
+  // 非归属 probe 的应答被拒绝，归属 probe 的应答才进入 device。
+  p2.send({ type: 'data', payload: { id: 'server-1', result: { decision: 'allow' } } });
+  await delay(30);
+  assert.equal(d.messages.some((m) => m.type === 'data' && m.payload.result?.decision === 'allow'), false);
+  p1.send({ type: 'data', payload: { id: 'server-1', result: { decision: 'deny' } } });
+  assert.deepEqual((await d.next('data')).payload, { id: 'server-1', result: { decision: 'deny' } });
+});
+
+test('matched data frames have a stream-safe bounded data budget', async (t) => {
+  const f = await fixture(t, { rateLimit: 20, dataRateLimit: 55, dataRateBytes: 1024 * 1024, rateWindowMs: 10000 });
   const d = await device(t, f.url);
   const p = await client(t, f.url); await auth(p, d.sid, d.hash);
-  // 流式回合的真实形状：配对成员的 data 帧密度远超控制帧限流阈值。
-  // 50 帧（> rateLimit=20）在 10s 窗口内连发，连接不得被 RATE_LIMITED 掐断。
+  // 正常流式密度可超过控制帧 rateLimit。
   for (let i = 0; i < 50; i += 1) d.send({ type: 'data', payload: { seq: i } });
   for (let i = 0; i < 50; i += 1) assert.deepEqual((await p.next('data')).payload, { seq: i });
   assert.equal(d.ws.readyState, WebSocket.OPEN);
-  assert.equal(p.ws.readyState, WebSocket.OPEN);
-  // 控制帧仍受限流约束：超发 pair_status_query 应被 RATE_LIMITED 拒绝
-  for (let i = 0; i < 30; i += 1) p.send({ type: 'pair_status_query', device_sid: d.sid });
-  assert.equal((await p.next('error')).code, 'RATE_LIMITED');
+  // 但不存在无限豁免：超过 data 配额会有明确拒绝。
+  for (let i = 0; i < 6; i += 1) d.send({ type: 'data', payload: { overflow: i } });
+  assert.equal((await d.next('error')).code, 'DATA_RATE_LIMITED');
 });
 
 test('stale probe slot is reclaimed individually while healthy probes stay connected', async (t) => {
@@ -756,7 +780,10 @@ test('lib/protocol：classifyFrame 帧分类与错误码常量', () => {
   assert.equal(classifyFrame(null), null);
   assert.equal(classifyFrame('frame'), null);
   // 错误码常量与线上已用值锁死（companion 代答/自造码，改值即破坏手机端兼容）
-  assert.deepEqual([ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT], [-32000, -32001, -32022]);
+  assert.deepEqual(
+    [ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED],
+    [-32000, -32001, -32022, -32100, -32101, -32102],
+  );
 });
 
 test('lib/protocol：默认长档 + isFastMethod 白名单短档', () => {

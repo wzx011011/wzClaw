@@ -17,9 +17,8 @@ const _channelId = 'wzx_workspace_notification';
 /// 推送唤醒服务：监听 ConnectionManager.messageStream，
 /// 当 App 在后台且收到工作区完成/出错事件时，弹出本地通知。
 ///
-/// 依赖链：
-///   启用通知 → 同时开启后台保活 → 前台 Service 保持进程存活
-///   → WebSocket 保持连接 → messageStream 实时触达 → 本地通知
+/// 通知偏好与后台保活偏好彼此独立：通知只决定是否订阅和展示提醒；
+/// 后台保活由 ZcodeKeepAliveController 的单独设置决定。
 class PushWakeService with WidgetsBindingObserver {
   PushWakeService._();
 
@@ -74,11 +73,7 @@ class PushWakeService with WidgetsBindingObserver {
     // 监听 App 生命周期
     WidgetsBinding.instance.addObserver(this);
 
-    if (_enabled) {
-      _startListening();
-      // 开启前台保活，确保进程不被系统杀死
-      await ConnectionManager.instance.setBackgroundKeepAliveEnabled(true);
-    }
+    if (_enabled) _startListening();
   }
 
   Future<void> setEnabled(bool enabled) async {
@@ -90,13 +85,8 @@ class PushWakeService with WidgetsBindingObserver {
 
     if (enabled) {
       _startListening();
-      await ConnectionManager.instance.setBackgroundKeepAliveEnabled(true);
     } else {
       _stopListening();
-      // WR-02修复: push 关闭时无条件禁用 keep-alive。
-      // 之前的 if (!backgroundKeepAliveEnabled) 条件永远为 false（push 开启时已将其置 true），
-      // 导致 keep-alive 永不关闭，持续耗电。
-      await ConnectionManager.instance.setBackgroundKeepAliveEnabled(false);
     }
   }
 

@@ -37,13 +37,14 @@ void main() {
       expect(find.text('Summary text'), findsOneWidget);
     });
 
-    testWidgets('renders reject and approve buttons', (tester) async {
+    testWidgets('does not offer unverified remote plan actions', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
         const PlanModeBar(planData: {'plan': 'Do something'}),
       ),);
 
-      expect(find.text('Reject'), findsOneWidget);
-      expect(find.text('Approve & Execute'), findsOneWidget);
+      expect(find.textContaining('未提供可验证的计划确认接口'), findsOneWidget);
+      expect(find.text('Reject'), findsNothing);
+      expect(find.text('Approve & Execute'), findsNothing);
     });
 
     testWidgets('truncates long plan text', (tester) async {

@@ -25,6 +25,8 @@ const { classifyFrame } = require('./lib/protocol');
 const DEFAULT_RELAY_URL = process.env.RELAY_URL || 'wss://5945.top/relay/';
 const RECONNECT_DELAY_MS = 5000;
 const REQUEST_TIMEOUT_MS = 30000;
+const PERMISSION_TIMEOUT_MS = 120000;
+const MAX_NDJSON_BUFFER = 1024 * 1024;
 
 // ── app-server 子进程桥（stdio NDJSON + 崩溃重启） ───────────────────
 
@@ -100,6 +102,12 @@ class AppServerEngine extends EventEmitter {
 
   _feed(text) {
     this.buffer += text;
+    if (Buffer.byteLength(this.buffer) > MAX_NDJSON_BUFFER) {
+      this.logger('engine-ndjson-overflow', String(Buffer.byteLength(this.buffer)));
+      this.buffer = '';
+      if (this.child) this.child.kill();
+      return;
+    }
     let index;
     while ((index = this.buffer.indexOf('\n')) !== -1) {
       const line = this.buffer.slice(0, index).trim();
@@ -233,8 +241,10 @@ class BrainAdapter {
     // 等待手机应答的反向请求：frame.id（server-N）-> 原帧。
     // app-server 的 server-N id 会从头复用，必须按原 id 精确应答并及时清理。
     this._pendingPermission = new Map();
+    this._permissionTimers = new Map();
     this.engine.on('notification', (frame) => this._onEngineNotification(frame));
     this.engine.on('reverseRequest', (frame) => this._onEngineReverseRequest(frame));
+    this.engine.on('dead', () => this._clearPendingPermissions('engine-dead'));
   }
 
   // ---- relay 连接 ----
@@ -263,6 +273,7 @@ class BrainAdapter {
     this.ws.on('close', (code, reason) => {
       this.logger('relay-close', `code=${code} reason=${reason && reason.toString().slice(0, 80)}`);
       this.ws = null;
+      this._clearPendingPermissions('relay-close');
       if (!this.stopped) setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
     });
   }
@@ -272,7 +283,16 @@ class BrainAdapter {
     this.stopped = true;
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.ws) { try { this.ws.close(); } catch { /* 已关闭 */ } }
+    this._clearPendingPermissions('stop');
     await this.engine.stop();
+  }
+
+  _clearPendingPermissions(reason) {
+    for (const timer of this._permissionTimers.values()) clearTimeout(timer);
+    const count = this._pendingPermission.size;
+    this._permissionTimers.clear();
+    this._pendingPermission.clear();
+    if (count) this.logger('permission-pending-cleared', `${reason} count=${count}`);
   }
 
   _send(event, data) {
@@ -578,7 +598,12 @@ class BrainAdapter {
         const key = p.requestId || p.toolCallId || '';
         for (const [frameId, frame] of this._pendingPermission) {
           const rp = frame.params || {};
-          if (rp.requestId === key || rp.toolCallId === key) this._pendingPermission.delete(frameId);
+          if (rp.requestId === key || rp.toolCallId === key) {
+            this._pendingPermission.delete(frameId);
+            const timer = this._permissionTimers.get(frameId);
+            if (timer) clearTimeout(timer);
+            this._permissionTimers.delete(frameId);
+          }
         }
         this._send('stream:agent:permission_resolved', {
           sessionId,
@@ -613,7 +638,16 @@ class BrainAdapter {
       // 实测 params：{requestId: perm_<uuid>, toolCallId, toolName, input,
       //   reason, riskLevel, sessionId, options:[allow_once/allow_project/deny]}
       const toolCallId = params.toolCallId || params.requestId || frame.id;
+      const oldTimer = this._permissionTimers.get(frame.id);
+      if (oldTimer) clearTimeout(oldTimer);
       this._pendingPermission.set(frame.id, frame);
+      this._permissionTimers.set(frame.id, setTimeout(() => {
+        if (!this._pendingPermission.has(frame.id)) return;
+        this._pendingPermission.delete(frame.id);
+        this._permissionTimers.delete(frame.id);
+        this.logger('permission-timeout', String(frame.id));
+        this.engine.respondError(frame.id, -32022, 'Client request timed out');
+      }, PERMISSION_TIMEOUT_MS).unref());
       this._send('stream:agent:permission_request', {
         requestId: params.requestId || toolCallId,
         toolCallId,
@@ -651,6 +685,9 @@ class BrainAdapter {
     }
     const frame = this._pendingPermission.get(frameId);
     this._pendingPermission.delete(frameId);
+    const timer = this._permissionTimers.get(frameId);
+    if (timer) clearTimeout(timer);
+    this._permissionTimers.delete(frameId);
     const approved = d.approved === true;
     // 语义映射（手机旧 UI 档位 → app-server optionId）：
     // 批准且 remember → allow_project（服务端 kind 为 allow_always，语义近似）；

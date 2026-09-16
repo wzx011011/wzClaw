@@ -10,6 +10,7 @@ import '../services/push_wake_service.dart';
 import '../services/secure_settings.dart';
 import '../services/session_sync_service.dart';
 import '../services/zcode_protocol_translate.dart' show normalizeQrScanToServerUrl;
+import '../zcode/zcode_keepalive_controller.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -131,7 +132,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _toggleBackgroundKeepAlive(bool value) async {
     setState(() => _backgroundKeepAliveEnabled = value);
-    await ConnectionManager.instance.setBackgroundKeepAliveEnabled(value);
+    await ZcodeKeepAliveController.instance.setEnabled(value);
   }
 
   Future<void> _confirmAndClearCache() async {

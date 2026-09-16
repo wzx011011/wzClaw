@@ -665,7 +665,10 @@ test('readRegistrationSecretFile：文件首行去 CRLF；缺失/为空返回空
 // 再发一次 result，重复应答绝不能再进 app-server（重复应答是协议错误源），
 // 但静默丢弃会变成「点了允许却没生效」的无头案（铁律 4）。
 test('迟到/重复的应答被丢弃并留 phone-response-late 日志，不重复转发', async (t) => {
-  const { relay, url: relayUrl } = await withRelay(t);
+  const relayLogs = [];
+  const { relay, url: relayUrl } = await withRelay(t, {
+    logger: (event, detail) => relayLogs.push(`${event}${detail ? ` ${detail}` : ''}`),
+  });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-late-'));
   const logs = [];
   let pairingUrl = '';
@@ -690,8 +693,9 @@ test('迟到/重复的应答被丢弃并留 phone-response-late 日志，不重�
   await waitFor(() => pairingUrl);
   const parsed = new URL(pairingUrl);
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
-  // 共享 fixture 启动即发的未知反向请求转发到手机
-  await client.next((m) => m.type === 'data' && m.payload.id === 'server-2');
+  // 共享 fixture 启动即发的未知反向请求会经 relay 单点路由到本手机。
+  const reverse = await client.next((m) => m.type === 'data' && m.payload.id === 'server-2');
+  assert.equal(reverse.payload.method, 'interaction/test');
   client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
   await client.next((m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay'
     && m.payload.params.ok === true);
@@ -702,8 +706,8 @@ test('迟到/重复的应答被丢弃并留 phone-response-late 日志，不重�
   const relays = client.messages.filter(
     (m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay');
   assert.equal(relays.length, 1, '重复应答不得再次到达 app-server');
-  assert.ok(logs.some((line) => line.startsWith('phone-response-late server-2')),
-    '丢弃必须有观测');
+  assert.ok(relayLogs.some((line) => line.startsWith('route-rejected-response server-2')),
+    'relay 丢弃非归属应答必须有观测');
 });
 
 // app-server 进程重启后 server-N id 从头计数：onRespawn 必须清空旧 pending，
@@ -938,10 +942,11 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
     br2.payload.result.branches.filter((b) => b.current).map((b) => b.name),
     ['feat/new-branch']);
 
-  // 非法分支名（选项注入形态）→ X_BAD_PARAMS，不得执行
+  // 非法分支名（选项注入形态）→ 数值错误码 + 可读 reason，不得执行
   ask(16, 'x/git/checkout', { path: dir, branch: '-oCore.proxy=evil' });
   const bad = await client.next((m) => m.type === 'data' && m.payload.id === 16);
-  assert.equal(bad.payload.error.code, 'X_BAD_PARAMS');
+  assert.equal(bad.payload.error.code, -32100);
+  assert.equal(bad.payload.error.data.reason, 'X_BAD_PARAMS');
 
   // x/fs/exists：存在目录 true / 不存在 false
   ask(17, 'x/fs/exists', { paths: [dir, path.join(dir, 'nope-dir')] });

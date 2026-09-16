@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
-import '../services/chat_store.dart';
 
 /// A bar that appears when the desktop agent enters plan mode.
 class PlanModeBar extends StatelessWidget {
@@ -71,35 +70,9 @@ class PlanModeBar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => ChatStore.instance.respondToPlan(false),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.error,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: colors.error),
-                  ),
-                ),
-                child: const Text('Reject', style: TextStyle(fontSize: 12)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => ChatStore.instance.respondToPlan(true),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.success,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: colors.success),
-                  ),
-                ),
-                child: const Text('Approve & Execute', style: TextStyle(fontSize: 12)),
-              ),
-            ],
+          Text(
+            '当前远程节点未提供可验证的计划确认接口；请在桌面端确认或拒绝。',
+            style: TextStyle(color: colors.textMuted, fontSize: 12),
           ),
         ],
       ),

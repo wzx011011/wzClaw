@@ -7,6 +7,52 @@ on:
     branches: [master]
 
 jobs:
+  relay-companion-test:
+    name: Relay & Companion Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay/zcode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: relay/zcode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run relay and companion tests
+        run: npm test
+
+  companion-windows-package:
+    name: Companion Windows Package
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: companion_app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: companion_app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unpacked Windows package
+        run: npm run dist:dir
+
   desktop-test:
     name: Desktop Test
     runs-on: ubuntu-latest
@@ -25,7 +71,7 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: Run tests
         run: npm test
@@ -50,7 +96,7 @@ jobs:
       # ws 依赖由 desktop node_modules 提供，无需单独安装 relay 依赖
       - name: Install desktop dependencies
         working-directory: wzxClaw_desktop
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: Run E2E session sync suite
         working-directory: wzxClaw_desktop
@@ -77,7 +123,7 @@ jobs:
           cache-dependency-path: wzxClaw_desktop/package-lock.json
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: Build (vite compile check)
         run: npx electron-vite build
@@ -109,41 +155,3 @@ jobs:
 
       - name: Run tests
         run: flutter test
-
-  android-build-apk:
-    name: Android Build APK
-    runs-on: ubuntu-latest
-    needs: android-analyze-test
-    if: github.ref == 'refs/heads/master'
-    defaults:
-      run:
-        working-directory: wzxClaw_android
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.x'
-          channel: 'stable'
-          cache: true
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Build APK (release, no signing)
-        run: flutter build apk --release --no-shrink
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-${{ github.sha }}
-          path: wzxClaw_android/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 14

@@ -12,6 +12,11 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const ERR_UNHANDLED = -32000;
 const ERR_FRAME_TOO_LARGE = -32001;
 const ERR_TIMEOUT = -32022;
+// companion 本地 x/* 扩展错误。error.code 必须始终是数字；可读分类放进
+// error.data.reason，避免 Android 把字符串 code 降级成泛化 -32000。
+const ERR_X_BAD_PARAMS = -32100;
+const ERR_X_GIT_TIMEOUT = -32101;
+const ERR_X_GIT_FAILED = -32102;
 
 // 超时档位判定（方向：默认长档）。
 // 失败模式分析（2026-09-15 设计审查）：若默认短档，app-server 新增的任何
@@ -48,4 +53,5 @@ function classifyFrame(frame) {
 }
 
 module.exports = { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
+  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED,
   isFastMethod, isPermissionLikeMethod, classifyFrame };

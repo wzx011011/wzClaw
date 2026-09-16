@@ -17,10 +17,16 @@ const path = require('node:path');
 const { WebSocket } = require('ws');
 const { MAX_PAYLOAD } = require('./server');
 const { deriveProof, deriveRegisterProof } = require('./lib/proof');
-const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, isFastMethod } = require('./lib/protocol');
+const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
+  ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod } = require('./lib/protocol');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
+
+// 单条 app-server NDJSON 不能无限积累。上限必须高于 relay 1MiB：companion 会先
+// 收到并截断大型 session/resume（实测可达约 26MiB）再走 relay；32MiB 允许这条
+// 正常恢复路径，同时阻止无换行坏流吃尽常驻进程内存。
+const MAX_NDJSON_BUFFER = 32 * 1024 * 1024;
 
 const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
 const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
@@ -127,6 +133,13 @@ class AppServerBridge {
   }
   feed(text) {
     this.buffer += text;
+    if (Buffer.byteLength(this.buffer) > MAX_NDJSON_BUFFER) {
+      this.logger('appserver-ndjson-overflow', String(Buffer.byteLength(this.buffer)));
+      this.buffer = '';
+      const child = this.child;
+      if (child) child.kill();
+      return;
+    }
     let index;
     while ((index = this.buffer.indexOf('\n')) !== -1) {
       const line = this.buffer.slice(0, index).trim();
@@ -512,7 +525,10 @@ function createCompanion(options = {}) {
           reply({ id: frame.id, error: { code: ERR_UNHANDLED, message: `companion 未实现该扩展方法: ${frame.method}` } });
       }
     } catch (err) {
-      reply({ id: frame.id, error: { code: err.code || 'X_GIT_FAILED', message: String(err.message || err) } });
+      const reason = err.code || 'X_GIT_FAILED';
+      const code = reason === 'X_BAD_PARAMS' ? ERR_X_BAD_PARAMS
+        : reason === 'X_GIT_TIMEOUT' ? ERR_X_GIT_TIMEOUT : ERR_X_GIT_FAILED;
+      reply({ id: frame.id, error: { code, message: String(err.message || err), data: { reason } } });
     }
   }
 

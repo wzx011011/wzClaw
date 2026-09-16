@@ -61,6 +61,7 @@ function classifyFrame(frame: AppServerFrame): 'request' | 'reverse-request' | '
 
 export class AppServerEngine extends EventEmitter {
   static readonly DEFAULT_REQUEST_TIMEOUT_MS = 30000
+  static readonly MAX_NDJSON_BUFFER_BYTES = 1024 * 1024
 
   private readonly command: string
   private readonly args: string[]
@@ -158,6 +159,12 @@ export class AppServerEngine extends EventEmitter {
   /** 喂入 stdout 文本（按行切 NDJSON；公开便于测试注入） */
   feed(text: string): void {
     this.buffer += text
+    if (Buffer.byteLength(this.buffer) > AppServerEngine.MAX_NDJSON_BUFFER_BYTES) {
+      this.logger('engine-ndjson-overflow', String(Buffer.byteLength(this.buffer)))
+      this.buffer = ''
+      this.child?.kill()
+      return
+    }
     let index: number
     while ((index = this.buffer.indexOf('\n')) !== -1) {
       const line = this.buffer.slice(0, index).trim()

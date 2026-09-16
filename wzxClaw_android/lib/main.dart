@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_colors.dart';
-import 'pages/file_browser_page.dart';
+import 'pages/files_placeholder_page.dart';
 import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
@@ -113,7 +113,8 @@ class WzxClawApp extends StatelessWidget {
                 '/chat': (context) => const ChatPage(),
                 '/goal-panel': (context) => const GoalPanelPage(),
                 '/settings': (context) => const SettingsPage(),
-                '/files': (context) => const FileBrowserPage(),
+                // app-server 未实测到文件树/读取接口；保留旧深链但不再触发会超时的旧协议。
+                '/files': (context) => const FilesPlaceholderPage(),
               },
             );
           },

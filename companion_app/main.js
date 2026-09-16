@@ -15,7 +15,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require
 const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
-const { createCompanion } = require('./cclient/companion');
+const { createCompanion, readRegistrationSecretFile } = require('./cclient/companion');
 
 // 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
 // spawn/重启逻辑自身有状态机，未处理异常多来自已防护边界的偶发竞态。
@@ -101,10 +101,16 @@ function startCompanion() {
   }
   pairingUrl = null;
   qrDataUrl = null;
+  // 注册共享密钥：与 CLI companion 同源（~/.wzxclaw/zcode-companion/relay-
+  // secret）。NAS relay 设了 REGISTRATION_SECRET，注册必须携带 proof——
+  // 不读这个文件，旧房间过期后的重注册会被 AUTH_FAILED 拒绝，陷入
+  // 「连接即断」的重连循环（2026-09-16 首启实测踩坑）。
+  const registrationSecret = readRegistrationSecretFile() || undefined;
   try {
     companion = createCompanion({
       relayUrl: cfg.relayUrl,
       cwd: cfg.cwd,
+      registrationSecret,
       logger: (event, detail) => pushLog(event, detail),
       onPairing: (url) => {
         pairingUrl = url;
