@@ -17,6 +17,21 @@ const fs = require('node:fs');
 const QRCode = require('qrcode');
 const { createCompanion } = require('./cclient/companion');
 
+// 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
+// spawn/重启逻辑自身有状态机，未处理异常多来自已防护边界的偶发竞态。
+process.on('uncaughtException', (error) => {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'),
+      `${new Date().toISOString()} uncaught ${error.stack || error}\n`);
+  } catch { /* 尽力取证 */ }
+});
+process.on('unhandledRejection', (reason) => {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'),
+      `${new Date().toISOString()} unhandledRejection ${reason && reason.stack ? reason.stack : reason}\n`);
+  } catch { /* 尽力取证 */ }
+});
+
 // 默认连接我们自己的 NAS relay（安装即连；设置里可改）
 const DEFAULT_RELAY_URL = 'wss://zcode.5945.top/ws';
 const RELAY_RE = /^wss?:\/\/.+\/ws$/;

@@ -57,12 +57,19 @@ function derivePairingUrl(relayUrl, sid, hash) {
 
 // app-server stdio 桥：按行分帧，崩溃自动重启（上限 + 退避）。
 class AppServerBridge {
-  constructor({ command, args, cwd, env, logger, maxRestarts = 5, restartDelayMs = 1000 }) {
+  constructor({ command, args, cwd, env, logger, onDead, maxRestarts = 5, restartDelayMs = 1000,
+    restartWindowMs = 5 * 60 * 1000 }) {
     this.command = command; this.args = args; this.cwd = cwd; this.env = env;
     this.logger = logger || (() => {});
     this.maxRestarts = maxRestarts; this.restartDelayMs = restartDelayMs;
-    this.child = null; this.buffer = ''; this.restarts = 0;
-    this.onFrame = null; this.onDead = null; this.onRespawn = null; this.stopped = false;
+    // 预算按时间滑窗计（默认 5 分钟 5 次）：固定计数 + 每帧重置预算会被
+    // 「崩溃循环 + 持续手机流量」打成约 1 次/秒的无限快拉。
+    this.restartWindowMs = restartWindowMs; this.restartTimes = [];
+    this.child = null; this.buffer = '';
+    // onDead 必须从选项取：此前构造器忽略它导致预算耗尽回调永不触发，
+    // 宿主永远看不到 app-server-dead 状态（回归锚：companion.test 连崩用例）
+    this.onDead = onDead || null;
+    this.onFrame = null; this.onRespawn = null; this.stopped = false;
   }
   start() {
     this.stopped = false;
@@ -79,6 +86,13 @@ class AppServerBridge {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this.feed(chunk));
     child.stderr.on('data', (chunk) => this.logger('appserver-stderr', chunk.slice(0, 2000)));
+    // 子进程死亡瞬间的在途写入会在 stdin 流（而非 child 对象）上异步抛
+    // EOF/EPIPE——不挂监听就是 uncaughtException，整个 companion 进程被带走
+    // （CLI 与 Electron 壳同命）。挂日志监听消化；后续写入靠 write() 的
+    // writable 检查挡住并有应答。
+    child.stdin.on('error', (error) => {
+      this.logger('appserver-stdin-error', error.code || String(error));
+    });
     // spawn 失败（ENOENT/EINVAL）只发 'error' 不发 'exit'：必须在此置空 this.child，
     // 否则 scheduleRestart 的 child!==null 守卫直接返回，桥变僵尸（永不重启也不报死）。
     child.on('error', (error) => {
@@ -93,17 +107,23 @@ class AppServerBridge {
     // 新进程的 server-N 反向请求 id 从头计数：通知宿主作废旧 pending 看护，
     // 防止旧定时器误杀复用了同 id 的新请求。
     if (this.onRespawn) this.onRespawn();
+    this.logger('appserver-respawned', '');
   }
   scheduleRestart(code, signal) {
     if (this.stopped) return;
     if (this.child !== null) return;
-    if (this.restarts >= this.maxRestarts) {
-      this.logger('appserver-dead', `exit=${code} signal=${signal}`);
+    const now = Date.now();
+    this.restartTimes = this.restartTimes.filter((t) => now - t < this.restartWindowMs);
+    if (this.restartTimes.length >= this.maxRestarts) {
+      this.logger('appserver-dead',
+        `exit=${code} signal=${signal} restarts=${this.restartTimes.length}/${this.restartWindowMs}ms`,);
       if (this.onDead) this.onDead();
       return;
     }
-    this.restarts += 1;
-    setTimeout(() => { if (!this.stopped && this.child === null) this.spawnChild(); }, this.restartDelayMs).unref();
+    this.restartTimes.push(now);
+    // 指数退避封顶 30s：连崩时不要按固定节奏快拉
+    const delay = Math.min(this.restartDelayMs * 2 ** (this.restartTimes.length - 1), 30000);
+    setTimeout(() => { if (!this.stopped && this.child === null) this.spawnChild(); }, delay).unref();
   }
   feed(text) {
     this.buffer += text;
@@ -125,17 +145,20 @@ class AppServerBridge {
     this.child.stdin.write(line);
     return true;
   }
-  resetRestartBudget() { this.restarts = 0; }
+  resetRestartBudget() { this.restartTimes = []; }
   stop() {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
     if (!this.child) return Promise.resolve();
     const child = this.child; this.child = null;
     child.removeAllListeners('exit');
+    // kill 必须同步发起：Electron before-quit 无法等待异步清理，异步杀进程
+    // 可能赶不上退出序列 → 孤儿 app-server。优雅退出由 stdin destroy 的
+    // EOF 兜底；2s SIGKILL 防僵尸。
+    child.kill();
     return new Promise((resolve) => {
       const finish = () => resolve();
       child.once('exit', finish);
-      setTimeout(() => { child.kill(); }, 0);
       setTimeout(() => { child.kill('SIGKILL'); finish(); }, 2000).unref();
       for (const stream of [child.stdin, child.stdout, child.stderr]) {
         try { stream.destroy(); } catch { /* 忽略 */ }
@@ -158,6 +181,12 @@ function createCompanion(options = {}) {
     // 白名单）短档；其余一律长档——未知交互方法误入短档会被静默代答拒绝，
     // 长档最坏只是多等。两档均可注入短值供测试。
     requestTimeoutMs = 15000, permissionRequestTimeoutMs = 120000,
+    // 自发链路保活间隔与僵尸判定阈值（可注入短值供测试）
+    linkPingMs = 30000, linkStaleMs = 60000,
+    // 引擎 dead 后的重启冷却：冷却内的手机帧直接 ERR_UNHANDLED，不 spawn
+    bridgeCooldownMs = 30000,
+    // 桥重启预算参数（透传 AppServerBridge，可注入供测试）
+    bridgeMaxRestarts = 5, bridgeRestartDelayMs = 1000, bridgeRestartWindowMs = 5 * 60 * 1000,
   } = options;
   if (typeof relayUrl !== 'string' || !/^wss?:\/\/.+\/ws$/.test(relayUrl)) throw safeError('INVALID_RELAY_URL');
   if (registrationSecret !== undefined && (typeof registrationSecret !== 'string' || !registrationSecret.length)) {
@@ -172,6 +201,8 @@ function createCompanion(options = {}) {
   let pairing = null; // { sid, passHash, url }
   let authStage = 'idle'; // idle → registered → challenged → authenticated
   let reconnectTimer = null;
+  let linkWatchTimer = null;
+  let bridgeDeadAt = 0;
   // 上次注册成功的凭据；重连时优先用它接管原房间（sid 不变，手机端配对不失效）。
   let creds = null;
   let reattaching = false;
@@ -224,12 +255,23 @@ function createCompanion(options = {}) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     const json = JSON.stringify(value);
     if (Buffer.byteLength(json) > MAX_PAYLOAD) return false;
+    // 对齐 relay 侧同款保护：慢消费链路（bufferedAmount 堆积）fail-fast
+    // terminate 触发统一重连，防出站帧在内核缓冲无限堆积成僵尸链路
+    if (ws.bufferedAmount > MAX_PAYLOAD * 2) {
+      log('send-slow-link-terminate', String(ws.bufferedAmount));
+      ws.terminate();
+      return false;
+    }
     ws.send(json);
     return true;
   }
 
   function startBridge() {
     if (bridgeStarted) return;
+    // 引擎 dead（重启预算耗尽）后的冷却：冷却内的手机帧不再立刻 spawn 一个
+    // 全新 bridge（其预算是全新的，等于绕过预算无限快拉），直接走 !bridge
+    // 分支回 ERR_UNHANDLED；冷却过后才允许整体重试。
+    if (bridgeDead && Date.now() - bridgeDeadAt < bridgeCooldownMs) return;
     let token;
     try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
     catch (error) {
@@ -243,11 +285,20 @@ function createCompanion(options = {}) {
     const resolved = zcodeCommand || defaultZcodeCommand();
     bridge = new AppServerBridge({
       command: resolved.command, args: resolved.args, cwd,
-      env: { ...process.env, ANTHROPIC_API_KEY: token },
+      env: {
+        ...process.env, ANTHROPIC_API_KEY: token,
+        // Electron 壳（companion_app）内 process.execPath 是 GUI exe：不设
+        // 此开关，spawn 出来的会是一个 Chromium 实例而非 stdio node 子进程
+        // （桌面 TS 引擎同款处理，见 mobile-app-server-bridge.ts）。纯 node
+        // CLI 下该字段不存在，env 保持原样。
+        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+      },
+      maxRestarts: bridgeMaxRestarts, restartDelayMs: bridgeRestartDelayMs,
+      restartWindowMs: bridgeRestartWindowMs,
       logger: (event, detail) => log(event, detail),
       onDead: () => {
-        // 重启预算耗尽：重置标志让下一次手机帧触发整体重试，并如实上报状态。
-        bridge = null; bridgeStarted = false; bridgeDead = true;
+        // 重启预算耗尽：记冷却起点，冷却内手机帧不重试；冷却后下一帧整体重试。
+        bridge = null; bridgeStarted = false; bridgeDead = true; bridgeDeadAt = Date.now();
         log('bridge-dead', ''); onStateChange('app-server-dead');
       },
     });
@@ -351,7 +402,14 @@ function createCompanion(options = {}) {
       }
       return;
     }
-    if (bridge.write(frame)) bridge.resetRestartBudget();
+    if (bridge.write(frame)) {
+      bridge.resetRestartBudget();
+    } else if (frame.method && frame.id != null && matchedUp) {
+      // 静默丢弃=缺陷（铁律 4）：引擎重启窗口/帧超限的写入失败必须有应答，
+      // 手机端才能立即报错，而不是干等自身超时。
+      log('bridge-write-dropped', String(frame.id));
+      send({ type: 'data', payload: { id: frame.id, error: { code: ERR_UNHANDLED, message: 'companion 桥不可用：引擎正在重启或帧超限' } } });
+    }
   }
 
   // ---- companion 本地扩展方法（x/*）----
@@ -378,10 +436,17 @@ function createCompanion(options = {}) {
       const child = spawn('git', ['--no-optional-locks', '-C', cwdPath, ...args],
         { windowsHide: true });
       let stdout = ''; let stderr = '';
+      // 看护：挂住的 hook（post-checkout 卡网等）不能让 x/* 请求永不超时
+      // （反向请求两档看护只覆盖 app-server 通道，不覆盖 x/*）
+      const timer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
+        reject(Object.assign(new Error('git timed out (10s)'), { code: 'X_GIT_TIMEOUT' }));
+      }, 10000).unref();
       child.stdout.on('data', (c) => { stdout += c; });
       child.stderr.on('data', (c) => { stderr += c; });
-      child.on('error', (err) => reject(err));
+      child.on('error', (err) => { clearTimeout(timer); reject(err); });
       child.on('exit', (code) => {
+        clearTimeout(timer);
         if (code === 0) resolve(stdout);
         else reject(Object.assign(new Error(stderr.trim().split('\n')[0] || `git exit ${code}`), { code: 'X_GIT_FAILED' }));
       });
@@ -396,12 +461,14 @@ function createCompanion(options = {}) {
         case 'x/git/status': {
           const dir = validateDir(frame.params && frame.params.path);
           const out = await spawnGit(['status', '--porcelain=v1', '-b'], dir);
-          // 首行 `## <branch>...`（或 detached `## HEAD (no branch)`），其余为变更行
+          // 首行完整形状 `## <branch>...[<upstream>][ [ahead N, behind M]]`；
+          // 无 upstream 退化为 `## <branch>`，detached 为 `## HEAD (no branch)`。
+          // 必须先剥 `...tracking` 段再剥 `[ahead/behind]`——只剥后缀会把
+          // upstream 带进分支名（本仓库实测踩坑：`feat/x...origin/feat/x`）。
           const lines = out.split('\n').filter((l) => l.length);
           const head = lines[0] || '';
-          const branch = head.startsWith('## ')
-            ? head.slice(3).replace(/\s*\[.*\]$/, '').trim()
-            : '';
+          let branch = head.startsWith('## ') ? head.slice(3) : '';
+          branch = branch.split('...')[0].replace(/\s*\[.*\]$/, '').trim();
           reply({ id: frame.id, result: { branch: branch === 'HEAD (no branch)' ? '' : branch, dirty: Math.max(0, lines.length - 1) } });
           return;
         }
@@ -465,6 +532,21 @@ function createCompanion(options = {}) {
     // 本连接的本地引用：stop() 置空外层 ws 后，关闭握手期间迟到的消息帧
     // 不会解引用 null（TypeError 杀进程），也不会误碰新连接。
     const conn = ws;
+    // 自发保活看护：单向死亡链路（NAT/热点切换）下 relay 的 ping 未必到达
+    // 我们，ws 却长期 OPEN、出站无限堆积。30s 自发 ping，60s 无任何入站
+    // （pong/其他帧）即主动 terminate 走统一重连。（间隔可注入供测试）
+    let lastInboundAt = Date.now();
+    clearInterval(linkWatchTimer);
+    linkWatchTimer = setInterval(() => {
+      const cur = ws;
+      if (!cur) return;
+      if (Date.now() - lastInboundAt > linkStaleMs) {
+        log('link-stale-terminate', '');
+        cur.terminate();
+        return;
+      }
+      try { cur.ping(); } catch { /* close 兜底重连 */ }
+    }, linkPingMs).unref();
     ws.on('open', () => {
       // 重连优先接管原房间（同 sid/hash 再认证，relay 原生支持）：配对码保持有效。
       // 房间已失效时 relay 回 error，届时作废本地凭据，下次重连全新注册出新码。
@@ -479,8 +561,10 @@ function createCompanion(options = {}) {
       register();
     });
     ws.on('error', () => { /* close 兜底重连 */ });
+    ws.on('pong', () => { lastInboundAt = Date.now(); });
     ws.on('close', () => {
       if (ws !== conn) return; // 陈旧连接的迟到 close：不动当前状态
+      clearInterval(linkWatchTimer);
       ws = null;
       authStage = 'idle';
       matchedUp = false;
@@ -503,6 +587,7 @@ function createCompanion(options = {}) {
     ws.on('message', (raw, binary) => {
       if (ws !== conn) return; // 关闭握手期间或已换代：丢弃迟到帧
       if (binary) return;
+      lastInboundAt = Date.now();
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!isObject(msg)) return;
       if (msg.type === 'error') {
@@ -533,7 +618,12 @@ function createCompanion(options = {}) {
         return;
       }
       if (msg.type === 'auth_ack') {
-        if (authStage !== 'challenged' || !['matched', 'waiting'].includes(msg.pair_status)) return;
+        if (authStage !== 'challenged' || !['matched', 'waiting'].includes(msg.pair_status)) {
+          // 形状非法却只 return 会留下「relay 已记 device 认证、本端卡在
+          // challenged 忽略一切 data」的僵尸链路——与 register_ack/challenge
+          // 同口径关连接重连。
+          conn.close(); return;
+        }
         // 设备端先于手机完成认证时收到 waiting：状态推进，等 pair_status_ack matched 再起桥。
         authStage = 'authenticated';
         reattaching = false; // 接管握手完成：后续错误帧不再按"接管被拒"烧凭据
@@ -544,6 +634,7 @@ function createCompanion(options = {}) {
       }
       if (msg.type === 'pair_status_ack') {
         if (authStage !== 'authenticated') return;
+        if (!['matched', 'waiting'].includes(msg.pair_status)) { conn.close(); return; }
         matchedUp = msg.pair_status === 'matched';
         if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
         else onStateChange('waiting-pairing');
@@ -574,6 +665,7 @@ function createCompanion(options = {}) {
     if (stopped) return Promise.resolve();
     stopped = true;
     clearTimeout(reconnectTimer);
+    clearInterval(linkWatchTimer);
     try {
       if (parseInt(fs.readFileSync(lockFile, 'utf8'), 10) === process.pid) fs.unlinkSync(lockFile);
     } catch { /* 锁已被接管或不存在 */ }

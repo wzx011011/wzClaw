@@ -963,3 +963,172 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
     'x/* 方法不得转发给 app-server');
 });
 
+
+test('x/git/status：有 upstream 的分支名必须剥掉 ...tracking 段（本仓库实测踩坑）', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-upstream-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-upstream-state-'));
+  const { execFileSync } = require('node:child_process');
+  const git = (args, cwd = dir) => execFileSync('git', ['-C', cwd, ...args],
+    { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  const bare = path.join(stateDir, 'origin.git');
+  git(['init', '-b', 'main']);
+  git(['config', 'user.email', 'test@test']);
+  git(['config', 'user.name', 'test']);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  git(['add', '.']);
+  git(['commit', '-m', 'init']);
+  git(['init', '--bare', bare]);
+  git(['remote', 'add', 'origin', bare]);
+  git(['push', '-u', 'origin', 'main']);
+
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  client.send({ type: 'data', payload: { id: 20, method: 'x/git/status', params: { path: dir } } });
+  const st = await client.next((m) => m.type === 'data' && m.payload.id === 20);
+  // porcelain 首行是 `## main...origin/main`——只剥 [ahead/behind] 会把
+  // upstream 带进分支名，导致手机端检出必败。这是该分支名的回归锚。
+  assert.equal(st.payload.result.branch, 'main');
+  assert.equal(st.payload.result.dirty, 0);
+});
+
+test('引擎重启窗口内的手机请求：bridge.write 失败必须回 ERR_UNHANDLED 而非静默丢弃', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-writedrop-'));
+  const logs = [];
+  let pairingUrl = '';
+  // 应答一帧后自毁：制造「child=null 的重启窗口」（默认退避 1s）
+  const onDemandServer = `
+    'use strict';
+    let done = false;
+    process.stdin.on('data', (chunk) => {
+      if (done) return;
+      done = true;
+      const line = chunk.toString().split('\\n')[0];
+      let frame; try { frame = JSON.parse(line); } catch { return; }
+      if (frame.id != null) {
+        process.stdout.write(JSON.stringify({ id: frame.id, result: { sessions: [] } }) + '\\n');
+      }
+      setTimeout(() => process.exit(0), 5);
+    });
+  `;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  // w1：引擎活着 → 正常应答；随后引擎自毁 → child=null 重启窗口（1s）
+  client.send({ type: 'data', payload: { id: 'w1', method: 'session/list' } });
+  const ok1 = await client.next((m) => m.type === 'data' && m.payload.id === 'w1');
+  assert.ok(ok1.payload.result);
+
+  // w2：窗口内到达 → write false → 必须有错误应答 + 观测。
+  // 时序上 w2 可能落进「引擎活着但已 self-destruct 倒计时」的盲区（写入成功
+  // 但引擎不再应答），所以用 300ms 短超时轮询直到拿到 ERR_UNHANDLED——
+  // 窗口长达 1s，轮询必然命中 write false 路径。
+  let err2 = null;
+  const windowStart = Date.now();
+  while (!err2 && Date.now() - windowStart < 800) {
+    const wid = `w2-${windowStart}-${Math.random().toString(36).slice(2, 6)}`;
+    client.send({ type: 'data', payload: { id: wid, method: 'session/list' } });
+    const r = await client.next((m) => m.type === 'data' && m.payload.id === wid, 300).catch(() => null);
+    if (r && r.payload.error) err2 = r;
+  }
+  assert.ok(err2, '重启窗口内的请求必须有错误应答');
+  assert.equal(err2.payload.error.code, -32000);
+  assert.ok(logs.some((l) => l.startsWith('bridge-write-dropped')), '丢弃必须有观测');
+
+  // 重启完成后恢复应答：等待 respawn 观测日志（spawn 时打点），时序确定
+  await waitFor(() => logs.filter((l) => l.startsWith('appserver-respawned')).length >= 2, 4000);
+  client.send({ type: 'data', payload: { id: 'w3', method: 'session/list' } });
+  const ok3 = await client.next((m) => m.type === 'data' && m.payload.id === 'w3');
+  assert.ok(ok3.payload.result, '重启后必须恢复应答');
+});
+
+test('app-server 连崩走预算+冷却：dead 后宿主必须收到 app-server-dead 且帧有错误应答', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-crashrace-'));
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    // 引擎一起来就退出：制造「spawn 即死」的极端场景
+    zcodeCommand: { command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    bridgeMaxRestarts: 1,
+    bridgeRestartDelayMs: 40,
+    bridgeCooldownMs: 250,
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+    onStateChange: (s) => logs.push(`state:${s}`),
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  // matched 起桥 → E1 spawn 即死 → 退避 40ms 重启 E2 → 再死 → 预算(1)耗尽
+  // → onDead 必须真实触发（onDead 接线回归锚：构造器曾忽略 onDead 选项，
+  // app-server-dead 状态从未上报）→ 进入冷却
+  await waitFor(() => logs.some((l) => l.startsWith('state:app-server-dead')), 4000);
+
+  // 冷却窗口内：bridge=null → 帧必须得到 ERR_UNHANDLED 而非静默
+  client.send({ type: 'data', payload: { id: 'c1', method: 'session/list' } });
+  const e1 = await client.next((m) => m.type === 'data' && m.payload.id === 'c1');
+  assert.equal(e1.payload.error.code, -32000);
+
+  // 冷却过后：下一帧触发整体重试 → E3 spawn 即死 → 再次 dead
+  await delay(300);
+  client.send({ type: 'data', payload: { id: 'c2', method: 'session/list' } });
+  await waitFor(() => logs.filter((l) => l.startsWith('state:app-server-dead')).length >= 2, 4000);
+  client.send({ type: 'data', payload: { id: 'c3', method: 'session/list' } });
+  const e3 = await client.next((m) => m.type === 'data' && m.payload.id === 'c3');
+  assert.equal(e3.payload.error.code, -32000);
+});
