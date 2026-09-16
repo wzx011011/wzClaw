@@ -383,6 +383,12 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 解除配对（清持久化 + 断开；本地缓存保留，重配对后可复用）
   void unpair() {
+    // 外部供帧模式下解绑归宿主（ConnectionManager/注册表）负责：
+    // store 若在此关闭/清理，会把宿主还在用的连接一并拆掉
+    if (_externallyFed) {
+      debugPrint('[zcode-store] 外部供帧模式下收到 unpair，忽略（解绑由宿主负责）');
+      return;
+    }
     _epoch++;
     _stopFallbackPolling();
     _rejectAllPendingReverse();
@@ -415,6 +421,9 @@ class ZcodeChatStore extends ChangeNotifier {
   /// [reconnect] 显式重连（会话列表页"重连"按钮复用本入口；修复 #20：
   /// 此前 `_pairing != null` 早退使已配对状态下按钮永远无效）
   Future<void> restore() async {
+    // 外部供帧模式：连接由宿主建立并转发，store 不得自建第二条连接
+    // （同一配对双连接会触发 relay 接管互踢）
+    if (_externallyFed) return;
     if (_pairing != null) {
       await reconnect();
       return;
@@ -448,6 +457,12 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 旧客户端关闭触发 `_onRelayStateChange(disconnected)`，新客户端
   /// matched 后 `_resubscribeAll` 会为已物化会话重订阅补放。
   Future<void> reconnect() async {
+    // 外部供帧模式：重连归宿主完成（relay 状态经 ingestRelayState 转入），
+    // 这里只兜底刷新会话列表，绝不自建连接
+    if (_externallyFed) {
+      await refreshSessions();
+      return;
+    }
     final info = _pairing;
     if (info == null) return; // 未配对：无事可做
     _stopFallbackPolling();
@@ -488,6 +503,82 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  // ── 外部供帧（R1 换接线桥）──────────────────────
+  // R1 期间连接所有权仍在 services/ConnectionManager（配对/设备列表/保活/
+  // x/* 扩展请求通道），引擎帧由宿主转发进来：store 不自建连接、不关宿主
+  // 客户端、不写配对持久化。终态（R3）连接层定稿后本缝随桥拆除——
+  // 见 .planning/PLAN-chat-rewire.md。
+
+  /// 外部供帧模式标记（restore/reconnect/unpair 据此不自管连接生命周期）
+  bool _externallyFed = false;
+
+  /// 是否处于外部供帧模式（测试/诊断用）
+  @visibleForTesting
+  bool get isExternallyFed => _externallyFed;
+
+  /// 宿主把自己的已连接客户端交给 store 供帧：重置会话态（等同换桌面），
+  /// 但不 close 任何客户端（生命周期全归宿主）、不写/清配对持久化
+  void attachExternal(ZcodeRelayClient client) {
+    _externallyFed = true;
+    _epoch++;
+    _stopFallbackPolling();
+    _rejectAllPendingReverse();
+    _client = client;
+    _pairing = null;
+    _connState = _relayStateToConn(client.currentState, client.paired);
+    _sessions = [];
+    _sessionsLoading = false;
+    _sessionsAutoLoaded = false;
+    _activeSessionId = null;
+    _states.clear();
+    _error = null;
+    notifyListeners();
+  }
+
+  /// 解除外部供帧（撤桥用）：store 回到未配对空态，宿主客户端不受影响
+  void detachExternal() {
+    if (!_externallyFed) return;
+    _applyDetachedState();
+    notifyListeners();
+  }
+
+  void _applyDetachedState() {
+    _externallyFed = false;
+    _epoch++;
+    _stopFallbackPolling();
+    _rejectAllPendingReverse();
+    _client = null;
+    _pairing = null;
+    _connState = ZcodeConnState.idle;
+    _sessions = [];
+    _sessionsLoading = false;
+    _sessionsAutoLoaded = false;
+    _activeSessionId = null;
+    _states.clear();
+    _availableModels.clear();
+    _modelCatalog.clear();
+    _currentModelRef = null;
+    thoughtLevel = null;
+    _defaultWorkspaceKey = null;
+    _defaultWorkspacePath = null;
+    _resumeTitle = _resumeWsKey = _resumeWsPath = null;
+    _error = null;
+  }
+
+  /// 宿主转发 relay 状态（配对成功/掉线/重连），语义同自建路径
+  void ingestRelayState(ZcodeRelayState state, bool paired) =>
+      _onRelayStateChange(state, paired);
+
+  /// 宿主转发引擎通知帧（session/event、state.updated、v4/telemetry 等）
+  void ingestNotifyFrame(ZcodeFrame frame) => _handleNotifyFrame(frame);
+
+  /// 宿主转发服务端反向请求（权限 / AskUser；runtimePreferences 已由
+  /// ZcodeRelayClient 内部自动代答，不会到达此处）；返回值即
+  /// onRequest 契约要回给服务端的应答。同步异常（未知方法安全拒绝）
+  /// 统一转为失败 Future，调用方无需 try/catch。
+  Future<dynamic> ingestReverseRequest(ZcodeFrame frame) =>
+      Future.sync(() => _handleReverseRequest(frame));
 
   /// relay 状态 → 连接状态映射；配对成功时自动拉一次会话列表，
   /// 重连成功后为所有已物化会话重订阅 + 补放断线期间的事件

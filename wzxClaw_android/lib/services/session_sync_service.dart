@@ -15,6 +15,7 @@ import 'chat_store.dart';
 import 'connection_manager.dart';
 import 'phone_session_index.dart';
 import 'ws_transport.dart';
+import 'zcode_protocol_translate.dart';
 
 /// Workspace info pushed by the desktop when mobile connects.
 class WorkspaceInfo {
@@ -404,10 +405,15 @@ class SessionSyncService {
     final messages = <ChatMessage>[];
     for (final raw in rawMessages) {
       if (raw is Map) {
-        final message = _fromDesktopMessage(Map<String, dynamic>.from(raw));
-        // 系统注入提醒 + 空助手占位行都不进时间线
-        if (!message.isSystemInjected && !message.isEmptyAssistant) {
-          messages.add(message);
+        // 引擎 assistant 行的 tool parts 拆为独立 tool 消息（与流式表示
+        // 统一）；否则历史里的工具不可见/错组（2026-09-17 用户实测）
+        for (final expanded
+            in expandEngineToolCalls(Map<String, dynamic>.from(raw))) {
+          final message = _fromDesktopMessage(expanded);
+          // 系统注入提醒 + 空助手占位行都不进时间线
+          if (!message.isSystemInjected && !message.isEmptyAssistant) {
+            messages.add(message);
+          }
         }
       }
     }
@@ -1434,7 +1440,7 @@ class SessionSyncService {
       usage: usage,
       toolCallId: json['toolCallId'] as String?,
       toolName: role == 'tool_result' ? (json['toolName'] as String?) : null,
-      toolInput: null,
+      toolInput: json['inputSummary'] as String?,
       toolOutput: role == 'tool_result' ? (json['content'] as String?) : null,
       toolStatus: role == 'tool_result'
           ? (json['isError'] == true

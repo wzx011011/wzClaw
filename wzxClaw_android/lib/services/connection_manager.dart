@@ -29,6 +29,7 @@ import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
+import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_keepalive_controller.dart';
 import '../zcode/zcode_model_heal.dart';
 import '../models/goal_snapshot.dart';
@@ -182,10 +183,17 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
       },
     );
     _client = client;
+    // R1 换接线桥：连接交给直连栈供帧（聊天数据源正在切换 ZcodeChatStore，
+    // 见 .planning/PLAN-chat-rewire.md）。翻译层暂留喂工作区/标题数据源
+    // （SessionSyncService），R1 收尾即零消费方，R3 删除。
+    ZcodeChatStore.instance.attachExternal(client);
     client.connect();
   }
 
   void _onZcodeState(ZcodeRelayState s, bool paired) {
+    // 换接线桥：relay 状态同步进直连栈（matched 触发其自动拉会话列表、
+    // 掉线触发其在途反向请求作废）
+    ZcodeChatStore.instance.ingestRelayState(s, paired);
     switch (s) {
       case ZcodeRelayState.matched:
         if (_stateNow != WsConnectionState.connected) {
@@ -276,6 +284,8 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   // ---- 入站：通知 → 旧事件 ----
 
   void _onZcodeNotify(ZcodeFrame frame) {
+    // 换接线桥：引擎通知帧原样投递直连栈（store 自行按帧归属路由）
+    ZcodeChatStore.instance.ingestNotifyFrame(frame);
     final method = frame.method ?? '';
     final events = translateNotification(method, frame.params, _registerReverse);
     for (final e in events) {
@@ -535,7 +545,17 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         final sessionId = d['sessionId'] as String?;
         final uiMode = d['mode'] as String?;
         final serverMode = _uiToServerMode[uiMode] ?? uiMode;
-        if (sessionId != null && serverMode != null) {
+        // 无 sessionId 无法设置（session/setMode 按会话生效）。必须显式报错
+        // 而非跳过后照常应答——照常应答会让客户端把缓存的旧模式回填，
+        // 表现为「切换后弹回原模式」（2026-09-17 实测锁死计划模式）。
+        if (sessionId == null || sessionId.isEmpty) {
+          _messageController.add(WsMessage(event: 'permission:mode:response', data: {
+            'requestId': d['requestId'] ?? '',
+            'error': '缺少 sessionId，无法设置权限模式',
+          },),);
+          return;
+        }
+        if (serverMode != null) {
           try {
             await client.request('session/setMode', {
               'sessionId': sessionId,

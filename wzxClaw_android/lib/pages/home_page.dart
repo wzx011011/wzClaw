@@ -1753,25 +1753,40 @@ class _ChatPageState extends State<ChatPage> {
     },);
   }
 
-  /// 统一的「自按钮向上弹出」定位（V3 输入区交互：弹层锚在对应按钮上方）
-  Future<T?> _showToolbarPopup<T>({
-    required GlobalKey key,
-    required double estimatedHeight,
-    required List<PopupMenuEntry<T>> items,
+  /// 输入区弹层统一骨架：底部抽屉（与工作区/分支抽屉同模式）。
+  /// 旧实现 showMenu + 估算坐标会跳位、Material 菜单样式也与官方不符
+  /// （2026-09-17 用户反馈）；抽屉位置固定、可承载富内容。
+  Future<T?> _showComposerSheet<T>({
+    required WidgetBuilder builder,
+    bool isScrollControlled = false,
   }) {
-    final box = key.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return Future<T?>.value();
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    final boxOrigin = box.localToGlobal(Offset.zero);
-    return showMenu<T>(
+    final colors = AppColors.of(context);
+    return showModalBottomSheet<T>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        boxOrigin.dx,
-        (boxOrigin.dy - estimatedHeight - 8).clamp(0.0, double.infinity).toDouble(),
-        overlay.size.width - boxOrigin.dx - box.size.width,
-        0,
+      backgroundColor: colors.bgSecondary,
+      isScrollControlled: isScrollControlled,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      items: items,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                decoration: BoxDecoration(
+                  color: colors.textMuted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            builder(ctx),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1779,41 +1794,52 @@ class _ChatPageState extends State<ChatPage> {
   /// 其余显式标注暂不支持，不做假入口（设计原则：不做假的成功响应）。
   Future<void> _showAttachPopup() async {
     _inputFocusNode.unfocus();
-    await _showToolbarPopup<String>(
-      key: _plusBtnKey,
-      estimatedHeight: 190,
-      items: [
-        _attachItem('添加附件', '暂不支持'),
-        _attachItem('使用 @ 添加上下文', '暂不支持'),
-        _attachItem('使用 / 选择能力', null),
-        _attachItem('使用 \$ 选择技能', '暂不支持'),
-      ],
+    final colors = AppColors.of(context);
+    final items = [
+      ('添加附件', '暂不支持'),
+      ('使用 @ 添加上下文', '暂不支持'),
+      ('使用 / 选择能力', null),
+      ('使用 \$ 选择技能', '暂不支持'),
+    ];
+    await _showComposerSheet<String>(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (label, note) in items)
+              ListTile(
+                dense: true,
+                enabled: note == null,
+                title: Row(children: [
+                  Text(label,
+                      style: TextStyle(
+                          color: note == null
+                              ? colors.textPrimary
+                              : colors.textMuted,
+                          fontSize: 14,),),
+                  if (note != null) ...[
+                    const SizedBox(width: 6),
+                    Text('（$note）',
+                        style: TextStyle(
+                            color: colors.textMuted, fontSize: 11,),),
+                  ],
+                ],),
+                onTap: note == null
+                    ? () {
+                        Navigator.pop(ctx, 'commands');
+                      }
+                    : null,
+              ),
+          ],
+        ),
+      ),
     ).then((value) {
       if (value == 'commands') _showCommandSheet();
     });
   }
 
-  PopupMenuItem<String> _attachItem(String label, String? note) {
-    final colors = AppColors.of(context);
-    final enabled = note == null;
-    return PopupMenuItem<String>(
-      enabled: enabled,
-      value: enabled ? 'commands' : null,
-      child: Row(children: [
-        Text(label,
-            style: TextStyle(
-                color: enabled ? colors.textPrimary : colors.textMuted,
-                fontSize: 13,),),
-        if (note != null) ...[
-          const SizedBox(width: 6),
-          Text('（$note）',
-              style: TextStyle(color: colors.textMuted, fontSize: 11),),
-        ],
-      ],),
-    );
-  }
-
-  /// 权限模式菜单：图标+名称+说明，当前项 ✓（措辞沿用既有四档映射）
+  /// 权限模式弹层：图标+名称+说明，当前项 ✓（措辞沿用既有四档映射）
   Future<void> _showPermissionPopup() async {
     _inputFocusNode.unfocus();
     const modes = ['always-ask', 'accept-edits', 'plan', 'bypass'];
@@ -1832,50 +1858,48 @@ class _ChatPageState extends State<ChatPage> {
     ];
     final colors = AppColors.of(context);
     final current = ChatStore.instance.permissionMode;
-    await _showToolbarPopup<String>(
-      key: _modeBtnKey,
-      estimatedHeight: 232,
-      items: [
-        for (var i = 0; i < modes.length; i++)
-          PopupMenuItem<String>(
-            value: modes[i],
-            child: Row(children: [
-              Icon(icons[i],
-                  size: 17,
-                  color: modes[i] == current
-                      ? colors.accent
-                      : colors.textSecondary,),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(labels[i],
-                        style: TextStyle(
-                            color: modes[i] == current
-                                ? colors.accent
-                                : colors.textPrimary,
-                            fontWeight: modes[i] == current
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                            fontSize: 13.5,),),
-                    Text(subtitles[i],
-                        style:
-                            TextStyle(color: colors.textMuted, fontSize: 11),),
-                  ],
-                ),
+    final chosen = await _showComposerSheet<String>(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < modes.length; i++)
+              ListTile(
+                dense: true,
+                leading: Icon(icons[i],
+                    size: 20,
+                    color: modes[i] == current
+                        ? colors.accent
+                        : colors.textSecondary,),
+                title: Text(labels[i],
+                    style: TextStyle(
+                        color: modes[i] == current
+                            ? colors.accent
+                            : colors.textPrimary,
+                        fontWeight: modes[i] == current
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        fontSize: 14,),),
+                subtitle: Text(subtitles[i],
+                    style: TextStyle(
+                        color: colors.textMuted, fontSize: 11,),),
+                trailing: modes[i] == current
+                    ? Icon(Icons.check, size: 18, color: colors.accent)
+                    : null,
+                onTap: () => Navigator.pop(ctx, modes[i]),
               ),
-              if (modes[i] == current)
-                Icon(Icons.check, size: 16, color: colors.accent),
-            ],),
-          ),
-      ],
-    ).then((value) {
-      if (value != null) ChatStore.instance.setPermissionMode(value);
-    });
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) ChatStore.instance.setPermissionMode(chosen);
   }
 
-  /// 上下文用量弹层：session/usage 实测数据（协议无 contextWindow，不显示百分比）
+  /// 上下文用量弹层：session/usage 实测数据。对齐官方「上下文容量」面板的
+  /// 信息结构（标题行 + 分段占比条 + 彩点明细），但只展示协议实测字段——
+  /// 协议无 contextWindow（不显示容量百分比）、无分类拆分（消息/MCP 等官方
+  /// 分类来自其云端计费，不可伪造）。缓存命中率 = 缓存读/(输入+缓存读)，实测可导出。
   Future<void> _showUsagePopup() async {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
@@ -1883,78 +1907,148 @@ class _ChatPageState extends State<ChatPage> {
     final colors = AppColors.of(context);
     // future 只构造一次（弹层构建期间不会重发请求）
     final usageFuture = ChatRuntimeService.instance.usage(sessionId);
-    await _showToolbarPopup<String>(
-      key: _usageBtnKey,
-      estimatedHeight: 264,
-      items: [
-        PopupMenuItem<String>(
-          enabled: false,
-          child: SizedBox(
-            width: 250,
-            child: FutureBuilder<ChatUsageInfo>(
-              future: usageFuture,
-              builder: (ctx, snap) {
-                Widget body;
-                if (snap.connectionState != ConnectionState.done) {
-                  body = const Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
-                } else if (snap.hasError) {
-                  body = Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      '用量获取失败（协议未提供上下文窗口时无法显示百分比）',
-                      style: TextStyle(color: colors.textMuted, fontSize: 12),
-                    ),
-                  );
-                } else {
-                  final u = snap.data!;
-                  final rows = [
-                    ('总 Token', _fmtTokens(u.totalTokens)),
-                    ('输入', _fmtTokens(u.inputTokens)),
-                    ('输出', _fmtTokens(u.outputTokens)),
-                    ('推理', _fmtTokens(u.reasoningTokens)),
-                    ('缓存读', _fmtTokens(u.cacheReadTokens)),
-                    ('模型请求次数', '${u.modelRequestCount}'),
-                  ];
-                  body = Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    await _showComposerSheet(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+        child: FutureBuilder<ChatUsageInfo>(
+          future: usageFuture,
+          builder: (ctx, snap) {
+            Widget body;
+            if (snap.connectionState != ConnectionState.done) {
+              body = const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            } else if (snap.hasError) {
+              body = Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Text(
+                  '用量获取失败（协议未提供上下文窗口时无法显示容量百分比）',
+                  style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                ),
+              );
+            } else {
+              final u = snap.data!;
+              const segColors = [
+                Color(0xFF3B82F6), // 输入
+                Color(0xFF10B981), // 输出
+                Color(0xFFA855F7), // 推理
+                Color(0xFFF59E0B), // 缓存读
+              ];
+              final segments = [
+                ('输入', u.inputTokens),
+                ('输出', u.outputTokens),
+                ('推理', u.reasoningTokens),
+                ('缓存读取', u.cacheReadTokens),
+              ];
+              final sum = segments.fold<int>(0, (n, s) => n + s.$2);
+              final cacheHit = (u.inputTokens + u.cacheReadTokens) > 0
+                  ? u.cacheReadTokens / (u.inputTokens + u.cacheReadTokens)
+                  : null;
+              body = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text('会话用量',
+                      Text('Token 用量',
                           style: TextStyle(
                               color: colors.textPrimary,
-                              fontSize: 13.5,
+                              fontSize: 15,
                               fontWeight: FontWeight.w600,),),
-                      const SizedBox(height: 8),
-                      for (final (label, value) in rows)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(children: [
-                            Text(label,
-                                style: TextStyle(
-                                    color: colors.textSecondary,
-                                    fontSize: 12.5,),),
-                            const Spacer(),
-                            Text(value,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,),),
-                          ],),
-                        ),
+                      const Spacer(),
+                      Text('共 ${_fmtTokens(u.totalTokens)}',
+                          style: TextStyle(
+                              color: colors.textSecondary, fontSize: 12.5,),),
                     ],
-                  );
-                }
-                return body;
-              },
-            ),
-          ),
+                  ),
+                  const SizedBox(height: 12),
+                  // 分段占比条（各分量占可归因总量）
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                      height: 6,
+                      child: sum == 0
+                          ? ColoredBox(
+                              color:
+                                  colors.textMuted.withValues(alpha: 0.2),)
+                          : Row(
+                              children: [
+                                for (var i = 0; i < segments.length; i++)
+                                  if (segments[i].$2 > 0)
+                                    Expanded(
+                                      flex: segments[i].$2,
+                                      child: ColoredBox(color: segColors[i]),
+                                    ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  for (var i = 0; i < segments.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                              color: segColors[i], shape: BoxShape.circle,),
+                        ),
+                        const SizedBox(width: 9),
+                        Text(segments[i].$1,
+                            style: TextStyle(
+                                color: colors.textSecondary, fontSize: 13,),),
+                        const Spacer(),
+                        Text(
+                          '${_fmtTokens(segments[i].$2)}'
+                          '（${sum == 0 ? 0 : (segments[i].$2 * 100 / sum).toStringAsFixed(1)}%）',
+                          style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,),
+                        ),
+                      ],),
+                    ),
+                  Divider(height: 22, color: colors.border),
+                  Row(children: [
+                    Text('平均缓存命中率',
+                        style: TextStyle(
+                            color: colors.textSecondary, fontSize: 13,),),
+                    const Spacer(),
+                    Text(cacheHit == null ? '—' : '${(cacheHit * 100).toStringAsFixed(1)}%',
+                        style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,),),
+                  ],),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Text('模型请求次数',
+                        style: TextStyle(
+                            color: colors.textSecondary, fontSize: 13,),),
+                    const Spacer(),
+                    Text('${u.modelRequestCount}',
+                        style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,),),
+                  ],),
+                  const SizedBox(height: 10),
+                  Text(
+                    '引擎协议未提供上下文窗口上限与分类拆分（消息/MCP 等），'
+                    '故不显示容量百分比；额度信息仅官方账号通道提供。',
+                    style: TextStyle(color: colors.textMuted, fontSize: 11, height: 1.5),
+                  ),
+                ],
+              );
+            }
+            return body;
+          },
         ),
-      ],
+      ),
     );
   }
 
@@ -1969,102 +2063,119 @@ class _ChatPageState extends State<ChatPage> {
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     final catalogFuture = NodeCatalogService.instance.modelCatalog();
-    await _showToolbarPopup<String>(
-      key: _modelBtnKey,
-      estimatedHeight: 320,
-      items: [
-        PopupMenuItem<String>(
-          enabled: false,
-          child: SizedBox(
-            width: 264,
-            child: FutureBuilder<NodeModelCatalog>(
-              future: catalogFuture,
-              builder: (ctx, snap) {
-                Widget body;
-                if (snap.connectionState != ConnectionState.done) {
-                  body = const Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
-                } else if (snap.hasError || (snap.data?.models.isEmpty ?? true)) {
-                  body = Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      snap.hasError
-                          ? '模型目录获取失败，请检查与大脑节点的连接'
-                          : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
-                      style: TextStyle(color: colors.textMuted, fontSize: 12),
-                    ),
-                  );
-                } else {
-                  final catalog = snap.data!;
-                  final groups = <String, List<NodeModelEntry>>{};
-                  for (final m in catalog.models) {
-                    (groups[m.providerId] ??= []).add(m);
-                  }
-                  body = Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (catalog.degraded)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('引擎目录暂不可用，仅显示导入快照',
-                              style: TextStyle(
-                                  color: colors.warning, fontSize: 11,),),
-                        ),
-                      for (final entry in groups.entries) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
-                          child: Text(entry.key,
-                              style: TextStyle(
-                                  color: colors.textMuted, fontSize: 11,),),
-                        ),
-                        for (final m in entry.value)
-                          InkWell(
-                            onTap: () async {
-                              Navigator.of(ctx).pop();
-                              await _applyModelChoice(
-                                sessionId,
-                                SessionModelUse(
-                                    providerId: m.providerId,
-                                    modelId: m.modelId,),
-                                retryContent,
-                                alsoSetDefault: catalog.defaultModel == null
-                                    || catalog.defaultModel!.key != m.key,
-                              );
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 7),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(m.modelId,
-                                        style: TextStyle(
-                                            color: colors.textPrimary,
-                                            fontSize: 13,),),
-                                  ),
-                                  if (catalog.defaultModel != null
-                                      && catalog.defaultModel!.key == m.key)
-                                    _modelTag(colors, '默认', colors.accent)
-                                  else if (m.source == 'imported')
-                                    _modelTag(colors, '快照', colors.warning),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    ],
-                  );
+    await _showComposerSheet(
+      isScrollControlled: true,
+      builder: (ctx) => ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(ctx).size.height * 0.65,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+          child: FutureBuilder<NodeModelCatalog>(
+            future: catalogFuture,
+            builder: (ctx, snap) {
+              Widget body;
+              if (snap.connectionState != ConnectionState.done) {
+                body = const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              } else if (snap.hasError || (snap.data?.models.isEmpty ?? true)) {
+                body = Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: Text(
+                    snap.hasError
+                        ? '模型目录获取失败，请检查与大脑节点的连接'
+                        : '暂无可用模型：请检查桌面端 ZCode 登录状态与模型配置',
+                    style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                  ),
+                );
+              } else {
+                final catalog = snap.data!;
+                // Provider 分组头（官方样式：provider 名 + 计数），模型行
+                // 选中态 ✓、默认/快照角标
+                final groups = <String, List<NodeModelEntry>>{};
+                for (final m in catalog.models) {
+                  (groups[m.providerId] ??= []).add(m);
                 }
-                return body;
-              },
-            ),
+                body = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Text('选择模型',
+                          style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,),),
+                      const Spacer(),
+                      Text('共 ${catalog.models.length} 个',
+                          style: TextStyle(
+                              color: colors.textMuted, fontSize: 11.5,),),
+                    ],),
+                    if (catalog.degraded)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text('引擎目录暂不可用，仅显示导入快照',
+                            style: TextStyle(
+                                color: colors.warning, fontSize: 11.5,),),
+                      ),
+                    for (final entry in groups.entries) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
+                        child: Text(entry.key,
+                            style: TextStyle(
+                                color: colors.textMuted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.3,),),
+                      ),
+                      for (final m in entry.value)
+                        InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () async {
+                            Navigator.of(ctx).pop();
+                            await _applyModelChoice(
+                              sessionId,
+                              SessionModelUse(
+                                  providerId: m.providerId, modelId: m.modelId,),
+                              retryContent,
+                              alsoSetDefault: catalog.defaultModel == null
+                                  || catalog.defaultModel!.key != m.key,
+                            );
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 9,),
+                            child: Row(children: [
+                              Expanded(
+                                child: Text(m.modelId,
+                                    style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 13.5,),),
+                              ),
+                              if (catalog.defaultModel != null
+                                  && catalog.defaultModel!.key == m.key) ...[
+                                _modelTag(colors, '默认', colors.accent),
+                                const SizedBox(width: 6),
+                                Icon(Icons.check,
+                                    size: 16, color: colors.accent,),
+                              ] else if (m.source == 'imported')
+                                _modelTag(colors, '快照', colors.warning),
+                            ],),
+                          ),
+                        ),
+                    ],
+                  ],
+                );
+              }
+              return body;
+            },
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -2117,40 +2228,45 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 思考档位弹层：低/高/最高（对齐官方三档；枚举未实测，失败显性提示）
+  /// 思考档位弹层：低/高/最高（对齐官方三档；枚举无读回方法，选中态仅在
+  /// 本次选择后标记，失败显性提示）
   Future<void> _showEffortPopup() async {
     final sessionId = ChatStore.instance.currentSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     const levels = [('低', 'low'), ('高', 'high'), ('最高', 'max')];
-    await _showToolbarPopup<String>(
-      key: _effortBtnKey,
-      estimatedHeight: 156,
-      items: [
-        for (final (label, value) in levels)
-          PopupMenuItem<String>(
-            value: value,
-            child: Text(label,
-                style:
-                    TextStyle(color: colors.textPrimary, fontSize: 13.5),),
-          ),
-      ],
-    ).then((value) async {
-      if (value == null) return;
-      try {
-        await ChatRuntimeService.instance.setThoughtLevel(sessionId, value);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('思考档位已设为 $value'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),);
-        }
-      } catch (e) {
-        if (mounted) _runtimeErrorSnack(e);
+    final chosen = await _showComposerSheet<String>(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (label, value) in levels)
+              ListTile(
+                dense: true,
+                title: Text(label,
+                    style: TextStyle(
+                        color: colors.textPrimary, fontSize: 14,),),
+                onTap: () => Navigator.pop(ctx, value),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null) return;
+    try {
+      await ChatRuntimeService.instance.setThoughtLevel(sessionId, chosen);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('思考档位已设为 $chosen'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),);
       }
-    });
+    } catch (e) {
+      if (mounted) _runtimeErrorSnack(e);
+    }
   }
 
   void _runtimeErrorSnack(Object e) {

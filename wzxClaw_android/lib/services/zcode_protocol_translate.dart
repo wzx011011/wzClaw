@@ -605,6 +605,46 @@ Map<String, dynamic>? _mapEngineMessage(Map row) {
 
 int _num(dynamic v) => v is int ? v : (v is num ? v.toInt() : 0);
 
+/// 引擎 assistant 行的 tool_calls 拆成独立 tool_result 行。
+///
+/// 背景（2026-09-17 真机 probe 实测）：引擎历史里一步工具 = 一条 assistant 行
+/// （parts=step-start,tool,step-finish），工具不是独立消息；而流式链路的工具
+/// 是独立事件。两套表示不统一导致历史渲染时工具全部消失/错组（用户实测：
+/// 全堆进最后一个 Working 组）。本函数把翻译后的行拆为与流式一致的形状：
+/// 每个工具一条 tool_result 行，有文本时保留 assistant 行在工具之后。
+/// created_at 递增 i 保证 DB 排序稳定；无 tool_calls 的行原样返回。
+List<Map<String, dynamic>> expandEngineToolCalls(Map<String, dynamic> row) {
+  final calls = row['tool_calls'] as List?;
+  if (row['role'] != 'assistant' || calls is! List || calls.isEmpty) {
+    return [row];
+  }
+  final agent = row['agent'];
+  final out = <Map<String, dynamic>>[];
+  var i = 0;
+  for (final tc in calls.whereType<Map>()) {
+    out.add({
+      'role': 'tool_result',
+      'content': (tc['outputSummary'] ?? '').toString(),
+      'created_at': _num(row['created_at']) + i,
+      'toolCallId': (tc['toolCallId'] ?? '').toString(),
+      'toolName': (tc['toolName'] ?? '').toString(),
+      'inputSummary': tc['inputSummary']?.toString(),
+      'isError': tc['isError'] == true,
+      if (agent is String && agent.isNotEmpty) 'agent': agent,
+    });
+    i += 1;
+  }
+  final text = row['content'] as String? ?? '';
+  if (text.isNotEmpty) {
+    out.add({
+      ...row,
+      'tool_calls': null,
+      'created_at': _num(row['created_at']) + i,
+    });
+  }
+  return out;
+}
+
 String? _truncate(dynamic v) {
   if (v is! String || v.isEmpty) return null;
   return v.length > 200 ? v.substring(0, 200) : v;

@@ -861,12 +861,17 @@ class ChatStore {
   }
 
   /// Set permission mode on desktop.
+  /// 必须携带 sessionId：桥接层 session/setMode 按 会话维度 生效（APP-SERVER.md
+  /// 「权限模式」节实测）。不带 sessionId 的请求会在 ConnectionManager 被跳过，
+  /// 但应答仍会把缓存的旧模式回填——表现为「切换后立刻弹回原模式」（2026-09-17
+  /// 用户实测：会话锁死在计划模式）。
   void setPermissionMode(String mode) {
     _transport.send(WsMessage(
       event: WsEvents.permissionSetModeRequest,
       data: {
         'requestId': '${DateTime.now().millisecondsSinceEpoch}',
         'mode': mode,
+        if (currentSessionId != null) 'sessionId': currentSessionId,
       },
     ),);
     _permissionMode = mode;
