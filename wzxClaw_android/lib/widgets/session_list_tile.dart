@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
-import '../models/session_meta.dart';
-import '../services/session_sync_service.dart';
+import '../zcode/zcode_chat_store.dart';
 
 /// A single session row widget for the session list in the drawer.
+/// R1 换接线：数据源 = ZcodeSessionMeta（引擎 session/list 实测字段）。
+/// 引擎无 rename/delete/本地消息数概念——相关 UI 随旧栈退役（D5 显式降级）。
 class SessionListTile extends StatelessWidget {
   const SessionListTile({
     super.key,
@@ -13,17 +14,16 @@ class SessionListTile extends StatelessWidget {
     required this.onTap,
   });
 
-  final SessionMeta session;
+  final ZcodeSessionMeta session;
   final bool isActive;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    final statusLabel = _statusLabel(session);
+    final running = session.status == 'running';
     return InkWell(
       onTap: onTap,
-      onLongPress: () => _showSessionActions(context, session),
       splashColor: colors.accent.withValues(alpha: 0.12),
       highlightColor: colors.accent.withValues(alpha: 0.12),
       child: Container(
@@ -43,7 +43,7 @@ class SessionListTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      if (session.taskState?.isActive == true || session.isRunning) ...[
+                      if (running) ...[
                         _RunningDot(color: colors.success),
                         const SizedBox(width: 5),
                       ],
@@ -73,50 +73,22 @@ class SessionListTile extends StatelessWidget {
                           color: colors.textMuted,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${session.messageCount} 条消息',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textMuted,
-                        ),
-                      ),
-                      if (statusLabel != null) ...[
-                        const SizedBox(width: 6),
+                      if (running) ...[
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 4,
                             vertical: 1,
                           ),
                           decoration: BoxDecoration(
-                            color: _statusColor(colors, session).withValues(alpha: 0.16),
+                            color: colors.success.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: Text(
-                            statusLabel,
+                            '运行',
                             style: TextStyle(
                               fontSize: 10,
-                              color: _statusColor(colors, session),
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (!session.isSynced) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.border,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                          child: Text(
-                            '缓存',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colors.textMuted,
+                              color: colors.success,
                             ),
                           ),
                         ),
@@ -138,40 +110,6 @@ class SessionListTile extends StatelessWidget {
     );
   }
 
-  String? _statusLabel(SessionMeta session) {
-    switch (session.taskState?.status) {
-      case 'starting':
-        return '启动';
-      case 'running':
-        return '运行';
-      case 'waiting_permission':
-      case 'waiting_user':
-        return '等待';
-      case 'stopping':
-        return '停止中';
-      case 'failed':
-        return '失败';
-      case 'cancelled':
-        return '已停止';
-      case 'interrupted':
-        return '中断';
-    }
-    return session.isRunning ? '运行' : null;
-  }
-
-  Color _statusColor(AppColors colors, SessionMeta session) {
-    switch (session.taskState?.status) {
-      case 'failed':
-        return colors.error;
-      case 'waiting_permission':
-      case 'waiting_user':
-      case 'stopping':
-        return colors.warning;
-      default:
-        return colors.accent;
-    }
-  }
-
   String _formatTime(int epochMs) {
     if (epochMs == 0) return '';
     final dt = DateTime.fromMillisecondsSinceEpoch(epochMs);
@@ -183,109 +121,6 @@ class SessionListTile extends StatelessWidget {
     if (diff.inHours < 24) return '${diff.inHours}小时前';
     if (diff.inDays < 7) return '${diff.inDays}天前';
     return '${dt.month}/${dt.day}';
-  }
-
-  void _showSessionActions(BuildContext context, SessionMeta session) {
-    final colors = AppColors.of(context);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgElevated,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.edit, color: colors.textSecondary),
-              title: Text('重命名',
-                  style: TextStyle(color: colors.textPrimary),),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showRenameDialog(context, session);
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.delete, color: colors.error),
-              title: Text('删除', style: TextStyle(color: colors.error)),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showDeleteConfirm(context, session);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showRenameDialog(BuildContext context, SessionMeta session) {
-    final colors = AppColors.of(context);
-    final controller = TextEditingController(text: session.title);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.bgElevated,
-        title: Text('重命名会话', style: TextStyle(color: colors.textPrimary)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: TextStyle(color: colors.textPrimary),
-          decoration: InputDecoration(
-            hintText: '输入新名称',
-            hintStyle: TextStyle(color: colors.textMuted),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: colors.border),
-            ),
-            focusedBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: colors.accent),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final title = controller.text.trim();
-              if (title.isNotEmpty) {
-                SessionSyncService.instance.renameSession(session.id, title);
-              }
-              Navigator.pop(ctx);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    ).then((_) => controller.dispose());
-  }
-
-  void _showDeleteConfirm(BuildContext context, SessionMeta session) {
-    final colors = AppColors.of(context);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.bgElevated,
-        title: Text('删除会话', style: TextStyle(color: colors.textPrimary)),
-        content: Text(
-          '确定删除 "${session.title}" 吗？此操作不可撤销。',
-          style: TextStyle(color: colors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              SessionSyncService.instance.deleteSession(session.id);
-              Navigator.pop(ctx);
-            },
-            child: Text('删除', style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
-    );
   }
 }
 

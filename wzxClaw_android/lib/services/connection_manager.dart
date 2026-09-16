@@ -136,7 +136,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   WsConnectionState _stateNow = WsConnectionState.disconnected;
   final List<_QueueEntry> _sendQueue = [];
   final Map<String, ReverseRequestInfo> _pendingReverse = {};
-  final Map<String, Completer<dynamic>> _reverseWaiters = {};
 
   // ---- 连接 ----
 
@@ -383,41 +382,13 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     if (key.isNotEmpty) _pendingReverse[key] = info;
   }
 
-  /// 反向请求（权限/AskUser）→ 旧事件；应答由 ChatStore 的
-  /// respondToPermission/respondToAskUser 发 'permission:response'
-  /// 触发回传（_dispatchReverseAck 完成挂起的 future）
+  /// 服务端反向请求 → 直连栈路由（R1 换接线）：权限/AskUser 注册进
+  /// ZcodeChatStore 的 UI 流，由 ZcodeChatStore.respondToPermission/
+  /// respondToAskUser 应答回传；runtimePreferences 已在 relay client
+  /// 内部自动代答，不会到达此处。同步异常已由缝转失败 Future。
+  /// （旧翻译路径随换接线退役——应答唯一路径 = 直连栈，无双应答）
   Future<dynamic> _onZcodeReverse(ZcodeFrame frame) {
-    final method = frame.method ?? '';
-    final completer = Completer<dynamic>();
-    final events = translateNotification(
-      method,
-      {'id': frame.id, 'method': method, 'params': frame.params},
-      _registerReverse,
-    );
-    for (final e in events) {
-      _messageController.add(e);
-    }
-    _reverseWaiters[frame.id.toString()] = completer;
-    // 与 companion 的权限超时档对齐（120s）：companion 代答 -32022 给
-    // 服务端后不会通知手机——此处兜底 complete，防止 waiter/UI 永久滞留
-    final frameId = frame.id;
-    Timer(const Duration(seconds: 120), () {
-      final w = _reverseWaiters.remove(frameId.toString());
-      if (w != null && !w.isCompleted) {
-        w.completeError(TimeoutException('permission timeout'));
-      }
-    });
-    return completer.future;
-  }
-
-  void _flushReverseAck(dynamic frameId, Map<String, dynamic> payload) {
-    final waiter = _reverseWaiters.remove(frameId.toString());
-    if (waiter == null || waiter.isCompleted) return;
-    if (payload.containsKey('error')) {
-      waiter.completeError(StateError('用户拒绝'));
-    } else {
-      waiter.complete(payload['result']);
-    }
+    return ZcodeChatStore.instance.ingestReverseRequest(frame);
   }
 
   // ---- 出站：旧事件 → app-server 请求（编排）----
@@ -534,11 +505,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
       case 'session:create:request':
         await _respondCreate(client, d);
-        return;
-
-      case 'permission:response':
-      case 'ask-user:answer':
-        _dispatchReverseAck(message, d);
         return;
 
       case 'permission:set_mode:request':
@@ -796,49 +762,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     }
   }
 
-  void _dispatchReverseAck(WsMessage message, Map<String, dynamic> d) {
-    final key = (d['requestId'] ?? d['questionId'] ?? d['toolCallId'] ?? '').toString();
-    final info = _pendingReverse.remove(key);
-    if (info == null) return;
-    final approved = message.event == 'permission:response'
-        ? d['approved'] == true
-        : (d['selectedLabels'] is List && (d['selectedLabels'] as List).isNotEmpty);
-    if (message.event == 'permission:response') {
-      // 应答 = 所选 option 的 response 原文（APP-SERVER.md 实测：其它形状
-      // 一律被服务端静默按 deny 处理）。旧 UI 无 remember 开关 → allow_once。
-      final result = _pickPermissionResponse(info, approved);
-      _flushReverseAck(info.frameId, {'result': result});
-      return;
-    }
-    if (approved) {
-      _flushReverseAck(info.frameId, {'result': d});
-    } else {
-      _flushReverseAck(info.frameId, {
-        'error': {'code': -32000, 'message': '用户拒绝'},
-      });
-    }
-  }
-
-  /// 从权限请求暂存的 options 里回放所选 option 的 response 原文；
-  /// 无暂存时按实测 schema 兜底构造（一次性批准，permissionUpdates 无法
-  /// 凭空构造故不提供 remember 语义）
-  Map<String, dynamic> _pickPermissionResponse(ReverseRequestInfo info, bool approved) {
-    final options = info.permissionOptions;
-    if (options != null) {
-      final wanted = approved ? 'allow_once' : 'deny';
-      for (final o in options) {
-        if (o['optionId']?.toString() == wanted) {
-          final response = o['response'];
-          if (response is Map) return Map<String, dynamic>.from(response);
-        }
-      }
-    }
-    return {
-      'decision': approved ? 'allow' : 'deny',
-      'reason': approved ? 'Approved once' : 'Denied',
-    };
-  }
-
   /// 服务端权限模式真实值（state.updated patch.mode.current，实测字段）。
   /// UI 词表 ↔ 服务端枚举映射（语义最近对应，非完全等价）：
   /// always-ask→build（默认执行+权限拦截）、accept-edits→edit、
@@ -973,11 +896,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     _sendQueue.clear();
     _selectedDesktopId = null;
     _selectedDesktopIdController.add(null);
-    for (final w in _reverseWaiters.values) {
-      if (!w.isCompleted) w.completeError(StateError('disconnected'));
-    }
-    _reverseWaiters.clear();
-    _pendingReverse.clear();
     _setState(WsConnectionState.disconnected);
     unawaited(_refreshDesktopList());
   }

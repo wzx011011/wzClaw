@@ -12,7 +12,6 @@ import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
-import '../services/chat_store.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
 import '../services/session_sync_service.dart';
@@ -24,13 +23,13 @@ import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/git_branch_sheet.dart';
 import '../widgets/permission_bar.dart';
-import '../widgets/plan_mode_bar.dart';
 import '../widgets/project_drawer.dart';
 
 import '../widgets/streaming_shimmer.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
 import '../widgets/workspace_switcher_sheet.dart';
+import '../zcode/zcode_chat_store.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -46,27 +45,31 @@ class _ChatPageState extends State<ChatPage> {
   List<ChatMessage> _displayMessages = [];
   bool _isStreaming = false;
   bool _isWaiting = false;
-  bool _isSessionLoading = false; // 切换会话时等待桌面端返回数据
+  bool _isSessionLoading = false; // 切换会话时等待引擎返回数据
   bool _showScrollFab = false;
   bool _scrollPending = false;
   int _previousGroupCount = 0;
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
-  bool _sessionJustSwitched = false;
   String? _workspaceName;
-  PermissionRequest? _permissionRequest;
-  StreamSubscription? _messagesSub;
-  StreamSubscription? _streamingSub;
   StreamSubscription? _voiceErrorSub;
-  StreamSubscription<bool>? _waitingSub;
-  StreamSubscription<bool>? _sessionLoadingSub;
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
   StreamSubscription<WsConnectionState>? _connectionStateSub;
-  StreamSubscription<PermissionRequest?>? _permissionSub;
   StreamSubscription<WorkspaceInfo?>? _workspaceInfoSub;
   final FocusNode _inputFocusNode = FocusNode();
+
+  /// 直连栈数据源（R1 换接线）：连接层不变（ConnectionManager 供帧），
+  /// 页面只认识数据容器
+  ZcodeChatStore get _store => ZcodeChatStore.instance;
+
+  // thinkingContent 是 getter（随 notifyListeners 推进），而思维链面板
+  // 组件吃 Stream<String>——页内广播桥做范式转换，组件签名不变
+  final StreamController<String> _thinkingCtrl =
+      StreamController<String>.broadcast();
+  String? _lastThinking;
+  String? _lastShownError;
 
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
   // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
@@ -90,60 +93,11 @@ class _ChatPageState extends State<ChatPage> {
   void initState() {
     super.initState();
     AppRestoreState.setLastRoute('/chat');
-    if (ConnectionManager.instance.selectedDesktopId == null) {
-      // Defer SQLite read to after the first frame so chat UI paints first
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) ChatStore.instance.loadHistory();
-      });
-    }
-
-    _messagesSub = ChatStore.instance.messagesStream.listen((msgs) {
-      if (mounted) {
-        // 检测会话切换
-        final curSid = ChatStore.instance.currentSessionId;
-        if (curSid != _lastRenderedSessionId) {
-          _lastRenderedSessionId = curSid;
-          _sessionJustSwitched = true;
-          _showScrollFab = false;
-          _slashSuggestions = [];
-          _permissionRequest = null;
-          _inputController.clear();
-          // 排队消息属于原会话上下文，切会话即清（不留到别的会话发出）
-          _sendQueue.clear();
-        }
-        setState(() => _displayMessages = msgs);
-        if ((_isStreaming || _sessionJustSwitched) && !_showScrollFab && msgs.isNotEmpty) {
-          _scrollToBottom();
-          _sessionJustSwitched = false;
-        }
-      }
-    });
-
-    _streamingSub = ChatStore.instance.streamingStream.listen((streaming) {
-      if (mounted) setState(() => _isStreaming = streaming);
-      if (!streaming) _scheduleQueueFlush();
-    });
-
-    _waitingSub = ChatStore.instance.waitingStream.listen((waiting) {
-      if (mounted) {
-        setState(() => _isWaiting = waiting);
-        if (waiting) _scrollToBottom();
-      }
-      if (!waiting) _scheduleQueueFlush();
-    });
-
-    _sessionLoadingSub = ChatStore.instance.sessionLoadingStream.listen((loading) {
-      if (mounted) setState(() => _isSessionLoading = loading);
-    });
-    _isSessionLoading = ChatStore.instance.isSessionLoading;
-    // 回种流式/等待初值：重进页面时若回合正在跑，否则发送按钮形态短暂错误、
-    // 消息会直发而非入队
-    _isStreaming = ChatStore.instance.isStreaming;
-    _isWaiting = ChatStore.instance.isWaitingForResponse;
-
-    _permissionSub = ChatStore.instance.permissionStream.listen((req) {
-      if (mounted) setState(() => _permissionRequest = req);
-    });
+    // 直连栈单一监听入口：ChangeNotifier → 页面状态（替代旧 4 流订阅）。
+    // 初始同步回种流式/等待/权限/会话初值：重进页面若回合正在跑，
+    // 否则发送按钮形态短暂错误、消息会直发而非入队
+    _store.addListener(_onStoreChanged);
+    _syncFromStore(initial: true);
 
     _scrollController.addListener(_onScroll);
 
@@ -193,25 +147,73 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
-    _messagesSub?.cancel();
-    _streamingSub?.cancel();
-    _waitingSub?.cancel();
+    _store.removeListener(_onStoreChanged);
     _voiceErrorSub?.cancel();
     _workspaceInfoSub?.cancel();
-    _permissionSub?.cancel();
-    _sessionLoadingSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
     _queueFlushTimer?.cancel();
+    _thinkingCtrl.close();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
   }
 
+  /// store → 页面状态单向同步（ChangeNotifier 单一入口）
+  void _onStoreChanged() => _syncFromStore();
+
+  void _syncFromStore({bool initial = false}) {
+    if (!mounted) return;
+    final sid = _store.activeSessionId;
+    if (sid != _lastRenderedSessionId) {
+      _lastRenderedSessionId = sid;
+      if (!initial) {
+        _showScrollFab = false;
+        _slashSuggestions = [];
+        _inputController.clear();
+        // 排队消息属于原会话上下文，切会话即清（不留到别的会话发出）
+        _sendQueue.clear();
+      }
+    }
+    final thinking = _store.thinkingContent;
+    if (thinking != _lastThinking) {
+      _lastThinking = thinking;
+      _thinkingCtrl.add(thinking);
+    }
+    setState(() {
+      _displayMessages = _store.messages;
+      _isStreaming = _store.isStreaming;
+      _isWaiting = _store.isWaitingForResponse;
+      _isSessionLoading = _store.sessionOpening;
+    });
+    if ((_isStreaming || _isWaiting) &&
+        !_showScrollFab &&
+        _displayMessages.isNotEmpty) {
+      _scrollToBottom();
+    }
+    // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）
+    if (!_isStreaming && !_isWaiting) _scheduleQueueFlush();
+
+    // 发送失败等业务错误：store.error 上浮为 SnackBar（模型卡路径已退役，
+    // 自愈失败也走这里）
+    final err = _store.error;
+    if (err != null && err != _lastShownError) {
+      _lastShownError = err;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      _store.clearError();
+    }
+  }
+
   void _onScroll() {
     if (_scrollController.position.pixels <= 50) {
-      ChatStore.instance.loadMoreMessages();
+      unawaited(_store.loadOlderMessages());
     }
     // Show/hide scroll-to-bottom FAB
     final distanceFromBottom = _scrollController.position.maxScrollExtent -
@@ -233,11 +235,11 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
     // Option A：没有活动会话 = 处于「新任务」欢迎态，首条消息触发建会话
-    if (ChatStore.instance.currentSessionId == null) {
+    if (_store.activeSessionId == null) {
       _startNewConversation(text);
       return;
     }
-    ChatStore.instance.sendMessage(text);
+    unawaited(_store.sendMessage(text));
     _inputController.clear();
     _scrollToBottom();
   }
@@ -245,11 +247,11 @@ class _ChatPageState extends State<ChatPage> {
   /// 队列消息「↑ 立即」：不等当前 turn 结束马上发
   void _sendQueuedNow(_QueuedSend item) {
     setState(() => _sendQueue.remove(item));
-    if (ChatStore.instance.currentSessionId == null) {
+    if (_store.activeSessionId == null) {
       _startNewConversation(item.text, requeueOnFailure: item);
       return;
     }
-    ChatStore.instance.sendMessage(item.text);
+    unawaited(_store.sendMessage(item.text));
     _scrollToBottom();
   }
 
@@ -262,10 +264,10 @@ class _ChatPageState extends State<ChatPage> {
       if (_sendQueue.isEmpty) return;
       final item = _sendQueue.removeAt(0);
       setState(() {});
-      if (ChatStore.instance.currentSessionId == null) {
+      if (_store.activeSessionId == null) {
         _startNewConversation(item.text, requeueOnFailure: item);
       } else {
-        ChatStore.instance.sendMessage(item.text);
+        unawaited(_store.sendMessage(item.text));
         _scrollToBottom();
       }
     });
@@ -277,22 +279,27 @@ class _ChatPageState extends State<ChatPage> {
   }) async {
     _inputController.clear();
     _scrollToBottom();
-    final ok = await SessionSyncService.instance.startNewConversation(text);
-    if (!ok && mounted) {
+    // 直连栈：先建会话（引擎 create），成功后发首条
+    await _store.newSession();
+    if (_store.activeSessionId == null) {
       // 失败不蒸发：排队来源回插队首（保持原顺序），输入来源回填输入框
       if (requeueOnFailure != null) {
         setState(() => _sendQueue.insert(0, requeueOnFailure));
       } else {
         _inputController.text = text;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('创建会话失败，请检查连接后重试'),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('创建会话失败，请检查连接后重试'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
     }
+    unawaited(_store.sendMessage(text));
   }
 
   Future<void> _editQueued(_QueuedSend item) async {
@@ -462,7 +469,7 @@ class _ChatPageState extends State<ChatPage> {
                     Text('重新发送', style: TextStyle(color: colors.textPrimary)),
                 onTap: () {
                   Navigator.pop(ctx);
-                  ChatStore.instance.sendMessage(msg.content);
+                  unawaited(_store.sendMessage(msg.content));
                 },
               ),
             ListTile(
@@ -516,33 +523,7 @@ class _ChatPageState extends State<ChatPage> {
       },
       appBar: AppBar(
         backgroundColor: colors.bgSecondary,
-        title: StreamBuilder<String?>(
-          stream: SessionSyncService.instance.activeSessionStream,
-          initialData: SessionSyncService.instance.activeSessionId,
-          builder: (context, snapshot) {
-            final sessionId = snapshot.data;
-            if (sessionId == null) {
-              return Text('wzxClaw',
-                  style: TextStyle(color: colors.textPrimary),);
-            }
-            // Find session title from cached sessions
-            final sessions = SessionSyncService.instance.sessions;
-            final match = sessions.where((s) => s.id == sessionId);
-            final title = match.isNotEmpty ? match.first.title : 'Session';
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('wzxClaw',
-                    style: TextStyle(color: colors.textPrimary, fontSize: 16),),
-                Text(
-                  title,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            );
-          },
-        ),
+        title: _buildTitle(colors),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
           // 切换桃面：返回设备列表（LandingPage）重新选择/切换桌面
@@ -558,9 +539,9 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
             icon: const Icon(Icons.add_comment_outlined),
             tooltip: '新任务',
-            onPressed: () async {
+            onPressed: () {
               _inputFocusNode.unfocus();
-              await SessionSyncService.instance.enterNewConversation();
+              _store.closeSessionView();
             },
           ),
           IconButton(
@@ -619,28 +600,34 @@ class _ChatPageState extends State<ChatPage> {
               ],
             ),
           ),
-          if (_permissionRequest != null)
-            PermissionBar(request: _permissionRequest!),
-          StreamBuilder<Map<String, dynamic>?>(
-            stream: ChatStore.instance.planModeStream,
-            builder: (context, snapshot) {
-              final planData = snapshot.data;
-              if (planData == null) return const SizedBox.shrink();
-              return PlanModeBar(planData: planData);
-            },
-          ),
-          StreamBuilder<AskUserQuestion?>(
-            stream: ChatStore.instance.askUserStream,
-            builder: (context, snapshot) {
-              if (snapshot.data == null) return const SizedBox.shrink();
-              return AskUserBar(question: snapshot.data!);
-            },
-          ),
+          if (_store.activePermission != null)
+            PermissionBar(request: _store.activePermission!),
+          if (_store.activeAskUser != null)
+            AskUserBar(question: _store.activeAskUser!),
           _buildSlashSuggestions(),
-          _buildTodoPanel(),
           _buildInputBar(),
         ],
       ),
+    );
+  }
+
+  /// appbar 标题：wzxClaw + 当前会话名（直连栈查表）
+  Widget _buildTitle(AppColors colors) {
+    final sid = _store.activeSessionId;
+    if (sid == null) {
+      return Text('wzxClaw', style: TextStyle(color: colors.textPrimary));
+    }
+    final match = _store.sessions.where((s) => s.sessionId == sid);
+    final title = match.isNotEmpty ? match.first.title : 'Session';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('wzxClaw',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),),
+        Text(title,
+            style: TextStyle(color: colors.textSecondary, fontSize: 11),
+            overflow: TextOverflow.ellipsis,),
+      ],
     );
   }
 
@@ -848,7 +835,7 @@ class _ChatPageState extends State<ChatPage> {
       // Option A：已连接且无活动会话 → 「新任务」欢迎页
       //（参考 ZCode 移动端：问候 + 工作区选择 + 快捷入口）
       if (_visibleConnectionState == WsConnectionState.connected &&
-          ChatStore.instance.currentSessionId == null) {
+          _store.activeSessionId == null) {
         return _buildWelcomeView(colors);
       }
       return Center(
@@ -872,7 +859,7 @@ class _ChatPageState extends State<ChatPage> {
       itemCount: itemCount,
       itemBuilder: (context, index) {
         if (showThinking && index == grouped.length) {
-          return AgentThinkingBlock(thinkingStream: ChatStore.instance.thinkingStream);
+          return AgentThinkingBlock(thinkingStream: _thinkingCtrl.stream);
         }
         final item = grouped[index];
         Widget child;
@@ -937,10 +924,6 @@ class _ChatPageState extends State<ChatPage> {
       case MessageRole.user:
         return _buildUserBubble(msg);
       case MessageRole.assistant:
-        // 模型不可用且自愈失败：渲染可操作卡片而非纯文本报错
-        if (msg.errorKind == 'model-unavailable') {
-          return _buildModelErrorCard(msg);
-        }
         return _buildAssistantBlock(msg);
       case MessageRole.tool:
         // Should not reach here — tools are grouped by _groupMessages
@@ -948,100 +931,7 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 「模型不可用」操作卡片：说明 + 选择可用模型重试 + 新建会话。
-  /// 自动自愈成功时不会产生此类消息；出现即代表需要用户介入。
-  Widget _buildModelErrorCard(ChatMessage msg) {
-    final colors = AppColors.of(context);
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.assistantBubble,
-        border: Border.all(color: colors.error.withValues(alpha: 0.45)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber_rounded,
-                  size: 16, color: colors.error,),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text('历史任务使用的模型已不可用',
-                    style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,),),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            msg.content,
-            style: TextStyle(color: colors.textSecondary, fontSize: 12, height: 1.5),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _retryModelUnavailable,
-                  icon: const Icon(Icons.view_in_ar_outlined, size: 15),
-                  label: const Text('选择可用模型重试',
-                      style: TextStyle(fontSize: 12),),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: colors.accent,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    // 坏会话里连 /clear 都走 session/send、同样被 -32031 拒
-                    // （2026-09-16 用户实测死循环）。必须经 session/create
-                    // 建新会话：有被阻塞原文时随新会话一并重发，一步迁移。
-                    final content = ChatStore.instance.lastModelBlockedContent;
-                    if (content == null || content.isEmpty) {
-                      await SessionSyncService.instance.enterNewConversation();
-                      return;
-                    }
-                    final ok = await SessionSyncService.instance
-                        .startNewConversation(content,);
-                    if (!ok && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('新建会话失败，请检查与大脑节点的连接'),
-                        duration: Duration(seconds: 2),
-                        behavior: SnackBarBehavior.floating,
-                      ),);
-                    }
-                  },
-                  icon: const Icon(Icons.post_add_outlined, size: 15),
-                  label: const Text('新建会话', style: TextStyle(fontSize: 12)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: colors.textSecondary,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 错误卡片「重试」：打开模型面板（只列实测可用模型），选中后自动重发
-  /// 被阻塞的原文。原文缺失（进程重建等）时降级为普通打开面板。
-  void _retryModelUnavailable() {
-    final content = ChatStore.instance.lastModelBlockedContent;
-    _showModelPopup(retryContent: content);
-  }
+  // ── User bubble ────────────────────────────────────────────────────
 
   // ── User bubble ────────────────────────────────────────────────────
 
@@ -1487,72 +1377,9 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-
-  // ── Todo panel ──────────────────────────────────────────────────────
-
-  Widget _buildTodoPanel() {
-    final colors = AppColors.of(context);
-    final todos = ChatStore.instance.todos;
-    if (todos.isEmpty) return const SizedBox.shrink();
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 120),
-      margin: const EdgeInsets.symmetric(horizontal: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: colors.bgTertiary,
-        border: Border.all(color: colors.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: todos.map((t) {
-            final status = t['status'] ?? 'pending';
-            final content = t['content'] ?? '';
-            final icon = status == 'completed'
-                ? Icons.check_circle
-                : status == 'in_progress'
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked;
-            final color = status == 'completed'
-                ? Colors.green
-                : status == 'in_progress'
-                    ? colors.accent
-                    : colors.textMuted;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: [
-                  Icon(icon, size: 14, color: color),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      content,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: status == 'completed' ? colors.textMuted : colors.textPrimary,
-                        decoration: status == 'completed' ? TextDecoration.lineThrough : null,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  // ── Input bar ──────────────────────────────────────────────────────
-
   // ── Input bar（V3 容器式：输入整行在上、工具栏在下；弹层自按钮向上展开） ──
 
   final GlobalKey _plusBtnKey = GlobalKey();
-  final GlobalKey _modeBtnKey = GlobalKey();
   final GlobalKey _usageBtnKey = GlobalKey();
   final GlobalKey _modelBtnKey = GlobalKey();
   final GlobalKey _effortBtnKey = GlobalKey();
@@ -1641,14 +1468,11 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 工具栏：左「+ · 权限模式」，右「用量 · 模型 · 档位 · 发送/停止」。
+  /// 工具栏：左「+」，右「用量 · 模型 · 档位 · 发送/停止」。
   /// 窄屏收纳：宽度不足时模式名收起为纯盾形图标（V3：图标组与发送永不移除）。
+  /// R1 降级（Q2）：权限模式按钮暂撤——四档 UI ↔ 引擎模式映射词典 R2 落地后恢复。
   Widget _buildComposerToolbar(AppColors colors, bool isConnected) {
-    // 官方样式：完全访问激活色
-    const modeOrange = Color(0xFFE8A33D);
     final busy = _isStreaming || _isWaiting;
-    final modelBlocked =
-        (ChatStore.instance.lastModelBlockedContent ?? '').isNotEmpty;
 
     Widget iconBtn({
       required GlobalKey key,
@@ -1670,46 +1494,12 @@ class _ChatPageState extends State<ChatPage> {
         );
 
     return LayoutBuilder(builder: (context, cons) {
-      // 容器内宽 <310 时收起模式名文字，仅保留盾形图标
-      final showModeText = cons.maxWidth >= 310;
-      final mode = ChatStore.instance.permissionMode;
-      const modeNames = {
-        'always-ask': '变更前确认',
-        'accept-edits': '自动编辑',
-        'plan': '计划模式',
-        'bypass': '完全访问',
-      };
-      final modeColor = mode == 'bypass' ? modeOrange : colors.textSecondary;
-
       return Row(children: [
         iconBtn(
           key: _plusBtnKey,
           tip: '附加',
           icon: Icons.add,
           onTap: isConnected ? _showAttachPopup : null,
-        ),
-        const SizedBox(width: 4),
-        SizedBox(
-          key: _modeBtnKey,
-          height: 30,
-          child: IconButton(
-            onPressed: isConnected ? _showPermissionPopup : null,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            tooltip: '权限模式',
-            icon: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.security_outlined, size: 18, color: modeColor),
-              if (showModeText) ...[
-                const SizedBox(width: 5),
-                Text(modeNames[mode] ?? '权限模式',
-                    style: TextStyle(
-                        color: modeColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,),),
-                const SizedBox(width: 2),
-                Icon(Icons.expand_more, size: 13, color: modeColor),
-              ],
-            ],),
-          ),
         ),
         const Spacer(),
         iconBtn(
@@ -1721,10 +1511,9 @@ class _ChatPageState extends State<ChatPage> {
         const SizedBox(width: 2),
         iconBtn(
           key: _modelBtnKey,
-          tip: modelBlocked ? '模型不可用' : '模型',
+          tip: '模型',
           icon: Icons.view_in_ar_outlined,
           onTap: isConnected ? _showModelPopup : null,
-          color: modelBlocked ? colors.error : null,
         ),
         const SizedBox(width: 2),
         iconBtn(
@@ -1740,7 +1529,7 @@ class _ChatPageState extends State<ChatPage> {
           height: 30,
           child: IconButton(
             onPressed: busy
-                ? () => ChatStore.instance.stopGeneration()
+                ? () => unawaited(_store.stopGeneration())
                 : (isConnected ? _sendMessage : null),
             style: IconButton.styleFrom(
               backgroundColor:
@@ -1847,69 +1636,12 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
-  /// 权限模式弹层：图标+名称+说明，当前项 ✓（措辞沿用既有四档映射）
-  Future<void> _showPermissionPopup() async {
-    _inputFocusNode.unfocus();
-    const modes = ['always-ask', 'accept-edits', 'plan', 'bypass'];
-    const labels = ['变更前确认', '自动编辑', '计划模式', '完全访问'];
-    const subtitles = [
-      '改文件前先问我。',
-      '自动编辑文件。',
-      '编辑前先出计划。',
-      '减少确认次数。',
-    ];
-    const icons = [
-      Icons.pan_tool_outlined,
-      Icons.shield_outlined,
-      Icons.checklist_outlined,
-      Icons.lock_open_outlined,
-    ];
-    final colors = AppColors.of(context);
-    final current = ChatStore.instance.permissionMode;
-    final chosen = await _showComposerSheet<String>(
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < modes.length; i++)
-              ListTile(
-                dense: true,
-                leading: Icon(icons[i],
-                    size: 20,
-                    color: modes[i] == current
-                        ? colors.accent
-                        : colors.textSecondary,),
-                title: Text(labels[i],
-                    style: TextStyle(
-                        color: modes[i] == current
-                            ? colors.accent
-                            : colors.textPrimary,
-                        fontWeight: modes[i] == current
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        fontSize: 14,),),
-                subtitle: Text(subtitles[i],
-                    style: TextStyle(
-                        color: colors.textMuted, fontSize: 11,),),
-                trailing: modes[i] == current
-                    ? Icon(Icons.check, size: 18, color: colors.accent)
-                    : null,
-                onTap: () => Navigator.pop(ctx, modes[i]),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (chosen != null) ChatStore.instance.setPermissionMode(chosen);
-  }
-
   /// 上下文用量弹层：session/usage 实测数据。对齐官方「上下文容量」面板的
   /// 信息结构（标题行 + 分段占比条 + 彩点明细），但只展示协议实测字段——
   /// 协议无 contextWindow（不显示容量百分比）、无分类拆分（消息/MCP 等官方
   /// 分类来自其云端计费，不可伪造）。缓存命中率 = 缓存读/(输入+缓存读)，实测可导出。
   Future<void> _showUsagePopup() async {
-    final sessionId = ChatStore.instance.currentSessionId;
+    final sessionId = _store.activeSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
@@ -2066,7 +1798,7 @@ class _ChatPageState extends State<ChatPage> {
   /// 未经引擎证实，点选走既有 setModel 链路失败会显性提示。
   /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
   Future<void> _showModelPopup({String? retryContent}) async {
-    final sessionId = ChatStore.instance.currentSessionId;
+    final sessionId = _store.activeSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
@@ -2229,7 +1961,7 @@ class _ChatPageState extends State<ChatPage> {
       // 从「模型不可用」卡片进入：切完立即重发被阻塞的原文；仍被拒会再次
       // 触发链上自动自愈并回卡片
       if (retryContent != null && retryContent.isNotEmpty) {
-        await ChatStore.instance.sendMessage(retryContent);
+        await _store.sendMessage(retryContent);
       }
     } catch (e) {
       if (mounted) _runtimeErrorSnack(e);
@@ -2239,7 +1971,7 @@ class _ChatPageState extends State<ChatPage> {
   /// 思考档位弹层：低/高/最高（对齐官方三档；枚举无读回方法，选中态仅在
   /// 本次选择后标记，失败显性提示）
   Future<void> _showEffortPopup() async {
-    final sessionId = ChatStore.instance.currentSessionId;
+    final sessionId = _store.activeSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);

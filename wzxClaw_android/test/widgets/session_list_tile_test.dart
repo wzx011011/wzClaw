@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/config/app_colors.dart';
-import 'package:wzxclaw_android/models/session_meta.dart';
-import 'package:wzxclaw_android/models/session_task_state.dart';
+import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/widgets/session_list_tile.dart';
 
 Widget wrapWithTheme(Widget child) {
@@ -12,26 +11,19 @@ Widget wrapWithTheme(Widget child) {
   );
 }
 
-SessionMeta makeSession({
+/// 构造引擎 session/list 实测形状的会话元数据（R1 直连栈契约）
+ZcodeSessionMeta makeSession({
   String id = 'sess-1',
   String title = 'Test Session',
-  int messageCount = 5,
-  bool isSynced = true,
   int? updatedAt,
-  SessionTaskState? taskState,
+  String? status,
 }) {
   final now = DateTime.now().millisecondsSinceEpoch;
-  return SessionMeta(
-    id: id,
-    workspacePath: '/home/user/project',
-    workspaceName: 'project',
+  return ZcodeSessionMeta(
+    sessionId: id,
     title: title,
-    createdAt: now - 3600000,
     updatedAt: updatedAt ?? now,
-    messageCount: messageCount,
-    isSynced: isSynced,
-    isRunning: taskState?.isActive ?? false,
-    taskState: taskState,
+    status: status,
   );
 }
 
@@ -47,18 +39,6 @@ void main() {
       ),);
 
       expect(find.text('My Session'), findsOneWidget);
-    });
-
-    testWidgets('renders message count', (tester) async {
-      await tester.pumpWidget(wrapWithTheme(
-        SessionListTile(
-          session: makeSession(messageCount: 12),
-          isActive: false,
-          onTap: () {},
-        ),
-      ),);
-
-      expect(find.textContaining('12'), findsOneWidget);
     });
 
     testWidgets('shows active indicator when isActive is true', (tester) async {
@@ -85,37 +65,28 @@ void main() {
       expect(find.byIcon(Icons.check_circle), findsNothing);
     });
 
-    testWidgets('shows cache badge when isSynced is false', (tester) async {
+    testWidgets('shows running badge for running sessions', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
         SessionListTile(
-          session: makeSession(isSynced: false),
+          session: makeSession(status: 'running'),
           isActive: false,
           onTap: () {},
         ),
       ),);
 
-      expect(find.textContaining('缓存'), findsOneWidget);
+      expect(find.text('运行'), findsOneWidget);
     });
 
-
-    testWidgets('shows task status badge for running sessions', (tester) async {
+    testWidgets('no running badge for idle sessions', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
         SessionListTile(
-          session: makeSession(
-            taskState: const SessionTaskState(
-              sessionId: 'sess-1',
-              runId: 'run-1',
-              status: 'waiting_permission',
-              startedAt: 1000,
-              updatedAt: 1000,
-            ),
-          ),
+          session: makeSession(status: 'idle'),
           isActive: false,
           onTap: () {},
         ),
       ),);
 
-      expect(find.text('等待'), findsOneWidget);
+      expect(find.text('运行'), findsNothing);
     });
 
     testWidgets('calls onTap when tapped', (tester) async {
