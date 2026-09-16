@@ -10,7 +10,8 @@ const { createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
-const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime, resolveZcodeRuntime } = require('../companion');
+const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime, resolveZcodeRuntime,
+  runtimeProcessEnv } = require('../companion');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -95,6 +96,20 @@ test('runtime probe：独立 app-server 的 session/list 握手通过后才报�
   // Windows 上 kill 后 stdout 句柄释放与 exit 事件存在极短竞态。
   await delay(120);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('runtime process env：仅 Electron 宿主执行 cjs 时启用 Node 模式', () => {
+  const original = process.versions.electron;
+  Object.defineProperty(process.versions, 'electron', { value: '31.7.0', configurable: true });
+  try {
+    const cjs = runtimeProcessEnv({ command: process.execPath, args: ['C:/zcode.cjs'] }, { SAFE: '1' });
+    assert.equal(cjs.ELECTRON_RUN_AS_NODE, '1');
+    const pathCli = runtimeProcessEnv({ command: 'zcode', args: [] }, { SAFE: '1' });
+    assert.equal(pathCli.ELECTRON_RUN_AS_NODE, undefined);
+  } finally {
+    if (original === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
+  }
 });
 
 test('runtime resolver：失效 ZCODE_BIN 必须明确报错而非回退', () => {

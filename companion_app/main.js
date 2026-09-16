@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const QRCode = require('qrcode');
 const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime } = require('./cclient/companion');
 const { detectZcode, normalizeImportSelection } = require('./zcode-integration');
+const { createRuntimeGate } = require('./runtime-gate');
 
 // 进程级兜底：托盘常驻节点不允许静默死亡。取证后继续存活——桥的
 // spawn/重启逻辑自身有状态机，未处理异常多来自已防护边界的偶发竞态。
@@ -49,8 +50,10 @@ let petWin = null;
 let tray = null;
 let quitting = false;
 let runtimeStatus = { category: 'checking', source: null, version: null, detailCode: null };
-let runtimeCheck = null;
+let runtimeGate = null;
 const logTail = [];
+
+const isPortable = () => Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
 
 // ---- 配置 ----
 
@@ -150,36 +153,42 @@ function publicRuntimeStatus(status = runtimeStatus) {
   };
 }
 
-async function ensureRuntimeThenStart() {
-  if (runtimeCheck) return runtimeCheck;
-  runtimeStatus = { category: 'checking', source: null, version: null, detailCode: null };
-  broadcast('runtime-status', publicRuntimeStatus());
-  runtimeCheck = probeZcodeRuntime({ cwd: cfg.cwd })
-    .then((status) => {
-      runtimeStatus = status;
-      broadcast('runtime-status', publicRuntimeStatus());
-      if (status.category === 'ready') startCompanion();
-      else {
-        lastState = 'runtime-unavailable';
-        updateTray();
-        pushLog('runtime-preflight-failed', status.category);
-      }
-      return publicRuntimeStatus();
-    })
-    .catch(() => {
-      runtimeStatus = { category: 'app-server-failed', source: null, version: null, detailCode: 'UNEXPECTED' };
-      broadcast('runtime-status', publicRuntimeStatus());
-      return publicRuntimeStatus();
-    })
-    .finally(() => { runtimeCheck = null; });
-  return runtimeCheck;
+async function stopCompanion() {
+  const running = companion;
+  companion = null;
+  pairingUrl = null;
+  qrDataUrl = null;
+  broadcast('pairing', { url: null, qr: null });
+  if (running) {
+    try { await running.stop(); } catch { /* 尽力停止旧链路 */ }
+  }
 }
 
-function startCompanion() {
-  if (companion) {
-    try { companion.stop(); } catch { /* 首次启动无实例 */ }
-    companion = null;
-  }
+function initRuntimeGate() {
+  runtimeGate = createRuntimeGate({
+    probe: (snapshot) => probeZcodeRuntime({ cwd: snapshot.cwd }),
+    start: async (snapshot) => startCompanion(snapshot),
+    stop: stopCompanion,
+    onStatus: (status) => {
+      runtimeStatus = status;
+      broadcast('runtime-status', publicRuntimeStatus());
+    },
+    onFailure: (status) => {
+      lastState = 'runtime-unavailable';
+      updateTray();
+      pushLog('runtime-preflight-failed', status.category);
+    },
+  });
+}
+
+function ensureRuntimeThenStart() {
+  if (!runtimeGate) initRuntimeGate();
+  return runtimeGate.check({ relayUrl: cfg.relayUrl, cwd: cfg.cwd })
+    .then(() => publicRuntimeStatus());
+}
+
+function startCompanion(snapshot) {
+  const startConfig = snapshot || { relayUrl: cfg.relayUrl, cwd: cfg.cwd };
   pairingUrl = null;
   qrDataUrl = null;
   // 注册共享密钥：与 CLI companion 同源（~/.wzxclaw/zcode-companion/relay-
@@ -189,8 +198,8 @@ function startCompanion() {
   const registrationSecret = readRegistrationSecretFile() || undefined;
   try {
     companion = createCompanion({
-      relayUrl: cfg.relayUrl,
-      cwd: cfg.cwd,
+      relayUrl: startConfig.relayUrl,
+      cwd: startConfig.cwd,
       registrationSecret,
       logger: (event, detail) => pushLog(event, detail),
       onPairing: (url) => {
@@ -209,7 +218,7 @@ function startCompanion() {
       },
     });
     companion.start();
-    pushLog('app-companion-started', cfg.relayUrl);
+    pushLog('app-companion-started', startConfig.relayUrl);
   } catch (e) {
     // 典型：ALREADY_RUNNING（旧计划任务 companion 还在跑）——如实上屏
     pushLog('app-companion-error', e.code || String(e.message || e));
@@ -303,8 +312,11 @@ function updateTray() {
     {
       label: '开机自启',
       type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+      enabled: !isPortable(),
+      checked: !isPortable() && app.getLoginItemSettings().openAtLogin,
+      click: (item) => {
+        if (!isPortable()) app.setLoginItemSettings({ openAtLogin: item.checked });
+      },
     },
     { type: 'separator' },
     {
@@ -340,7 +352,8 @@ function registerIpc() {
     qrDataUrl,
     mode,
     config: { relayUrl: cfg.relayUrl, cwd: cfg.cwd },
-    autoStart: app.getLoginItemSettings().openAtLogin,
+    autoStart: !isPortable() && app.getLoginItemSettings().openAtLogin,
+    portable: isPortable(),
     logs: logTail.slice(-200),
     runtime: publicRuntimeStatus(),
     companionError: null,
@@ -367,7 +380,7 @@ function registerIpc() {
         },
       };
       persistConfig();
-      app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
+      if (!isPortable()) app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
       await ensureRuntimeThenStart();
       return { ok: true, firstRun: firstRunSnapshot(), runtime: publicRuntimeStatus() };
     } catch {
@@ -413,7 +426,7 @@ function registerIpc() {
     cfg.relayUrl = valid.relayUrl;
     cfg.cwd = valid.cwd;
     saveConfig();
-    app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
+    if (!isPortable()) app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
     await ensureRuntimeThenStart(); // 换 relay/目录后先验证 runtime，再恢复连接
     return { ok: true, runtime: publicRuntimeStatus() };
   });
@@ -428,6 +441,7 @@ if (!gotLock) {
   app.on('second-instance', () => showFull());
   app.whenReady().then(() => {
     loadConfig();
+    initRuntimeGate();
     registerIpc();
     if (mode === 'pet') {
       createPet();

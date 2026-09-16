@@ -39,6 +39,7 @@ function renderRuntime(status) {
     'not-logged-in': 'ZCode runtime 可用，但未检测到登录态。请先在官方 ZCode 中登录。',
     'auth-store-unreadable': '无法读取本机 ZCode 登录态。请打开官方 ZCode 完成登录或修复配置。',
     'version-failed': 'ZCode runtime 无法返回有效版本。请更新或重新安装官方 ZCode。',
+    'doctor-failed': 'ZCode runtime 诊断失败。请打开官方 ZCode 完成修复后重试。',
     'app-server-timeout': 'ZCode 启动后未响应 app-server 健康检查。请关闭残留进程后重试。',
     'app-server-failed': 'ZCode app-server 健康检查失败。请更新或打开官方 ZCode 完成修复。',
   };
@@ -57,22 +58,6 @@ function applySnapshot(s) {
   $('btnFull').classList.toggle('active', s.mode === 'full');
   $('btnPet').classList.toggle('active', s.mode === 'pet');
   for (const l of s.logs || []) pushLog(l.event, l.detail);
-}
-
-function selectionFromUi() {
-  return {
-    modelMetadata: $('selectModels').checked,
-    preferences: $('selectPreferences').checked,
-    workspaces: $('selectWorkspaces').checked,
-    extensions: $('selectExtensions').checked,
-  };
-}
-
-function applySelection(selection) {
-  $('selectModels').checked = selection.modelMetadata !== false;
-  $('selectPreferences').checked = selection.preferences !== false;
-  $('selectWorkspaces').checked = selection.workspaces === true;
-  $('selectExtensions').checked = selection.extensions === true;
 }
 
 function renderDetection(detected) {
@@ -97,7 +82,11 @@ async function openImportWizard() {
 async function bootstrap() {
   const [snapshot, firstRun] = await Promise.all([window.api.getSnapshot(), window.api.getFirstRunStatus()]);
   applySnapshot(snapshot);
-  applySelection(firstRun.selection || {});
+  if (snapshot.portable) {
+    $('autoStart').checked = false;
+    $('autoStart').disabled = true;
+    $('autoStart').parentElement.title = '便携版不支持开机自启，请使用安装版';
+  }
   if (!firstRun.completed) {
     renderDetection(firstRun.detected);
     $('importOverlay').classList.remove('hidden');
@@ -143,7 +132,7 @@ $('btnApplyImport').addEventListener('click', async () => {
     relayUrl: $('relayUrl').value,
     cwd: $('cwd').value,
     autoStart: $('autoStart').checked,
-    selection: selectionFromUi(),
+    selection: {},
   });
   if (r.ok) $('importOverlay').classList.add('hidden');
   else $('importMsg').textContent = r.error || '保存失败';

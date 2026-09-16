@@ -52,9 +52,19 @@ function resolveZcodeRuntime(env = process.env) {
   return { category: 'resolved', source: 'path', command: 'zcode', args: [] };
 }
 
+function runtimeProcessEnv(resolved, env = process.env) {
+  // packaged Electron 通过自身 exe 执行 zcode.cjs 时必须切 Node 模式；直接 PATH CLI
+  // 不应携带该变量。按 resolved 形状判断，而不是只看宿主全局，便于测试和复用。
+  const viaHostExecutable = resolved.command === process.execPath && resolved.args.length > 0;
+  return {
+    ...env,
+    ...(viaHostExecutable && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  };
+}
+
 function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = process.env } = {}) {
   return new Promise((resolve) => {
-    let child; let settled = false; let stdout = '';
+    let child; let settled = false; let stdout = ''; let stderrBytes = 0;
     const finish = (result) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
@@ -63,13 +73,18 @@ function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = proc
     };
     const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
     try {
-      child = spawn(resolved.command, [...resolved.args, ...commandArgs], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
+      child = spawn(resolved.command, [...resolved.args, ...commandArgs], {
+        stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+        env: runtimeProcessEnv(resolved, env),
+      });
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(0, 16 * 1024); });
+      // 只排空并计量，不返回/记录原文，避免凭据或会话内容进入 UI 日志。
+      child.stderr.on('data', (chunk) => { stderrBytes = Math.min(stderrBytes + chunk.length, 16 * 1024); });
       child.on('error', (error) => finish({ ok: false, code: error.code || 'SPAWN_ERROR' }));
       child.on('exit', (code) => finish(code === 0
         ? { ok: true, stdout: stdout.trim() }
-        : { ok: false, code: `EXIT_${code ?? 'UNKNOWN'}` }));
+        : { ok: false, code: `EXIT_${code ?? 'UNKNOWN'}`, stderrPresent: stderrBytes > 0 }));
     } catch (error) { finish({ ok: false, code: error.code || 'SPAWN_ERROR' }); }
   });
 }
@@ -85,8 +100,12 @@ function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
     };
     const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
     try {
-      child = spawn(resolved.command, [...resolved.args, 'app-server', '--cwd', cwd], { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env });
+      child = spawn(resolved.command, [...resolved.args, 'app-server', '--cwd', cwd], {
+        cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+        env: runtimeProcessEnv(resolved, env),
+      });
       child.stdout.setEncoding('utf8');
+      child.stderr.on('data', () => { /* 排空但不记录原文，防敏感诊断泄漏 */ });
       child.stdout.on('data', (chunk) => {
         buffer += chunk;
         if (Buffer.byteLength(buffer) > 32 * 1024) return finish({ ok: false, code: 'OUTPUT_LIMIT' });
@@ -124,12 +143,16 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
   const versionText = version.stdout.match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
   if (!versionText) return { category: 'version-failed', source: resolved.source, version: null, detailCode: 'BAD_VERSION' };
   const doctor = await runRuntimeCommand(resolved, ['doctor'], { timeoutMs: 10000, env });
+  if (!doctor.ok) {
+    return { category: 'doctor-failed', source: resolved.source, version: versionText,
+      detailCode: doctor.code, doctorWarning: null };
+  }
   let token;
   try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
   catch (error) { return { category: error.code === 'NOT_LOGGED_IN' ? 'not-logged-in' : 'auth-store-unreadable', source: resolved.source, version: versionText, detailCode: error.code, doctorWarning: doctor.ok ? null : doctor.code }; }
   const probe = await probeAppServer(resolved, {
     cwd,
-    env: { ...env, ANTHROPIC_API_KEY: token, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+    env: { ...env, ANTHROPIC_API_KEY: token },
   });
   return probe.ok
     ? { category: 'ready', source: resolved.source, version: versionText, detailCode: null, doctorWarning: doctor.ok ? null : doctor.code }
@@ -186,7 +209,8 @@ class AppServerBridge {
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this.feed(chunk));
-    child.stderr.on('data', (chunk) => this.logger('appserver-stderr', chunk.slice(0, 2000)));
+    // 子进程 stderr 可能含配置、请求或凭据上下文；只留长度观测，绝不转发原文。
+    child.stderr.on('data', (chunk) => this.logger('appserver-stderr', `bytes=${Buffer.byteLength(chunk)}`));
     // 子进程死亡瞬间的在途写入会在 stdin 流（而非 child 对象）上异步抛
     // EOF/EPIPE——不挂监听就是 uncaughtException，整个 companion 进程被带走
     // （CLI 与 Electron 壳同命）。挂日志监听消化；后续写入靠 write() 的
@@ -816,7 +840,8 @@ function readRegistrationSecretFile(homeDir = os.homedir()) {
 }
 
 module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand,
-  resolveZcodeRuntime, runRuntimeCommand, probeAppServer, probeZcodeRuntime, readRegistrationSecretFile };
+  resolveZcodeRuntime, runtimeProcessEnv, runRuntimeCommand, probeAppServer, probeZcodeRuntime,
+  readRegistrationSecretFile };
 // 把配对二维码渲染成 PNG + 纯文本链接，写到固定位置（数据目录 + 可选额外路径）。
 // 口令/房间号均持久化且确定性派生：二维码内容几乎永不变化——
 // 用户永远去同一个固定路径取最新码，无需每次找。
