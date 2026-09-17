@@ -493,16 +493,55 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             }
 
             final activeId = store.activeSessionId;
+            // 按工作区分组（对齐官方移动端）：组 = workspaceKey（缺省回退
+            // workspacePath / 未分组）；组内保持引擎排序（新→旧），
+            // 组间按各组最新会话时间排序
+            final groups = <String, List<ZcodeSessionMeta>>{};
+            for (final s in sessions) {
+              final key = s.workspaceKey ?? s.workspacePath ?? '未分组';
+              (groups[key] ??= []).add(s);
+            }
+            int newest(List<ZcodeSessionMeta> l) =>
+                l.map((e) => e.updatedAt).reduce((a, b) => a > b ? a : b);
+            final orderedKeys = groups.keys.toList()
+              ..sort((a, b) => newest(groups[b]!).compareTo(newest(groups[a]!)));
+
             return Column(
               mainAxisSize: MainAxisSize.min,
-              children: sessions.map((session) {
-                final isActive = session.sessionId == activeId;
-                return SessionListTile(
-                  session: session,
-                  isActive: isActive,
-                  onTap: () => _onSessionTap(context, session),
-                );
-              }).toList(),
+              children: [
+                for (final key in orderedKeys) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+                    child: Row(children: [
+                      Icon(Icons.folder_outlined,
+                          size: 14, color: colors.textMuted,),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _workspaceDisplayName(key),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textSecondary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        '${groups[key]!.length}',
+                        style: TextStyle(
+                            fontSize: 11, color: colors.textMuted,),
+                      ),
+                    ],),
+                  ),
+                  for (final session in groups[key]!)
+                    SessionListTile(
+                      session: session,
+                      isActive: session.sessionId == activeId,
+                      onTap: () => _onSessionTap(context, session),
+                    ),
+                ],
+              ],
             );
           },
         ),
@@ -518,6 +557,16 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     // 拉取在后台继续
     unawaited(ZcodeChatStore.instance.openSession(session.sessionId));
     if (context.mounted) Navigator.pop(context);
+  }
+
+  /// 工作区组名：取路径末段（E:\ai\wzxClaw → wzxClaw；非路径 key 原样）
+  String _workspaceDisplayName(String key) {
+    final normalized = key.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final idx = normalized.lastIndexOf('/');
+    if (idx >= 0 && idx < normalized.length - 1) {
+      return normalized.substring(idx + 1);
+    }
+    return key;
   }
 
   Widget _buildFooter(AppColors colors) {
