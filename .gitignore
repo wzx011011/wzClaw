@@ -15,7 +15,7 @@ build/
 *.tsbuildinfo
 
 # Junk files from template literal / path expansion bugs
-${*
+[$][{]*
 .playwright-results/
 
 .env

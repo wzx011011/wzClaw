@@ -1,4 +1,6 @@
-# wzxClaw
+# wzxClaw Desktop (Legacy)
+
+> **Legacy / 历史组件：** 本目录是旧 Electron IDE，仅保留维护与迁移参考。现役产品由 Android、NAS relay 和 Windows Companion + ZCode app-server 组成；本组件不进入主 CI，也不再由根 Release 发布。
 
 **[中文](#中文) | [English](#english)**
 
@@ -54,7 +56,7 @@ wzxClaw 将完整的 AI Agent Runtime 直接内嵌到桌面 GUI 中，配备 Mon
 
 ### 安装
 
-从 [Releases](../../releases) 下载最新安装包，运行即可。无需额外配置，启动后在应用内设置 API Key。
+根仓库不再发布此 Legacy Desktop 的安装包。需要维护或迁移验证时请从源码构建；不要将 Companion 的 `companion-v*` Release 当作本组件安装包。
 
 #### 从源码构建
 
@@ -140,7 +142,7 @@ wzxClaw embeds a full AI Agent Runtime directly into a desktop GUI, with a Monac
 
 ### Installation
 
-Download the latest installer from [Releases](../../releases) and run it. No additional setup needed — configure your API keys inside the application.
+The root repository no longer publishes installers for this Legacy Desktop. Build it from source only when maintenance or migration verification is required; `companion-v*` releases are for the current Companion product, not this component.
 
 #### Build from source
 

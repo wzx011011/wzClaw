@@ -14,7 +14,7 @@
    │ WSS
    ▼
 NAS relay
-   └─ zcode.5945.top/ws（sid/hash 房间模型）← v2 配对流（生产；UI 经手机端翻译壳接线）
+   └─ zcode.5945.top/ws（sid/hash 房间模型，生产；UI 已接 app-server 直连状态栈）
    ▼
 大脑节点 = companion ＋ zcode app-server 子进程
    └─ 工具执行发生在节点所在机器（运行时本地性）
@@ -29,8 +29,8 @@ NAS relay
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
-| `relay/zcode/test/` | 79 项测试（node --test） |
-| `wzxClaw_desktop/` | 旧 Electron IDE——**M3 待迁移**：引擎换绑 app-server（尚未开始；原 packages/brain 参考源码已于 2026-09-15 清理删除） |
+| `relay/zcode/test/` | relay / CLI companion 协议与回归测试（node --test） |
+| `wzxClaw_desktop/` | **Legacy** 旧 Electron IDE：仅保留维护与迁移参考，不进入主 CI 或 Release |
 
 > 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
 > `relay/server.js`、`relay/lib/`，部署套件 Dockerfile/compose/nginx/test 等）
@@ -44,7 +44,7 @@ NAS relay
 ## 常用命令
 
 ```bash
-# relay 侧测试（79 项；涉及子进程/长连接的套件必须 force-exit）
+# relay 侧测试（用例数随契约演进；涉及子进程/长连接的套件必须 force-exit）
 cd relay/zcode && npm test   # = node --test --test-force-exit "test/*.test.js"
 
 # 协议 schema 探针（只读，跑真实链路；改协议后先跑探针再动手）
@@ -54,7 +54,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 # 手机端
 cd wzxClaw_android
 flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
-flutter test           # 382 项
+flutter test           # 用例数随功能演进，不在文档写死
 
 # 手机端 release APK（2026-09-16 定）：
 # 1. 每次出包前 pubspec.yaml 的 patch 版本 +1 并带 +N（如 1.2.5+5 → 1.2.6+6），
@@ -109,9 +109,10 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **确定性房间号**：房间 id 由 (pass_hash, mid) 派生、口令落盘
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
-- **架构收敛完成（2026-09-17）**：R3 已执行——翻译壳（zcode_protocol_translate/
-  ChatStore/ws_transport/session_sync）整体删除，手机端从 UI 到连接层只剩
-  app-server 一种形状；goal/todos 面板待 R2 用直连栈 session/goal 重建。
+- **架构收敛完成（2026-09-17）**：R3 已执行——历史翻译壳模块
+  `zcode_protocol_translate` / `ChatStore` / `ws_transport` / `session_sync` 已删除；
+  现用 UI 直接消费 `ZcodeChatStore`，由 `ConnectionManager` 与 `lib/zcode/`
+  承接 app-server 帧，goal 面板通过直连请求读取 `session/goal`。
 - **UI/协议分层表述纪律（2026-09-17 定）**：UI 是稳定层，做好就不变；
   演进只发生在网络与协议层。文档与讨论一律说「UI ＋ 当前接线的协议栈」
   （如：页面接 WsEvents 栈 → 改接 app-server 直连栈），
@@ -120,7 +121,9 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **APK 发布纪律**：编译好的手机端 release APK 一律放 NAS `/volume1/share/zcode/`
   （scp 过去即可），不放旧位置 `/volume1/docker/zcode-relay-build/apk/`；
   每次出包 patch 版本 +1（pubspec 带 +N 保 versionCode 递增），文件名带
-  版本号 `wzxClaw-android-release-vX.Y.Z.apk`。
+  版本号 `wzxClaw-android-release-vX.Y.Z.apk`。根 `release.yml` 的 `android-v*`
+  仅构建并校验候选 artifact：当前 release 使用 debug signing 且 CI 无 NAS 凭据，
+  不创建正式 Release；`companion-v*` 独立发布 Companion，绝不发布 Legacy Desktop。
 
 ## 外部服务
 
