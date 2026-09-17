@@ -25,8 +25,8 @@ import '../widgets/permission_bar.dart';
 import '../widgets/project_drawer.dart';
 
 import '../widgets/streaming_shimmer.dart';
-import '../widgets/thinking_indicator.dart';
 import '../widgets/tool_call_list.dart';
+import '../widgets/turn_block.dart';
 import '../widgets/workspace_switcher_sheet.dart';
 import '../zcode/zcode_chat_store.dart';
 
@@ -871,37 +871,91 @@ class _ChatPageState extends State<ChatPage> {
       );
     }
 
-    final showThinking = _isWaiting; // agent:running 이 _isStreaming=true 로 설정해도 여전히 표시
     final showBlockedCard = _store.modelBlockedContent != null &&
         _store.modelBlockedSessionId == _store.activeSessionId;
     // Group consecutive tool messages together
     final grouped = _groupMessages(_displayMessages);
-    final blockedIndex = grouped.length + (showThinking ? 1 : 0);
-    final itemCount = blockedIndex + (showBlockedCard ? 1 : 0);
+
+    // ── 回合分桶：用户消息独立成块；连续过程（工具/助手文本）合成一个
+    // 回合块（TurnBlockView 按真实顺序内联思考/工具/叙述）。
+    // 子智能体线程保持独立卡片。
+    final blocks = <Object>[];
+    var turnBuf = <ChatMessage>[];
+    void flushTurn() {
+      if (turnBuf.isEmpty) return;
+      blocks.add(_TurnEntry(List.of(turnBuf)));
+      turnBuf = <ChatMessage>[];
+    }
+
+    for (final item in grouped) {
+      if (item is _SubagentGroup) {
+        flushTurn();
+        blocks.add(item);
+        continue;
+      }
+      if (item is _ToolGroup) {
+        turnBuf.addAll(item.messages);
+        continue;
+      }
+      final msg = item as ChatMessage;
+      if (msg.role == MessageRole.user) {
+        flushTurn();
+        blocks.add(msg);
+        continue;
+      }
+      turnBuf.add(msg);
+    }
+    flushTurn();
+
+    final itemCount = blocks.length + (showBlockedCard ? 1 : 0);
     // Only animate newly appended messages (not full replacement from session switch).
     // If prev count was 0 (empty or just switched), skip animation entirely.
     final prevCount = _previousGroupCount > 0 ? _previousGroupCount : itemCount;
-    _previousGroupCount = grouped.length;
+    _previousGroupCount = blocks.length;
 
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
       itemCount: itemCount,
       itemBuilder: (context, index) {
-        if (showThinking && index == grouped.length) {
-          return AgentThinkingBlock(thinkingStream: _thinkingCtrl.stream);
-        }
-        if (showBlockedCard && index == blockedIndex) {
+        if (showBlockedCard && index == blocks.length) {
           return _buildModelBlockedCard(colors);
         }
-        final item = grouped[index];
+        final block = blocks[index];
         Widget child;
-        if (item is _ToolGroup) {
-          child = ToolCallGroup(tools: item.messages);
-        } else if (item is _SubagentGroup) {
-          child = _SubagentGroupCard(group: item, buildItem: _buildMessageItem);
+        if (block is _TurnEntry) {
+          final isLast = index == blocks.length - 1;
+          final busy = isLast && (_isStreaming || _isWaiting);
+          TurnThinkData? think;
+          if (busy) {
+            think = TurnThinkData(
+                running: true, content: _store.thinkingContent,);
+          } else if (isLast &&
+              (_store.lastThinkingContent.isNotEmpty ||
+                  _store.lastThinkingMs != null)) {
+            think = TurnThinkData(
+              duration: _store.lastThinkingMs == null
+                  ? null
+                  : Duration(milliseconds: _store.lastThinkingMs!),
+              content: _store.lastThinkingContent,
+            );
+          }
+          child = TurnBlockView(
+            vm: buildTurnVM(
+              block.messages,
+              busy: busy,
+              totalDuration: !busy && isLast && _store.lastTurnMs != null
+                  ? Duration(milliseconds: _store.lastTurnMs!)
+                  : null,
+              think: think,
+            ),
+            defaultCollapsed: isLast ? null : true,
+            answerBuilder: _buildMarkdownBody,
+          );
+        } else if (block is _SubagentGroup) {
+          child = _SubagentGroupCard(group: block, buildItem: _buildMessageItem);
         } else {
-          child = _buildMessageItem(item as ChatMessage);
+          child = _buildUserBubble(block as ChatMessage);
         }
         // Animate only newly appended items
         if (index >= prevCount) {
@@ -2307,6 +2361,12 @@ class _ChatPageState extends State<ChatPage> {
 // ── Custom code block builder with syntax highlight + copy ────────────
 
 /// 排队中的待发消息（见 _sendQueue）
+/// 回合块条目：一个回合内的有序消息切片（工具 + 助手文本，不含用户消息）
+class _TurnEntry {
+  const _TurnEntry(this.messages);
+  final List<ChatMessage> messages;
+}
+
 class _QueuedSend {
   final String id;
   String text;

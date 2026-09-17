@@ -96,7 +96,7 @@ enum DetailLineKind { dim, add, del, cmd }
 /// 思考行数据
 class TurnThinkData {
   const TurnThinkData({
-    required this.duration,
+    this.duration,
     required this.content,
     this.running = false,
   });
@@ -249,11 +249,20 @@ String _plainExcerpt(String text) {
 /// ── 渲染 ──────────────────────────────────────────────────────────
 
 class TurnBlockView extends StatefulWidget {
-  const TurnBlockView({super.key, required this.vm, this.defaultCollapsed});
+  const TurnBlockView({
+    super.key,
+    required this.vm,
+    this.defaultCollapsed,
+    this.answerBuilder,
+  });
 
   final TurnVM vm;
+
   /// null = 自动（busy 展开 / 完成折叠）
   final bool? defaultCollapsed;
+
+  /// 正文 Markdown 渲染器（宿主传入富渲染；缺省纯文本）
+  final Widget Function(String markdown)? answerBuilder;
 
   @override
   State<TurnBlockView> createState() => _TurnBlockViewState();
@@ -347,7 +356,9 @@ class _TurnBlockViewState extends State<TurnBlockView> {
         if (vm.answerMarkdown.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6, bottom: 2),
-            child: MarkdownBodyLite(markdown: vm.answerMarkdown),
+            child: widget.answerBuilder != null
+                ? widget.answerBuilder!(vm.answerMarkdown)
+                : MarkdownBodyLite(markdown: vm.answerMarkdown),
           ),
         // 块级操作按钮（正文非空时）
         if (vm.answerMarkdown.isNotEmpty)
