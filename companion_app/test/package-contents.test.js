@@ -65,8 +65,13 @@ function assertPackageContents(archivePath) {
     walk(runtimeDir);
     assert.deepEqual(violations, [], `bundled runtime must not carry credential-like files: ${violations}`);
   } else {
-    assert.equal(fs.existsSync(runtimeDir), false,
-      'non-bundled build must not ship zcode-runtime (manifest says bundled:false)');
+    // 非 bundled 构建：extraResources 仍会拷出含 manifest 的 zcode-runtime
+    // 目录（prepare-runtime 的空形态），但绝不能携带 runtime 本体
+    assert.equal(
+      fs.existsSync(path.join(runtimeDir, 'glm', 'zcode.cjs')),
+      false,
+      'non-bundled build must not ship zcode-runtime/glm/zcode.cjs',
+    );
   }
 }
 

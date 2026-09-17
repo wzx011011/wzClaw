@@ -145,6 +145,59 @@ test('runtime resolver：打包 Electron 用同安装目录官方 ZCode.exe 承�
   }
 });
 
+test('runtime resolver：内嵌 runtime 兜底（无官方安装时）', () => {
+  // 打包布局：resources/zcode-runtime/glm/zcode.cjs
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-bundled-'));
+  const bundled = path.join(root, 'zcode-runtime', 'glm', 'zcode.cjs');
+  fs.mkdirSync(path.dirname(bundled), { recursive: true });
+  fs.writeFileSync(bundled, '');
+  const original = process.resourcesPath;
+  Object.defineProperty(process, 'resourcesPath', { value: root, configurable: true });
+  try {
+    const resolved = resolveZcodeRuntime({ LOCALAPPDATA: '' });
+    assert.deepEqual(resolved, {
+      category: 'resolved',
+      source: 'bundled',
+      command: process.execPath,
+      args: [bundled],
+    });
+    // 显式覆盖（开发/测试口）同样生效
+    const other = path.join(root, 'other.cjs');
+    fs.writeFileSync(other, '');
+    const viaEnv = resolveZcodeRuntime({
+      LOCALAPPDATA: '',
+      WZXCLAW_BUNDLED_RUNTIME: other,
+    });
+    assert.equal(viaEnv.source, 'bundled');
+    assert.deepEqual(viaEnv.args, [other]);
+  } finally {
+    Object.defineProperty(process, 'resourcesPath', {
+      value: original,
+      configurable: true,
+    });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runtime resolver：官方安装永远优先于内嵌 runtime（顺序钉死）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-priority-'));
+  const runtime = path.join(root, 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs');
+  fs.mkdirSync(path.dirname(runtime), { recursive: true });
+  fs.writeFileSync(runtime, '');
+  const bundled = path.join(root, 'bundled', 'zcode.cjs');
+  fs.mkdirSync(path.dirname(bundled), { recursive: true });
+  fs.writeFileSync(bundled, '');
+  try {
+    const resolved = resolveZcodeRuntime({
+      LOCALAPPDATA: root,
+      WZXCLAW_BUNDLED_RUNTIME: bundled,
+    });
+    assert.equal(resolved.source, 'installed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runtime resolver：失效 ZCODE_BIN 必须明确报错而非回退', () => {
   const original = process.env.ZCODE_BIN;
   process.env.ZCODE_BIN = path.join(os.tmpdir(), 'does-not-exist-zcode');
