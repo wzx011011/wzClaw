@@ -25,7 +25,6 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
-import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
 import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_keepalive_controller.dart';
@@ -59,11 +58,6 @@ class ConnectionManager with WidgetsBindingObserver {
       StreamController<WsConnectionState>.broadcast();
   Stream<WsConnectionState> get stateStream => _stateController.stream;
 
-  final StreamController<WsMessage> _messageController =
-      StreamController<WsMessage>.broadcast();
-  Stream<WsMessage> get messageStream => _messageController.stream;
-  Stream<WsMessage> get incoming => _messageController.stream;
-
   final StreamController<String?> _errorController =
       StreamController<String?>.broadcast();
   Stream<String?> get errorStream => _errorController.stream;
@@ -96,15 +90,6 @@ class ConnectionManager with WidgetsBindingObserver {
 
   /// f25b231 UI 契约：当前桌面列表（同步读）
   List<DesktopInfo> get desktops => List.unmodifiable(_desktops);
-
-  /// f25b231 UI 契约：后台保活开关（前台服务由 App 生命周期模块接管，
-  /// 新链路客户端自带保活 ping——保留 API 兼容，仅记录偏好）
-  Future<void> setBackgroundKeepAliveEnabled(bool enabled) async {
-    // 前台服务的实际启停由 ZcodeKeepAliveController 接管（监听生命周期 +
-    // 同一 pref key）。此前这里只写 pref 不通知 controller，设置开关要
-    // 重启 App 才生效——开关必须即时生效，故整体委托。
-    await ZcodeKeepAliveController.instance.setEnabled(enabled);
-  }
 
   Stream<String?> get desktopIdentityStream =>
       _desktopsController.stream.map((_) => desktopIdentity);
@@ -185,10 +170,6 @@ class ConnectionManager with WidgetsBindingObserver {
         // 多配对：列表常驻，仅当前桌面标记离线（relay 可达、桌面不在）
         unawaited(_refreshDesktopList());
         _setState(WsConnectionState.connecting);
-        _messageController.add(const WsMessage(
-          event: 'system:no_desktop',
-          data: {'error': '桌面端不在线，等待其连接…'},
-        ),);
         break;
       case ZcodeRelayState.closed:
         unawaited(_refreshDesktopList());
@@ -290,8 +271,6 @@ class ConnectionManager with WidgetsBindingObserver {
     _selectedDesktopIdController.add(desktopId);
   }
 
-  void clearDesktopSelection() => selectDesktop(null);
-
   // ---- 生命周期 ----
 
   // cFSC 互斥标志：入口守卫（状态检查）到 _connectPairing 之间隔着两个
@@ -332,11 +311,6 @@ class ConnectionManager with WidgetsBindingObserver {
     }
   }
 
-  Future<void> wakeAndReconnect(String reason) async {
-    debugPrint('[ConnectionManager] wakeAndReconnect: $reason');
-    await connectFromSavedConfiguration();
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // 保活/重连由 ZcodeRelayClient 自理（ping + 指数退避）；
@@ -365,7 +339,6 @@ class ConnectionManager with WidgetsBindingObserver {
   void dispose() {
     disconnect();
     _stateController.close();
-    _messageController.close();
     _errorController.close();
     _desktopsController.close();
     _selectedDesktopIdController.close();

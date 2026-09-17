@@ -125,11 +125,6 @@ class ChatRuntimeService {
     });
   }
 
-  /// 设置思考档位。枚举值未实测（协议无读回方法），错误显性上浮。
-  Future<void> setThoughtLevel(String sessionId, String level) async {
-    await _call('session/setThoughtLevel', {
-      'sessionId': sessionId,
-      'thoughtLevel': level,
-    });
-  }
+  // 思考档位设置已迁直连栈（ZcodeChatStore.setThoughtLevel：枚举经
+  // 2026-09-17 真机探针实测 low|high|max，且乐观回显 store.thoughtLevel）。
 }

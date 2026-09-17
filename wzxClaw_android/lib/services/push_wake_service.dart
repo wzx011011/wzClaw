@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,7 +16,7 @@ const _channelId = 'wzx_workspace_notification';
 ///
 /// 通知偏好与后台保活偏好彼此独立：通知只决定是否订阅和展示提醒；
 /// 后台保活由 ZcodeKeepAliveController 的单独设置决定。
-class PushWakeService with WidgetsBindingObserver {
+class PushWakeService {
   PushWakeService._();
 
   static final PushWakeService instance = PushWakeService._();
@@ -63,9 +62,6 @@ class PushWakeService with WidgetsBindingObserver {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
 
-    // 监听 App 生命周期
-    WidgetsBinding.instance.addObserver(this);
-
   }
 
   Future<void> setEnabled(bool enabled) async {
@@ -74,29 +70,6 @@ class PushWakeService with WidgetsBindingObserver {
 
     if (!Platform.isAndroid) return;
 
-    if (enabled) {
-    } else {
-    }
-  }
-
-  /// 兼容旧版 main.dart 调用（前台 Service 方案无需处理待处理事件）
-  Future<void> applyPendingWakeReconnect() async {}
-
-  // ──────────────────────────────────────────────
-  // WidgetsBindingObserver
-  // ──────────────────────────────────────────────
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.resumed:
-        break;
-      case AppLifecycleState.paused:
-      case AppLifecycleState.hidden:
-        break;
-      default:
-        break;
-    }
   }
 
   // ──────────────────────────────────────────────

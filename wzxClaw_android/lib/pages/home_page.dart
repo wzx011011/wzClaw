@@ -14,7 +14,6 @@ import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
-import '../services/voice_input_service.dart';
 import '../services/git_service.dart';
 import '../services/chat_runtime_service.dart';
 import '../widgets/animated_message_item.dart';
@@ -51,7 +50,6 @@ class _ChatPageState extends State<ChatPage> {
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   String? _workspaceName;
-  StreamSubscription? _voiceErrorSub;
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
@@ -102,18 +100,6 @@ class _ChatPageState extends State<ChatPage> {
 
     _scrollController.addListener(_onScroll);
 
-    _voiceErrorSub = VoiceInputService.instance.errorStream.listen((error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(VoiceInputService.errorMessage(error)),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    });
-
     // 工作区选择态在直连栈 store 里（欢迎页选择/最近会话回退）；
     // 变化时刷新当前分支（companion x/* 扩展，见 git_service.dart）
     _store.addListener(_onWorkspaceChanged);
@@ -144,7 +130,6 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _store.removeListener(_onStoreChanged);
-    _voiceErrorSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
     _queueFlushTimer?.cancel();
@@ -314,15 +299,12 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
-    // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息）
+    // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息，
+    // 失败原因已进 store.error）
     final pendingLevel = _pendingThoughtLevel;
     if (pendingLevel != null) {
       _pendingThoughtLevel = null;
-      try {
-        await ChatRuntimeService.instance.setThoughtLevel(newSid, pendingLevel);
-      } catch (e) {
-        debugPrint('[effort] 新会话补发思考档位失败: $e');
-      }
+      await _store.setThoughtLevel(pendingLevel);
     }
     unawaited(_store.sendMessage(text));
   }
@@ -2265,7 +2247,10 @@ class _ChatPageState extends State<ChatPage> {
     );
     if (chosen == null) return;
     if (sessionId == null) {
+      // 新任务态暂存：直接落到 store 状态，弹层勾选立即回显；
+      // 会话创建后由 _startNewConversation 补发引擎
       setState(() => _pendingThoughtLevel = chosen);
+      _store.thoughtLevel = chosen;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('思考档位将在新会话生效'),
@@ -2275,17 +2260,16 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
-    try {
-      await ChatRuntimeService.instance.setThoughtLevel(sessionId, chosen);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('思考档位已设为 $chosen'),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),);
-      }
-    } catch (e) {
-      if (mounted) _runtimeErrorSnack(e);
+    // 统一走直连栈 store：乐观回显（thoughtLevel）+ 引擎生效一体完成。
+    // 旧路径 ChatRuntimeService 只写引擎不回 store，UI 勾选永不更新
+    // （2026-09-17 迁移审计 split-brain #2）。失败时 store._error 已带原因。
+    final ok = await _store.setThoughtLevel(chosen);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_store.error ?? '设置思考档位失败'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),);
     }
   }
 

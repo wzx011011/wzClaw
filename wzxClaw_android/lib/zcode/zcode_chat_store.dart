@@ -2143,10 +2143,12 @@ class ZcodeChatStore extends ChangeNotifier {
   // 会话高级操作（官方 web 对齐；schema 均经 probe-methods 实测）
   // ──────────────────────────────────────────────
 
-  /// 思考强度（session/setThoughtLevel；实测字段 thoughtLevel: string，
-  /// 业务枚举 low|medium|high）。乐观更新，权威值以快照回填为准。
+  /// 思考强度（session/setThoughtLevel；实测字段 thoughtLevel: string）。
+  /// 枚举 2026-09-17 真机探针实测：low|high|max 通过，medium 被 -32603
+  /// 拒（"Unsupported reasoning effort: medium"）。乐观更新，权威值以
+  /// 快照回填为准。
   Future<bool> setThoughtLevel(String level) async {
-    const allowed = ['low', 'medium', 'high'];
+    const allowed = ['low', 'high', 'max'];
     if (!allowed.contains(level)) {
       _fail('未知思考强度：$level');
       return false;
