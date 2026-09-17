@@ -12,7 +12,6 @@ import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
-import '../services/attachment_service.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
 import '../services/git_service.dart';
@@ -70,46 +69,6 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 新任务态选择的思考档位：引擎无节点级默认档位，暂存到会话创建后补发
   String? _pendingThoughtLevel;
-
-  /// 待发送附件（上传中/已就绪），发送时拼接节点路径引用进消息
-  final List<AttachmentUpload> _attachments = [];
-
-  /// 组装出站文本：已就绪附件的节点路径引用 + 用户输入；同时清空附件列表
-  String _composeOutgoing(String text) {
-    final refs = _attachments
-        .where((a) => a.done)
-        .map((a) => '[附件已上传到节点: ${a.nodePath}]')
-        .join('
-');
-');
-    _attachments.removeWhere((a) => a.done);
-    return refs.isEmpty ? text : '$refs
-$text';
-  }
-
-  /// 选图/拍照并上传为待发送附件
-  Future<void> _pickAndUploadAttachment({required bool camera}) async {
-    Navigator.pop(context); // 收起附加菜单
-    final up = await AttachmentService.pickAndUpload(
-      source: camera ? ImageSource.camera : ImageSource.gallery,
-      onChanged: (_) {
-        if (mounted) setState(() {});
-      },
-    );
-    if (up == null) return;
-    if (!mounted) return;
-    setState(() {
-      _attachments.removeWhere((a) => a.name == up.name && a.nodePath == null);
-      _attachments.add(up);
-    });
-    if (up.error != null) _showTopSnack(up.error!);
-  }
-
-  /// 移除待发送附件（上传中的移除后其完成结果将被忽略；节点残件由
-  /// companion 30 分钟过期清理兜底）
-  void _removeAttachment(AttachmentUpload a) {
-    setState(() => _attachments.remove(a));
-  }
 
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
   // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
@@ -265,10 +224,8 @@ $text';
   }
 
   void _sendMessage() {
-    var text = _inputController.text.trim();
-    final hasReadyAttachment = _attachments.any((a) => a.done);
-    if (text.isEmpty && !hasReadyAttachment) return;
-    text = _composeOutgoing(text);
+    final text = _inputController.text.trim();
+    if (text.isEmpty) return;
     if (ConnectionManager.instance.state != WsConnectionState.connected) return;
     // 流式进行中：改为排队（对齐官方 ZCode「继续输入以排队后续修改」）
     if (_isStreaming || _isWaiting) {
@@ -1518,22 +1475,8 @@ $text';
           curve: Curves.easeOutCubic,
           padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
           child: Column(children: [
-            // 待发送附件条（上传进度/完成/失败 + 移除）
-            if (_attachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    for (final a in _attachments)
-                      _AttachmentChip(
-                        attachment: a,
-                        onRemove: () => _removeAttachment(a),
-                      ),
-                  ],),
-                ),
-              ),
-            // 消息排队条：流式期间发送的内容在此排队（↑立即/编辑/删除/拖拽）
+            // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
+            // 语义未定，先不暴露——用户 2026-09-17 定）
             _buildSendQueueStrip(colors),
             _buildComposerContainer(colors, isConnected),
           ],),
@@ -1742,11 +1685,10 @@ $text';
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     final items = [
-      ('add', Icons.attach_file, '添加附件（图片）', null),
-      ('camera', Icons.photo_camera_outlined, '拍照附件', null),
-      ('commands', Icons.terminal, '使用 / 选择能力', null),
-      ('context', Icons.data_object, '使用 @ 添加上下文', '暂不支持'),
-      ('skill', Icons.bolt, r'使用 $ 选择技能', '暂不支持'),
+      ('添加附件', '暂不支持'),
+      ('使用 @ 添加上下文', '暂不支持'),
+      ('使用 / 选择能力', null),
+      ('使用 \$ 选择技能', '暂不支持'),
     ];
     await _showComposerSheet<String>(
       builder: (ctx) => Padding(
@@ -1754,15 +1696,10 @@ $text';
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final (action, icon, label, note) in items)
+            for (final (label, note) in items)
               ListTile(
                 dense: true,
                 enabled: note == null,
-                leading: Icon(icon,
-                    size: 20,
-                    color: note == null
-                        ? colors.textPrimary
-                        : colors.textMuted,),
                 title: Row(children: [
                   Text(label,
                       style: TextStyle(
@@ -1779,14 +1716,7 @@ $text';
                 ],),
                 onTap: note == null
                     ? () {
-                        Navigator.pop(ctx);
-                        if (action == 'add') {
-                          unawaited(_pickAndUploadAttachment(camera: false));
-                        } else if (action == 'camera') {
-                          unawaited(_pickAndUploadAttachment(camera: true));
-                        } else if (action == 'commands') {
-                          _showCommandSheet();
-                        }
+                        Navigator.pop(ctx, 'commands');
                       }
                     : null,
               ),
@@ -2415,74 +2345,6 @@ $text';
 // ── Custom code block builder with syntax highlight + copy ────────────
 
 /// 排队中的待发消息（见 _sendQueue）
-/// 待发送附件胶囊：文件名 + 上传进度（完成 ✓ / 失败标）+ 移除按钮
-class _AttachmentChip extends StatelessWidget {
-  const _AttachmentChip({required this.attachment, required this.onRemove});
-  final AttachmentUpload attachment;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    final a = attachment;
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-      decoration: BoxDecoration(
-        color: colors.bgTertiary,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-            color: a.error != null ? colors.error : colors.border,),
-      ),
-      constraints: const BoxConstraints(maxWidth: 200),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.insert_drive_file_outlined,
-              size: 13, color: colors.textMuted,),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(a.name,
-                style: TextStyle(color: colors.textPrimary, fontSize: 12,),
-                overflow: TextOverflow.ellipsis,),
-          ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: onRemove,
-            child: Icon(Icons.close, size: 14, color: colors.textMuted),
-          ),
-        ],),
-        const SizedBox(height: 3),
-        if (a.error != null)
-          Text(a.error!,
-              style: TextStyle(color: colors.error, fontSize: 10.5),
-              overflow: TextOverflow.ellipsis)
-        else if (a.done)
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.check_circle, size: 11, color: colors.success),
-            const SizedBox(width: 3),
-            Text('已上传',
-                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
-          ])
-        else
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            SizedBox(
-              width: 60,
-              child: LinearProgressIndicator(
-                value: a.progress,
-                minHeight: 3,
-                color: colors.accent,
-                backgroundColor: colors.border,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text('${(a.progress * 100).toStringAsFixed(0)}%',
-                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
-          ]),
-      ],),
-    );
-  }
-}
-
 /// 回合块条目：一个回合内的有序消息切片（工具 + 助手文本，不含用户消息）
 class _TurnEntry {
   const _TurnEntry(this.messages);
