@@ -62,6 +62,7 @@ function loadConfig() {
   const dir = app.getPath('userData');
   fs.mkdirSync(dir, { recursive: true });
   configPath = path.join(dir, 'config.json');
+  logFilePath = path.join(dir, 'companion.log');
   const defaults = {
     schemaVersion: 2,
     relayUrl: DEFAULT_RELAY_URL,
@@ -149,10 +150,27 @@ function saveConfig() {
 
 // ---- 日志与广播 ----
 
+// 持久化日志上限：单文件 1MB，超过即截断重写（托盘常驻进程不允许
+// 只留内存日志——本次排障证明窗口一关证据就丢）。
+const LOG_FILE_MAX_BYTES = 1024 * 1024;
+let logFilePath = null;
+
+function appendLogFile(line) {
+  if (!logFilePath) return;
+  try {
+    if (fs.existsSync(logFilePath) && fs.statSync(logFilePath).size > LOG_FILE_MAX_BYTES) {
+      fs.writeFileSync(logFilePath, '');
+    }
+    fs.appendFileSync(logFilePath, `${line}\n`);
+  } catch { /* 日志落盘失败不影响主流程 */ }
+}
+
 function pushLog(event, detail) {
-  logTail.push({ t: Date.now(), event, detail: detail || '' });
+  const text = detail || '';
+  logTail.push({ t: Date.now(), event, detail: text });
   if (logTail.length > 300) logTail.splice(0, logTail.length - 300);
-  broadcast('log', { event, detail: detail || '' });
+  appendLogFile(`${new Date().toISOString()} ${event}${text ? ` ${text}` : ''}`);
+  broadcast('log', { event, detail: text });
 }
 
 function broadcast(type, payload) {
@@ -190,6 +208,9 @@ function initRuntimeGate() {
     start: async (snapshot) => startCompanion(snapshot),
     stop: stopCompanion,
     onStatus: (status) => {
+      if (status.category !== runtimeStatus.category) {
+        pushLog('runtime-status', `${status.category}${status.source ? ` source=${status.source}` : ''}`);
+      }
       runtimeStatus = status;
       broadcast('runtime-status', publicRuntimeStatus());
     },

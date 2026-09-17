@@ -52,6 +52,11 @@ function createRelay(options = {}) {
     if (ws.readyState !== WebSocket.OPEN) return;
     const json = JSON.stringify(value);
     if (Buffer.byteLength(json) > MAX_PAYLOAD || ws.bufferedAmount > MAX_PAYLOAD * 2) {
+      // 终止必须留观测（静默丢弃=缺陷）： oversized=单帧超限，slow=慢消费堆积。
+      // 只记字节数，不落帧内容。
+      const state = sockets.get(ws);
+      logger('send-overflow-terminate',
+        `role=${state?.role || 'unknown'} frame=${Buffer.byteLength(json)}B buffered=${ws.bufferedAmount}B`);
       ws.terminate(); return;
     }
     ws.send(json);
