@@ -25,7 +25,7 @@ NAS relay
 | 路径 | 职责 |
 |---|---|
 | `wzxClaw_android/lib/zcode/` | 手机端核心：ZcodeChatStore（每会话状态容器/同步层/反向请求/通知）、ZcodeDesktopRegistry（多桌面注册表）、relay 客户端、权限组件、SQLite 缓存 |
-| `wzxClaw_android/lib/services/` | 翻译壳：WsEvents 形状协议栈（换芯不换壳的产物；现用 home_page 的数据源经 `zcode_protocol_translate` 接引擎帧；退役条件 = 聊天页换接线到 `lib/zcode` 直连栈） |
+| `wzxClaw_android/lib/services/` | 连接层 + 扩展服务：ConnectionManager（relay 连接/设备列表/供帧桥/zcodeRequest 通道）、GitService、ChatRuntimeService、NodeCatalogService（后三者走 x/* 扩展） |
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
@@ -61,6 +61,9 @@ flutter test           # 382 项
 #    versionCode 单调递增，手机上能看出是否最新版；
 # 2. 产物统一放 NAS `/volume1/share/zcode/`，文件名带版本：
 #    wzxClaw-android-release-vX.Y.Z.apk（不带版本的旧文件删掉，避免分不清）
+# 3. （2026-09-17 教训）被取消过的构建产物不可信——gradle 会在损坏增量上
+#    "续"出截断 zip（报成功但手机报解析错误）。取消后必须 flutter clean
+#    重建；上架前先 apksigner verify + zip 完整性检查，再 scp + 哈希比对
 flutter build apk --release
 
 # companion（PC 常驻节点）
@@ -106,9 +109,9 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **确定性房间号**：房间 id 由 (pass_hash, mid) 派生、口令落盘
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
-- **双栈现状（2026-09-16 记录）**：`lib/zcode` 目标栈与 `services/` 换芯栈并存，
-  新 UI 直发通道走 ConnectionManager.zcodeRequest；旧 WsEvents 壳的退役条件
-  = zcode 聊天页落地接线。改动共享组件时两栈回归面都要跑。
+- **架构收敛完成（2026-09-17）**：R3 已执行——翻译壳（zcode_protocol_translate/
+  ChatStore/ws_transport/session_sync）整体删除，手机端从 UI 到连接层只剩
+  app-server 一种形状；goal/todos 面板待 R2 用直连栈 session/goal 重建。
 - **UI/协议分层表述纪律（2026-09-17 定）**：UI 是稳定层，做好就不变；
   演进只发生在网络与协议层。文档与讨论一律说「UI ＋ 当前接线的协议栈」
   （如：页面接 WsEvents 栈 → 改接 app-server 直连栈），

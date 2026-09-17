@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/config/app_colors.dart';
-import 'package:wzxclaw_android/services/chat_store.dart';
+import 'package:wzxclaw_android/zcode/zcode_reverse_models.dart';
 import 'package:wzxclaw_android/widgets/permission_bar.dart';
 
 Widget wrapWithTheme(Widget child) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
-import '../services/chat_store.dart';
+import '../zcode/zcode_reverse_models.dart';
+import '../zcode/zcode_chat_store.dart';
 
 /// A bar that appears when the desktop agent asks the user a question.
 class AskUserBar extends StatefulWidget {
@@ -23,7 +24,7 @@ class _AskUserBarState extends State<AskUserBar> {
   }
 
   void _submitSelection() {
-    ChatStore.instance.respondToAskUser(
+    ZcodeChatStore.instance.respondToAskUser(
       widget.question.questionId,
       _selected.toList(),
     );
@@ -32,7 +33,7 @@ class _AskUserBarState extends State<AskUserBar> {
   void _submitOther() {
     final text = _otherController.text.trim();
     if (text.isEmpty) return;
-    ChatStore.instance.respondToAskUser(
+    ZcodeChatStore.instance.respondToAskUser(
       widget.question.questionId,
       [],
       customText: text,
@@ -40,7 +41,7 @@ class _AskUserBarState extends State<AskUserBar> {
   }
 
   void _onSingleSelect(String label) {
-    ChatStore.instance.respondToAskUser(widget.question.questionId, [label]);
+    ZcodeChatStore.instance.respondToAskUser(widget.question.questionId, [label]);
   }
 
   @override

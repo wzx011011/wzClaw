@@ -2,7 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
-import '../services/chat_store.dart';
+import '../zcode/zcode_reverse_models.dart';
+import '../zcode/zcode_chat_store.dart';
 
 /// A bar that appears when the desktop agent requests permission for a tool.
 class PermissionBar extends StatelessWidget {
@@ -81,7 +82,7 @@ class PermissionBar extends StatelessWidget {
             children: [
               TextButton(
                 onPressed: () =>
-                    ChatStore.instance.respondToPermission(request.toolCallId, false),
+                    ZcodeChatStore.instance.respondToPermission(request.toolCallId, approved: false),
                 style: TextButton.styleFrom(
                   foregroundColor: colors.error,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -95,7 +96,7 @@ class PermissionBar extends StatelessWidget {
               const SizedBox(width: 8),
               TextButton(
                 onPressed: () =>
-                    ChatStore.instance.respondToPermission(request.toolCallId, true),
+                    ZcodeChatStore.instance.respondToPermission(request.toolCallId, approved: true),
                 style: TextButton.styleFrom(
                   foregroundColor: colors.success,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),

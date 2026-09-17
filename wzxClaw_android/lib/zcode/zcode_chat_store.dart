@@ -241,6 +241,23 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 已知可用模型（state.updated 全量快照缓存；setModel 兜底用）
   final List<String> _availableModels = [];
 
+  // ---- 工作区选择（欢迎页选择态；null = 跟随最近会话）----
+
+  /// 用户显式选择的工作区（数据源 = store.sessions 分组，非引擎状态）。
+  /// 引擎无"当前工作区"概念——这只影响 newSession 的 workspace 参数。
+  String? _selectedWorkspaceKey;
+  String? _selectedWorkspacePath;
+
+  /// 当前生效的工作区路径（显式选择 ?? 默认回退）；供欢迎页 chip 显示
+  String? get selectedWorkspacePath =>
+      _selectedWorkspacePath ?? _defaultWorkspacePath;
+
+  void selectWorkspace(String workspaceKey, String workspacePath) {
+    _selectedWorkspaceKey = workspaceKey;
+    _selectedWorkspacePath = workspacePath;
+    notifyListeners();
+  }
+
   /// 结构化模型目录（settings.model.available 全元数据；模型选择器数据源）
   final List<ZcodeModelInfo> _modelCatalog = [];
 
@@ -846,13 +863,17 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     final hasExplicit = (workspaceKey?.isNotEmpty ?? false)
         && (workspacePath?.isNotEmpty ?? false);
-    // 未显式指定时复用最近会话的 workspace（手机端不知道桌面路径）
-    if (!hasExplicit
-        && (_defaultWorkspaceKey == null || _defaultWorkspacePath == null)) {
+    // 未显式指定时：欢迎页显式选择的工作区优先，其次复用最近会话的
+    // workspace（手机端不知道桌面路径）
+    if (!hasExplicit && _selectedWorkspaceKey == null) {
       await refreshSessions(); // 刷一次列表以获得可复用工作区
     }
-    final wsKey = hasExplicit ? workspaceKey : _defaultWorkspaceKey;
-    final wsPath = hasExplicit ? workspacePath : _defaultWorkspacePath;
+    final wsKey = hasExplicit
+        ? workspaceKey
+        : (_selectedWorkspaceKey ?? _defaultWorkspaceKey);
+    final wsPath = hasExplicit
+        ? workspacePath
+        : (_selectedWorkspacePath ?? _defaultWorkspacePath);
     if (wsKey == null || wsKey.isEmpty || wsPath == null || wsPath.isEmpty) {
       _fail('没有可用的工作区，请先在桌面端创建一个会话');
       return;

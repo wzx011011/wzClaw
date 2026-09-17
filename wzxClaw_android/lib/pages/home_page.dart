@@ -14,7 +14,6 @@ import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
-import '../services/session_sync_service.dart';
 import '../services/voice_input_service.dart';
 import '../services/git_service.dart';
 import '../services/chat_runtime_service.dart';
@@ -57,7 +56,6 @@ class _ChatPageState extends State<ChatPage> {
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
   StreamSubscription<WsConnectionState>? _connectionStateSub;
-  StreamSubscription<WorkspaceInfo?>? _workspaceInfoSub;
   final FocusNode _inputFocusNode = FocusNode();
 
   /// 直连栈数据源（R1 换接线）：连接层不变（ConnectionManager 供帧），
@@ -116,15 +114,10 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
 
-    _workspaceInfoSub =
-        SessionSyncService.instance.workspaceInfoStream.listen((info) {
-      if (mounted) setState(() => _workspaceName = info?.workspaceName);
-      // 工作区变化/切换后刷新当前分支（companion x/* 扩展，见 git_service.dart）
-      GitService.instance.refreshBranch(info?.workspacePath);
-    });
-    _workspaceName = SessionSyncService.instance.workspaceInfo?.workspaceName;
-    GitService.instance
-        .refreshBranch(SessionSyncService.instance.workspaceInfo?.workspacePath);
+    // 工作区选择态在直连栈 store 里（欢迎页选择/最近会话回退）；
+    // 变化时刷新当前分支（companion x/* 扩展，见 git_service.dart）
+    _store.addListener(_onWorkspaceChanged);
+    _onWorkspaceChanged();
 
     // Debounce all transient (non-connected) states so brief reconnects
     // don't flash the status bar.  We stay on the last known state until
@@ -152,7 +145,6 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     _store.removeListener(_onStoreChanged);
     _voiceErrorSub?.cancel();
-    _workspaceInfoSub?.cancel();
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
     _queueFlushTimer?.cancel();
@@ -213,6 +205,24 @@ class _ChatPageState extends State<ChatPage> {
       _store.clearError();
     }
     _lastShownError = err;
+  }
+
+  /// 工作区选择变化（欢迎页选择/最近会话回退）→ 分支刷新 + chip 刷新
+  void _onWorkspaceChanged() {
+    if (!mounted) return;
+    final path = _store.selectedWorkspacePath;
+    setState(() => _workspaceName = _workspaceDisplayName(path));
+    GitService.instance.refreshBranch(path);
+  }
+
+  /// 工作区名：取路径末段（E:\ai\wzxClaw → wzxClaw；非路径原样）
+  String _workspaceDisplayName(String? path) {
+    if (path == null || path.isEmpty) return '';
+    final normalized = path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final idx = normalized.lastIndexOf('/');
+    return idx >= 0 && idx < normalized.length - 1
+        ? normalized.substring(idx + 1)
+        : path;
   }
 
   void _onScroll() {
@@ -761,51 +771,45 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 当前工作区 chip：点按弹切换器；工作区来自本地每设备记忆
+  /// 当前工作区 chip：点按弹切换器；工作区来自直连栈选择态
   Widget _buildWorkspaceChip(AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, snap) {
-        final wsName = snap.data?.workspaceName ?? '';
-        final hasWs = wsName.isNotEmpty;
-        return InkWell(
+    final wsName = _workspaceDisplayName(_store.selectedWorkspacePath);
+    final hasWs = wsName.isNotEmpty;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => showWorkspaceSwitcherSheet(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: colors.bgTertiary,
           borderRadius: BorderRadius.circular(16),
-          onTap: () => showWorkspaceSwitcherSheet(context),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: colors.bgTertiary,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: colors.border),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              hasWs ? Icons.folder_outlined : Icons.folder_off_outlined,
+              size: 15,
+              color: hasWs ? colors.accent : colors.textMuted,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  hasWs ? Icons.folder_outlined : Icons.folder_off_outlined,
-                  size: 15,
-                  color: hasWs ? colors.accent : colors.textMuted,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  hasWs ? wsName : '选择工作区',
-                  style: TextStyle(
-                    color: hasWs ? colors.textPrimary : colors.textMuted,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 16,
-                  color: colors.textMuted,
-                ),
-              ],
+            const SizedBox(width: 6),
+            Text(
+              hasWs ? wsName : '选择工作区',
+              style: TextStyle(
+                color: hasWs ? colors.textPrimary : colors.textMuted,
+                fontSize: 13,
+              ),
             ),
-          ),
-        );
-      },
+            const SizedBox(width: 2),
+            Icon(
+              Icons.keyboard_arrow_down,
+              size: 16,
+              color: colors.textMuted,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2250,8 +2254,7 @@ class _ChatPageState extends State<ChatPage> {
     return ValueListenableBuilder<String?>(
       valueListenable: GitService.instance.currentBranch,
       builder: (context, branch, _) {
-        final wsPath =
-            SessionSyncService.instance.workspaceInfo?.workspacePath;
+        final wsPath = _store.selectedWorkspacePath;
         final hasBranch = branch != null && branch.isNotEmpty;
         return InkWell(
           borderRadius: BorderRadius.circular(16),

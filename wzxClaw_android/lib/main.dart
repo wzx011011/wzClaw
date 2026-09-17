@@ -5,16 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_colors.dart';
 import 'pages/files_placeholder_page.dart';
-import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
-import 'services/file_sync_service.dart';
-import 'services/goal_store.dart';
 import 'services/push_wake_service.dart';
 import 'zcode/zcode_keepalive_controller.dart';
 import 'zcode/zcode_notifier.dart';
-import 'services/session_sync_service.dart';
 
 /// Global theme mode notifier — allows settings page to switch theme at runtime.
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
@@ -25,9 +21,6 @@ final ValueNotifier<String> accentNotifier = ValueNotifier('green');
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize services early so they start listening (lightweight — only subscribes to streams)
-  SessionSyncService.instance;
-  FileSyncService.instance;
-  GoalStore.instance; // 尽早订阅 goal 快照广播（回合驱动刷新即开始积累状态）
   // Load persisted theme mode
   final prefs = await SharedPreferences.getInstance();
   final saved = prefs.getString('theme_mode');
@@ -111,7 +104,6 @@ class WzxClawApp extends StatelessWidget {
               routes: {
                 '/': (context) => const LandingPage(),
                 '/chat': (context) => const ChatPage(),
-                '/goal-panel': (context) => const GoalPanelPage(),
                 '/settings': (context) => const SettingsPage(),
                 // app-server 未实测到文件树/读取接口；保留旧深链但不再触发会超时的旧协议。
                 '/files': (context) => const FilesPlaceholderPage(),

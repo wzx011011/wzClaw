@@ -9,12 +9,9 @@ import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
 import '../services/pairing_store.dart';
-import '../services/session_sync_service.dart';
-import '../services/zcode_protocol_translate.dart'
-    show normalizeQrScanToServerUrl, parsePairingUrlAny;
+import '../services/pairing_url.dart';
 import '../zcode/zcode_relay_client.dart';
 import 'qr_scanner_page.dart';
-import '../widgets/workspace_picker_card.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -38,7 +35,6 @@ class _LandingPageState extends State<LandingPage>
   StreamSubscription<WsConnectionState>? _stateSub;
   StreamSubscription<List<DesktopInfo>>? _desktopsSub;
   bool _didNavigate = false;
-  String? _savedWorkspacePath;
 
   // 呼吸动画控制器（状态B）
   late final AnimationController _pulseController;
@@ -107,7 +103,6 @@ class _LandingPageState extends State<LandingPage>
   Future<void> _autoConnect() async {
     final prefs = await SharedPreferences.getInstance();
     final serverUrl = prefs.getString('server_url');
-    _savedWorkspacePath = await AppRestoreState.getLastWorkspacePath();
     if (serverUrl != null && serverUrl.isNotEmpty) {
       try {
         final host = Uri.parse(serverUrl).host;
@@ -120,55 +115,13 @@ class _LandingPageState extends State<LandingPage>
     }
   }
 
-  /// 选择桌面端后，获取工作区列表。
-  /// 单工作区或匹配已保存工作区时自动选择，否则弹出选择器。
+  /// 选择桌面端后直接进入聊天页（R3 简化）：工作区选择已由聊天页
+  /// 「新任务」欢迎态承担（store.selectedWorkspace / 抽屉按工作区分组），
+  /// 旧的中间工作区列表弹窗随翻译壳退役。
   void _onSelectDesktop(DesktopInfo desktop) {
     _didNavigate = false;
     ConnectionManager.instance.selectDesktop(desktop.desktopId);
-
-    // 监听一次工作区列表响应
-    StreamSubscription<List<WorkspaceItem>>? sub;
-    sub = SessionSyncService.instance.workspacesStream.listen((workspaces) {
-      sub?.cancel();
-
-      if (!mounted) return;
-
-      // 单工作区 → 自动选择，跳过弹窗
-      if (workspaces.length == 1) {
-        final path = workspaces.first.primaryPath;
-        if (path != null && path.isNotEmpty) {
-          SessionSyncService.instance.switchWorkspace(path);
-        }
-        _navigateToChat();
-        return;
-      }
-
-      // 有保存的工作区且匹配 → 自动选择，跳过弹窗
-      if (_savedWorkspacePath != null) {
-        final match = workspaces
-            .where((w) => w.primaryPath == _savedWorkspacePath)
-            .firstOrNull;
-        if (match != null && match.primaryPath != null) {
-          SessionSyncService.instance.switchWorkspace(match.primaryPath!);
-          _navigateToChat();
-          return;
-        }
-      }
-
-      // 多个工作区且无匹配 → 弹出选择器
-      _showWorkspacePicker(workspaces);
-    });
-
-    // 请求工作区列表
-    SessionSyncService.instance.fetchWorkspaces();
-
-    // 超时保护：3 秒后如果没收到响应，直接进聊天
-    Future.delayed(const Duration(seconds: 3), () {
-      sub?.cancel();
-      if (mounted && !_didNavigate) {
-        _navigateToChat();
-      }
-    });
+    _navigateToChat();
   }
 
   void _navigateToChat() {
@@ -182,120 +135,10 @@ class _LandingPageState extends State<LandingPage>
     });
   }
 
-  void _showWorkspacePicker(List<WorkspaceItem> workspaces) {
-    final colors = AppColors.of(context);
-    showModalBottomSheet(
-      context: context,
-      isDismissible: false,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                  Text('选择工作区',
-                      style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,),),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _navigateToChat();
-                    },
-                    child: Text('跳过',
-                        style: TextStyle(color: colors.textMuted, fontSize: 13),),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            if (workspaces.isEmpty)
-              // 空状态
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
-                child: Column(
-                  children: [
-                    Icon(Icons.folder_off_outlined, size: 40, color: colors.textMuted),
-                    const SizedBox(height: 12),
-                    Text('暂无工作区',
-                        style: TextStyle(color: colors.textSecondary, fontSize: 14),),
-                    const SizedBox(height: 6),
-                    Text('请在桌面端打开项目后重试',
-                        style: TextStyle(color: colors.textMuted, fontSize: 12),),
-                  ],
-                ),
-              )
-            else
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.55,
-              ),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: workspaces.length,
-                itemBuilder: (ctx, i) {
-                  final ws = workspaces[i];
-                  return WorkspacePickerCard(
-                    workspace: ws,
-                    colors: colors,
-                    onWorkspaceTap: () {
-                      Navigator.pop(ctx);
-                      final path = ws.primaryPath;
-                      if (path != null && path.isNotEmpty) {
-                        SessionSyncService.instance.switchWorkspace(path);
-                      }
-                      _navigateToChat();
-                    },
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    ).then((_) {
-      // 用户点击跳过或底部 sheet 关闭 → 导航到聊天
-      if (mounted && !_didNavigate) {
-        _navigateToChat();
-      }
-    });
-  }
-
+  /// 中继条上的「断开」：断开当前连接并刷新在线状态
   void _onDisconnect() {
-    final colors = AppColors.of(context);
-    showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.bgElevated,
-        title: Text('断开连接', style: TextStyle(color: colors.textPrimary)),
-        content: Text('确定要断开 Relay 服务器连接吗？',
-            style: TextStyle(color: colors.textSecondary),),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('取消', style: TextStyle(color: colors.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('断开', style: TextStyle(color: colors.error)),
-          ),
-        ],
-      ),
-    ).then((confirmed) {
-      if (confirmed == true) {
-        AppRestoreState.setLastRoute('/');
-        ConnectionManager.instance.disconnect();
-      }
-    });
+    ConnectionManager.instance.disconnect();
+    if (mounted) _refreshOnlineStatus();
   }
 
   /// 中继条统一入口：与设备卡片同一口径 —— 已连接 / 连接中 / 未连接

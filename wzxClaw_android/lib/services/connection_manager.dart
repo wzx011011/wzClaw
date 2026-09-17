@@ -18,29 +18,22 @@
 // ============================================================
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../config/app_config.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../models/ws_message.dart';
 import '../zcode/zcode_pairing.dart';
 import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_keepalive_controller.dart';
-import '../zcode/zcode_model_heal.dart';
-import '../models/goal_snapshot.dart';
 import 'pairing_store.dart';
-import 'phone_session_index.dart';
-import 'session_sync_service.dart';
-import 'ws_transport.dart';
+import 'pairing_url.dart';
 import '../zcode/zcode_relay_client.dart';
-import 'zcode_protocol_translate.dart';
 
-class ConnectionManager with WidgetsBindingObserver implements WsTransport {
+class ConnectionManager with WidgetsBindingObserver {
   ConnectionManager._() {
     WidgetsBinding.instance.addObserver(this);
     // 保活判定的链路数据源注入（依赖倒置：controller 不反向 import 本类）
@@ -64,13 +57,11 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
 
   final StreamController<WsConnectionState> _stateController =
       StreamController<WsConnectionState>.broadcast();
-  @override
   Stream<WsConnectionState> get stateStream => _stateController.stream;
 
   final StreamController<WsMessage> _messageController =
       StreamController<WsMessage>.broadcast();
   Stream<WsMessage> get messageStream => _messageController.stream;
-  @override
   Stream<WsMessage> get incoming => _messageController.stream;
 
   final StreamController<String?> _errorController =
@@ -82,12 +73,10 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Stream<List<DesktopInfo>> get desktopsStream => _desktopsController.stream;
 
   String? _selectedDesktopId;
-  @override
   String? get selectedDesktopId => _selectedDesktopId;
 
   final StreamController<String?> _selectedDesktopIdController =
       StreamController<String?>.broadcast();
-  @override
   Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
 
   bool get desktopOnline => _desktops.any((d) => d.online);
@@ -120,7 +109,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   Stream<String?> get desktopIdentityStream =>
       _desktopsController.stream.map((_) => desktopIdentity);
 
-  @override
   WsConnectionState get state => _stateNow;
 
   // ---- 内部状态 ----
@@ -129,13 +117,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   ZcodeRelayClient? _client;
   ZcodePairingInfo? _pairing;
   String? _desktopName;
-  String? _wsKey;
-  String? _wsPath;
-  /// 用户显式切换的工作区（workspaceKey）；null = 未选，取最新活跃组
-  String? _selectedWsKey;
   WsConnectionState _stateNow = WsConnectionState.disconnected;
-  final List<_QueueEntry> _sendQueue = [];
-  final Map<String, ReverseRequestInfo> _pendingReverse = {};
 
   // ---- 连接 ----
 
@@ -151,7 +133,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     disconnect();
     final name = _paramOf(url, 'name');
     _desktopName = name;
-    _selectedWsKey = null; // 新连接重置选中态，取最新活跃工作区为默认
     _pairing = ZcodePairingInfo(
       relayWsUrl: parsed.relayWsUrl,
       sid: parsed.sid,
@@ -198,7 +179,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         if (_stateNow != WsConnectionState.connected) {
           _setState(WsConnectionState.connected);
           _emitDesktopOnline();
-          _flushQueue();
         }
         break;
       case ZcodeRelayState.waiting:
@@ -266,7 +246,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     if (hit == null) return false;
     disconnect();
     _desktopName = hit.info.desktopName;
-    _selectedWsKey = null;
     _pairing = hit.info;
     unawaited(PairingStore.instance.setActiveSid(sid));
     _connectPairing();
@@ -280,543 +259,28 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     await _refreshDesktopList();
   }
 
-  // ---- 入站：通知 → 旧事件 ----
+  // ---- 入站：引擎通知帧 → 直连栈 ----
 
   void _onZcodeNotify(ZcodeFrame frame) {
     // 换接线桥：引擎通知帧原样投递直连栈（store 自行按帧归属路由）
     ZcodeChatStore.instance.ingestNotifyFrame(frame);
-    final method = frame.method ?? '';
-    final events = translateNotification(method, frame.params, _registerReverse);
-    for (final e in events) {
-      // permission.resolved（超时/桌面已答）：清待答表；旧协议无对应
-      // 事件不下发，UI 卡片由超时兜底/用户点击自然清除
-      if (e.event == 'stream:agent:permission_resolved') {
-        final d = e.data is Map ? e.data as Map : const {};
-        // 引擎侧 requestId 与 toolCallId 不是同一命名空间，登记键可能用其一
-        // （_registerReverse 用 questionId ?? toolCallId）——清理双键都试，
-        // 防单键不匹配导致待答表滞留（小型泄漏 + 陈旧应答源）
-        for (final k in ['requestId', 'toolCallId', 'questionId']) {
-          final key = d[k]?.toString();
-          if (key != null && key.isNotEmpty) _pendingReverse.remove(key);
-        }
-        continue;
-      }
-      _messageController.add(e);
-      // 回合边界/会话加载 → 延迟刷新目标快照（todos 在回合中会变化，
-      // 引擎无独立 todo 推送；去抖避免一次回合内反复拉取）
-      if (_goalRefreshPendingEvents.contains(e.event)) {
-        _scheduleGoalRefresh();
-      }
-    }
-    // state.updated：缓存 workspace（session/create 复用）+ 真实权限模式
-    if (method == 'state.updated' && frame.params is Map) {
-      _cacheWorkspace(frame.params as Map);
-      _cacheMode(frame.params as Map);
-    }
   }
 
-  /// 触发 goal 快照刷新的事件（回合边界 + 会话加载完成）
-  static const _goalRefreshPendingEvents = {
-    'stream:agent:turn_end',
-    'session:load:response',
-  };
-
-  Timer? _goalRefreshTimer;
-  void _scheduleGoalRefresh() {
-    _goalRefreshTimer?.cancel();
-    _goalRefreshTimer = Timer(const Duration(milliseconds: 800), () {
-      final sid = SessionSyncService.instance.activeSessionId;
-      if (sid != null && sid.isNotEmpty) {
-        unawaited(refreshGoalState(sid));
-      }
-    });
-  }
-
-  /// 拉取目标快照并广播：
-  /// 1) 旧 `todo:updated` 事件（ChatStore 现有 Todo 面板直接点亮，零 UI 改动）
-  /// 2) `zcode:goal:snapshot` 事件（GoalStore 面板消费，含 groups/stats）
-  Future<void> refreshGoalState(String sessionId) async {
-    try {
-      final result = await _requireClient().request('session/goal', {
-        'sessionId': sessionId,
-      });
-      final snapshot = parseGoalSnapshot(result);
-      _messageController.add(WsMessage(
-          event: WsEvents.goalSnapshot,
-          data: {'sessionId': sessionId, 'snapshot': snapshot},),);
-      if (snapshot.todos.isNotEmpty) {
-        _messageController.add(WsMessage(event: 'todo:updated', data: {
-          'sessionId': sessionId,
-          'todos': [for (final t in snapshot.todos) t.toLegacyTodo()],
-        },),);
-      }
-    } catch (e) {
-      // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
-      debugPrint('[ConnectionManager] goal snapshot failed: $e');
-    }
-  }
-
-  /// 子智能体线程（悬浮窗"智能体"板块）。引擎参数 schema 实测只接受
-  /// {action:'show'}（带 sessionId 反而报 action 非法），作用于本进程
-  /// 最近 materialize 的会话——手机驱动场景即当前会话。
-  Future<List<SubagentThread>> fetchSubagentThreads() async {
-    try {
-      final result = await _requireClient()
-          .request('session/subagents', {'action': 'show'});
-      return parseSubagentThreads(result);
-    } catch (e) {
-      debugPrint('[ConnectionManager] subagents fetch failed: $e');
-      return const [];
-    }
-  }
-
-  ZcodeRelayClient _requireClient() {
-    final c = _client;
-    if (c == null) throw StateError('relay not connected');
-    return c;
-  }
-
-  void _registerReverse(ReverseRequestInfo info, WsMessage event) {
-    final d = event.data is Map ? event.data as Map : const {};
-    final key = (d['questionId'] ?? d['toolCallId'] ?? '').toString();
-    if (key.isNotEmpty) _pendingReverse[key] = info;
-  }
-
-  /// 服务端反向请求 → 直连栈路由（R1 换接线）：权限/AskUser 注册进
-  /// ZcodeChatStore 的 UI 流，由 ZcodeChatStore.respondToPermission/
-  /// respondToAskUser 应答回传；runtimePreferences 已在 relay client
-  /// 内部自动代答，不会到达此处。同步异常已由缝转失败 Future。
-  /// （旧翻译路径随换接线退役——应答唯一路径 = 直连栈，无双应答）
   Future<dynamic> _onZcodeReverse(ZcodeFrame frame) {
     return ZcodeChatStore.instance.ingestReverseRequest(frame);
   }
 
-  // ---- 出站：旧事件 → app-server 请求（编排）----
+  // ---- 出站：纯连接层通用请求通道 ----
 
-  /// 直发 zcode/companion 请求（不经旧事件翻译层）。典型用途：companion
-  /// 本地扩展方法 `x/*`（git 分支/文件系统，见 APP-SERVER.md「companion
-  /// 本地扩展协议」）。未连接或未配对时抛 StateError。
+  /// 直发 zcode/companion 请求（companion 本地扩展方法 `x/*`：git 分支/
+  /// 模型目录/用量等，见 APP-SERVER.md「companion 本地扩展协议」）。
+  /// 未连接或未配对时抛 StateError。
   Future<dynamic> zcodeRequest(String method, [Map<String, dynamic>? params]) {
     final client = _client;
     if (client == null || _stateNow != WsConnectionState.connected || !client.paired) {
       throw StateError('未连接桌面');
     }
     return client.request(method, params);
-  }
-
-  @override
-  void send(WsMessage message, {int priority = 0}) {
-    final client = _client;
-    if (client == null || _stateNow != WsConnectionState.connected || !client.paired) {
-      _enqueue(message, priority);
-      return;
-    }
-    unawaited(_dispatch(message, client));
-  }
-
-  void _enqueue(WsMessage message, int priority) {
-    if (_sendQueue.length >= AppConfig.maxQueueSize) {
-      _sendQueue.removeLast();
-    }
-    final entry = _QueueEntry(message.toJsonString(), priority);
-    final idx = _sendQueue.indexWhere((e) => e.priority < priority);
-    if (idx == -1) {
-      _sendQueue.add(entry);
-    } else {
-      _sendQueue.insert(idx, entry);
-    }
-  }
-
-  void _flushQueue() {
-    // 头部排空（FIFO；队列头高尾低 → 高优先级先发、同优先级按入队顺序）
-    while (_sendQueue.isNotEmpty) {
-      final entry = _sendQueue.removeAt(0);
-      final client = _client;
-      if (client == null) {
-        // 连接已不在：这条排队消息丢弃但要有观测（铁律 4）
-        debugPrint('[ConnectionManager] flush 丢弃（无连接）: ${entry.json}');
-        break;
-      }
-      try {
-        final decoded = jsonDecode(entry.json);
-        if (decoded is Map<String, dynamic>) {
-          unawaited(_dispatch(WsMessage.fromJson(decoded), client));
-        }
-      } catch (e) {
-        debugPrint('[ConnectionManager] flush 解码失败: $e');
-      }
-    }
-  }
-
-  Future<void> _dispatch(WsMessage message, ZcodeRelayClient client) async {
-    final d = message.data is Map
-        ? Map<String, dynamic>.from(message.data as Map)
-        : <String, dynamic>{};
-    switch (message.event) {
-      case 'command:send':
-        final sessionId = d['sessionId'] as String?;
-        final content = d['content'] as String? ?? '';
-        if (sessionId == null || sessionId.isEmpty || content.isEmpty) return;
-        // 发送 → 按拒因自动自愈（时序与直连栈共享 zcode_model_heal）。
-        // 模型不可用类错误附带原文内容与种类：UI 渲染可操作的重试卡片，
-        // 而不是一条无从下手的纯文本（用户感知为「发了没回复」）。
-        final (error, errorKind) = await zcodeSendWithHeal(
-          request: client.request,
-          sessionId: sessionId,
-          content: content,
-        );
-        if (error != null) {
-          _messageController.add(WsMessage(
-            event: 'stream:agent:error',
-            data: {
-              'sessionId': sessionId,
-              'error': error,
-              if (errorKind != null) 'errorKind': errorKind,
-              if (errorKind != null) 'content': content,
-            },
-          ),);
-        }
-        return;
-
-      case 'command:stop':
-        final sessionId = d['sessionId'] as String?;
-        if (sessionId != null && sessionId.isNotEmpty) {
-          try {
-            await client.request('session/stop', {'sessionId': sessionId});
-          } catch (_) {}
-        }
-        return;
-
-      case 'session:list:request':
-        await _respondList(client, d['requestId']?.toString() ?? '');
-        return;
-
-      case 'workspace:list:request':
-        await _respondWorkspaceList(client, d['requestId']?.toString() ?? '');
-        return;
-
-      case 'workspace:switch:request':
-        await _respondWorkspaceSwitch(client, d);
-        return;
-
-      case 'session:load:request':
-        await _respondLoad(client, d);
-        return;
-
-      case 'session:create:request':
-        await _respondCreate(client, d);
-        return;
-
-      case 'permission:set_mode:request':
-        final sessionId = d['sessionId'] as String?;
-        final uiMode = d['mode'] as String?;
-        final serverMode = _uiToServerMode[uiMode] ?? uiMode;
-        // 无 sessionId 无法设置（session/setMode 按会话生效）。必须显式报错
-        // 而非跳过后照常应答——照常应答会让客户端把缓存的旧模式回填，
-        // 表现为「切换后弹回原模式」（2026-09-17 实测锁死计划模式）。
-        if (sessionId == null || sessionId.isEmpty) {
-          _messageController.add(WsMessage(event: 'permission:mode:response', data: {
-            'requestId': d['requestId'] ?? '',
-            'error': '缺少 sessionId，无法设置权限模式',
-          },),);
-          return;
-        }
-        if (serverMode != null) {
-          try {
-            await client.request('session/setMode', {
-              'sessionId': sessionId,
-              'mode': serverMode,
-            });
-            _serverModeNow = serverMode; // 乐观更新，权威以快照回填
-          } catch (e) {
-            _messageController.add(WsMessage(event: 'permission:mode:response', data: {
-              'requestId': d['requestId'] ?? '',
-              'error': '设置模式失败: $e',
-            },),);
-            return;
-          }
-        }
-        _messageController.add(WsMessage(
-          event: 'permission:mode:response',
-          data: {
-            'requestId': d['requestId'] ?? '',
-            'mode': _serverToUiMode[_serverModeNow] ?? uiMode ?? 'always-ask',
-          },
-        ),);
-        return;
-
-      case 'permission:get_mode:request':
-        _messageController.add(WsMessage(
-          event: 'permission:mode:response',
-          data: {
-            'requestId': d['requestId'] ?? '',
-            'mode': _serverToUiMode[_serverModeNow] ?? 'always-ask',
-          },
-        ),);
-        return;
-
-      // 旧 relay 控制语义：新链路无对应，吞掉
-      case 'identity:announce':
-      case 'identity:mobile_announce':
-      case 'target:select':
-      case 'target:clear':
-      case 'ping':
-      case 'pong':
-      case 'session:rename:request':
-      case 'session:delete:request':
-      case 'session:clear:request':
-      case 'file:tree:request':
-      case 'file:read:request':
-        return;
-
-      default:
-        // 静默丢弃=缺陷（铁律 4）：未知出站事件（含 plan:decision——计划模式
-        // 批准/拒绝，新栈尚无对应引擎方法）必须留痕，否则就是「点了没反应」
-        // 的无头案
-        debugPrint('[ConnectionManager] 未处理的出站事件: ${message.event}');
-    }
-  }
-
-  /// 「模型已不可用」自愈与发送决策已上移共享模块 zcode_model_heal.dart
-  /// （zcodeSendWithHeal），旧 UI 桥与直连栈共用同一时序，避免两份实现漂移。
-
-  Future<void> _respondList(ZcodeRelayClient client, String requestId) async {
-    try {
-      final result = await client.request('session/list');
-      // 按工作区分组：选中组优先（未选=最新活跃组），响应顶层带该工作区
-      // 的 path/name 且只含其会话——旧 UI 的会话列表/工作区卡片依赖此语义
-      final groups = groupSessionsByWorkspace(result);
-      final selected = resolveWorkspace(groups, _selectedWsKey);
-      if (selected != null) {
-        _wsKey = selected.key;
-        _wsPath = selected.path;
-      }
-      _messageController.add(sessionListWsResponse(requestId, groups, _selectedWsKey));
-    } catch (e) {
-      _messageController.add(WsMessage(event: 'session:error', data: {
-        'requestId': requestId,
-        'error': '获取会话列表失败: $e',
-      },),);
-    }
-  }
-
-  /// 旧 workspace:list：app-server 无独立工作区接口，由 session/list 聚合
-  Future<void> _respondWorkspaceList(ZcodeRelayClient client, String requestId) async {
-    try {
-      final result = await client.request('session/list');
-      final groups = groupSessionsByWorkspace(result);
-      _messageController.add(workspaceListWsResponse(requestId, groups));
-    } catch (e) {
-      _messageController.add(WsMessage(event: 'session:error', data: {
-        'requestId': requestId,
-        'error': '获取工作区列表失败: $e',
-      },),);
-    }
-  }
-
-  /// 旧 workspace:switch：引擎全局会话、cwd 不可切换——切换是客户端过滤
-  /// 语义。命中即记录选中组、应答成功并推送该工作区的会话列表刷新 UI。
-  Future<void> _respondWorkspaceSwitch(
-      ZcodeRelayClient client, Map<String, dynamic> d,) async {
-    final requestId = d['requestId']?.toString() ?? '';
-    final target = d['workspacePath']?.toString() ?? '';
-    try {
-      final result = await client.request('session/list');
-      final groups = groupSessionsByWorkspace(result);
-      final hit = resolveWorkspace(groups, target);
-      if (hit == null) {
-        _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
-          'requestId': requestId,
-          'success': false,
-          'error': '未找到工作区: $target',
-        },),);
-        return;
-      }
-      _selectedWsKey = hit.key;
-      _wsKey = hit.key;
-      _wsPath = hit.path;
-      // Option A：用户显式切换工作区 → 记入本地每设备记忆，新建会话复用
-      final sid = _pairing?.sid ?? '';
-      if (sid.isNotEmpty) {
-        unawaited(PhoneSessionIndex.instance
-            .setDeviceWorkspace(sid, hit.key, hit.path),);
-      }
-      _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
-        'requestId': requestId,
-        'success': true,
-        'workspacePath': hit.path,
-        'workspaceName': workspaceBasename(hit.path),
-      },),);
-      // 切换后立即推送新工作区的会话列表（旧 UI 依赖推送刷新抽屉/首页）
-      _messageController
-          .add(sessionListWsResponse('$requestId-list', groups, hit.key));
-    } catch (e) {
-      _messageController.add(WsMessage(event: 'workspace:switch:response', data: {
-        'requestId': requestId,
-        'success': false,
-        'error': '切换工作区失败: $e',
-      },),);
-    }
-  }
-
-  Future<void> _respondLoad(ZcodeRelayClient client, Map<String, dynamic> d) async {
-    final requestId = d['requestId']?.toString() ?? '';
-    final sessionId = d['sessionId'] as String? ?? '';
-    if (sessionId.isEmpty) {
-      _messageController.add(WsMessage(
-        event: 'session:error',
-        data: {'requestId': requestId, 'error': '缺少会话 ID'},
-      ),);
-      return;
-    }
-    try {
-      final resume = await client.request('session/resume', {'sessionId': sessionId});
-      if (resume is Map) {
-        _cacheWorkspace(resume);
-        _cacheMode(resume);
-      }
-      await client.request('session/subscribe', {
-        'sessionId': sessionId,
-        'deliveryKind': 'web-remote-replayable',
-      });
-      // resume 响应自带全量 messages（companion 已按帧上限截尾并打
-      // messagesTruncated 标记）——直接使用，省一次同量级重拉
-      final events = resume is Map && (resume['messages'] is List)
-          ? responseToWsMessages('session/messages', resume, const {})
-          : await (() async {
-              final messages = await client.request('session/messages', {
-                'sessionId': sessionId,
-                'limit': 200,
-              });
-              return responseToWsMessages('session/messages', messages, const {});
-            }());
-      for (final e in events) {
-        _messageController.add(WsMessage(
-          event: e.event,
-          data: {'requestId': requestId, 'sessionId': sessionId, ...?e.data},
-        ),);
-      }
-      // 会话加载完成 → 拉一次目标快照（悬浮窗"进程"板块随会话就绪）
-      _scheduleGoalRefresh();
-    } catch (e) {
-      _messageController.add(WsMessage(event: 'session:error', data: {
-        'requestId': requestId,
-        'sessionId': sessionId,
-        'error': e is ZcodeRequestException && e.code == -32004
-            ? '该会话正在桌面端运行，手机端暂无法查看'
-            : '加载会话失败: $e',
-      },),);
-    }
-  }
-
-  Future<void> _respondCreate(ZcodeRelayClient client, Map<String, dynamic> d) async {
-    final requestId = d['requestId']?.toString() ?? '';
-    final sid = _pairing?.sid ?? '';
-    // 工作区解析顺序（Option A）：连接期间缓存 → 手机本地每设备记忆
-    // → 一次 session/list 发现（发现结果回写本地记忆，之后不再拉）
-    if (_wsKey == null || _wsPath == null) {
-      final remembered = await PhoneSessionIndex.instance.workspaceFor(sid);
-      if (remembered != null) {
-        _wsKey = remembered.workspaceKey;
-        _wsPath = remembered.workspacePath;
-      }
-    }
-    if (_wsKey == null || _wsPath == null) {
-      try {
-        final result = await client.request('session/list');
-        final selected = resolveWorkspace(groupSessionsByWorkspace(result), _selectedWsKey);
-        if (selected != null) {
-          _wsKey = selected.key;
-          _wsPath = selected.path;
-        }
-      } catch (_) {}
-    }
-    if (_wsKey == null || _wsPath == null) {
-      _messageController.add(WsMessage(event: 'session:error', data: {
-        'requestId': requestId,
-        'error': '没有可用工作区，请先打开一个会话',
-      },),);
-      return;
-    }
-    try {
-      final result = await client.request('session/create', {
-        'workspace': {'workspaceKey': _wsKey, 'workspacePath': _wsPath},
-      });
-      // 记住本设备工作区：下次新建会话免发现
-      if (sid.isNotEmpty) {
-        unawaited(PhoneSessionIndex.instance
-            .setDeviceWorkspace(sid, _wsKey!, _wsPath!),);
-      }
-      final events = responseToWsMessages('session/create', result, const {});
-      for (final e in events) {
-        _messageController.add(WsMessage(
-          event: e.event,
-          data: {'requestId': requestId, ...?e.data},
-        ),);
-      }
-    } catch (e) {
-      _messageController.add(WsMessage(event: 'session:error', data: {
-        'requestId': requestId,
-        'error': '新建会话失败: $e',
-      },),);
-    }
-  }
-
-  /// 服务端权限模式真实值（state.updated patch.mode.current，实测字段）。
-  /// UI 词表 ↔ 服务端枚举映射（语义最近对应，非完全等价）：
-  /// always-ask→build（默认执行+权限拦截）、accept-edits→edit、
-  /// plan→plan、bypass→yolo；auto 显示回落 build 档。
-  static const _uiToServerMode = {
-    'always-ask': 'build',
-    'accept-edits': 'edit',
-    'plan': 'plan',
-    'bypass': 'yolo',
-  };
-  static const _serverToUiMode = {
-    'plan': 'plan',
-    'edit': 'accept-edits',
-    'yolo': 'bypass',
-    'build': 'always-ask',
-    'auto': 'always-ask',
-  };
-  String? _serverModeNow;
-
-  void _cacheMode(Map node) {
-    dynamic mode;
-    void search(Map n, int depth) {
-      if (depth > 4 || mode != null) return;
-      // state.updated 补丁形状：mode:{current:...}
-      final m = n['mode'];
-      if (m is Map && m['current'] != null) {
-        mode = m['current'];
-        return;
-      }
-      for (final v in n.values) {
-        if (v is Map) search(v, depth + 1);
-      }
-    }
-
-    search(node, 0);
-    if (mode != null) _serverModeNow = mode.toString();
-  }
-
-  void _cacheWorkspace(Map node) {
-    dynamic key;
-    dynamic path;
-    void search(Map n, int depth) {
-      if (depth > 4) return;
-      key ??= n['workspaceKey'];
-      path ??= n['workspacePath'];
-      for (final v in n.values) {
-        if (v is Map) search(v, depth + 1);
-      }
-    }
-
-    search(node, 0);
-    if (key != null && path != null) {
-      _wsKey = key.toString();
-      _wsPath = path.toString();
-    }
   }
 
   // ---- 桌面选择（单桌面语义：保留 API 兼容，无路由作用）----
@@ -849,8 +313,7 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
         final hit = stored.where((s) => s.info.sid == active).firstOrNull ??
             stored.first;
         _desktopName = hit.info.desktopName;
-        _selectedWsKey = null;
-        _pairing = hit.info;
+            _pairing = hit.info;
         _connectPairing();
         return;
       }
@@ -874,7 +337,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
     await connectFromSavedConfiguration();
   }
 
-  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // 保活/重连由 ZcodeRelayClient 自理（ping + 指数退避）；
     // 前台唤醒时仅在断线状态下触发一次配置恢复
@@ -893,7 +355,6 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   void disconnect() {
     _client?.close();
     _client = null;
-    _sendQueue.clear();
     _selectedDesktopId = null;
     _selectedDesktopIdController.add(null);
     _setState(WsConnectionState.disconnected);
@@ -923,8 +384,3 @@ class ConnectionManager with WidgetsBindingObserver implements WsTransport {
   }
 }
 
-class _QueueEntry {
-  final String json;
-  final int priority;
-  const _QueueEntry(this.json, this.priority);
-}

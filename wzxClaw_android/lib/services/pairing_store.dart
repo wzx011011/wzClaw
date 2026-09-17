@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../zcode/zcode_pairing.dart';
-import 'zcode_protocol_translate.dart' show parsePairingUrlAny;
+import 'pairing_url.dart' show parsePairingUrlAny;
 
 /// 一条已保存的桌面配对
 class StoredPairing {

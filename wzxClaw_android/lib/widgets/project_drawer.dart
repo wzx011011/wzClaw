@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
-import '../services/session_sync_service.dart';
 import '../zcode/zcode_chat_store.dart';
 import 'session_list_tile.dart';
 import 'swipe_actions_tile.dart';
@@ -201,12 +200,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         overflow: TextOverflow.ellipsis,
       );
     }
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
+    return ListenableBuilder(
+      listenable: ZcodeChatStore.instance,
+      builder: (context, _) {
+        final wsName = _currentWorkspaceName();
         final display = wsName.isNotEmpty
             ? '$platformInfo · $wsName'
             : platformInfo;
@@ -220,6 +217,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         );
       },
     );
+  }
+
+  /// 当前工作区名：取 store 选择态路径末段（无选择/空 = ''）
+  String _currentWorkspaceName() {
+    final path = ZcodeChatStore.instance.selectedWorkspacePath;
+    if (path == null || path.isEmpty) return '';
+    return _workspaceDisplayName(path);
   }
 
   /// 弹出桌面端选择器
@@ -321,12 +325,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
 
   /// Workspace section — 显示当前工作区及切换按钮。
   Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
+    return ListenableBuilder(
+      listenable: ZcodeChatStore.instance,
+      builder: (context, _) {
+        final wsName = _currentWorkspaceName();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,

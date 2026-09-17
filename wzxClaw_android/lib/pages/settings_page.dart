@@ -9,8 +9,8 @@ import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
 import '../services/push_wake_service.dart';
 import '../services/secure_settings.dart';
-import '../services/session_sync_service.dart';
-import '../services/zcode_protocol_translate.dart' show normalizeQrScanToServerUrl;
+import '../services/pairing_url.dart' show normalizeQrScanToServerUrl;
+import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_keepalive_controller.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
@@ -174,7 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
 
     try {
-      await SessionSyncService.instance.clearLocalCache();
+      await ZcodeChatStore.instance.clearLocalCache();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('本地缓存已清空')),
@@ -645,16 +645,20 @@ class _SettingsPageState extends State<SettingsPage> {
                                   ),
                                 ),
                               // Show workspace name as subtitle when available
-                              StreamBuilder<WorkspaceInfo?>(
-                                stream: SessionSyncService.instance.workspaceInfoStream,
-                                initialData: SessionSyncService.instance.workspaceInfo,
-                                builder: (context, wsSnap) {
-                                  final wsInfo = wsSnap.data;
-                                  if (wsInfo != null && connState == WsConnectionState.connected) {
+                              Builder(
+                                builder: (context) {
+                                  final wsPath = ZcodeChatStore
+                                      .instance.selectedWorkspacePath;
+                                  if (wsPath != null &&
+                                      wsPath.isNotEmpty &&
+                                      connState == WsConnectionState.connected) {
                                     return Padding(
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
-                                        wsInfo.workspaceName,
+                                        wsPath
+                                            .replaceAll('\\', '/')
+                                            .split('/')
+                                            .last,
                                         style: TextStyle(color: colors.textMuted, fontSize: 12),
                                         overflow: TextOverflow.ellipsis,
                                       ),
