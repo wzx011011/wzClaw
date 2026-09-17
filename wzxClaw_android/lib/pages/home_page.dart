@@ -988,7 +988,9 @@ class _ChatPageState extends State<ChatPage> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      // 左右 16：与抽屉/欢迎页留白一致；原 4px 内容几乎贴屏幕边
+      //（2026-09-18 用户反馈左右间距太小）
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: itemCount,
       itemBuilder: (context, index) {
         if (showBlockedCard && index == blocks.length) {
