@@ -128,9 +128,15 @@ class ZcodeSessionState {
   /// 由 setMode 乐观更新，权威值以 patch.mode.current 回填为准。
   String? mode;
 
-  /// 视口渲染用消息快照（每次访问生成新列表，页面零改动兼容）
-  List<ChatMessage> get chatMessages =>
-      items.map((e) => e.message).toList(growable: false);
+  /// 视口渲染用消息快照（每次访问生成新列表，页面零改动兼容）。
+  /// 过滤规则与旧栈 _renderable 对齐：系统注入提醒（引擎把 TodoWrite
+  /// 等提示以 user-role 入库，2026-09-17 真机复现）+ 空助手占位行不展示；
+  /// 流式中的占位（isStreaming）是活消息，不过滤。
+  List<ChatMessage> get chatMessages => items
+      .map((e) => e.message)
+      .where((m) =>
+          !m.isSystemInjected && (!m.isEmptyAssistant || m.isStreaming))
+      .toList(growable: false);
 
   /// 尾部最后一条**已确认（synced）**的协议消息 id（缓存恢复时推导水位用）。
   /// 未确认条目（本地乐观消息/流式占位）即使采纳了 protoId 也不计入——
