@@ -1078,6 +1078,25 @@ class ZcodeChatStore extends ChangeNotifier {
     await _refreshAuthoritative(state);
   }
 
+  /// 关闭会话（session/close，协议实测存在）：结束该会话在节点上的运行，
+  /// 释放占用；引擎无 delete——会话记录仍在列表中（close ≠ delete）。
+  /// 若关闭的是视口会话，页面回到欢迎态。
+  Future<void> closeSession(String sessionId) async {
+    final client = _client;
+    if (client == null || !client.paired) {
+      _fail('未连接 ZCode，无法关闭会话');
+      return;
+    }
+    try {
+      await client.request('session/close', {'sessionId': sessionId});
+    } catch (e) {
+      _fail('关闭会话失败: $e');
+      return;
+    }
+    if (_activeSessionId == sessionId) closeSessionView();
+    await refreshSessions();
+  }
+
   // ──────────────────────────────────────────────
   // 权限确认 / AskUser
   // ──────────────────────────────────────────────

@@ -6,17 +6,20 @@ import '../zcode/zcode_chat_store.dart';
 /// A single session row widget for the session list in the drawer.
 /// R1 换接线：数据源 = ZcodeSessionMeta（引擎 session/list 实测字段）。
 /// 引擎无 rename/delete/本地消息数概念——相关 UI 随旧栈退役（D5 显式降级）。
+/// [pinned] = 本地置顶（SharedPreferences 记忆，非引擎能力）。
 class SessionListTile extends StatelessWidget {
   const SessionListTile({
     super.key,
     required this.session,
     required this.isActive,
     required this.onTap,
+    this.pinned = false,
   });
 
   final ZcodeSessionMeta session;
   final bool isActive;
   final VoidCallback onTap;
+  final bool pinned;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +49,11 @@ class SessionListTile extends StatelessWidget {
                       if (running) ...[
                         _RunningDot(color: colors.success),
                         const SizedBox(width: 5),
+                      ],
+                      if (pinned) ...[
+                        Icon(Icons.push_pin,
+                            size: 12, color: colors.textMuted,),
+                        const SizedBox(width: 4),
                       ],
                       Expanded(
                         child: Text(

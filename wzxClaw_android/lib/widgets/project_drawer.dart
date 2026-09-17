@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
@@ -7,6 +8,7 @@ import '../services/connection_manager.dart';
 import '../services/session_sync_service.dart';
 import '../zcode/zcode_chat_store.dart';
 import 'session_list_tile.dart';
+import 'swipe_actions_tile.dart';
 import 'workspace_switcher_sheet.dart';
 
 /// Drawer widget displaying the current desktop workspace and its sessions.
@@ -18,6 +20,33 @@ class ProjectDrawer extends StatefulWidget {
 }
 
 class _ProjectDrawerState extends State<ProjectDrawer> {
+  static const _kPinnedKey = 'wzxclaw-zcode-pinned-sessions';
+
+  Set<String> _pinnedIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPins();
+  }
+
+  Future<void> _loadPins() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(
+      () => _pinnedIds =
+          (prefs.getStringList(_kPinnedKey) ?? const []).toSet(),
+    );
+  }
+
+  Future<void> _togglePin(String sessionId) async {
+    final next = Set<String>.from(_pinnedIds);
+    if (!next.remove(sessionId)) next.add(sessionId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kPinnedKey, next.toList());
+    if (!mounted) return;
+    setState(() => _pinnedIds = next);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -501,6 +530,15 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
               final key = s.workspaceKey ?? s.workspacePath ?? '未分组';
               (groups[key] ??= []).add(s);
             }
+            // 组内：置顶优先，其余按引擎排序（新→旧）
+            for (final list in groups.values) {
+              list.sort((a, b) {
+                final ra = _pinnedIds.contains(a.sessionId) ? 0 : 1;
+                final rb = _pinnedIds.contains(b.sessionId) ? 0 : 1;
+                if (ra != rb) return ra - rb;
+                return b.updatedAt.compareTo(a.updatedAt);
+              });
+            }
             int newest(List<ZcodeSessionMeta> l) =>
                 l.map((e) => e.updatedAt).reduce((a, b) => a > b ? a : b);
             final orderedKeys = groups.keys.toList()
@@ -535,10 +573,30 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                     ],),
                   ),
                   for (final session in groups[key]!)
-                    SessionListTile(
-                      session: session,
-                      isActive: session.sessionId == activeId,
-                      onTap: () => _onSessionTap(context, session),
+                    SwipeActionsTile(
+                      actions: [
+                        SwipeAction(
+                          label: _pinnedIds.contains(session.sessionId)
+                              ? '取消置顶'
+                              : '置顶',
+                          icon: Icons.push_pin,
+                          color: colors.accent,
+                          onTap: () => _togglePin(session.sessionId),
+                        ),
+                        SwipeAction(
+                          label: '结束',
+                          icon: Icons.stop_circle_outlined,
+                          color: colors.error,
+                          onTap: () => ZcodeChatStore.instance
+                              .closeSession(session.sessionId),
+                        ),
+                      ],
+                      child: SessionListTile(
+                        session: session,
+                        pinned: _pinnedIds.contains(session.sessionId),
+                        isActive: session.sessionId == activeId,
+                        onTap: () => _onSessionTap(context, session),
+                      ),
                     ),
                 ],
               ],
