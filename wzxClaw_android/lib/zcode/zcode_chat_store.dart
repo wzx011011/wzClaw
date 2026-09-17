@@ -333,6 +333,12 @@ class ZcodeChatStore extends ChangeNotifier {
     return s != null && (s.isStreaming || s.isWaitingForResponse);
   }
 
+  // ── 回合块数据（最近一次已完成回合）──────────────
+  String get lastThinkingContent =>
+      _activeState?.lastThinkingContent ?? '';
+  int? get lastThinkingMs => _activeState?.lastThinkingMs;
+  int? get lastTurnMs => _activeState?.lastTurnMs;
+
   /// 当前视口会话是否正被桌面端应用运行（-32004；ChatPage 显示状态条用）
   bool get remoteActiveElsewhere =>
       _activeState?.remoteActiveElsewhere ?? false;
@@ -2574,6 +2580,8 @@ class ZcodeChatStore extends ChangeNotifier {
       outputSummary: errorText ?? _summaryOf(output),
       status: status,
       isError: status == ToolCallStatus.error,
+      inputFull: _fullOf(input),
+      outputFull: errorText ?? _fullOf(output),
     );
   }
 
@@ -2594,6 +2602,17 @@ class ZcodeChatStore extends ChangeNotifier {
     try {
       final encoded = jsonEncode(v);
       return encoded.length > 400 ? '${encoded.substring(0, 400)}…' : encoded;
+    } catch (_) {
+      return v.toString();
+    }
+  }
+
+  /// 全量形态（回合块工具行二级展开用；不截断——截断只发生在显示层）
+  String? _fullOf(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return v;
+    try {
+      return jsonEncode(v);
     } catch (_) {
       return v.toString();
     }

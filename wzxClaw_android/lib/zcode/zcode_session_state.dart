@@ -190,6 +190,7 @@ class ZcodeSessionState {
 
   /// 确保尾部存在流式 assistant 占位（isStreaming = true）
   void ensureStreamingPlaceholder() {
+    _turnStartedAt ??= DateTime.now();
     if (streamingIndex >= 0 && streamingIndex < items.length) return;
     items.add(ZcodeSessionItem(
       message: ChatMessage(
@@ -226,11 +227,43 @@ class ZcodeSessionState {
 
   /// 追加 thinking 增量（reasoning_delta；超限保留后半部分）
   void appendThinkingDelta(String delta) {
+    _thinkingStartedAt ??= DateTime.now();
     if (thinkingContent.length + delta.length > _kMaxThinkingChars) {
       thinkingContent =
           thinkingContent.substring(thinkingContent.length ~/ 2);
     }
     thinkingContent += delta;
+  }
+
+  // ── 回合块数据（思考保留 + 回合时长）────────────────
+  // 新回合开始时滚存为 last*（不跨回合累积、不随 reset 丢失），
+  // 供回合块「思考 · 持续了 N 秒」渲染历史回合。
+
+  /// 最近一次已完成回合的思考内容
+  String lastThinkingContent = '';
+
+  /// 最近一次已完成回合的思考时长（毫秒；未知为 null）
+  int? lastThinkingMs;
+
+  DateTime? _thinkingStartedAt;
+  DateTime? _turnStartedAt;
+
+  /// 最近一次已完成回合的总时长（毫秒；未知为 null）
+  int? lastTurnMs;
+
+  void _rollTurnBlockData() {
+    if (thinkingContent.isNotEmpty) {
+      lastThinkingContent = thinkingContent;
+      if (_thinkingStartedAt != null) {
+        lastThinkingMs =
+            DateTime.now().difference(_thinkingStartedAt!).inMilliseconds;
+      }
+    }
+    if (_turnStartedAt != null) {
+      lastTurnMs = DateTime.now().difference(_turnStartedAt!).inMilliseconds;
+    }
+    _thinkingStartedAt = null;
+    _turnStartedAt = null;
   }
 
   /// 用权威全文重对流式文本（model.response 的 content，防增量丢失）
@@ -296,11 +329,13 @@ class ZcodeSessionState {
     }
     streamingIndex = -1;
     streamingText = '';
+    _rollTurnBlockData();
     thinkingContent = '';
   }
 
   /// 新回合时重置流式游标与 token 计数
   void resetTurnState() {
+    _rollTurnBlockData();
     streamingIndex = -1;
     streamingText = '';
     thinkingContent = '';

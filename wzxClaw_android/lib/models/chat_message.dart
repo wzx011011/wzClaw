@@ -13,6 +13,11 @@ class ToolCallInfo {
   final ToolCallStatus status;
   final bool isError;
 
+  /// 全量输入/输出（内存级，不入库不序列化——重启后降级为 summary）。
+  /// 回合块工具行二级展开（diff/命令输出原文）的数据源。
+  final String? inputFull;
+  final String? outputFull;
+
   const ToolCallInfo({
     required this.toolCallId,
     required this.toolName,
@@ -20,6 +25,8 @@ class ToolCallInfo {
     this.outputSummary,
     this.status = ToolCallStatus.running,
     this.isError = false,
+    this.inputFull,
+    this.outputFull,
   });
 
   ToolCallInfo copyWith({
@@ -34,6 +41,8 @@ class ToolCallInfo {
         outputSummary: outputSummary ?? this.outputSummary,
         status: status ?? this.status,
         isError: isError ?? this.isError,
+        inputFull: inputFull,
+        outputFull: outputFull,
       );
 
   Map<String, dynamic> toJson() => {
