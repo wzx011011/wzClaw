@@ -51,8 +51,17 @@ function runtimeProcessEnv(resolved, env = process.env) {
   // 直接 PATH CLI 与其他可执行文件参数均不携带该变量。
   const runtimeScript = resolved.args[0];
   const runsCjsRuntime = typeof runtimeScript === 'string' && runtimeScript.toLowerCase().endsWith('.cjs');
+  // 剥离宿主进程注入的 Chromium/Electron 内部变量（ELECTRON-spawns-ELECTRON
+  // 时的 crashpad 管道等串扰）；ZCODE_* 必须保留——桌面端会为子进程设置
+  // ZCODE_BUILTIN_PROVIDER_CONFIG_FILE 等必需配置，剥掉会让 runtime 因
+  // 「无法定位 Built-in Provider Config」直接退 1（2026-09-17 实测矩阵）。
+  const sanitized = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (/^(CHROME_|ELECTRON_)/i.test(key)) continue;
+    sanitized[key] = value;
+  }
   return {
-    ...env,
+    ...sanitized,
     ...(runsCjsRuntime && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   };
 }
@@ -92,10 +101,17 @@ function runRuntimeCommand(resolved, commandArgs, { timeoutMs = 5000, env = proc
 function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
   return new Promise((resolve) => {
     let child; let settled = false; let buffer = '';
+    let stderrTail = ''; let stdoutTail = '';
     const finish = (result) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
       if (child) try { child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy(); child.kill(); } catch { /* 已退出 */ }
+      // 失败时附两端输出尾部（限长、压成单行）供本地 GUI 日志归因；
+      // 官方 CLI 的崩溃输出是路径/异常文本，不含凭据（token 不落 stdio）。
+      if (!result.ok) {
+        const tail = `${stderrTail}\n[out] ${stdoutTail}`.replace(/\s+/g, ' ').trim();
+        if (tail) result.stderrTail = tail.slice(-300);
+      }
       resolve(result);
     };
     const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
@@ -105,7 +121,11 @@ function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
         env: runtimeProcessEnv(resolved, env),
       });
       child.stdout.setEncoding('utf8');
-      child.stderr.on('data', () => { /* 排空但不记录原文，防敏感诊断泄漏 */ });
+      child.stdout.on('data', (chunk) => { stdoutTail = (stdoutTail + chunk).slice(-4096); });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => {
+        stderrTail = (stderrTail + chunk).slice(-4096);
+      });
       child.stdout.on('data', (chunk) => {
         buffer += chunk;
         if (Buffer.byteLength(buffer) > 32 * 1024) return finish({ ok: false, code: 'OUTPUT_LIMIT' });
@@ -150,10 +170,19 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
   let token;
   try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
   catch (error) { return { category: error.code === 'NOT_LOGGED_IN' ? 'not-logged-in' : 'auth-store-unreadable', source: resolved.source, version: versionText, detailCode: error.code, doctorWarning: doctor.ok ? null : doctor.code }; }
-  const probe = await probeAppServer(resolved, {
-    cwd,
-    env: { ...env, ANTHROPIC_API_KEY: token },
-  });
+  // app-server 探针失败可能是偶发（子进程启动竞态/与桌面引擎的资源瞬时冲突，
+  // 2026-09-17 GUI 实测同环境时通时断）：短间隔重试，偏向「多等」而非一票否决。
+  let probe = null; let attempt = 0; const maxAttempts = 3;
+  for (;;) {
+    attempt += 1;
+    probe = await probeAppServer(resolved, {
+      cwd,
+      env: { ...env, ANTHROPIC_API_KEY: token },
+    });
+    if (probe.ok || attempt >= maxAttempts) break;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1200).unref());
+  }
+  if (probe.attempts === undefined) probe.attempts = attempt;
   return probe.ok
     ? { category: 'ready', source: resolved.source, version: versionText, detailCode: null,
         doctorWarning: doctor.ok ? null : doctor.code,
@@ -433,14 +462,10 @@ function createCompanion(options = {}) {
     const resolved = zcodeCommand || defaultZcodeCommand();
     bridge = new AppServerBridge({
       command: resolved.command, args: resolved.args, cwd,
-      env: {
-        ...process.env, ANTHROPIC_API_KEY: token,
-        // Electron 壳（companion_app）内 process.execPath 是 GUI exe：不设
-        // 此开关，spawn 出来的会是一个 Chromium 实例而非 stdio node 子进程
-        // （桌面 TS 引擎同款处理，见 mobile-app-server-bridge.ts）。纯 node
-        // CLI 下该字段不存在，env 保持原样。
-        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-      },
+      // 统一经 runtimeProcessEnv：Electron 壳内注入 ELECTRON_RUN_AS_NODE（否则
+      // spawn 出来的是 Chromium 实例而非 stdio node 子进程），并剥离宿主
+      // CHROME_/ELECTRON_/ZCODE_ 变量（crashpad 管道串扰 + 外层进程噪声）。
+      env: runtimeProcessEnv(resolved, { ...process.env, ANTHROPIC_API_KEY: token }),
       maxRestarts: bridgeMaxRestarts, restartDelayMs: bridgeRestartDelayMs,
       restartWindowMs: bridgeRestartWindowMs,
       logger: (event, detail) => log(event, detail),

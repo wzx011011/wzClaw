@@ -208,8 +208,15 @@ function initRuntimeGate() {
     start: async (snapshot) => startCompanion(snapshot),
     stop: stopCompanion,
     onStatus: (status) => {
-      if (status.category !== runtimeStatus.category) {
-        pushLog('runtime-status', `${status.category}${status.source ? ` source=${status.source}` : ''}`);
+      if (status.category !== runtimeStatus.category
+        || status.detailCode !== runtimeStatus.detailCode) {
+        const fields = [status.category];
+        if (status.source) fields.push(`source=${status.source}`);
+        if (status.detailCode) fields.push(`detail=${status.detailCode}`);
+        if (status.doctorWarning) fields.push(`doctor=${status.doctorWarning}`);
+        if (status.stderrTail) fields.push(`stderr=${status.stderrTail}`);
+        if (status.attempts > 1) fields.push(`attempts=${status.attempts}`);
+        pushLog('runtime-status', fields.join(' '));
       }
       runtimeStatus = status;
       broadcast('runtime-status', publicRuntimeStatus());

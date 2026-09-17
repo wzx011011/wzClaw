@@ -130,7 +130,37 @@ test('runtime process env：Electron 执行 runtime cjs 时启用 Node 模式', 
   }
 });
 
-test('runtime resolver：打包 Electron 用同安装目录官方 ZCode.exe 承载 cjs', () => {
+test('runtime process env：剥离宿主 CHROME_/ELECTRON_ 变量，ZCODE_ 与业务注入保留', () => {
+  const original = process.versions.electron;
+  Object.defineProperty(process.versions, 'electron', { value: '41.10.7', configurable: true });
+  try {
+    // GUI 壳的 process.env 携带 crashpad 管道等 Chromium 内部变量；传给
+    // 子 runtime 前剥掉。ZCODE_* 必须保留（含子 runtime 必需的
+    // ZCODE_BUILTIN_PROVIDER_CONFIG_FILE，2026-09-17 实测剥掉即退 1）。
+    const env = runtimeProcessEnv(
+      { command: 'C:/host/ZCode.exe', args: ['C:/rt/zcode.cjs'] },
+      {
+        SAFE: 'keep', PATH: 'C:/bin', ANTHROPIC_API_KEY: 'token',
+        CHROME_CRASHPAD_PIPE_NAME: '\\\\.\\pipe\\crashpad_parent',
+        ELECTRON_NO_ATTACHED_CONSOLE: '1', ZCODE_PROCESS_LABEL: 'local-1',
+        ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: 'C:/cfg/zcode-builtin.json',
+      },
+    );
+    assert.equal(env.SAFE, 'keep');
+    assert.equal(env.PATH, 'C:/bin');
+    assert.equal(env.ANTHROPIC_API_KEY, 'token');
+    assert.equal(env.CHROME_CRASHPAD_PIPE_NAME, undefined);
+    assert.equal(env.ELECTRON_NO_ATTACHED_CONSOLE, undefined);
+    assert.equal(env.ZCODE_PROCESS_LABEL, 'local-1');
+    assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, 'C:/cfg/zcode-builtin.json');
+    assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
+  } finally {
+    if (original === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
+  }
+});
+
+test('runtime resolver：宿主一律自托管（Electron 与 node CLI 同路）', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-install-'));
   const runtime = path.join(root, 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs');
   const host = path.join(root, 'Programs', 'ZCode', 'ZCode.exe');
@@ -138,14 +168,21 @@ test('runtime resolver：打包 Electron 用同安装目录官方 ZCode.exe 承�
   fs.writeFileSync(runtime, '');
   fs.writeFileSync(host, '');
   const original = process.versions.electron;
-  Object.defineProperty(process.versions, 'electron', { value: '31.7.0', configurable: true });
+  Object.defineProperty(process.versions, 'electron', { value: '41.10.7', configurable: true });
   try {
-    const resolved = resolveZcodeRuntime({ LOCALAPPDATA: root });
-    assert.deepEqual(resolved, { category: 'resolved', source: 'installed', command: host, args: [runtime] });
-    assert.deepEqual(defaultZcodeCommand({ LOCALAPPDATA: root }), { command: host, args: [runtime] });
+    // Electron 父进程：自托管（官方 ZCode.exe 作子进程会静默 exit 1，2026-09-17 事故）
+    const inElectron = resolveZcodeRuntime({ LOCALAPPDATA: root });
+    assert.deepEqual(inElectron, { category: 'resolved', source: 'installed', command: process.execPath, args: [runtime] });
+    assert.deepEqual(defaultZcodeCommand({ LOCALAPPDATA: root }), { command: process.execPath, args: [runtime] });
   } finally {
     if (original === undefined) delete process.versions.electron;
     else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
+  }
+  try {
+    // node CLI 父进程：同样自托管（node ≥24 含 node:sqlite 可承载 runtime）
+    const inNode = resolveZcodeRuntime({ LOCALAPPDATA: root });
+    assert.deepEqual(inNode, { category: 'resolved', source: 'installed', command: process.execPath, args: [runtime] });
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
