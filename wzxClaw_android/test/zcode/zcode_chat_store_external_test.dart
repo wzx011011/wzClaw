@@ -103,15 +103,23 @@ void main() {
     fake.handlers['session/subagents'] = (_) => {
           'messages': [
             {
-              'info': {'id': 'sa-2', 'agent': 'Explore', 'role': 'assistant',
-                       'time': {'created': 200}},
+              'info': {
+                'id': 'sa-2',
+                'agent': 'Explore',
+                'role': 'assistant',
+                'time': {'created': 200},
+              },
               'parts': [
                 {'type': 'text', 'text': '子智能体结论'},
               ],
             },
             {
-              'info': {'id': 'sa-1', 'agent': 'Explore', 'role': 'assistant',
-                       'time': {'created': 100}},
+              'info': {
+                'id': 'sa-1',
+                'agent': 'Explore',
+                'role': 'assistant',
+                'time': {'created': 100},
+              },
               'parts': [
                 {'type': 'text', 'text': '子智能体开始'},
               ],
