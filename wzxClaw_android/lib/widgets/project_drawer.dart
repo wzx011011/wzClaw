@@ -323,12 +323,42 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     showWorkspaceSwitcherSheet(context);
   }
 
+  /// 主列表范围：当前选中工作区的未归档会话（列表跟随上方选择；
+  /// 未选择工作区或会话缺工作区信息时不隐藏）。工作区条目的计数徽标
+  /// 与会话列表共用同一口径。
+  List<ZcodeSessionMeta> _scopedSessions() {
+    final store = ZcodeChatStore.instance;
+    final selectedKey = store.selectedWorkspaceKey;
+    final selectedPath = store.selectedWorkspacePath;
+    final hasScope = (selectedKey?.isNotEmpty ?? false) ||
+        (selectedPath?.isNotEmpty ?? false);
+    bool inScope(ZcodeSessionMeta s) {
+      if (_archivedIds.contains(s.sessionId)) return false;
+      if (!hasScope) return true;
+      if (selectedKey != null &&
+          selectedKey.isNotEmpty &&
+          s.workspaceKey == selectedKey) {
+        return true;
+      }
+      if (selectedPath != null &&
+          selectedPath.isNotEmpty &&
+          s.workspacePath == selectedPath) {
+        return true;
+      }
+      return false;
+    }
+
+    return store.sessions.where(inScope).toList();
+  }
+
   /// Workspace section — 显示当前工作区及切换按钮。
   Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
     return ListenableBuilder(
       listenable: ZcodeChatStore.instance,
       builder: (context, _) {
         final wsName = _currentWorkspaceName();
+        // 会话计数与会话列表同一口径（当前工作区未归档会话）
+        final sessionCount = _scopedSessions().length;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,6 +419,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                           fontWeight: FontWeight.w600,
                         ),
                         overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      '$sessionCount 会话',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textMuted,
                       ),
                     ),
                   ],
@@ -527,30 +564,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         ListenableBuilder(
           listenable: ZcodeChatStore.instance,
           builder: (context, _) {
-            final store = ZcodeChatStore.instance;
-            // 主列表 = 当前工作区的未归档会话（对齐官方：列表跟随上方
-            // 选中的工作区；无选中或会话缺工作区信息时不隐藏）
-            final selectedKey = store.selectedWorkspaceKey;
-            final selectedPath = store.selectedWorkspacePath;
-            final hasScope = (selectedKey?.isNotEmpty ?? false) ||
-                (selectedPath?.isNotEmpty ?? false);
-            bool inScope(ZcodeSessionMeta s) {
-              if (_archivedIds.contains(s.sessionId)) return false;
-              if (!hasScope) return true;
-              if (selectedKey != null &&
-                  selectedKey.isNotEmpty &&
-                  s.workspaceKey == selectedKey) {
-                return true;
-              }
-              if (selectedPath != null &&
-                  selectedPath.isNotEmpty &&
-                  s.workspacePath == selectedPath) {
-                return true;
-              }
-              return false;
-            }
-
-            final sessions = store.sessions.where(inScope).toList();
+        final store = ZcodeChatStore.instance;
+        // 主列表 = 当前工作区的未归档会话（对齐官方：列表跟随上方
+        // 选中的工作区）
+        final sessions = _scopedSessions();
 
             final activeId = store.activeSessionId;
 
@@ -586,58 +603,21 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 ),
               );
             } else {
-            // 按工作区分组（对齐官方移动端）：组 = workspaceKey（缺省回退
-            // workspacePath / 未分组）；组内保持引擎排序（新→旧），
-            // 组间按各组最新会话时间排序
-            final groups = <String, List<ZcodeSessionMeta>>{};
-            for (final s in sessions) {
-              final key = s.workspaceKey ?? s.workspacePath ?? '未分组';
-              (groups[key] ??= []).add(s);
-            }
-            // 组内：置顶优先，其余按引擎排序（新→旧）
-            for (final list in groups.values) {
-              list.sort((a, b) {
-                final ra = _pinnedIds.contains(a.sessionId) ? 0 : 1;
-                final rb = _pinnedIds.contains(b.sessionId) ? 0 : 1;
-                if (ra != rb) return ra - rb;
-                return b.updatedAt.compareTo(a.updatedAt);
-              });
-            }
-            int newest(List<ZcodeSessionMeta> l) =>
-                l.map((e) => e.updatedAt).reduce((a, b) => a > b ? a : b);
-            final orderedKeys = groups.keys.toList()
-              ..sort((a, b) => newest(groups[b]!).compareTo(newest(groups[a]!)));
+            // 列表跟随上方选中的工作区，不再渲染工作区分组头：工作区名
+            // 与会话计数由上方专门的工作区条目承载（2026-09-18 用户定）。
+            // 排序：置顶优先，其余按引擎排序（新→旧）
+            sessions.sort((a, b) {
+              final ra = _pinnedIds.contains(a.sessionId) ? 0 : 1;
+              final rb = _pinnedIds.contains(b.sessionId) ? 0 : 1;
+              if (ra != rb) return ra - rb;
+              return b.updatedAt.compareTo(a.updatedAt);
+            });
 
             mainList = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (final key in orderedKeys) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-                    child: Row(children: [
-                      Icon(Icons.folder_outlined,
-                          size: 14, color: colors.textMuted,),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          _workspaceDisplayName(key),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: colors.textSecondary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Text(
-                        '${groups[key]!.length}',
-                        style: TextStyle(
-                            fontSize: 11, color: colors.textMuted,),
-                      ),
-                    ],),
-                  ),
-                  for (final session in groups[key]!)
-                    SwipeActionsTile(
+                for (final session in sessions)
+                  SwipeActionsTile(
                       actions: [
                         SwipeAction(
                           label: _pinnedIds.contains(session.sessionId)
@@ -670,7 +650,6 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                         onTap: () => _onSessionTap(context, session),
                       ),
                     ),
-                ],
               ],
             );
             }
