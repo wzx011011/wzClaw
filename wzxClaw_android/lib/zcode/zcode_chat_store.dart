@@ -253,6 +253,10 @@ class ZcodeChatStore extends ChangeNotifier {
   String? get selectedWorkspacePath =>
       _selectedWorkspacePath ?? _defaultWorkspacePath;
 
+  /// 当前生效的工作区 key（显式选择 ?? 默认回退）；供抽屉会话列表过滤
+  String? get selectedWorkspaceKey =>
+      _selectedWorkspaceKey ?? _defaultWorkspaceKey;
+
   void selectWorkspace(String workspaceKey, String workspacePath) {
     _selectedWorkspaceKey = workspaceKey;
     _selectedWorkspacePath = workspacePath;
@@ -828,6 +832,17 @@ class ZcodeChatStore extends ChangeNotifier {
           createdAt: state.items.first.message.createdAt,
         ),);
       }
+    }
+    // 引擎契约（2026-09-17 探针实测）：回合未完成时 session/messages 返回
+    // 空——刚发出消息就切走再点回会话会看到空白。显式说明而不是无声空屏；
+    // 回合完成后 _refreshAuthoritative 会拉到历史并持久化，再进入即正常。
+    if (state.items.isEmpty &&
+        (state.isStreaming || state.isWaitingForResponse)) {
+      state.insertHeadNotice(ChatMessage(
+        role: MessageRole.assistant,
+        content: '（回合进行中：引擎在回合完成后才落库消息，稍后重新打开即可看到完整记录）',
+        createdAt: DateTime.now(),
+      ),);
     }
 
     // 运行中：推送不可用 → 降级轮询；推送在用 → 武装看门狗
@@ -2002,6 +2017,20 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     _finishTurnFlags(state);
     unawaited(_persistSession(state));
+    unawaited(_refreshListingsAfterTurn(state));
+  }
+
+  /// 回合结束后延迟刷新会话列表：引擎在首条消息被接受后才自动生成标题
+  /// （2026-09-17 真机探针实测：create 后 title 为空，回合完成后 title=
+  /// 首条消息文本）。不刷新则抽屉一直停留在「（无标题会话）」。
+  Future<void> _refreshListingsAfterTurn(ZcodeSessionState state) async {
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (_connState != ZcodeConnState.matched) return;
+    try {
+      await refreshSessions();
+    } catch (_) {
+      // 列表刷新失败不影响会话视口；下次回合结束再试
+    }
   }
 
   /// 回合收尾的视口状态清理

@@ -528,10 +528,29 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
           listenable: ZcodeChatStore.instance,
           builder: (context, _) {
             final store = ZcodeChatStore.instance;
-            // 主列表 = 未归档会话（归档的收进底部折叠区）
-            final sessions = store.sessions
-                .where((s) => !_archivedIds.contains(s.sessionId))
-                .toList();
+            // 主列表 = 当前工作区的未归档会话（对齐官方：列表跟随上方
+            // 选中的工作区；无选中或会话缺工作区信息时不隐藏）
+            final selectedKey = store.selectedWorkspaceKey;
+            final selectedPath = store.selectedWorkspacePath;
+            final hasScope = (selectedKey?.isNotEmpty ?? false) ||
+                (selectedPath?.isNotEmpty ?? false);
+            bool inScope(ZcodeSessionMeta s) {
+              if (_archivedIds.contains(s.sessionId)) return false;
+              if (!hasScope) return true;
+              if (selectedKey != null &&
+                  selectedKey.isNotEmpty &&
+                  s.workspaceKey == selectedKey) {
+                return true;
+              }
+              if (selectedPath != null &&
+                  selectedPath.isNotEmpty &&
+                  s.workspacePath == selectedPath) {
+                return true;
+              }
+              return false;
+            }
+
+            final sessions = store.sessions.where(inScope).toList();
 
             final activeId = store.activeSessionId;
 
@@ -551,12 +570,18 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
 
             Widget mainList;
             if (sessions.isEmpty) {
+              final hasElsewhere = store.sessions
+                  .any((s) => !_archivedIds.contains(s.sessionId));
               final allArchived = _archivedIds.isNotEmpty;
               mainList = Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Text(
-                  allArchived ? '会话已全部归档\n可在下方展开查看' : '暂无会话记录\n连接大脑节点后自动加载',
+                  hasElsewhere
+                      ? '当前工作区暂无会话\n可切换工作区查看其他会话'
+                      : (allArchived
+                          ? '会话已全部归档\n可在下方展开查看'
+                          : '暂无会话记录\n连接大脑节点后自动加载'),
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
