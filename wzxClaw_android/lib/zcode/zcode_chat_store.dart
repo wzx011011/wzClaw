@@ -60,6 +60,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
+import '../models/goal_snapshot.dart';
 import 'zcode_desktop_registry.dart';
 import 'zcode_model_heal.dart';
 import 'zcode_notifier.dart';
@@ -1119,6 +1120,42 @@ class ZcodeChatStore extends ChangeNotifier {
       // 停止请求失败也继续拉权威消息
     }
     await _refreshAuthoritative(state);
+  }
+
+  /// 子智能体线程（session/subagents {action:'show'}，作用于本进程最近
+  /// materialize 的会话）：逐行经 _mapProtocolMessage 映射后按 info.agent
+  /// 分组，最新线程在前。失败返回空列表（尽力而为）。
+  Future<List<SubagentThread>> fetchSubagentThreads() async {
+    final client = _client;
+    if (client == null || !client.paired) return const [];
+    try {
+      final result =
+          await client.request('session/subagents', {'action': 'show'});
+      final rows = (result is Map ? result['messages'] : null) as List? ?? [];
+      final byAgent = <String, List<Map<String, dynamic>>>{};
+      for (final row in rows.whereType<Map>()) {
+        final info = row['info'] is Map ? row['info'] as Map : const {};
+        final agent = info['agent']?.toString() ?? '';
+        final msg = _mapProtocolMessage(row);
+        if (msg == null) continue;
+        final time = info['time'] is Map ? info['time'] as Map : const {};
+        byAgent.putIfAbsent(agent, () => []).add({
+          'role': msg.role.name,
+          'content': msg.content,
+          'created_at': (time['created'] as num?)?.toInt() ?? 0,
+        });
+      }
+      int newest(SubagentThread t) => t.messages
+          .map((m) => (m['created_at'] as num?)?.toInt() ?? 0)
+          .reduce((x, y) => x > y ? x : y);
+      final threads = byAgent.entries
+          .map((e) => SubagentThread(agent: e.key, messages: e.value))
+          .toList()
+        ..sort((a, b) => newest(b).compareTo(newest(a)));
+      return threads;
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// 关闭会话（session/close，协议实测存在）：结束该会话在节点上的运行，

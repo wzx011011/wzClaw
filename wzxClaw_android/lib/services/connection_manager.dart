@@ -337,6 +337,7 @@ class ConnectionManager with WidgetsBindingObserver {
     await connectFromSavedConfiguration();
   }
 
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // 保活/重连由 ZcodeRelayClient 自理（ping + 指数退避）；
     // 前台唤醒时仅在断线状态下触发一次配置恢复

@@ -97,6 +97,39 @@ void main() {
     );
   });
 
+
+  test('fetchSubagentThreads：按 info.agent 聚合、最新线程在前', () async {
+    final fake = FakeZcodeRelayClient();
+    fake.handlers['session/subagents'] = (_) => {
+          'messages': [
+            {
+              'info': {'id': 'sa-2', 'agent': 'Explore', 'role': 'assistant',
+                       'time': {'created': 200}},
+              'parts': [
+                {'type': 'text', 'text': '子智能体结论'},
+              ],
+            },
+            {
+              'info': {'id': 'sa-1', 'agent': 'Explore', 'role': 'assistant',
+                       'time': {'created': 100}},
+              'parts': [
+                {'type': 'text', 'text': '子智能体开始'},
+              ],
+            },
+          ],
+        };
+    final store = fedStore(fake);
+
+    final threads = await store.fetchSubagentThreads();
+
+    expect(threads, hasLength(1));
+    expect(threads.first.agent, 'Explore');
+    expect(threads.first.messages.length, 2);
+    // 聚合行形状：role/content/created_at（面板摘要渲染依赖）
+    expect(threads.first.messages.first['content'], '子智能体结论');
+    expect(threads.first.messages.first['role'], 'assistant');
+  });
+
   test('ingestNotifyFrame：未知通知帧不崩溃', () {
     final fake = FakeZcodeRelayClient();
     final store = fedStore(fake);

@@ -25,9 +25,10 @@ class GoalStore extends ChangeNotifier {
   GoalSnapshot get snapshot => _snapshot;
   bool get loading => _loading;
 
-  /// 子智能体线程：R2 待直连栈重建（session/subagents 需要引擎消息
-  /// 映射器 _mapEngineMessage，随翻译壳退役），当前恒为空
-  List<Never> get threads => const [];
+  List<SubagentThread> _threads = const [];
+
+  /// 子智能体线程（session/subagents，经 ZcodeChatStore 映射聚合）
+  List<SubagentThread> get threads => List.unmodifiable(_threads);
 
   /// 主动刷新（面板进入/下拉）：session/goal → 快照 → notifyListeners。
   /// 无活动会话或未连接时清空（面板显示空态，不阻断）。
@@ -44,6 +45,7 @@ class GoalStore extends ChangeNotifier {
       final result = await ConnectionManager.instance
           .zcodeRequest('session/goal', {'sessionId': sid});
       _snapshot = parseGoalSnapshot(result);
+      _threads = await ZcodeChatStore.instance.fetchSubagentThreads();
     } catch (e) {
       // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
       debugPrint('[goal-store] goal snapshot failed: $e');
