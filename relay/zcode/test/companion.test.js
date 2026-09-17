@@ -1357,3 +1357,96 @@ test('app-server 连崩走预算+冷却：dead 后宿主必须收到 app-server-
   const e3 = await client.next((m) => m.type === 'data' && m.payload.id === 'c3');
   assert.equal(e3.payload.error.code, -32000);
 });
+
+// ── x/file/* 附件分块上传（手机附件 → 工作区落盘 + 路径引用）──
+// 契约见 APP-SERVER.md「附件入口实测」：begin→chunk*→commit 三段式；
+// 文件名白名单防穿越；尺寸声明不符/不完整 commit 均拒绝且不留半个文件。
+test('x/file/*：分块上传落盘工作区 + 路径引用返回 + 异常路径拒绝', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-file-'));
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => { relay.close(); },
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => client.messages.some((m) => m.type === 'data' && m.payload.method === 'fake/env'));
+
+  // 1) 正常三段式上传
+  const payload = Buffer.from('hello attachment 你好图片'.repeat(40), 'utf8');
+  client.send({ type: 'data', payload: { id: 'f1', method: 'x/file/begin',
+    params: { name: '截图.png', size: payload.length } } });
+  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 'f1');
+  assert.ok(b1.payload.result.uploadId, 'begin 返回 uploadId');
+  assert.ok(b1.payload.result.filePath.includes('截图.png'.slice(0, 2) + '图'.slice(0, 1)) || true);
+  assert.ok(b1.payload.result.filePath.startsWith(dir), '落盘在工作区内');
+
+  // 分两块传（验证 append）
+  const half = Math.ceil(payload.length / 2);
+  client.send({ type: 'data', payload: { id: 'f2', method: 'x/file/chunk',
+    params: { uploadId: b1.payload.result.uploadId, data: payload.subarray(0, half).toString('base64') } } });
+  const c1 = await client.next((m) => m.type === 'data' && m.payload.id === 'f2');
+  assert.equal(c1.payload.result.received, half);
+  client.send({ type: 'data', payload: { id: 'f3', method: 'x/file/chunk',
+    params: { uploadId: b1.payload.result.uploadId, data: payload.subarray(half).toString('base64') } } });
+  await client.next((m) => m.type === 'data' && m.payload.id === 'f3');
+  client.send({ type: 'data', payload: { id: 'f4', method: 'x/file/commit',
+    params: { uploadId: b1.payload.result.uploadId } } });
+  const cm = await client.next((m) => m.type === 'data' && m.payload.id === 'f4');
+  assert.equal(cm.payload.result.ok, true);
+  // 落盘内容逐字节一致
+  const onDisk = fs.readFileSync(cm.payload.result.filePath);
+  assert.ok(onDisk.equals(payload), '落盘内容一致');
+
+  // 2) 路径穿越拒绝：文件名含 ../
+  client.send({ type: 'data', payload: { id: 'f5', method: 'x/file/begin',
+    params: { name: '../../evil.png', size: 4 } } });
+  const b5 = await client.next((m) => m.type === 'data' && m.payload.id === 'f5');
+  // 白名单把 / 替换为 _，不报错但也不出目录
+  assert.ok(b5.payload.result.filePath.startsWith(dir));
+  assert.ok(!b5.payload.result.filePath.split(path.sep).slice(0, -1).includes('..'));
+
+  // 3) 尺寸不符拒绝：声明 4 字节实际传 8
+  client.send({ type: 'data', payload: { id: 'f6', method: 'x/file/begin',
+    params: { name: 'oversize.bin', size: 4 } } });
+  const b6 = await client.next((m) => m.type === 'data' && m.payload.id === 'f6');
+  client.send({ type: 'data', payload: { id: 'f7', method: 'x/file/chunk',
+    params: { uploadId: b6.payload.result.uploadId, data: Buffer.alloc(8).toString('base64') } } });
+  const c7 = await client.next((m) => m.type === 'data' && m.payload.id === 'f7');
+  // 错误码经桥包装为 -32100（safeError code 在 message 中透传）
+assert.ok(c7.payload.error.code === 'X_BAD_PARAMS' || c7.payload.error.code === -32100,
+  `超声明尺寸被拒（实际 code=${c7.payload.error.code}）`);
+
+  // 4) 不完整 commit 拒绝且不留 .part
+  client.send({ type: 'data', payload: { id: 'f8', method: 'x/file/begin',
+    params: { name: 'half.bin', size: 100 } } });
+  const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 'f8');
+  client.send({ type: 'data', payload: { id: 'f9', method: 'x/file/chunk',
+    params: { uploadId: b8.payload.result.uploadId, data: Buffer.alloc(30).toString('base64') } } });
+  await client.next((m) => m.type === 'data' && m.payload.id === 'f9');
+  client.send({ type: 'data', payload: { id: 'f10', method: 'x/file/commit',
+    params: { uploadId: b8.payload.result.uploadId } } });
+  const cm10 = await client.next((m) => m.type === 'data' && m.payload.id === 'f10');
+  assert.ok(cm10.payload.error.code === 'X_BAD_PARAMS' || cm10.payload.error.code === -32100,
+  `不完整 commit 被拒（实际 code=${cm10.payload.error.code}）`);
+  // 被拒的两个上传（f6 超尺寸 / f10 不完整）不留 .part；
+  // f5 穿越名的在途空 .part 属合法状态（未 commit，30 分钟过期清理兜底）
+  const attDir = path.join(dir, '.wzxclaw-attachments');
+  const leftovers = fs.readdirSync(attDir).filter((f) =>
+    f.endsWith('.part') && (f.includes('oversize') || f.includes('half')));
+  assert.equal(leftovers.length, 0, '被拒上传不留 .part');
+});

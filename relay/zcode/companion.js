@@ -365,6 +365,18 @@ function createCompanion(options = {}) {
   let reattaching = false;
   let matchedUp = false; // 房间当前是否手机+设备齐全（决定 app-server 出站是否放行）
   const pending = new Map(); // 反向请求超时看护（按 method 分档，见 handleAppServerFrame）
+  // 手机附件分块上传会话表（x/file/*）：uploadId → {tmpPath,finalPath,
+  // size,received,createdAt}。30 分钟过期清理——中断的上传不留永久临时文件
+  const fileUploads = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, up] of fileUploads) {
+      if (now - up.createdAt > 30 * 60 * 1000) {
+        fileUploads.delete(id);
+        try { fs.unlinkSync(up.tmpPath); } catch { /* best effort */ }
+      }
+    }
+  }, 5 * 60 * 1000).unref();
 
   function log(event, detail) { logger(event, detail); }
 
@@ -850,6 +862,73 @@ function createCompanion(options = {}) {
             commands: summary && Array.isArray(summary.commands) ? summary.commands : [],
             mcpCount: summary && typeof summary.mcpCount === 'number' ? summary.mcpCount : 0,
             importedAt,
+          } });
+          return;
+        }
+        case 'x/file/begin': {
+          // 手机附件上传（三段式：begin→chunk*→commit）。落盘工作区
+          // .wzxclaw-attachments/，返回节点绝对路径供消息引用（引擎 Read
+          // →视觉管线自洽，APP-SERVER.md「附件入口实测」）。
+          // 安全：文件名只取末段并做字符白名单，杜绝路径穿越。
+          const p = frame.params || {};
+          const rawName = String(p.name || '').trim();
+          const safeName = rawName.replace(/[\\\/]/g, '_').replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
+          if (!safeName || safeName === '.' || safeName === '..'
+            || safeName.length > 120) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          if (!Number.isInteger(p.size) || p.size < 0 || p.size > 200 * 1024 * 1024) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const dir = path.join(cwd, '.wzxclaw-attachments');
+          fs.mkdirSync(dir, { recursive: true });
+          const uploadId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+          const stamp = new Date().toISOString().slice(0, 10);
+          // 目标名带日期+上传 id 前缀防同名校验；手机引用返回的完整路径
+          const fileName = `${stamp}-${uploadId}-${safeName}`;
+          const tmpPath = path.join(dir, `${fileName}.part`);
+          fs.writeFileSync(tmpPath, Buffer.alloc(0));
+          fileUploads.set(uploadId, { tmpPath, finalPath: path.join(dir, fileName),
+            size: p.size, received: 0, createdAt: Date.now() });
+          reply({ id: frame.id, result: {
+            uploadId,
+            // 手机拼接进消息文本的引用（引擎工作区内的绝对路径）
+            filePath: path.join(dir, fileName),
+          } });
+          return;
+        }
+        case 'x/file/chunk': {
+          const p = frame.params || {};
+          const up = fileUploads.get(String(p.uploadId || ''));
+          if (!up) throw safeError('X_NO_UPLOAD');
+          if (typeof p.data !== 'string' || p.data.length === 0) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const buf = Buffer.from(p.data, 'base64');
+          up.received += buf.length;
+          if (up.received > up.size) { // 声明尺寸不符：截断拒绝，防塞大文件
+            fileUploads.delete(String(p.uploadId));
+            try { fs.unlinkSync(up.tmpPath); } catch { /* best effort */ }
+            throw safeError('X_BAD_PARAMS');
+          }
+          fs.appendFileSync(up.tmpPath, buf);
+          reply({ id: frame.id, result: { received: up.received } });
+          return;
+        }
+        case 'x/file/commit': {
+          const p = frame.params || {};
+          const up = fileUploads.get(String(p.uploadId || ''));
+          if (!up) throw safeError('X_NO_UPLOAD');
+          fileUploads.delete(String(p.uploadId));
+          if (up.received !== up.size) { // 不完整：删除并如实报错，不留半个文件
+            try { fs.unlinkSync(up.tmpPath); } catch { /* best effort */ }
+            throw safeError('X_BAD_PARAMS');
+          }
+          fs.renameSync(up.tmpPath, up.finalPath);
+          reply({ id: frame.id, result: {
+            ok: true,
+            filePath: up.finalPath,
+            size: up.size,
           } });
           return;
         }
