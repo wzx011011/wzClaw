@@ -2,7 +2,7 @@
 
 const { randomUUID, createHmac } = require('node:crypto');
 const { WebSocket } = require('ws');
-const { MAX_PAYLOAD } = require('./server');
+const { MAX_PAYLOAD } = require('./lib/constants');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
 

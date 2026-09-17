@@ -10,8 +10,10 @@ const { createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createRelay } = require('../server');
-const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime, resolveZcodeRuntime,
-  defaultZcodeCommand, runtimeProcessEnv } = require('../companion');
+const { createCompanion, readRegistrationSecretFile, resolveRegistrationSecret,
+  probeZcodeRuntime, resolveZcodeRuntime, defaultZcodeCommand,
+  runtimeProcessEnv } = require('../companion');
+const { applyImport } = require('../../../companion_app/zcode-importer');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -99,6 +101,9 @@ test('runtime probe：独立 app-server 的 session/list 握手通过后才报�
   assert.equal(result.category, 'ready');
   assert.equal(result.source, 'environment');
   assert.match(result.version, /\d+\.\d+/);
+  assert.deepEqual(result.runtimeDescriptor, {
+    command: process.execPath, args: [FAKE_APP_SERVER], source: 'environment',
+  });
   // Windows 上 kill 后 stdout 句柄释放与 exit 事件存在极短竞态。
   await delay(120);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -340,8 +345,9 @@ test('反向请求超时默认长档：白名单方法短档、未知方法不�
   const rejected = (tag) => client.messages.some(
     (m) => m.type === 'data' && m.payload.method === 'fake/answered'
       && m.payload.params.tag === tag && m.payload.params.code === -32022);
+  let emitId = 100;
   const emit = (tag, method) => client.send({
-    type: 'data', payload: { id: `emit-${tag}`, method: 'emit/reverse', params: { tag, method } },
+    type: 'data', payload: { id: emitId++, method: 'emit/reverse', params: { tag, method } },
   });
   cleanup(t, [
     () => companion.stop(),
@@ -772,6 +778,22 @@ test('带密钥 relay 端到端：同 secret 的 companion 注册并配对成功
 
 // 注册密钥文件回退：~/.wzxclaw/zcode-companion/relay-secret 首行（去 CRLF）。
 // 缺失/为空返回 ''（开放注册模式），文件内容不匹配路径约定时同样安静回退。
+test('resolveRegistrationSecret：显式注入优先，其次环境变量，最后 0600 文件', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-secret-priority-'));
+  const secretDir = path.join(home, '.wzxclaw', 'zcode-companion');
+  fs.mkdirSync(secretDir, { recursive: true });
+  fs.writeFileSync(path.join(secretDir, 'relay-secret'), 'file-secret\n');
+
+  assert.equal(resolveRegistrationSecret({
+    explicit: 'explicit-secret', env: { REGISTRATION_SECRET: 'env-secret' }, homeDir: home,
+  }), 'explicit-secret');
+  assert.equal(resolveRegistrationSecret({
+    env: { REGISTRATION_SECRET: 'env-secret' }, homeDir: home,
+  }), 'env-secret');
+  assert.equal(resolveRegistrationSecret({ env: {}, homeDir: home }), 'file-secret');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('readRegistrationSecretFile：文件首行去 CRLF；缺失/为空返回空串', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zcode-secret-test-'));
   const secretPath = path.join(home, '.wzxclaw', 'zcode-companion', 'relay-secret');
@@ -1098,6 +1120,57 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
     'x/* 方法不得转发给 app-server');
 });
 
+test('GUI importer 与 core 共享显式 snapshotPath，工作区/偏好/扩展端到端可读', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-shared-state-'));
+  const stateDir = path.join(dir, 'state');
+  const snapshotPath = path.join(stateDir, 'gui-import.json');
+  const receipt = applyImport({
+    manifest: {
+      models: { selectedModel: null, providers: [] },
+      workspaces: ['C:\\work\\one', 'C:\\work\\two'],
+      preferences: { locale: 'zh-CN', keepAwakeWhileRunning: true },
+      extensions: { skills: ['skill-a'], plugins: [], commands: ['review'], mcpCount: 2 },
+    },
+    selection: { workspaces: true, preferences: true, extensions: true },
+    snapshotPath,
+  });
+  assert.equal(receipt.ok, true);
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    stateDir,
+    snapshotPath,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  const ask = (id, method) => client.send({ type: 'data', payload: { id, method, params: {} } });
+
+  ask(41, 'x/workspaces/list');
+  assert.deepEqual((await client.next((m) => m.payload?.id === 41)).payload.result.workspaces,
+    ['C:\\work\\one', 'C:\\work\\two']);
+  ask(42, 'x/preferences/summary');
+  assert.deepEqual((await client.next((m) => m.payload?.id === 42)).payload.result,
+    { count: 2, keys: ['keepAwakeWhileRunning', 'locale'], importedAt: receipt.importedAt });
+  ask(43, 'x/extensions/list');
+  const extensions = (await client.next((m) => m.payload?.id === 43)).payload.result;
+  assert.deepEqual(extensions.skills, ['skill-a']);
+  assert.deepEqual(extensions.commands, ['review']);
+});
+
 test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落盘/扩展摘要', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xmodel-'));
@@ -1281,8 +1354,8 @@ test('引擎重启窗口内的手机请求：bridge.write 失败必须回 ERR_UN
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
 
   // w1：引擎活着 → 正常应答；随后引擎自毁 → child=null 重启窗口（1s）
-  client.send({ type: 'data', payload: { id: 'w1', method: 'session/list' } });
-  const ok1 = await client.next((m) => m.type === 'data' && m.payload.id === 'w1');
+  client.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const ok1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
   assert.ok(ok1.payload.result);
 
   // w2：窗口内到达 → write false → 必须有错误应答 + 观测。
@@ -1290,11 +1363,12 @@ test('引擎重启窗口内的手机请求：bridge.write 失败必须回 ERR_UN
   // 但引擎不再应答），所以用 300ms 短超时轮询直到拿到 ERR_UNHANDLED——
   // 窗口长达 1s，轮询必然命中 write false 路径。
   let err2 = null;
+  let wid = 2;
   const windowStart = Date.now();
   while (!err2 && Date.now() - windowStart < 800) {
-    const wid = `w2-${windowStart}-${Math.random().toString(36).slice(2, 6)}`;
     client.send({ type: 'data', payload: { id: wid, method: 'session/list' } });
     const r = await client.next((m) => m.type === 'data' && m.payload.id === wid, 300).catch(() => null);
+    wid += 1;
     if (r && r.payload.error) err2 = r;
   }
   assert.ok(err2, '重启窗口内的请求必须有错误应答');
@@ -1303,8 +1377,8 @@ test('引擎重启窗口内的手机请求：bridge.write 失败必须回 ERR_UN
 
   // 重启完成后恢复应答：等待 respawn 观测日志（spawn 时打点），时序确定
   await waitFor(() => logs.filter((l) => l.startsWith('appserver-respawned')).length >= 2, 4000);
-  client.send({ type: 'data', payload: { id: 'w3', method: 'session/list' } });
-  const ok3 = await client.next((m) => m.type === 'data' && m.payload.id === 'w3');
+  client.send({ type: 'data', payload: { id: 900, method: 'session/list' } });
+  const ok3 = await client.next((m) => m.type === 'data' && m.payload.id === 900);
   assert.ok(ok3.payload.result, '重启后必须恢复应答');
 });
 
@@ -1345,16 +1419,16 @@ test('app-server 连崩走预算+冷却：dead 后宿主必须收到 app-server-
   await waitFor(() => logs.some((l) => l.startsWith('state:app-server-dead')), 4000);
 
   // 冷却窗口内：bridge=null → 帧必须得到 ERR_UNHANDLED 而非静默
-  client.send({ type: 'data', payload: { id: 'c1', method: 'session/list' } });
-  const e1 = await client.next((m) => m.type === 'data' && m.payload.id === 'c1');
+  client.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const e1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
   assert.equal(e1.payload.error.code, -32000);
 
   // 冷却过后：下一帧触发整体重试 → E3 spawn 即死 → 再次 dead
   await delay(300);
-  client.send({ type: 'data', payload: { id: 'c2', method: 'session/list' } });
+  client.send({ type: 'data', payload: { id: 2, method: 'session/list' } });
   await waitFor(() => logs.filter((l) => l.startsWith('state:app-server-dead')).length >= 2, 4000);
-  client.send({ type: 'data', payload: { id: 'c3', method: 'session/list' } });
-  const e3 = await client.next((m) => m.type === 'data' && m.payload.id === 'c3');
+  client.send({ type: 'data', payload: { id: 3, method: 'session/list' } });
+  const e3 = await client.next((m) => m.type === 'data' && m.payload.id === 3);
   assert.equal(e3.payload.error.code, -32000);
 });
 
@@ -1388,59 +1462,59 @@ test('x/file/*：分块上传落盘工作区 + 路径引用返回 + 异常路径
 
   // 1) 正常三段式上传
   const payload = Buffer.from('hello attachment 你好图片'.repeat(40), 'utf8');
-  client.send({ type: 'data', payload: { id: 'f1', method: 'x/file/begin',
+  client.send({ type: 'data', payload: { id: 1, method: 'x/file/begin',
     params: { name: '截图.png', size: payload.length } } });
-  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 'f1');
+  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
   assert.ok(b1.payload.result.uploadId, 'begin 返回 uploadId');
   assert.ok(b1.payload.result.filePath.includes('截图.png'.slice(0, 2) + '图'.slice(0, 1)) || true);
   assert.ok(b1.payload.result.filePath.startsWith(dir), '落盘在工作区内');
 
   // 分两块传（验证 append）
   const half = Math.ceil(payload.length / 2);
-  client.send({ type: 'data', payload: { id: 'f2', method: 'x/file/chunk',
+  client.send({ type: 'data', payload: { id: 2, method: 'x/file/chunk',
     params: { uploadId: b1.payload.result.uploadId, data: payload.subarray(0, half).toString('base64') } } });
-  const c1 = await client.next((m) => m.type === 'data' && m.payload.id === 'f2');
+  const c1 = await client.next((m) => m.type === 'data' && m.payload.id === 2);
   assert.equal(c1.payload.result.received, half);
-  client.send({ type: 'data', payload: { id: 'f3', method: 'x/file/chunk',
+  client.send({ type: 'data', payload: { id: 3, method: 'x/file/chunk',
     params: { uploadId: b1.payload.result.uploadId, data: payload.subarray(half).toString('base64') } } });
-  await client.next((m) => m.type === 'data' && m.payload.id === 'f3');
-  client.send({ type: 'data', payload: { id: 'f4', method: 'x/file/commit',
+  await client.next((m) => m.type === 'data' && m.payload.id === 3);
+  client.send({ type: 'data', payload: { id: 4, method: 'x/file/commit',
     params: { uploadId: b1.payload.result.uploadId } } });
-  const cm = await client.next((m) => m.type === 'data' && m.payload.id === 'f4');
+  const cm = await client.next((m) => m.type === 'data' && m.payload.id === 4);
   assert.equal(cm.payload.result.ok, true);
   // 落盘内容逐字节一致
   const onDisk = fs.readFileSync(cm.payload.result.filePath);
   assert.ok(onDisk.equals(payload), '落盘内容一致');
 
   // 2) 路径穿越拒绝：文件名含 ../
-  client.send({ type: 'data', payload: { id: 'f5', method: 'x/file/begin',
+  client.send({ type: 'data', payload: { id: 5, method: 'x/file/begin',
     params: { name: '../../evil.png', size: 4 } } });
-  const b5 = await client.next((m) => m.type === 'data' && m.payload.id === 'f5');
+  const b5 = await client.next((m) => m.type === 'data' && m.payload.id === 5);
   // 白名单把 / 替换为 _，不报错但也不出目录
   assert.ok(b5.payload.result.filePath.startsWith(dir));
   assert.ok(!b5.payload.result.filePath.split(path.sep).slice(0, -1).includes('..'));
 
   // 3) 尺寸不符拒绝：声明 4 字节实际传 8
-  client.send({ type: 'data', payload: { id: 'f6', method: 'x/file/begin',
+  client.send({ type: 'data', payload: { id: 6, method: 'x/file/begin',
     params: { name: 'oversize.bin', size: 4 } } });
-  const b6 = await client.next((m) => m.type === 'data' && m.payload.id === 'f6');
-  client.send({ type: 'data', payload: { id: 'f7', method: 'x/file/chunk',
+  const b6 = await client.next((m) => m.type === 'data' && m.payload.id === 6);
+  client.send({ type: 'data', payload: { id: 7, method: 'x/file/chunk',
     params: { uploadId: b6.payload.result.uploadId, data: Buffer.alloc(8).toString('base64') } } });
-  const c7 = await client.next((m) => m.type === 'data' && m.payload.id === 'f7');
+  const c7 = await client.next((m) => m.type === 'data' && m.payload.id === 7);
   // 错误码经桥包装为 -32100（safeError code 在 message 中透传）
 assert.ok(c7.payload.error.code === 'X_BAD_PARAMS' || c7.payload.error.code === -32100,
   `超声明尺寸被拒（实际 code=${c7.payload.error.code}）`);
 
   // 4) 不完整 commit 拒绝且不留 .part
-  client.send({ type: 'data', payload: { id: 'f8', method: 'x/file/begin',
+  client.send({ type: 'data', payload: { id: 8, method: 'x/file/begin',
     params: { name: 'half.bin', size: 100 } } });
-  const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 'f8');
-  client.send({ type: 'data', payload: { id: 'f9', method: 'x/file/chunk',
+  const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 8);
+  client.send({ type: 'data', payload: { id: 9, method: 'x/file/chunk',
     params: { uploadId: b8.payload.result.uploadId, data: Buffer.alloc(30).toString('base64') } } });
-  await client.next((m) => m.type === 'data' && m.payload.id === 'f9');
-  client.send({ type: 'data', payload: { id: 'f10', method: 'x/file/commit',
+  await client.next((m) => m.type === 'data' && m.payload.id === 9);
+  client.send({ type: 'data', payload: { id: 10, method: 'x/file/commit',
     params: { uploadId: b8.payload.result.uploadId } } });
-  const cm10 = await client.next((m) => m.type === 'data' && m.payload.id === 'f10');
+  const cm10 = await client.next((m) => m.type === 'data' && m.payload.id === 10);
   assert.ok(cm10.payload.error.code === 'X_BAD_PARAMS' || cm10.payload.error.code === -32100,
   `不完整 commit 被拒（实际 code=${cm10.payload.error.code}）`);
   // 被拒的两个上传（f6 超尺寸 / f10 不完整）不留 .part；

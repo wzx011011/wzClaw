@@ -15,10 +15,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { WebSocket } = require('ws');
-const { MAX_PAYLOAD } = require('./server');
+const { MAX_PAYLOAD } = require('./lib/constants');
 const { deriveProof, deriveRegisterProof } = require('./lib/proof');
 const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
   ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod } = require('./lib/protocol');
+const { resolveCompanionStatePaths } = require('./lib/state-path');
+const { resolveZcodeRuntime: resolveRuntime, publicRuntimeDescriptor } = require('./lib/runtime-resolver');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
@@ -41,34 +43,7 @@ function defaultZcodeCommand(env = process.env) {
 
 // 运行时预检只产生脱敏的状态码，绝不向调用者返回命令行、token 或原始 stderr。
 function resolveZcodeRuntime(env = process.env) {
-  const local = path.join(env.LOCALAPPDATA || '', 'Programs/ZCode/resources/glm/zcode.cjs');
-  const host = path.join(env.LOCALAPPDATA || '', 'Programs/ZCode/ZCode.exe');
-  const commandForRuntime = (runtime) => {
-    // 打包 Companion 的 Electron 不能代替官方 ZCode host 执行其 cjs runtime。
-    // 本机独立安装完整时必须使用同安装目录官方 host；CLI 保持 Node 自身路径。
-    if (process.versions.electron && fs.existsSync(host)) return host;
-    return process.execPath;
-  };
-  // 内嵌 runtime（Companion 安装包 extraResources 自带，2026-09-17 策略：
-  // 允许内嵌自用、不公开分发、官方安装优先）。打包态取 resources/zcode-runtime；
-  // 开发/测试用 WZXCLAW_BUNDLED_RUNTIME 显式指定。CLI（无 resourcesPath）或
-  // 文件不存在时自然跳过。路径不存在不报错——它只是兜底，不是用户显式配置。
-  const bundled = env.WZXCLAW_BUNDLED_RUNTIME
-    || (process.resourcesPath
-      ? path.join(process.resourcesPath, 'zcode-runtime', 'glm', 'zcode.cjs')
-      : null);
-  if (env.ZCODE_BIN) {
-    if (!fs.existsSync(env.ZCODE_BIN)) return { category: 'invalid-override' };
-    return { category: 'resolved', source: 'environment', command: commandForRuntime(env.ZCODE_BIN), args: [env.ZCODE_BIN] };
-  }
-  if (fs.existsSync(local)) return { category: 'resolved', source: 'installed', command: commandForRuntime(local), args: [local] };
-  if (bundled && fs.existsSync(bundled)) {
-    // 宿主 = Companion 自身可执行文件的 Node 模式（E41 起宿主 Node 含
-    // node:sqlite，实测可承载 runtime；ELECTRON_RUN_AS_NODE 由
-    // runtimeProcessEnv 按 .cjs 参数自动注入）
-    return { category: 'resolved', source: 'bundled', command: process.execPath, args: [bundled] };
-  }
-  return { category: 'resolved', source: 'path', command: 'zcode', args: [] };
+  return resolveRuntime({ env });
 }
 
 function runtimeProcessEnv(resolved, env = process.env) {
@@ -145,7 +120,7 @@ function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
               ? { id: frame.id, result: RUNTIME_PREFERENCES_RESULT }
               : { id: frame.id, error: { code: ERR_UNHANDLED, message: 'runtime probe does not handle this request' } };
             try { child.stdin.write(`${JSON.stringify(response)}\n`); } catch { return finish({ ok: false, code: 'WRITE_FAILED' }); }
-          } else if (frame.id === 'runtime-probe-1') {
+          } else if (frame.id === 1) {
             return Array.isArray(frame.result?.sessions)
               ? finish({ ok: true })
               : finish({ ok: false, code: frame.error ? 'APP_SERVER_ERROR' : 'BAD_RESPONSE' });
@@ -155,7 +130,7 @@ function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
       child.on('error', (error) => finish({ ok: false, code: error.code || 'SPAWN_ERROR' }));
       child.on('exit', (code) => finish({ ok: false, code: `EXIT_${code ?? 'UNKNOWN'}` }));
       child.stdin.on('error', () => finish({ ok: false, code: 'WRITE_FAILED' }));
-      child.stdin.write('{"id":"runtime-probe-1","method":"session/list","params":{}}\n');
+      child.stdin.write('{"id":1,"method":"session/list","params":{}}\n');
     } catch (error) { finish({ ok: false, code: error.code || 'SPAWN_ERROR' }); }
   });
 }
@@ -180,7 +155,10 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
     env: { ...env, ANTHROPIC_API_KEY: token },
   });
   return probe.ok
-    ? { category: 'ready', source: resolved.source, version: versionText, detailCode: null, doctorWarning: doctor.ok ? null : doctor.code }
+    ? { category: 'ready', source: resolved.source, version: versionText, detailCode: null,
+        doctorWarning: doctor.ok ? null : doctor.code,
+        // 预检成功后把同一解析结果绑定给长期 bridge，避免两次解析跨更新/环境变化。
+        runtimeDescriptor: publicRuntimeDescriptor(resolved) }
     : { category: probe.code === 'TIMEOUT' ? 'app-server-timeout' : 'app-server-failed', source: resolved.source, version: versionText, detailCode: probe.code, doctorWarning: doctor.ok ? null : doctor.code };
 }
 
@@ -327,7 +305,7 @@ class AppServerBridge {
 function createCompanion(options = {}) {
   const {
     relayUrl, cwd = process.cwd(), zcodeCommand, v2ConfigPath,
-    midFile = path.join(os.homedir(), '.wzxclaw', 'zcode-companion', 'mid'),
+    stateDir, midFile, snapshotPath,
     logger = () => {}, onPairing = () => {}, onStateChange = () => {},
     reconnectDelayMs = 5000,
     // 注册共享密钥：relay 设置 REGISTRATION_SECRET 后注册必须携带 proof
@@ -349,6 +327,8 @@ function createCompanion(options = {}) {
   if (registrationSecret !== undefined && (typeof registrationSecret !== 'string' || !registrationSecret.length)) {
     throw safeError('INVALID_REGISTRATION_SECRET');
   }
+
+  const statePaths = resolveCompanionStatePaths({ stateDir, midFile, snapshotPath });
 
   let stopped = false;
   let ws = null;
@@ -381,10 +361,10 @@ function createCompanion(options = {}) {
   function log(event, detail) { logger(event, detail); }
 
   function ensureMid() {
-    fs.mkdirSync(path.dirname(midFile), { recursive: true });
-    try { return fs.readFileSync(midFile, 'utf8').trim(); } catch { /* 首次运行 */ }
+    fs.mkdirSync(statePaths.stateDir, { recursive: true });
+    try { return fs.readFileSync(statePaths.midFile, 'utf8').trim(); } catch { /* 首次运行 */ }
     const mid = `companion-${randomBytes(16).toString('hex')}`;
-    fs.writeFileSync(midFile, mid, { mode: 0o600 });
+    fs.writeFileSync(statePaths.midFile, mid, { mode: 0o600 });
     return mid;
   }
   const mid = ensureMid();
@@ -392,21 +372,20 @@ function createCompanion(options = {}) {
   // 注册口令持久化（与 mid 同目录）：配合 relay 的确定性 sid（由 pass_hash+mid 派生），
   // 进程重启/开机自启动/掉线重连都得到同一配对码，手机端无需重扫。
   function ensurePassHash() {
-    const passHashFile = path.join(path.dirname(midFile), 'passhash');
-    fs.mkdirSync(path.dirname(passHashFile), { recursive: true });
+    fs.mkdirSync(statePaths.stateDir, { recursive: true });
     try {
-      const saved = fs.readFileSync(passHashFile, 'utf8').trim();
+      const saved = fs.readFileSync(statePaths.passHashFile, 'utf8').trim();
       if (/^[A-Za-z0-9+/]{43}=$/.test(saved)) return saved;
     } catch { /* 首次运行 */ }
     const generated = randomBytes(32).toString('base64');
-    fs.writeFileSync(passHashFile, generated, { mode: 0o600 });
+    fs.writeFileSync(statePaths.passHashFile, generated, { mode: 0o600 });
     return generated;
   }
   const passHash = ensurePassHash();
 
   // 单实例锁（与 mid 同目录）：自启动实例与手动实例并存会互踢（同 mid+口令
   // 派生同一房间，注册互为 owner 接管）。持锁进程死亡后锁可被新实例接管。
-  const lockFile = path.join(path.dirname(midFile), 'companion.lock');
+  const lockFile = statePaths.lockFile;
   const isPidAlive = (pid) => {
     try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
   };
@@ -600,7 +579,7 @@ function createCompanion(options = {}) {
   //   import-snapshot.json）作为目录补充展示，标记 unavailable=false 待引擎证实。
   // - 默认模型是 companion 自己的配置（model-default.json，0600），绝不写
   //   ~/.zcode；新会话由手机端在建会后先 setModel 应用。
-  const modelDefaultFile = path.join(path.dirname(midFile), 'model-default.json');
+  const modelDefaultFile = statePaths.modelDefaultFile;
   let engineModelCatalog = []; // [{providerId,modelId}] 引擎实测可用
   let engineCatalogAt = 0;
 
@@ -621,10 +600,17 @@ function createCompanion(options = {}) {
 
   // 读 companion_app 导入快照里的模型目录（快照与 CLI companion 共用数据目录）。
   // 结构见 zcode-importer.applyImport；缺失/损坏返回空（不算错误）。
+  function readImportSnapshot() {
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(statePaths.snapshotPath, 'utf8'));
+      return snapshot && typeof snapshot === 'object' && snapshot.schemaVersion === 1
+        ? snapshot : null;
+    } catch { return null; }
+  }
+
   function readImportedModelCatalog() {
     try {
-      const snap = JSON.parse(fs.readFileSync(
-        path.join(path.dirname(midFile), 'import-snapshot.json'), 'utf8',));
+      const snap = readImportSnapshot();
       const models = snap && snap.categories && snap.categories.models;
       if (!models || typeof models !== 'object') return [];
       const providers = Array.isArray(models.providers) ? models.providers : [];
@@ -846,22 +832,35 @@ function createCompanion(options = {}) {
           } });
           return;
         }
+        case 'x/workspaces/list': {
+          const snap = readImportSnapshot();
+          const workspaces = snap?.categories?.workspaces;
+          reply({ id: frame.id, result: {
+            workspaces: Array.isArray(workspaces) ? workspaces : [],
+            importedAt: snap?.importedAt || null,
+          } });
+          return;
+        }
+        case 'x/preferences/summary': {
+          const snap = readImportSnapshot();
+          const preferences = snap?.categories?.preferences;
+          const keys = preferences && typeof preferences === 'object' && !Array.isArray(preferences)
+            ? Object.keys(preferences).sort() : [];
+          reply({ id: frame.id, result: {
+            count: keys.length, keys, importedAt: snap?.importedAt || null,
+          } });
+          return;
+        }
         case 'x/extensions/list': {
           // 导入快照的扩展摘要（只读）；快照缺失时如实返回 empty 而非报错
-          let summary = null;
-          let importedAt = null;
-          try {
-            const snap = JSON.parse(fs.readFileSync(
-              path.join(path.dirname(midFile), 'import-snapshot.json'), 'utf8',));
-            summary = snap && snap.categories && snap.categories.extensions;
-            importedAt = snap && snap.importedAt || null;
-          } catch { /* 未导入 */ }
+          const snap = readImportSnapshot();
+          const summary = snap?.categories?.extensions;
           reply({ id: frame.id, result: {
             skills: summary && Array.isArray(summary.skills) ? summary.skills : [],
             plugins: summary && Array.isArray(summary.plugins) ? summary.plugins : [],
             commands: summary && Array.isArray(summary.commands) ? summary.commands : [],
             mcpCount: summary && typeof summary.mcpCount === 'number' ? summary.mcpCount : 0,
-            importedAt,
+            importedAt: snap?.importedAt || null,
           } });
           return;
         }
@@ -1133,9 +1132,14 @@ function readRegistrationSecretFile(homeDir = os.homedir()) {
   }
 }
 
+function resolveRegistrationSecret({ explicit, env = process.env,
+  homeDir = os.homedir() } = {}) {
+  return explicit || env.REGISTRATION_SECRET || readRegistrationSecretFile(homeDir);
+}
+
 module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand,
   resolveZcodeRuntime, runtimeProcessEnv, runRuntimeCommand, probeAppServer, probeZcodeRuntime,
-  readRegistrationSecretFile };
+  readRegistrationSecretFile, resolveRegistrationSecret };
 // 把配对二维码渲染成 PNG + 纯文本链接，写到固定位置（数据目录 + 可选额外路径）。
 // 口令/房间号均持久化且确定性派生：二维码内容几乎永不变化——
 // 用户永远去同一个固定路径取最新码，无需每次找。
@@ -1160,22 +1164,15 @@ if (require.main === module) {
   const relayIdx = args.indexOf('--relay');
   const cwdIdx = args.indexOf('--cwd');
   const noQrIdx = args.indexOf('--no-qr');
-  const secretIdx = args.indexOf('--register-secret');
   const midFileIdx = args.indexOf('--mid-file');
   const qrPngIdx = args.indexOf('--qr-png');
   const midFile = midFileIdx !== -1 && args[midFileIdx + 1] ? args[midFileIdx + 1] : undefined;
   const qrPngPath = qrPngIdx !== -1 && args[qrPngIdx + 1] ? args[qrPngIdx + 1] : undefined;
-  // 注册共享密钥三级回退：CLI 参数 > 环境变量 REGISTRATION_SECRET >
-  // ~/.wzxclaw/zcode-companion/relay-secret 文件；都未提供时不附
-  // register_proof（对开放注册的 relay 零影响）。
-  // 密钥来源：环境变量 > 文件（0600）。CLI 参数档会进 shell history /
-  // 进程列表，与「密钥不进进程参数」约定冲突——仅保留供测试，并打印警告。
-  const registrationSecret = secretIdx !== -1 && args[secretIdx + 1]
-    ? (console.error('[companion] 警告: --register-secret 会暴露在进程参数中，仅建议测试使用'),
-       args[secretIdx + 1])
-    : process.env.REGISTRATION_SECRET || readRegistrationSecretFile();
+  // 密钥来源统一为环境变量 > 0600 文件；不提供命令行参数入口，避免凭据
+  // 暴露在 shell history 和进程列表。都未提供时兼容开放注册 relay。
+  const registrationSecret = resolveRegistrationSecret();
   if (relayIdx === -1 || !args[relayIdx + 1]) {
-    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--register-secret <注册密钥>] [--mid-file <路径>] [--qr-png <路径>]');
+    console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--mid-file <路径>] [--qr-png <路径>]');
     process.exitCode = 1;
   } else {
     let qrTerminal;

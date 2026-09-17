@@ -31,7 +31,23 @@ test('旧配置检查迟到完成时不得启动新配置', async () => {
   await a;
 
   assert.equal(stops, 2);
-  assert.deepEqual(starts, [{ relayUrl: 'wss://b/ws', cwd: 'B' }]);
+  assert.deepEqual(starts, [{ relayUrl: 'wss://b/ws', cwd: 'B', runtimeDescriptor: null }]);
+});
+
+test('预检返回的 runtime descriptor 绑定到长期 companion 启动', async () => {
+  const starts = [];
+  const descriptor = Object.freeze({ command: 'ZCode.exe', args: ['zcode.cjs'], source: 'installed' });
+  const gate = createRuntimeGate({
+    probe: async () => ({ category: 'ready', runtimeDescriptor: descriptor }),
+    start: async (cfg) => { starts.push(cfg); },
+    stop: async () => {},
+    onStatus: () => {},
+    onFailure: () => {},
+  });
+
+  await gate.check({ relayUrl: 'wss://relay/ws', cwd: 'C' });
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].runtimeDescriptor, descriptor);
 });
 
 test('重新检查失败先停止旧 companion 且不重启', async () => {

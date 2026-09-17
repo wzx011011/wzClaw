@@ -80,9 +80,17 @@ test('invalid configuration remains a safe status without raw content', () => {
   assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 
-test('selection defaults to safe metadata and keeps executable extensions opt-in', () => {
+test('selection uses the importer category schema and preserves explicit choices', () => {
   assert.deepEqual(normalizeImportSelection({}), {
-    modelMetadata: true, preferences: true, workspaces: false, extensions: false,
+    models: true, workspaces: true, preferences: true, extensions: false,
+  });
+  assert.deepEqual(normalizeImportSelection({ selection: {
+    models: false, workspaces: false, preferences: true, extensions: true,
+  } }), {
+    models: false, workspaces: false, preferences: true, extensions: true,
+  });
+  assert.deepEqual(normalizeImportSelection({ selection: { extensions: true } }, { useDefaults: false }), {
+    models: false, workspaces: false, preferences: false, extensions: true,
   });
 });
 

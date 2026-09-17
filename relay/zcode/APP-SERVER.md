@@ -31,10 +31,12 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
 
 - 帧格式：NDJSON，**无 `jsonrpc` 字段**的类 JSON-RPC（发 `{"jsonrpc":"2.0",…}` 会被
   zod 拒绝：Unrecognized key）。
-  - 请求 `{id: number|string, method, params}`
+  - app-server 请求形状可见 `{id: number|string, method, params}`；经 relay 的 probe
+    普通请求必须使用数值 ID，relay 会改写为房间内部数值 ID以隔离多 probe
   - 通知 `{method, params}`（无 id）
   - 响应 `{id, result}` / `{id, error:{code,message,data?}}`
-  - 服务端反向请求：`id` 形如 `"server-1"`，客户端必须应答 `{id:"server-1", result}`
+  - device/app-server 反向请求：`id` 形如 `"server-1"`，客户端必须应答
+    `{id:"server-1", result}`；probe 发出的字符串 `method+id` 会被 relay 显式拒绝
 - 无需 initialize 握手：连上即可调 `session/list`（发 `initialize` 反而 Method not found）。
 
 ## 已验证（E: 盘真实数据）

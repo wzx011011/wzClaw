@@ -18,27 +18,36 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 const BUNDLE_DIR = path.join(__dirname, '..', 'runtime-bundle');
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024; // 防拷错目录（实测 glm/ ≈ 49MB）
 
 function candidateSources(env = process.env) {
   const list = [];
-  if (env.ZCODE_BUNDLE_SRC) list.push(env.ZCODE_BUNDLE_SRC);
+  if (env.ZCODE_BUNDLE_SRC) list.push({ type: 'environment', root: env.ZCODE_BUNDLE_SRC });
   const localAppData = env.LOCALAPPDATA;
   if (localAppData) {
-    list.push(path.join(localAppData, 'Programs', 'ZCode', 'resources', 'glm'));
+    list.push({
+      type: 'installed',
+      root: path.join(localAppData, 'Programs', 'ZCode', 'resources', 'glm'),
+    });
   }
   return list;
 }
 
 function resolveSource(env = process.env) {
   for (const candidate of candidateSources(env)) {
-    const cjs = path.join(candidate, 'zcode.cjs');
-    const packages = path.join(candidate, 'packages');
+    const cjs = path.join(candidate.root, 'zcode.cjs');
+    const packages = path.join(candidate.root, 'packages');
     try {
       if (fs.statSync(cjs).isFile()) {
-        return { root: candidate, cjs, packages: fs.statSync(packages).isDirectory() ? packages : null };
+        return {
+          type: candidate.type,
+          root: candidate.root,
+          cjs,
+          packages: fs.statSync(packages).isDirectory() ? packages : null,
+        };
       }
     } catch { /* 尝试下一个候选 */ }
   }
@@ -56,6 +65,10 @@ function dirSize(dir) {
 
 // 从官方安装读 runtime 版本（不执行任何代码；zcode.cjs 是打包 JS，无明文版本号，
 // 故以 packages 目录 mtime + 文件大小做指纹，版本真值由运行时 gate 上报）
+function fileSha256(filePath) {
+  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
 function copyRuntime(source) {
   fs.rmSync(BUNDLE_DIR, { recursive: true, force: true });
   fs.mkdirSync(path.join(BUNDLE_DIR, 'glm'), { recursive: true });
@@ -67,11 +80,14 @@ function copyRuntime(source) {
   if (total > MAX_TOTAL_BYTES) {
     throw new Error(`内嵌 runtime 体积异常（${(total / 1024 / 1024).toFixed(1)}MB > 200MB），疑似拷错源目录`);
   }
+  // manifest 随包分发：只含确定性字段——来源类型（枚举）、体积、runtime
+  // 内容哈希。绝不写构建机绝对路径与时间戳，保证可复现且不泄露本机信息；
+  // 哈希同时供 package 测试校验包内 runtime 与 manifest 一致。
   const manifest = {
     bundled: true,
-    source: source.root,
+    sourceType: source.type,
     bytes: total,
-    copiedAt: new Date().toISOString(),
+    runtimeSha256: fileSha256(path.join(BUNDLE_DIR, 'glm', 'zcode.cjs')),
   };
   fs.writeFileSync(path.join(BUNDLE_DIR, 'manifest.json'),
     JSON.stringify(manifest, null, 2),);
@@ -81,23 +97,27 @@ function copyRuntime(source) {
 function writeEmptyBundle(reason) {
   fs.rmSync(BUNDLE_DIR, { recursive: true, force: true });
   fs.mkdirSync(BUNDLE_DIR, { recursive: true });
-  const manifest = { bundled: false, reason, copiedAt: new Date().toISOString() };
+  // 固定枚举 reason，不携带异常文本（可能含本机路径）
+  const manifest = { bundled: false,
+    reason: reason === 'copy-failed' ? 'copy-failed' : 'source-not-found' };
   fs.writeFileSync(path.join(BUNDLE_DIR, 'manifest.json'),
     JSON.stringify(manifest, null, 2),);
-  console.log(`[prepare-runtime] not bundled: ${reason}`);
+  console.log(`[prepare-runtime] not bundled: ${manifest.reason}`);
 }
 
 function main() {
   const source = resolveSource();
   if (!source) {
-    writeEmptyBundle('未找到本机官方 ZCode 安装（也未设置 ZCODE_BUNDLE_SRC）');
+    writeEmptyBundle('source-not-found');
     return;
   }
   try {
     copyRuntime(source);
   } catch (e) {
-    // 拷贝失败必须让构建失败（宁可不打包也不出半份 bundle）
-    writeEmptyBundle(`拷贝失败：${e.message}`);
+    // 拷贝失败必须让构建失败（宁可不打包也不出半份 bundle）；
+    // 异常细节只进构建控制台，不进随包 manifest
+    console.error(`[prepare-runtime] copy failed: ${e.message}`);
+    writeEmptyBundle('copy-failed');
     process.exitCode = 1;
   }
 }

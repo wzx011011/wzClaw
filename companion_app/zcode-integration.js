@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { resolveZcodeRuntime, installationSummary, bundledRuntimePath } = require('./cclient/lib/runtime-resolver');
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
 
@@ -32,30 +33,12 @@ function readJsonFile(fsApi, filePath, { allowArray = false } = {}) {
   }
 }
 
-function resolveZcodeInstallation({ env = process.env, fsApi = fs, platform = process.platform, bundledRuntime = null } = {}) {
-  const localAppData = env.LOCALAPPDATA;
-  const candidates = [
-    ['environment', env.ZCODE_BIN],
-    ['installed', platform === 'win32' && localAppData
-      ? path.join(localAppData, 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs')
-      : null],
-    // Companion 安装包内嵌 runtime（extraResources）；官方安装存在时永远优先
-    ['bundled', bundledRuntime],
-  ];
-  for (const [source, candidate] of candidates) {
-    if (typeof candidate === 'string' && candidate.length && isRegularFile(fsApi, candidate)) {
-      return { status: 'found', source, command: candidate };
-    }
-  }
-  // PATH 只能证明“可能可调用”，首启页必须如实标记为未验证安装。
-  return { status: 'not-found', source: null, command: null };
-}
-
-// 打包态内嵌 runtime 路径（resources/zcode-runtime/glm/zcode.cjs）。
-// resourcesPath 由 Electron 主进程提供；非打包环境传 null。
-function bundledRuntimePath(resourcesPath) {
-  if (!resourcesPath) return null;
-  return path.join(resourcesPath, 'zcode-runtime', 'glm', 'zcode.cjs');
+function resolveZcodeInstallation({ env = process.env, fsApi = fs, platform = process.platform,
+  bundledRuntime = null } = {}) {
+  const runtimeEnv = bundledRuntime ? { ...env, WZXCLAW_BUNDLED_RUNTIME: bundledRuntime } : env;
+  const resolved = resolveZcodeRuntime({ env: runtimeEnv, fsApi, platform });
+  return { ...installationSummary(resolved), command: resolved.category === 'resolved'
+    && resolved.source !== 'path' ? resolved.args[0] : null };
 }
 
 function inspectZcodeConfiguration({ fsApi = fs, homeDir = os.homedir() } = {}) {
@@ -103,14 +86,22 @@ function detectZcode(options = {}) {
   return { installation, ...configuration };
 }
 
-function normalizeImportSelection(input) {
-  const selected = input && input.selection && typeof input.selection === 'object' ? input.selection : {};
-  return {
-    modelMetadata: selected.modelMetadata !== false,
-    preferences: selected.preferences !== false,
-    workspaces: selected.workspaces === true,
-    extensions: selected.extensions === true,
-  };
+const IMPORT_SELECTION_DEFAULTS = Object.freeze({
+  models: true,
+  workspaces: true,
+  preferences: true,
+  extensions: false,
+});
+
+function normalizeImportSelection(input, { useDefaults = true } = {}) {
+  const selected = input && input.selection && typeof input.selection === 'object'
+    ? input.selection : (input && typeof input === 'object' ? input : {});
+  const normalized = {};
+  for (const [category, defaultValue] of Object.entries(IMPORT_SELECTION_DEFAULTS)) {
+    normalized[category] = typeof selected[category] === 'boolean'
+      ? selected[category] : (useDefaults ? defaultValue : false);
+  }
+  return normalized;
 }
 
 // ---- 导入清单（只读扫描，产出可勾选的脱敏项） ----
@@ -247,6 +238,7 @@ function buildImportManifest(options = {}) {
 module.exports = {
   MAX_CONFIG_BYTES,
   PREFERENCE_ALLOWLIST,
+  IMPORT_SELECTION_DEFAULTS,
   resolveZcodeInstallation,
   bundledRuntimePath,
   inspectZcodeConfiguration,

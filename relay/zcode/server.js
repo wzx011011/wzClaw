@@ -5,7 +5,7 @@ const { createHmac, randomBytes, randomUUID } = require('node:crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const { verifyProof, verifyRegisterProof } = require('./lib/proof');
 const { classifyFrame } = require('./lib/protocol');
-const MAX_PAYLOAD = 1024 * 1024;
+const { MAX_PAYLOAD } = require('./lib/constants');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function createRelay(options = {}) {
@@ -21,6 +21,9 @@ function createRelay(options = {}) {
   const config = { authTimeoutMs: 10000, roomTtlMs: 60000, sweepIntervalMs: 1000,
     pingIntervalMs: 30000, maxSockets: 32, maxDevices: 16, maxRooms: 16, maxProbes: 3,
     rateLimit: 120, rateWindowMs: 10000,
+    // RPC 路由必须有界且可回收。deadline 只约束 relay 的归属记录，不替代
+    // companion/app-server 自己的请求超时；到期后迟到响应会以 unmatched 留观测。
+    routeDeadlineMs: 2 * 60 * 1000, maxPendingRoutes: 256,
     // 流式 data 独立配额：不能沿用控制帧 120/10s 把正常回合掐断，也不能无限豁免。
     // 16 个满帧/窗口：单次 session/resume 截断回复可接近 1MiB，必须容纳；
     // 持续占用仍受字节总量和帧数双重限制。
@@ -83,8 +86,8 @@ function createRelay(options = {}) {
       for (const [id, route] of room.requestRoutes) {
         if (route.probe === state) room.requestRoutes.delete(id);
       }
-      for (const [id, probe] of room.reverseRoutes) {
-        if (probe === state) room.reverseRoutes.delete(id);
+      for (const [id, route] of room.reverseRoutes) {
+        if (route.probe === state) room.reverseRoutes.delete(id);
       }
     }
     state.room = null;
@@ -278,7 +281,14 @@ function createRelay(options = {}) {
           // 反向请求只能由一个手机回答。稳定选择第一个健康 probe，避免双允许。
           const probe = [...state.room.probes.values()].find((p) => !isStale(p));
           if (!probe) { logger('route-no-probe', String(msg.payload.id)); return; }
-          state.room.reverseRoutes.set(msg.payload.id, probe);
+          if (!state.room.reverseRoutes.has(msg.payload.id)
+            && state.room.reverseRoutes.size >= config.maxPendingRoutes) {
+            logger('route-capacity-reverse', `count=${state.room.reverseRoutes.size}`);
+            return;
+          }
+          state.room.reverseRoutes.set(msg.payload.id, {
+            probe, deadlineAt: Date.now() + config.routeDeadlineMs,
+          });
           send(probe.ws, msg);
         } else {
           // 无 id 的通知/流式事件可安全广播，保留多手机旁观能力。
@@ -287,14 +297,30 @@ function createRelay(options = {}) {
       } else {
         const kind = classifyFrame(msg.payload);
         if (kind === 'request' && typeof msg.payload.id === 'number') {
+          if (state.room.requestRoutes.size >= config.maxPendingRoutes) {
+            logger('route-capacity-request', `count=${state.room.requestRoutes.size}`);
+            send(state.ws, { type: 'data', payload: { id: msg.payload.id,
+              error: { code: -32000, message: 'Relay request route capacity reached' } } });
+            return;
+          }
           const wireId = state.room.nextRequestId++;
-          state.room.requestRoutes.set(wireId, { probe: state, sourceId: msg.payload.id });
+          state.room.requestRoutes.set(wireId, { probe: state, sourceId: msg.payload.id,
+            deadlineAt: Date.now() + config.routeDeadlineMs });
           send(state.room.device.ws, { type: 'data', payload: { ...msg.payload, id: wireId } });
-        } else if (kind === 'response' && state.room.reverseRoutes.get(msg.payload.id) === state) {
-          state.room.reverseRoutes.delete(msg.payload.id);
-          send(state.room.device.ws, msg);
+        } else if (kind === 'reverse-request') {
+          // 字符串 method+id 只允许来自 device（app-server 的反向请求）。probe
+          // 发出同形状普通请求时必须显式拒绝，绝不能误当反向请求广播/单播给其它手机。
+          logger('route-rejected-request', 'string-id');
+          send(state.ws, { type: 'data', payload: { id: msg.payload.id,
+            error: { code: -32600, message: 'Probe request id must be a number' } } });
         } else if (kind === 'response') {
-          logger('route-rejected-response', String(msg.payload.id));
+          const route = state.room.reverseRoutes.get(msg.payload.id);
+          if (route && route.probe === state) {
+            state.room.reverseRoutes.delete(msg.payload.id);
+            send(state.room.device.ws, msg);
+          } else {
+            logger('route-rejected-response', String(msg.payload.id));
+          }
         } else {
           // probe 通知保持上行；普通响应必须有明确反向请求归属。
           send(state.room.device.ws, msg);
@@ -303,8 +329,22 @@ function createRelay(options = {}) {
     } else fail(state);
   }
   const sweepTimer = setInterval(() => {
+    const now = Date.now();
     for (const [sid, room] of rooms) {
-      if (room.inactiveAt !== null && Date.now() - room.inactiveAt >= config.roomTtlMs) rooms.delete(sid);
+      if (room.inactiveAt !== null && now - room.inactiveAt >= config.roomTtlMs) {
+        rooms.delete(sid);
+        continue;
+      }
+      for (const [id, route] of room.requestRoutes) {
+        if (route.deadlineAt > now) continue;
+        room.requestRoutes.delete(id);
+        logger('route-expired-request', `id=${id}`);
+      }
+      for (const [id, route] of room.reverseRoutes) {
+        if (route.deadlineAt > now) continue;
+        room.reverseRoutes.delete(id);
+        logger('route-expired-reverse', `id=${id}`);
+      }
     }
   }, config.sweepIntervalMs).unref();
   const pingTimer = setInterval(() => {

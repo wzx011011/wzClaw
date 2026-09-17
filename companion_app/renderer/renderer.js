@@ -210,7 +210,7 @@ $('btnApplyImport').addEventListener('click', async () => {
     relayUrl: $('relayUrl').value,
     cwd: $('cwd').value,
     autoStart: $('autoStart').checked,
-    selection: {},
+    selection,
   });
   if (r.ok) {
     if (importResult) {

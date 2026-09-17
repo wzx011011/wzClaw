@@ -3,10 +3,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
+const http = require('node:http');
 const { randomUUID, randomBytes, createHash, createHmac } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { WebSocket } = require('ws');
-const { createRelay, MAX_PAYLOAD } = require('../server');
+const { createRelay } = require('../server');
+const { MAX_PAYLOAD } = require('../lib/constants');
 const { deriveProof, deriveRegisterProof, verifyProof } = require('../lib/proof');
 const { classifyFrame, ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
   ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod,
@@ -228,7 +230,17 @@ async function fixture(t, options) {
   const address = await relay.listen({ port: 0 });
   assert.equal(address.address, '127.0.0.1');
   const url = `ws://127.0.0.1:${address.port}/ws`;
-  const health = async () => (await fetch(`http://127.0.0.1:${address.port}/health`)).json();
+  const health = () => new Promise((resolve, reject) => {
+    const request = http.get({ host: '127.0.0.1', port: address.port, path: '/health' }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (error) { reject(error); }
+      });
+    });
+    request.on('error', reject);
+  });
   return { relay, url, health };
 }
 async function client(t, url, options) {
@@ -561,6 +573,72 @@ test('per-probe RPC routes isolate colliding ids while notifications still broad
   d.send(notification);
   assert.deepEqual(await p1.next('data'), notification);
   assert.deepEqual(await p2.next('data'), notification);
+});
+
+test('attachment requests with colliding numeric ids stay isolated between two probes', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+
+  p1.send({ type: 'data', payload: { id: 7, method: 'x/file/begin', params: { name: 'a.txt', size: 1 } } });
+  const d1 = await d.next('data');
+  p2.send({ type: 'data', payload: { id: 7, method: 'x/file/begin', params: { name: 'b.txt', size: 1 } } });
+  const d2 = await d.next('data');
+  assert.notEqual(d1.payload.id, d2.payload.id);
+  d.send({ type: 'data', payload: { id: d2.payload.id, result: { uploadId: 'for-p2' } } });
+  d.send({ type: 'data', payload: { id: d1.payload.id, result: { uploadId: 'for-p1' } } });
+  assert.deepEqual((await p2.next('data')).payload, { id: 7, result: { uploadId: 'for-p2' } });
+  assert.deepEqual((await p1.next('data')).payload, { id: 7, result: { uploadId: 'for-p1' } });
+  await delay(30);
+  assert.equal(p1.messages.some((m) => m.payload?.result?.uploadId === 'for-p2'), false);
+  assert.equal(p2.messages.some((m) => m.payload?.result?.uploadId === 'for-p1'), false);
+});
+
+test('probe method requests require numeric ids; string ids are rejected and never reach device or peers', async (t) => {
+  const logs = [];
+  const f = await fixture(t, { logger: (event, detail) => logs.push(`${event} ${detail}`) });
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+  d.messages.length = 0; p1.messages.length = 0; p2.messages.length = 0;
+
+  p1.send({ type: 'data', payload: { id: 'client-string-id', method: 'session/list' } });
+  const rejected = await p1.next('data', (m) => m.payload.id === 'client-string-id');
+  assert.equal(rejected.payload.error.code, -32600);
+  await delay(30);
+  assert.equal(d.messages.some((m) => m.type === 'data'), false);
+  assert.equal(p2.messages.some((m) => m.type === 'data'), false);
+  assert.ok(logs.some((line) => line.startsWith('route-rejected-request ')));
+});
+
+test('route tables enforce pending limits and sweep expired request and reverse routes with observation', async (t) => {
+  const logs = [];
+  const f = await fixture(t, {
+    routeDeadlineMs: 40,
+    maxPendingRoutes: 1,
+    sweepIntervalMs: 10,
+    logger: (event, detail) => logs.push(`${event} ${detail}`),
+  });
+  const d = await device(t, f.url);
+  const p = await client(t, f.url); await auth(p, d.sid, d.hash);
+
+  p.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const first = await d.next('data');
+  p.send({ type: 'data', payload: { id: 2, method: 'session/list' } });
+  const full = await p.next('data', (m) => m.payload.id === 2);
+  assert.equal(full.payload.error.code, -32000);
+  await eventually(() => logs.some((line) => line.startsWith('route-expired-request ')));
+  d.send({ type: 'data', payload: { id: first.payload.id, result: {} } });
+  await eventually(() => logs.some((line) => line.startsWith('route-unmatched-response ')));
+
+  d.send({ type: 'data', payload: { id: 'server-a', method: 'interaction/requestPermission' } });
+  await p.next('data', (m) => m.payload.id === 'server-a');
+  d.send({ type: 'data', payload: { id: 'server-b', method: 'interaction/requestPermission' } });
+  await eventually(() => logs.some((line) => line.startsWith('route-capacity-reverse ')));
+  await eventually(() => logs.some((line) => line.startsWith('route-expired-reverse ')));
+  p.send({ type: 'data', payload: { id: 'server-a', result: { decision: 'allow' } } });
+  await eventually(() => logs.some((line) => line.startsWith('route-rejected-response server-a')));
 });
 
 test('reverse request is routed to one probe and rejects duplicate responders', async (t) => {

@@ -13,7 +13,8 @@ const { createHash } = require('node:crypto');
 const SRC = path.join(__dirname, '..');
 const DST = path.join(__dirname, '..', '..', '..', 'companion_app', 'cclient');
 
-const PAIRS = ['companion.js', 'server.js', 'lib/proof.js', 'lib/protocol.js'];
+const PAIRS = ['companion.js', 'lib/constants.js', 'lib/proof.js', 'lib/protocol.js',
+  'lib/runtime-resolver.js', 'lib/state-path.js'];
 
 test('companion_app/cclient 与 relay/zcode 源码零漂移', () => {
   for (const rel of PAIRS) {

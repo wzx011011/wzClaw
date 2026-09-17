@@ -2,8 +2,8 @@
 // ============================================================
 // wzxClaw Companion App（Windows 桌面壳）
 //
-// 内嵌 relay/zcode/companion.js（cclient/ 原样拷贝，require('./server')
-// 仅取 MAX_PAYLOAD），通过 createCompanion 回调驱动两个形态：
+// 构建前从 relay/zcode 唯一源码生成 cclient 核心，通过 createCompanion
+// 回调驱动两个形态：
 // - 完整形态：状态 + 配对二维码 + 设置（relay/工作目录/自启）+ 日志
 // - 桌面宠物形态：透明置顶小窗，状态变色，双击/菜单回到完整形态
 // 托盘常驻；关闭窗口 = 缩到托盘。配对凭据与 CLI companion 共享同一
@@ -15,7 +15,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require
 const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
-const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime } = require('./cclient/companion');
+const { createCompanion, resolveRegistrationSecret, probeZcodeRuntime } = require('./cclient/companion');
 const { detectZcode, normalizeImportSelection, buildImportManifest, bundledRuntimePath } = require('./zcode-integration');
 const { applyImport, snapshotSummary } = require('./zcode-importer');
 const { createRuntimeGate } = require('./runtime-gate');
@@ -117,8 +117,12 @@ function safeDetectionSnapshot() {
 
 // ---- 导入快照（Companion 自己的 userData，绝不写 ~/.zcode） ----
 
+function companionStateDir() {
+  return path.join(app.getPath('home'), '.wzxclaw', 'zcode-companion');
+}
+
 function importSnapshotPath() {
-  return path.join(app.getPath('userData'), 'import-snapshot.json');
+  return path.join(companionStateDir(), 'import-snapshot.json');
 }
 
 function importSnapshotSummary() {
@@ -128,7 +132,9 @@ function importSnapshotSummary() {
 function firstRunSnapshot() {
   return {
     completed: cfg.firstRun.completed === true,
-    selection: normalizeImportSelection({ selection: cfg.firstRun.selection }),
+    selection: normalizeImportSelection({ selection: cfg.firstRun.selection }, {
+      useDefaults: cfg.firstRun.completed !== true,
+    }),
     detected: safeDetectionSnapshot(),
   };
 }
@@ -209,11 +215,14 @@ function startCompanion(snapshot) {
   // secret）。NAS relay 设了 REGISTRATION_SECRET，注册必须携带 proof——
   // 不读这个文件，旧房间过期后的重注册会被 AUTH_FAILED 拒绝，陷入
   // 「连接即断」的重连循环（2026-09-16 首启实测踩坑）。
-  const registrationSecret = readRegistrationSecretFile() || undefined;
+  const registrationSecret = resolveRegistrationSecret() || undefined;
   try {
     companion = createCompanion({
       relayUrl: startConfig.relayUrl,
       cwd: startConfig.cwd,
+      stateDir: companionStateDir(),
+      snapshotPath: importSnapshotPath(),
+      ...(startConfig.runtimeDescriptor ? { zcodeCommand: startConfig.runtimeDescriptor } : {}),
       registrationSecret,
       logger: (event, detail) => pushLog(event, detail),
       onPairing: (url) => {
@@ -436,7 +445,7 @@ function registerIpc() {
     const valid = validateCompanionSetup(next || {});
     if (!valid.ok) return valid;
     try {
-      const selection = normalizeImportSelection(next);
+      const selection = normalizeImportSelection(next, { useDefaults: false });
       const detected = safeDetectionSnapshot();
       cfg.relayUrl = valid.relayUrl;
       cfg.cwd = valid.cwd;

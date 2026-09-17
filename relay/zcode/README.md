@@ -13,12 +13,12 @@
                     `zcode app-server`（ZCode Protocol v1）
 ```
 
-- **relay**（`server.js`）：房间 + HMAC 质询配对，已验证协议（30 tests）。
+- **relay**（`server.js`）：房间 + HMAC 质询配对；多 probe 请求按 socket 隔离，普通请求只接受数值 ID，路由表有 deadline、容量上限与日志观测。
 - **companion**（`companion.js`）：桌面侧 device 角色；QR 配对 URL 自管；
   spawn 本机 `zcode app-server`；`session/requestRuntimePreferences` 反向请求自动代答，
   其余反向请求（权限确认等）转发给手机端应答，超时看护按 method 分档：
-  权限/确认/AskUser 类（method 含 permission/confirm/approval/askUser/interaction）
-  放宽到 120s，其余 15s，超时一律代答 `-32022` 拒绝；模型 token 从
+  只有实名快速方法白名单走 15s，其余未知/交互方法默认走 120s，避免新方法被
+  短档误拒；超时一律代答 `-32022`；模型 token 从
   `~/.zcode/v2/config.json` 读取后仅注入子进程环境变量（不落盘、不打印、不经过 relay）。
 - **probe**（`probe.js`）：早期对官方桌面远程控制协议的验证器，保留作 relay 回归测试用。
 
@@ -36,16 +36,16 @@
 # relay（默认 127.0.0.1:18884；--host 0.0.0.0 供容器/nginx 使用）
 node server.js [--port 18884] [--host 127.0.0.1]
 
-# companion（桌面侧，另一终端；relay 设了注册密钥时加 --register-secret）
-node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <ZCode 工作区>] [--register-secret <注册密钥>]
+# companion（桌面侧，另一终端；注册密钥走环境变量或 0600 文件）
+node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <ZCode 工作区>]
 
-# 测试（37 个：30 relay + 7 companion，含假 app-server 桥接全流程）
-node --test test/relay.test.js test/companion.test.js
+# 全量测试（含 relay、companion、CLI 与源码同步契约）
+npm test
 ```
 
-companion 启动后输出一次性配对 URL（`<origin>/pair?sid=...&hash=...`），
-渲染成二维码给手机扫。sid/口令每次启动轮换；relay 断线自动重连并重新注册。
-mid 持久化于 `~/.wzxclaw/zcode-companion/mid`。
+companion 启动后输出配对 URL（`<origin>/pair?sid=...&hash=...`）并渲染二维码。
+mid 与 passhash 持久化在 `~/.wzxclaw/zcode-companion/`，sid 由二者确定性派生；
+重启、重连和 relay 重部署不换码，手机无需重扫。
 
 ## NAS 部署（已完成，2026-09-13）
 
@@ -71,10 +71,10 @@ device_mid))`（hex 不认），校验失败一律 AUTH_FAILED；未设置时行
   （仅含 secret 一行，勿进 git/日志），存在时注入 `-e REGISTRATION_SECRET`；
   文件缺失时打印「未设置注册密钥，relay 将开放注册」并跳过该 -e；文件存在但
   为空时终止部署（避免误部署开放注册的 relay）。
-- companion 侧：`--register-secret <值>` 或环境变量 `REGISTRATION_SECRET`
-  （CLI 参数优先），或密钥文件 `~/.wzxclaw/zcode-companion/relay-secret`
-  （首行，与 NAS 部署脚本同名同语义；密钥不进 git、不进进程参数，无需改
-  自启 VBS）；均未提供时注册帧不带 proof，可正常注册到开放 relay。
+- companion 侧：环境变量 `REGISTRATION_SECRET` 优先，其次读取密钥文件
+  `~/.wzxclaw/zcode-companion/relay-secret`（首行、权限统一为 0600，与 NAS
+  部署脚本同名同语义）。不提供命令行 secret 参数，避免进入 shell history
+  和进程列表；两者均未提供时可连接开放注册 relay。
 
 ## Windows 常驻（开机自启）
 
@@ -139,11 +139,12 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
 `createCompanion(options)`：`start()` / `stop()`（Promise，等子进程退出）、
 `pairingUrl` / `state`；回调 `onPairing(url)`、`onStateChange(state)`、
 `logger(event, detail)`；可注入 `zcodeCommand`（测试用假进程）与 `v2ConfigPath`；
-`registrationSecret`（可选，设置后注册帧附 register_proof，CLI 对应
-`--register-secret` 或环境变量 `REGISTRATION_SECRET`）。
-反向请求超时看护分两档：`requestTimeoutMs`（默认 15000，普通反向请求）与
-`permissionRequestTimeoutMs`（默认 120000，权限/确认/AskUser 类，按 method 含
-permission/confirm/approval/askUser/interaction 判定），两档超时后代答 `-32022` 拒绝。
+`registrationSecret`（可选，设置后注册帧附 register_proof；CLI 从
+`REGISTRATION_SECRET` 或 0600 密钥文件解析）。
+反向请求超时看护分两档：`requestTimeoutMs`（默认 15000，仅实名快速方法白名单）与
+`permissionRequestTimeoutMs`（默认 120000，覆盖其余未知/交互方法），两档超时后
+代答 `-32022`。`stateDir` 与 `snapshotPath` 可显式注入；默认均归属
+`~/.wzxclaw/zcode-companion/`。
 
 ## 大脑网络（v3 P2/P3）：已退役
 

@@ -16,10 +16,9 @@ NAS relay**（`wss://zcode.5945.top/ws` 烧入为默认值，可在设置里改�
 
 ## 关键设计
 
-- **内嵌而非外挂**：`cclient/` 是 `relay/zcode/companion.js` + `server.js` +
-  `lib/{proof,protocol}.js` 的原样拷贝（companion 只从 server.js 取
-  MAX_PAYLOAD），由 Electron 主进程 `createCompanion()` 直接驱动，不依赖
-  系统 Node。
+- **内嵌而非外挂**：`relay/zcode/` 是核心唯一源码；`scripts/sync-core.js`
+  在 `pretest`、`predist`、`predist:dir` 阶段按固定清单生成 `cclient/`，由 Electron
+  主进程 `createCompanion()` 直接驱动，不依赖系统 Node，也不手工双写。
 - **配对凭据共享**：数据目录仍是 `~/.wzxclaw/zcode-companion/`（mid/passhash/
   配对 URL 与 CLI companion 同一份）——**换装本 App 不换码，手机不用重扫**。
   同目录单实例锁 `companion.lock` 保证与旧实例互斥。
@@ -50,7 +49,6 @@ node gen-icon.js            # 重新生成图标（改 pixel() 后）
 
 ## 升级内嵌 companion
 
-`relay/zcode/companion.js` / `server.js` / `lib/*` 有改动后重新拷贝到
-`cclient/`（保持目录结构），回归点：冒烟脚本（见 git 历史）、配对流程、
-x/* 扩展（手机端 git 分支钮依赖 `x/git/*`）。两份拷贝不同步是已知维护成本，
-大改后建议把 cclient 生成脚本化。
+只修改 `relay/zcode/` 核心源码，然后运行 `npm test`；`pretest` 会先确定性同步到
+`cclient/`，relay 侧同步契约测试还会逐文件校验哈希。打包前的 `predist` 与
+`predist:dir` 使用同一脚本，避免测试通过后打入旧副本。

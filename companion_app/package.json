@@ -9,11 +9,13 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/runtime-gate.test.js test/zcode-integration.test.js test/zcode-importer.test.js",
+    "sync-core": "node scripts/sync-core.js",
+    "pretest": "node scripts/sync-core.js",
+    "test": "node --test test/runtime-gate.test.js test/zcode-integration.test.js test/zcode-importer.test.js test/core-integration.test.js",
     "test:package": "node --test test/package-contents.test.js",
     "prepare-runtime": "node scripts/prepare-runtime.js",
-    "predist": "node scripts/prepare-runtime.js",
-    "predist:dir": "node scripts/prepare-runtime.js",
+    "predist": "node scripts/sync-core.js && node scripts/prepare-runtime.js",
+    "predist:dir": "node scripts/sync-core.js && node scripts/prepare-runtime.js",
     "dist": "electron-builder --win nsis portable",
     "dist:dir": "electron-builder --win --dir"
   },

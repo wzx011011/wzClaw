@@ -18,7 +18,9 @@ function createRuntimeGate({ probe, start, stop, onStatus, onFailure }) {
       .then(async (status) => {
         if (mine !== generation) return null;
         onStatus(status);
-        if (status.category === 'ready') await start(snapshot);
+        if (status.category === 'ready') {
+          await start(Object.freeze({ ...snapshot, runtimeDescriptor: status.runtimeDescriptor || null }));
+        }
         else onFailure(status);
         return status;
       })
