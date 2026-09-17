@@ -1,9 +1,10 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const test = require('node:test');
 const { inspectZcodeConfiguration, normalizeImportSelection, resolveZcodeInstallation,
-  buildImportManifest, PREFERENCE_ALLOWLIST } = require('../zcode-integration');
+  bundledRuntimePath, buildImportManifest, PREFERENCE_ALLOWLIST } = require('../zcode-integration');
 
 function fakeFs(files) {
   const keyFor = (file) => file.replaceAll('\\', '/');
@@ -23,6 +24,38 @@ test('detects only an existing explicit ZCode executable', () => {
     status: 'found', source: 'environment', command: 'C:\\zcode.cjs',
   });
   assert.equal(resolveZcodeInstallation({ fsApi, env: { ZCODE_BIN: 'missing' } }).status, 'not-found');
+});
+
+test('bundled runtime 探测：官方安装优先，bundled 仅兜底', () => {
+  const installedCjs = 'C:/root/Programs/ZCode/resources/glm/zcode.cjs';
+  const bundled = 'C:/resources/zcode-runtime/glm/zcode.cjs';
+  const fsApi = fakeFs({
+    [installedCjs]: 'x',
+    [bundled]: 'x',
+  });
+  // 只有 bundled → found/bundled
+  assert.deepEqual(
+    resolveZcodeInstallation({ fsApi, env: {}, bundledRuntime: bundled }),
+    { status: 'found', source: 'bundled', command: bundled },
+  );
+  // 官方与 bundled 同时存在 → installed 优先（顺序钉死）
+  assert.deepEqual(
+    resolveZcodeInstallation({
+      fsApi, env: { LOCALAPPDATA: 'C:/root' }, platform: 'win32', bundledRuntime: bundled,
+    }),
+    { status: 'found', source: 'installed', command: path.join('C:/root', 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs') },
+  );
+  // 都不存在 → not-found
+  assert.deepEqual(
+    resolveZcodeInstallation({ fsApi: fakeFs({}), env: {}, bundledRuntime: bundled }),
+    { status: 'not-found', source: null, command: null },
+  );
+  // bundledRuntimePath：打包态拼接 / 非 Electron 环境 null
+  assert.equal(
+    bundledRuntimePath('C:/resources'),
+    path.join('C:/resources', 'zcode-runtime', 'glm', 'zcode.cjs'),
+  );
+  assert.equal(bundledRuntimePath(null), null);
 });
 
 test('configuration summary never returns credential values', () => {

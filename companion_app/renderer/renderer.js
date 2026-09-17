@@ -62,10 +62,12 @@ function applySnapshot(s) {
 
 function renderDetection(detected) {
   const installed = detected.installation.status === 'found';
+  const sourceNames = { installed: '本机安装', environment: '环境变量', bundled: '内置 runtime' };
+  const sourceLabel = sourceNames[detected.installation.source] ?? detected.installation.source ?? '';
   $('installStatus').className = `status ${installed ? 'good' : 'warn'}`;
   $('installStatus').textContent = installed
-    ? `已检测到 ZCode 安装（来源：${detected.installation.source}）。Companion 将使用它启动 app-server。`
-    : '未检测到可验证的 ZCode 安装。仍可继续设置，但首次需要确认 ZCode 已安装并可从命令行调用。';
+    ? `已检测到 ZCode（来源：${sourceLabel}）。Companion 将使用它启动 app-server。`
+    : '未检测到可用的 ZCode。请安装官方 ZCode，或使用内置 runtime 版安装包。';
   const metadata = detected.metadata;
   const credential = detected.credentials.status === 'available' ? '检测到本地登录态' : '未检测到可用登录态';
   $('metadataStatus').className = `status ${metadata.status === 'compatible' ? 'good' : 'warn'}`;

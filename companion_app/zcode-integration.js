@@ -32,13 +32,15 @@ function readJsonFile(fsApi, filePath, { allowArray = false } = {}) {
   }
 }
 
-function resolveZcodeInstallation({ env = process.env, fsApi = fs, platform = process.platform } = {}) {
+function resolveZcodeInstallation({ env = process.env, fsApi = fs, platform = process.platform, bundledRuntime = null } = {}) {
   const localAppData = env.LOCALAPPDATA;
   const candidates = [
     ['environment', env.ZCODE_BIN],
     ['installed', platform === 'win32' && localAppData
       ? path.join(localAppData, 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs')
       : null],
+    // Companion 安装包内嵌 runtime（extraResources）；官方安装存在时永远优先
+    ['bundled', bundledRuntime],
   ];
   for (const [source, candidate] of candidates) {
     if (typeof candidate === 'string' && candidate.length && isRegularFile(fsApi, candidate)) {
@@ -47,6 +49,13 @@ function resolveZcodeInstallation({ env = process.env, fsApi = fs, platform = pr
   }
   // PATH 只能证明“可能可调用”，首启页必须如实标记为未验证安装。
   return { status: 'not-found', source: null, command: null };
+}
+
+// 打包态内嵌 runtime 路径（resources/zcode-runtime/glm/zcode.cjs）。
+// resourcesPath 由 Electron 主进程提供；非打包环境传 null。
+function bundledRuntimePath(resourcesPath) {
+  if (!resourcesPath) return null;
+  return path.join(resourcesPath, 'zcode-runtime', 'glm', 'zcode.cjs');
 }
 
 function inspectZcodeConfiguration({ fsApi = fs, homeDir = os.homedir() } = {}) {
@@ -239,6 +248,7 @@ module.exports = {
   MAX_CONFIG_BYTES,
   PREFERENCE_ALLOWLIST,
   resolveZcodeInstallation,
+  bundledRuntimePath,
   inspectZcodeConfiguration,
   detectZcode,
   normalizeImportSelection,

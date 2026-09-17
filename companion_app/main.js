@@ -16,7 +16,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
 const { createCompanion, readRegistrationSecretFile, probeZcodeRuntime } = require('./cclient/companion');
-const { detectZcode, normalizeImportSelection, buildImportManifest } = require('./zcode-integration');
+const { detectZcode, normalizeImportSelection, buildImportManifest, bundledRuntimePath } = require('./zcode-integration');
 const { applyImport, snapshotSummary } = require('./zcode-importer');
 const { createRuntimeGate } = require('./runtime-gate');
 
@@ -103,7 +103,10 @@ function validateCompanionSetup(next) {
 }
 
 function safeDetectionSnapshot() {
-  const detected = detectZcode();
+  const detected = detectZcode({
+    // 打包态内嵌 runtime 路径（官方安装存在时探测层永远优先官方）
+    bundledRuntime: bundledRuntimePath(process.resourcesPath || null),
+  });
   // renderer 只需要状态和计数；启动路径、文件名、原始配置均留在主进程。
   return {
     installation: { status: detected.installation.status, source: detected.installation.source },

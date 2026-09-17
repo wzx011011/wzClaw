@@ -49,11 +49,25 @@ function resolveZcodeRuntime(env = process.env) {
     if (process.versions.electron && fs.existsSync(host)) return host;
     return process.execPath;
   };
+  // 内嵌 runtime（Companion 安装包 extraResources 自带，2026-09-17 策略：
+  // 允许内嵌自用、不公开分发、官方安装优先）。打包态取 resources/zcode-runtime；
+  // 开发/测试用 WZXCLAW_BUNDLED_RUNTIME 显式指定。CLI（无 resourcesPath）或
+  // 文件不存在时自然跳过。路径不存在不报错——它只是兜底，不是用户显式配置。
+  const bundled = env.WZXCLAW_BUNDLED_RUNTIME
+    || (process.resourcesPath
+      ? path.join(process.resourcesPath, 'zcode-runtime', 'glm', 'zcode.cjs')
+      : null);
   if (env.ZCODE_BIN) {
     if (!fs.existsSync(env.ZCODE_BIN)) return { category: 'invalid-override' };
     return { category: 'resolved', source: 'environment', command: commandForRuntime(env.ZCODE_BIN), args: [env.ZCODE_BIN] };
   }
   if (fs.existsSync(local)) return { category: 'resolved', source: 'installed', command: commandForRuntime(local), args: [local] };
+  if (bundled && fs.existsSync(bundled)) {
+    // 宿主 = Companion 自身可执行文件的 Node 模式（E41 起宿主 Node 含
+    // node:sqlite，实测可承载 runtime；ELECTRON_RUN_AS_NODE 由
+    // runtimeProcessEnv 按 .cjs 参数自动注入）
+    return { category: 'resolved', source: 'bundled', command: process.execPath, args: [bundled] };
+  }
   return { category: 'resolved', source: 'path', command: 'zcode', args: [] };
 }
 
