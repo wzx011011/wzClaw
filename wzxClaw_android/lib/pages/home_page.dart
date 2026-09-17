@@ -1724,8 +1724,17 @@ class _ChatPageState extends State<ChatPage> {
       'auto': '变更前确认',
     };
     final serverMode = _store.sessionMode;
-    final modeLabel = modeNames[serverMode] ?? '权限模式';
-    final modeColor = serverMode == 'yolo' ? modeOrange : colors.textSecondary;
+    // 新任务态的暂存档位必须回显到按钮上：否则选完没有任何可见变化，
+    // 会被当成「设置不了」（2026-09-17 用户反馈）
+    final pendingMode = _store.activeSessionId == null
+        ? _pendingPermissionMode
+        : null;
+    final effectiveMode = pendingMode ?? serverMode;
+    final modeLabel = (modeNames[effectiveMode] ?? '权限模式') +
+        (pendingMode != null ? '·待生效' : '');
+    final modeColor = pendingMode != null || effectiveMode == 'yolo'
+        ? modeOrange
+        : colors.textSecondary;
 
     return Row(
       children: [
@@ -1976,6 +1985,16 @@ class _ChatPageState extends State<ChatPage> {
     if (chosen == null) return;
     if (_store.activeSessionId == null) {
       setState(() => _pendingPermissionMode = chosen);
+      if (!mounted) return;
+      final label =
+          tiers.firstWhere((t) => t.$1 == chosen, orElse: () => tiers[0]).$2;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('权限模式「$label」将在新会话生效'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
       return;
     }
     unawaited(_store.setMode(chosen));
