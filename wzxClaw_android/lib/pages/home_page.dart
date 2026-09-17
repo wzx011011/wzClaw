@@ -201,8 +201,8 @@ class _ChatPageState extends State<ChatPage> {
     // 发送失败等业务错误：store.error 上浮为 SnackBar（模型卡路径已退役，
     // 自愈失败也走这里）
     final err = _store.error;
-    if (err != null && err != _lastShownError) {
-      _lastShownError = err;
+    final hasBlockedCard = _store.modelBlockedContent != null;
+    if (err != null && err != _lastShownError && !hasBlockedCard) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(err),
@@ -212,6 +212,7 @@ class _ChatPageState extends State<ChatPage> {
       );
       _store.clearError();
     }
+    _lastShownError = err;
   }
 
   void _onScroll() {
@@ -867,9 +868,12 @@ class _ChatPageState extends State<ChatPage> {
     }
 
     final showThinking = _isWaiting; // agent:running 이 _isStreaming=true 로 설정해도 여전히 표시
+    final showBlockedCard = _store.modelBlockedContent != null &&
+        _store.modelBlockedSessionId == _store.activeSessionId;
     // Group consecutive tool messages together
     final grouped = _groupMessages(_displayMessages);
-    final itemCount = grouped.length + (showThinking ? 1 : 0);
+    final blockedIndex = grouped.length + (showThinking ? 1 : 0);
+    final itemCount = blockedIndex + (showBlockedCard ? 1 : 0);
     // Only animate newly appended messages (not full replacement from session switch).
     // If prev count was 0 (empty or just switched), skip animation entirely.
     final prevCount = _previousGroupCount > 0 ? _previousGroupCount : itemCount;
@@ -882,6 +886,9 @@ class _ChatPageState extends State<ChatPage> {
       itemBuilder: (context, index) {
         if (showThinking && index == grouped.length) {
           return AgentThinkingBlock(thinkingStream: _thinkingCtrl.stream);
+        }
+        if (showBlockedCard && index == blockedIndex) {
+          return _buildModelBlockedCard(colors);
         }
         final item = grouped[index];
         Widget child;
@@ -1894,9 +1901,10 @@ class _ChatPageState extends State<ChatPage> {
   /// 引擎 resume 目录（会话内切换）。快照独有模型标注「快照」——可用性
   /// 未经引擎证实，点选走既有 setModel 链路失败会显性提示。
   /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
-  Future<void> _showModelPopup() async {
+  Future<void> _showModelPopup({String? retryContent}) async {
     // 新任务态（无会话）也允许选模型：目录与默认模型是节点级（x/model/*），
-    // 选择落盘为节点默认、将要创建的会话应用（companion 实测语义）
+    // 选择落盘为节点默认、将要创建的会话应用（companion 实测语义）。
+    // [retryContent] = 「模型不可用」卡片的重发原文（仅会话内流程）。
     final sessionId = _store.activeSessionId;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
@@ -1979,6 +1987,7 @@ class _ChatPageState extends State<ChatPage> {
                               sessionId,
                               SessionModelUse(
                                   providerId: m.providerId, modelId: m.modelId,),
+                              retryContent: retryContent,
                             );
                           },
                           child: Padding(
@@ -2025,17 +2034,105 @@ class _ChatPageState extends State<ChatPage> {
             style: TextStyle(color: color, fontSize: 10,),),
       );
 
+  /// 「模型不可用」操作卡片（会话尾部）：自动自愈失败后等待用户介入——
+  /// 选可用模型重试（带原文重发）或迁移到全新会话。
+  Widget _buildModelBlockedCard(AppColors colors) {
+    final content = _store.modelBlockedContent ?? '';
+    final reason = _store.modelBlockedReason ?? '';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.assistantBubble,
+        border: Border.all(color: colors.error.withValues(alpha: 0.45)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('历史任务使用的模型已不可用',
+                  style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,),),
+            ),
+          ],),
+          const SizedBox(height: 4),
+          Text(reason,
+              style: TextStyle(
+                  color: colors.textSecondary, fontSize: 12, height: 1.5,),),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => _showModelPopup(retryContent: content),
+                icon: const Icon(Icons.view_in_ar_outlined, size: 15),
+                label: const Text('选择可用模型重试',
+                    style: TextStyle(fontSize: 12),),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colors.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _migrateBlockedToNewSession,
+                icon: const Icon(Icons.post_add_outlined, size: 15),
+                label: const Text('新建会话', style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.textSecondary,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+          ],),
+        ],
+      ),
+    );
+  }
+
+  /// 卡片「新建会话」：把被阻塞原文迁移到全新会话发出（一步迁移）。
+  /// 旧会话坏在模型配置上，/clear 也走 session/send 同样被拒（实测死循环），
+  /// 必须经 session/create 建新会话。
+  Future<void> _migrateBlockedToNewSession() async {
+    final content = _store.modelBlockedContent ?? '';
+    _store.clearModelBlocked();
+    await _store.newSession();
+    if (_store.activeSessionId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('新建会话失败，请检查与大脑节点的连接'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),);
+      }
+      return;
+    }
+    unawaited(_store.sendMessage(content));
+  }
+
   /// 应用模型选择：有会话 → 会话内 setModel（非默认模型时顺带设节点默认）；
   /// 无会话（新任务态）→ 仅落盘节点默认（新会话应用，companion 实测语义）。
-  /// [retryContent] 已随模型错误卡退役，恒为空。
+  /// [retryContent] = 「模型不可用」卡片的重发原文：切换成功后自动重发，
+  /// 并清除阻塞卡。
   Future<void> _applyModelChoice(
     String? sessionId,
-    SessionModelUse m,
-  ) async {
+    SessionModelUse m, {
+    String? retryContent,
+  }) async {
     try {
       if (sessionId != null) {
         await ChatRuntimeService.instance
             .setModel(sessionId, m.providerId, m.modelId);
+        _store.clearModelBlocked();
       }
       var configuredDefault = false;
       if (sessionId == null) {
@@ -2061,6 +2158,11 @@ class _ChatPageState extends State<ChatPage> {
             behavior: SnackBarBehavior.floating,
           ),);
         }
+      }
+      if (sessionId != null &&
+          retryContent != null &&
+          retryContent.isNotEmpty) {
+        await _store.sendMessage(retryContent);
       }
     } catch (e) {
       if (mounted) _runtimeErrorSnack(e);

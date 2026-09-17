@@ -203,6 +203,12 @@ class ZcodeChatStore extends ChangeNotifier {
   ZcodeConnState _connState = ZcodeConnState.idle;
   String? _error;
 
+  /// 「模型不可用」且自动自愈失败：挂起等用户选择（选模型重试/新建会话）。
+  /// 渲染为会话尾部操作卡片；成功发送 / 重试成功 / 迁移新会话后清除。
+  String? modelBlockedSessionId;
+  String? modelBlockedContent;
+  String? modelBlockedReason;
+
   // ---- 多桌面身份（由 ZcodeDesktopRegistry 维护）----
 
   /// 本 store 归属的桌面 id（= 配对 sid；轮换换码时由注册表迁移）
@@ -1019,6 +1025,10 @@ class ZcodeChatStore extends ChangeNotifier {
       _fail('发送失败：$e');
       return;
     }
+    // 已接受：模型阻塞卡若因本次发送挂起，此刻已解除
+    modelBlockedSessionId = null;
+    modelBlockedContent = null;
+    modelBlockedReason = null;
     // 已接受：确保订阅（推送渲染）；推送不可用 → 降级轮询；
     // 推送在用 → 武装看门狗（防订阅静默失效导致流式冻住）
     await _ensureSubscribed(state);
@@ -1069,6 +1079,10 @@ class ZcodeChatStore extends ChangeNotifier {
     state.isStreaming = false;
     state.isWaitingForResponse = false;
     state.finalizeStreaming();
+    // 自愈失败：挂起「模型不可用」操作卡等待用户介入（选模型重试/新建会话）
+    modelBlockedSessionId = state.sessionId;
+    modelBlockedContent = text;
+    modelBlockedReason = attempted ? healError : '发送失败：$reason';
     _notifyIfActive(state);
     _fail(attempted ? healError : '发送失败：$reason');
   }
@@ -1103,6 +1117,19 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     if (_activeSessionId == sessionId) closeSessionView();
     await refreshSessions();
+  }
+
+  /// 清除「模型不可用」阻塞卡（重试成功 / 新建会话迁移后调用）
+  void clearModelBlocked() {
+    if (modelBlockedSessionId == null &&
+        modelBlockedContent == null &&
+        modelBlockedReason == null) {
+      return;
+    }
+    modelBlockedSessionId = null;
+    modelBlockedContent = null;
+    modelBlockedReason = null;
+    notifyListeners();
   }
 
   // ──────────────────────────────────────────────
