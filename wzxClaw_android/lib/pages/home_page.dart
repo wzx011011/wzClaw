@@ -1550,13 +1550,6 @@ class _ChatPageState extends State<ChatPage> {
         ),
       ),
       const Spacer(),
-        iconBtn(
-          key: _plusBtnKey,
-          tip: '附加',
-          icon: Icons.add,
-          onTap: isConnected ? _showAttachPopup : null,
-        ),
-        const Spacer(),
         // 上下文用量：必须已有会话（新任务态不可点，语义对齐官方）
         iconBtn(
           key: _usageBtnKey,
