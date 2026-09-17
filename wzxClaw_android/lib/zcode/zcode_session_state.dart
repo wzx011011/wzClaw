@@ -134,8 +134,9 @@ class ZcodeSessionState {
   /// 流式中的占位（isStreaming）是活消息，不过滤。
   List<ChatMessage> get chatMessages => items
       .map((e) => e.message)
-      .where((m) =>
-          !m.isSystemInjected && (!m.isEmptyAssistant || m.isStreaming))
+      .where(
+        (m) => !m.isSystemInjected && (!m.isEmptyAssistant || m.isStreaming),
+      )
       .toList(growable: false);
 
   /// 尾部最后一条**已确认（synced）**的协议消息 id（缓存恢复时推导水位用）。
