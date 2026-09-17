@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
@@ -156,8 +158,36 @@ class TurnVM {
   final TurnThinkData? think;
 }
 
+/// 工具调用的扁平视图：直连栈（assistant.toolCalls）与 legacy
+/// （role==tool 消息）两种形态归一后的最小展示单元。
+class _ToolView {
+  const _ToolView({
+    required this.name,
+    required this.status,
+    required this.createdAt,
+    this.input,
+    this.output,
+    this.callId = '',
+    this.everError = false,
+  });
+
+  final String name;
+  final ToolCallStatus status;
+  final String? input;
+  final String? output;
+  final String callId;
+  final DateTime createdAt;
+
+  /// 同 callID 历史上是否失败过（先败后成 = 已重试恢复）
+  final bool everError;
+
+  bool get failed => everError && status == ToolCallStatus.error;
+  bool get recovered => everError && status != ToolCallStatus.error;
+}
+
 /// 从一回合的扁平消息切片构建 TurnVM。
-/// [messages] = 该回合内按序的消息（工具消息 + 助手文本消息，不含用户消息）；
+/// [messages] = 该回合内按序的消息（直连栈：assistant 消息携带 toolCalls；
+/// legacy：role==tool 独立消息，仅旧缓存兼容）；不含用户消息。
 /// [busy] = 回合是否在途；[totalDuration] = 回合总时长（可得时传入）；
 /// [think] = 思考行数据（可得时传入；null = 该回合无思考信息）。
 TurnVM buildTurnVM(
@@ -169,55 +199,134 @@ TurnVM buildTurnVM(
   final parts = <TurnPart>[];
   String answer = '';
   final counts = <String, int>{};
-  var sawTool = false;
-
   var lastVerb = '';
-  for (final m in messages) {
-    if (m.role == MessageRole.tool) {
-      final done = m.toolStatus != ToolCallStatus.running;
-      final verb = turnToolVerb(m.toolName ?? 'Tool', done: done);
-      final target = (m.toolInput ?? m.toolOutput ?? m.content).isNotEmpty
-          ? _lastPathSegment(m.toolInput ?? m.content)
-          : (m.toolName ?? 'Tool');
-      sawTool = true;
-      // 聚合：连续同类且均为聚合形态（查阅/搜索/执行）→ 计数合并
-      final aggregate = verb == '查阅' || verb == '搜索' || verb == '执行';
-      if (aggregate && verb == lastVerb) {
-        final prev = parts.last.tool!;
-        parts[parts.length - 1] = TurnPart.tool(
-          TurnToolRow(
-            verb: verb,
-            target: '· ${prev.count ?? 1 + 1}${verb == '执行' ? ' 个命令' : ' 文件'}',
-            count: (prev.count ?? 1) + 1,
-            running: m.toolStatus == ToolCallStatus.running,
-          ),
-        );
-        counts[verb] = (counts[verb] ?? 0) + 1;
-        continue;
-      }
-      parts.add(
-        TurnPart.tool(
-          TurnToolRow(
-            verb: verb,
-            target: target,
-            running: !done,
-            failed: m.toolStatus == ToolCallStatus.error,
-            recovered: m.toolStatus == ToolCallStatus.error,
-            elapsed: done ? null : DateTime.now().difference(m.createdAt),
-          ),
+  var currentMembers = <_ToolView>[];
+
+  // 最后一个非空助手文本 = 正文；其前的文本 = 中间叙述（避免同一段
+  // 文本既进叙述又进正文的重复展示）
+  var lastTextIndex = -1;
+  for (var i = 0; i < messages.length; i++) {
+    final m = messages[i];
+    if (m.role == MessageRole.assistant && m.content.trim().isNotEmpty) {
+      lastTextIndex = i;
+    }
+  }
+
+  void emitTool(_ToolView v) {
+    final done = v.status != ToolCallStatus.running;
+    final verb = turnToolVerb(v.name, done: done);
+    // 聚合：连续同类（读取/搜索/执行）合并为一行，展开逐成员显示
+    final aggregate = verb == '读取' || verb == '搜索' || verb == '执行';
+    if (aggregate &&
+        verb == lastVerb &&
+        parts.isNotEmpty &&
+        parts.last.kind == TurnPartKind.tool) {
+      currentMembers = List.of(currentMembers)..add(v);
+      final count = currentMembers.length;
+      parts[parts.length - 1] = TurnPart.tool(
+        TurnToolRow(
+          verb: verb,
+          target: '· $count${verb == '执行' ? ' 个命令' : ' 文件'}',
+          count: count,
+          running: v.status == ToolCallStatus.running,
+          failed: v.failed,
+          details: [
+            for (final member in currentMembers) _memberLine(member),
+          ],
         ),
       );
       counts[verb] = (counts[verb] ?? 0) + 1;
-      lastVerb = verb;
-    } else if (m.role == MessageRole.assistant) {
-      if (m.content.trim().isEmpty) continue;
-      final text = m.content;
-      if (sawTool) {
-        parts.add(TurnPart.narration(_plainExcerpt(text)));
+      return;
+    }
+    currentMembers = [v];
+    final delta = _editLineDelta(v.name, v.input);
+    parts.add(
+      TurnPart.tool(
+        TurnToolRow(
+          verb: verb,
+          target: _toolTarget(v.name, v.input),
+          add: delta?.$1,
+          del: delta?.$2,
+          running: !done,
+          failed: v.failed,
+          recovered: v.recovered,
+          elapsed: done ? null : DateTime.now().difference(v.createdAt),
+          details: _toolDetails(v),
+        ),
+      ),
+    );
+    counts[verb] = (counts[verb] ?? 0) + 1;
+    lastVerb = verb;
+  }
+
+  for (var i = 0; i < messages.length; i++) {
+    final m = messages[i];
+
+    // ── 工具展开：直连栈形态（assistant.toolCalls，协议权威）为主，
+    // legacy role==tool 独立消息兜底。同 callID 连续条目合并为一个视图
+    // （引擎重试：终态取最后，先败后成标「已重试恢复」）。
+    final views = <_ToolView>[];
+    final calls = m.toolCalls;
+    if (calls != null && calls.isNotEmpty) {
+      for (final tc in calls) {
+        views.add(
+          _ToolView(
+            name: tc.toolName,
+            status: tc.status,
+            input: tc.inputFull ?? tc.inputSummary,
+            output: tc.outputFull ?? tc.outputSummary,
+            callId: tc.toolCallId,
+            createdAt: m.createdAt,
+            everError: tc.status == ToolCallStatus.error,
+          ),
+        );
       }
-      answer = text; // 最后一个助手文本 = 正文（多段时取最后一段，前面段落成叙述）
+    } else if (m.role == MessageRole.tool) {
+      views.add(
+        _ToolView(
+          name: m.toolName ?? 'Tool',
+          status: m.toolStatus ?? ToolCallStatus.running,
+          input: m.toolInput ?? (m.content.isNotEmpty ? m.content : null),
+          output: m.toolOutput,
+          callId: m.toolCallId ?? '',
+          createdAt: m.createdAt,
+          everError: m.toolStatus == ToolCallStatus.error,
+        ),
+      );
+    }
+    final merged = <_ToolView>[];
+    for (final v in views) {
+      if (merged.isNotEmpty && v.callId.isNotEmpty && merged.last.callId == v.callId) {
+        final p = merged.last;
+        merged[merged.length - 1] = _ToolView(
+          name: v.name,
+          status: v.status,
+          input: v.input ?? p.input,
+          output: v.output ?? p.output,
+          callId: v.callId,
+          createdAt: p.createdAt,
+          everError: p.everError || v.everError,
+        );
+      } else {
+        merged.add(v);
+      }
+    }
+    for (final v in merged) {
+      emitTool(v);
+    }
+
+    // ── 助手文本：最后一个 = 正文，其余 = 中间叙述（叙述会打断聚合）
+    if (m.role == MessageRole.assistant &&
+        i != lastTextIndex &&
+        m.content.trim().isNotEmpty) {
+      parts.add(TurnPart.narration(_plainExcerpt(m.content)));
+      lastVerb = '';
+      currentMembers = const [];
     }
   }
+
+  // 正文兜底：无任何助手文本的回合（罕见）不显示正文
+  if (lastTextIndex >= 0) answer = messages[lastTextIndex].content;
 
   final countsLabel = counts.entries
       .map((e) => '${e.key} ${e.value}')
@@ -231,6 +340,174 @@ TurnVM buildTurnVM(
     totalDuration: totalDuration,
     think: think,
   );
+}
+
+/// 工具行目标：按工具类型从输入提取人类可读目标（命令/路径末段/模式/URL）。
+/// 结构化字段提取不到时回退原始输入首行的路径末段。
+String _toolTarget(String name, String? input) {
+  final raw = input?.trim() ?? '';
+  if (raw.isEmpty) return name;
+  Map<String, dynamic>? json;
+  if (raw.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) json = decoded;
+    } catch (_) {}
+  }
+  String? pick(List<String> keys) {
+    for (final k in keys) {
+      final v = json?[k];
+      if (v is String && v.trim().isNotEmpty) return v.trim();
+    }
+    return null;
+  }
+
+  switch (name) {
+    case 'Bash':
+      final cmd = pick(['command', 'cmd', 'script']);
+      if (cmd != null) return _singleLine(cmd, 60);
+      break;
+    case 'Read':
+    case 'file-read':
+    case 'Write':
+    case 'file-write':
+    case 'Edit':
+    case 'file-edit':
+      final path = pick(['file_path', 'filePath', 'path', 'notebook_path']);
+      if (path != null) return _lastPathSegment(path);
+      break;
+    case 'Glob':
+      final pattern = pick(['pattern']);
+      if (pattern != null) return _singleLine(pattern, 48);
+      break;
+    case 'Grep':
+      final pattern = pick(['pattern']);
+      if (pattern != null) return _singleLine(pattern, 40);
+      break;
+    case 'WebFetch':
+    case 'web-fetch':
+      final url = pick(['url']);
+      if (url != null) return _singleLine(url, 60);
+      break;
+    case 'WebSearch':
+    case 'web-search':
+      final query = pick(['query']);
+      if (query != null) return _singleLine(query, 40);
+      break;
+    case 'Agent':
+    case 'agent-tool':
+    case 'Task':
+      final desc = pick(['description', 'agent_type', 'prompt']);
+      if (desc != null) return _singleLine(desc, 48);
+      break;
+  }
+  return _lastPathSegment(_singleLine(raw, 60));
+}
+
+/// 首行单行化并按显示宽度截断
+String _singleLine(String s, int max) {
+  final line = s.replaceAll('\r\n', '\n').split('\n').first.trim();
+  if (line.length <= max) return line;
+  return '${line.substring(0, max)}…';
+}
+
+/// Edit 行数增减：old/new 去公共前后缀行后，剩余旧行数 = 删除、
+/// 剩余新行数 = 新增（真实行级差异，非两侧全量）。
+(int, int)? _editLineDelta(String name, String? input) {
+  if (name != 'Edit' && name != 'file-edit') return null;
+  final raw = input?.trim() ?? '';
+  if (!raw.startsWith('{')) return null;
+  Map<String, dynamic>? json;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) json = decoded;
+  } catch (_) {
+    return null;
+  }
+  final oldS = json?['old_string'];
+  final newS = json?['new_string'];
+  if (oldS is! String || newS is! String) return null;
+  var oldLines = _textLines(oldS);
+  var newLines = _textLines(newS);
+  var common = 0;
+  while (common < oldLines.length &&
+      common < newLines.length &&
+      oldLines[common] == newLines[common]) {
+    common++;
+  }
+  oldLines = oldLines.sublist(common);
+  newLines = newLines.sublist(common);
+  var suffix = 0;
+  while (suffix < oldLines.length &&
+      suffix < newLines.length &&
+      oldLines[oldLines.length - 1 - suffix] ==
+          newLines[newLines.length - 1 - suffix]) {
+    suffix++;
+  }
+  if (suffix > 0) {
+    oldLines = oldLines.sublist(0, oldLines.length - suffix);
+    newLines = newLines.sublist(0, newLines.length - suffix);
+  }
+  if (newLines.isEmpty && oldLines.isEmpty) return null;
+  return (newLines.length, oldLines.length);
+}
+
+List<String> _textLines(String s) {
+  final parts = s.replaceAll('\r\n', '\n').split('\n');
+  if (parts.length > 1 && parts.last.isEmpty) parts.removeLast();
+  return parts;
+}
+
+/// 二级展开详情：输入（Bash 只展示命令本体；结构化输入美化 JSON）+
+/// 输出原文。超长在显示层截断并标注（全量数据仍在消息模型里）。
+List<TurnDetailLine> _toolDetails(_ToolView v) {
+  final lines = <TurnDetailLine>[];
+  final input = v.input?.trim();
+  if (input != null && input.isNotEmpty) {
+    lines.add(
+      TurnDetailLine(_capBlock(_prettyInput(v.name, input)),
+          kind: DetailLineKind.cmd,),
+    );
+  }
+  final output = v.output?.trim();
+  if (output != null && output.isNotEmpty) {
+    lines.add(TurnDetailLine(_capBlock(output)));
+  }
+  return lines;
+}
+
+String _prettyInput(String name, String input) {
+  if (name == 'Bash') {
+    if (input.startsWith('{')) {
+      try {
+        final json = jsonDecode(input);
+        if (json is Map<String, dynamic> && json['command'] is String) {
+          return '\$ ${json['command']}';
+        }
+      } catch (_) {}
+    }
+    return '\$ $input';
+  }
+  if (input.startsWith('{')) {
+    try {
+      final json = jsonDecode(input);
+      if (json is Map<String, dynamic>) {
+        return const JsonEncoder.withIndent('  ').convert(json);
+      }
+    } catch (_) {}
+  }
+  return input;
+}
+
+String _capBlock(String s, [int max = 8000]) {
+  final t = s.replaceAll('\r\n', '\n');
+  return t.length <= max ? t : '${t.substring(0, max)}…（已截断）';
+}
+
+/// 聚合行的成员明细行（展开逐文件/逐命令显示）
+TurnDetailLine _memberLine(_ToolView v) {
+  final target = _toolTarget(v.name, v.input);
+  return TurnDetailLine('· $target${v.failed ? '  ⚠' : ''}');
 }
 
 String _lastPathSegment(String s) {
@@ -548,10 +825,16 @@ class _ToolRowViewState extends State<_ToolRowView> {
             border: Border.all(color: colors.border),
             borderRadius: BorderRadius.circular(6),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            for (final line in d.details)
-              Text(line.text,
-                  style: TextStyle(
+          // 大输出限高滚动，不撑爆回合块
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final line in d.details)
+                  SelectableText(
+                    line.text,
+                    style: TextStyle(
                       color: switch (line.kind) {
                         DetailLineKind.add => colors.success,
                         DetailLineKind.del => colors.error,
@@ -559,8 +842,12 @@ class _ToolRowViewState extends State<_ToolRowView> {
                         DetailLineKind.dim => colors.textMuted,
                       },
                       fontSize: 11.5,
-                      fontFamily: 'monospace',),),
-          ],),
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
     ],);
   }
