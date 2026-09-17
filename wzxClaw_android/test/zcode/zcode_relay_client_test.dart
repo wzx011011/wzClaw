@@ -32,7 +32,11 @@ const _expectedProof = 'VTUZXUzYQY7iiL8vQvtmzhLyzCtAssHHHiEoftC78l8';
 
 /// 按协议公式计算期望 proof：base64url 无 padding 的
 /// HMAC-SHA256(hash 字符串 UTF8, "$nonce|probe|$sid" UTF8)
-String _proofOf(String nonce, {String sid = _testSid, String hash = _testHash}) {
+String _proofOf(
+  String nonce, {
+  String sid = _testSid,
+  String hash = _testHash,
+}) {
   final mac =
       Hmac(sha256, utf8.encode(hash)).convert(utf8.encode('$nonce|probe|$sid'));
   return base64Url.encode(mac.bytes).replaceAll('=', '');
@@ -117,16 +121,21 @@ class FakeRelayServer {
   bool autoReplyQueries = true;
 
   void start() {
-    channel.serverSide.stream.listen((raw) {
-      final msg = jsonDecode(raw as String) as Map<String, dynamic>;
-      messages.add(msg);
-      if (autoReplyQueries && msg['type'] == 'pair_status_query') {
-        channel.serverSide.sink.add(jsonEncode({
-          'type': 'pair_status_ack',
-          'pair_status': 'matched',
-        }),);
-      }
-    }, onDone: () => clientClosed = true,);
+    channel.serverSide.stream.listen(
+      (raw) {
+        final msg = jsonDecode(raw as String) as Map<String, dynamic>;
+        messages.add(msg);
+        if (autoReplyQueries && msg['type'] == 'pair_status_query') {
+          channel.serverSide.sink.add(
+            jsonEncode({
+              'type': 'pair_status_ack',
+              'pair_status': 'matched',
+            }),
+          );
+        }
+      },
+      onDone: () => clientClosed = true,
+    );
   }
 
   /// 下发一条信封（单条 WS 消息、无换行 —— 与 relay server.js 的 send() 一致）
@@ -296,6 +305,7 @@ void main() {
       final future = client.request('session/list', {});
       await settle();
       final payload = h.server.dataPayloads.single;
+      expect(payload['id'], isA<int>());
       expect(payload['id'], 1);
       expect(payload['method'], 'session/list');
       expect(payload['params'], {});
@@ -313,6 +323,7 @@ void main() {
       final future2 = client.request('session/stop');
       await settle();
       final payload2 = h.server.dataPayloads.last;
+      expect(payload2['id'], isA<int>());
       expect(payload2['id'], 2);
       expect(payload2['method'], 'session/stop');
       expect(payload2.containsKey('params'), isFalse);
@@ -453,7 +464,9 @@ void main() {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
       final client = await h.connectMatched();
 
-      h.server.send({'type': 'error', 'code': 'AUTH_FAILED', 'message': 'auth failed'});
+      h.server.send(
+        {'type': 'error', 'code': 'AUTH_FAILED', 'message': 'auth failed'},
+      );
       await settle();
 
       // 客户端主动关闭了连接（服务端视角收到 done），状态回到 closed
@@ -477,7 +490,9 @@ void main() {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
       final client = await h.connectMatched();
 
-      h.server.send({'type': 'error', 'code': 'CAPACITY', 'message': 'Request rejected'});
+      h.server.send(
+        {'type': 'error', 'code': 'CAPACITY', 'message': 'Request rejected'},
+      );
       await settle();
 
       final d = client.debugScheduledReconnectDelay;
@@ -490,7 +505,9 @@ void main() {
       final h = RelayHarness(reconnectDelay: const Duration(milliseconds: 30));
       final client = await h.connectMatched();
 
-      h.server.send({'type': 'error', 'code': 'AUTH_FAILED', 'message': 'auth failed'});
+      h.server.send(
+        {'type': 'error', 'code': 'AUTH_FAILED', 'message': 'auth failed'},
+      );
       await settle();
 
       final d = client.debugScheduledReconnectDelay;
@@ -565,7 +582,8 @@ void main() {
 
       // 用户此刻才批准旧请求（completers[0]）：hook 完成，但连接已换代——
       // 陈旧 result 绝不能发上新连接命中同 id 的新请求
-      completers.first.complete({'decision': 'allow', 'reason': 'Approved once'});
+      completers.first
+          .complete({'decision': 'allow', 'reason': 'Approved once'});
       await settle();
 
       // 新连接只应收到对新反向请求的响应之外的数据帧为空——
@@ -708,21 +726,23 @@ void main() {
       final client = await h.connectMatched();
 
       void pushEvent(String eventId) {
-        h.server.send({
-          'type': 'data',
-          'payload': {
-            'method': 'session/event',
-            'params': {
-              'deliveryKind': 'web-remote-replayable',
-              'eventId': eventId,
-              'seq': 1,
-              'sessionId': 'sess-1',
-              'turnId': 'turn-1',
-              'type': 'model.streaming',
-              'payload': {'delta': 'hi', 'kind': 'text_delta'},
+        h.server.send(
+          {
+            'type': 'data',
+            'payload': {
+              'method': 'session/event',
+              'params': {
+                'deliveryKind': 'web-remote-replayable',
+                'eventId': eventId,
+                'seq': 1,
+                'sessionId': 'sess-1',
+                'turnId': 'turn-1',
+                'type': 'model.streaming',
+                'payload': {'delta': 'hi', 'kind': 'text_delta'},
+              },
             },
           },
-        },);
+        );
       }
 
       pushEvent('e1');
@@ -748,8 +768,7 @@ void main() {
 
     test('onRequest 钩子抛错 → 回传 error 帧（-32000），而非 result', () async {
       final h = RelayHarness(
-        onRequest: (frame) async =>
-            throw Exception('会话已切换，请求被拒绝'),
+        onRequest: (frame) async => throw Exception('会话已切换，请求被拒绝'),
       );
       await h.connectMatched();
 

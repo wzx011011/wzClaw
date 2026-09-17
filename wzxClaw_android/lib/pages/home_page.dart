@@ -12,7 +12,6 @@ import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
-import '../services/app_restore_state.dart';
 import '../services/attachment_service.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
@@ -77,9 +76,7 @@ class _ChatPageState extends State<ChatPage> {
   final List<AttachmentUpload> _attachments = [];
 
   String _composeOutgoing(String text, Iterable<AttachmentUpload> attachments) {
-    final refs = attachments
-        .map((a) => '[附件已上传到节点: ${a.nodePath}]')
-        .join('\n');
+    final refs = attachments.map((a) => '[附件已上传到节点: ${a.nodePath}]').join('\n');
     return refs.isEmpty ? text : '$refs\n$text';
   }
 
@@ -97,6 +94,9 @@ class _ChatPageState extends State<ChatPage> {
         if (mounted) setState(() {});
       },
     );
+    if (upload != null && !_attachments.contains(upload) && mounted) {
+      setState(() => _attachments.add(upload));
+    }
     if (upload != null && upload.error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -133,7 +133,6 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
-    AppRestoreState.setLastRoute('/chat');
     // 直连栈单一监听入口：ChangeNotifier → 页面状态（替代旧 4 流订阅）。
     // 初始同步回种流式/等待/权限/会话初值：重进页面若回合正在跑，
     // 否则发送按钮形态短暂错误、消息会直发而非入队
@@ -161,8 +160,7 @@ class _ChatPageState extends State<ChatPage> {
       } else {
         // Transient states (connecting / reconnecting / disconnected):
         // only show if the state persists for 1.2 s.
-        _reconnectDebounceTimer =
-            Timer(const Duration(milliseconds: 1200), () {
+        _reconnectDebounceTimer = Timer(const Duration(milliseconds: 1200), () {
           if (mounted) setState(() => _visibleConnectionState = state);
         });
       }
@@ -245,7 +243,8 @@ class _ChatPageState extends State<ChatPage> {
   /// 工作区名：取路径末段（E:\ai\wzxClaw → wzxClaw；非路径原样）
   String _workspaceDisplayName(String? path) {
     if (path == null || path.isEmpty) return '';
-    final normalized = path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final normalized =
+        path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
     final idx = normalized.lastIndexOf('/');
     return idx >= 0 && idx < normalized.length - 1
         ? normalized.substring(idx + 1)
@@ -375,7 +374,10 @@ class _ChatPageState extends State<ChatPage> {
         backgroundColor: AppColors.of(dialogCtx).bgSecondary,
         title: Text(
           '编辑排队消息',
-          style: TextStyle(color: AppColors.of(dialogCtx).textPrimary, fontSize: 16),
+          style: TextStyle(
+            color: AppColors.of(dialogCtx).textPrimary,
+            fontSize: 16,
+          ),
         ),
         content: TextField(
           controller: controller,
@@ -395,12 +397,17 @@ class _ChatPageState extends State<ChatPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx),
-            child: Text('取消',
-                style: TextStyle(color: AppColors.of(dialogCtx).textSecondary),),
+            child: Text(
+              '取消',
+              style: TextStyle(color: AppColors.of(dialogCtx).textSecondary),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, controller.text.trim()),
-            child: Text('保存', style: TextStyle(color: AppColors.of(dialogCtx).accent),),
+            child: Text(
+              '保存',
+              style: TextStyle(color: AppColors.of(dialogCtx).accent),
+            ),
           ),
         ],
       ),
@@ -452,8 +459,11 @@ class _ChatPageState extends State<ChatPage> {
             index: index,
             child: Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: Icon(Icons.drag_indicator,
-                  size: 18, color: colors.textMuted,),
+              child: Icon(
+                Icons.drag_indicator,
+                size: 18,
+                color: colors.textMuted,
+              ),
             ),
           ),
           Expanded(
@@ -475,26 +485,38 @@ class _ChatPageState extends State<ChatPage> {
                 color: colors.bgInput,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(children: [
-                Icon(Icons.north, size: 11, color: colors.textPrimary),
-                const SizedBox(width: 3),
-                Text('立即',
+              child: Row(
+                children: [
+                  Icon(Icons.north, size: 11, color: colors.textPrimary),
+                  const SizedBox(width: 3),
+                  Text(
+                    '立即',
                     style: TextStyle(
-                        color: colors.textPrimary, fontSize: 12,),),
-              ],),
+                      color: colors.textPrimary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.edit_outlined,
-                size: 17, color: colors.textSecondary,),
+            icon: Icon(
+              Icons.edit_outlined,
+              size: 17,
+              color: colors.textSecondary,
+            ),
             tooltip: '编辑',
             onPressed: () => _editQueued(item),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.delete_outline,
-                size: 17, color: colors.textSecondary,),
+            icon: Icon(
+              Icons.delete_outline,
+              size: 17,
+              color: colors.textSecondary,
+            ),
             tooltip: '删除',
             onPressed: () => setState(() => _sendQueue.remove(item)),
           ),
@@ -596,7 +618,6 @@ class _ChatPageState extends State<ChatPage> {
             icon: const Icon(Icons.swap_horiz_outlined),
             tooltip: '切换桃面端',
             onPressed: () {
-              AppRestoreState.setLastRoute('/');
               Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
             },
           ),
@@ -657,8 +678,10 @@ class _ChatPageState extends State<ChatPage> {
                           setState(() => _showScrollFab = false);
                         },
                         backgroundColor: colors.bgElevated,
-                        child: Icon(Icons.keyboard_arrow_down,
-                            color: colors.textPrimary,),
+                        child: Icon(
+                          Icons.keyboard_arrow_down,
+                          color: colors.textPrimary,
+                        ),
                       ),
                     ),
                   ),
@@ -687,11 +710,15 @@ class _ChatPageState extends State<ChatPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('wzxClaw',
-            style: TextStyle(color: colors.textPrimary, fontSize: 16),),
-        Text(title,
-            style: TextStyle(color: colors.textSecondary, fontSize: 11),
-            overflow: TextOverflow.ellipsis,),
+        Text(
+          'wzxClaw',
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        Text(
+          title,
+          style: TextStyle(color: colors.textSecondary, fontSize: 11),
+          overflow: TextOverflow.ellipsis,
+        ),
       ],
     );
   }
@@ -704,26 +731,30 @@ class _ChatPageState extends State<ChatPage> {
     // 固定宽度比例，模拟长短不一的消息气泡
     final rows = [
       (align: Alignment.centerRight, w: screenWidth * 0.55),
-      (align: Alignment.centerLeft,  w: screenWidth * 0.75),
-      (align: Alignment.centerLeft,  w: screenWidth * 0.60),
-      (align: Alignment.centerLeft,  w: screenWidth * 0.45),
+      (align: Alignment.centerLeft, w: screenWidth * 0.75),
+      (align: Alignment.centerLeft, w: screenWidth * 0.60),
+      (align: Alignment.centerLeft, w: screenWidth * 0.45),
       (align: Alignment.centerRight, w: screenWidth * 0.50),
-      (align: Alignment.centerLeft,  w: screenWidth * 0.70),
+      (align: Alignment.centerLeft, w: screenWidth * 0.70),
     ];
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       physics: const NeverScrollableScrollPhysics(),
-      children: rows.map((r) => Align(
-        alignment: r.align,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: _SkeletonBox(
-            width: r.w,
-            height: 36,
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),).toList(),
+      children: rows
+          .map(
+            (r) => Align(
+              alignment: r.align,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: _SkeletonBox(
+                  width: r.w,
+                  height: 36,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 
@@ -906,8 +937,10 @@ class _ChatPageState extends State<ChatPage> {
         return _buildWelcomeView(colors);
       }
       return Center(
-        child: Text('暂无消息',
-            style: TextStyle(color: colors.textMuted, fontSize: 14),),
+        child: Text(
+          '暂无消息',
+          style: TextStyle(color: colors.textMuted, fontSize: 14),
+        ),
       );
     }
 
@@ -969,7 +1002,9 @@ class _ChatPageState extends State<ChatPage> {
           TurnThinkData? think;
           if (busy) {
             think = TurnThinkData(
-                running: true, content: _store.thinkingContent,);
+              running: true,
+              content: _store.thinkingContent,
+            );
           } else if (isLast &&
               (_store.lastThinkingContent.isNotEmpty ||
                   _store.lastThinkingMs != null)) {
@@ -993,7 +1028,8 @@ class _ChatPageState extends State<ChatPage> {
             answerBuilder: _buildMarkdownBody,
           );
         } else if (block is _SubagentGroup) {
-          child = _SubagentGroupCard(group: block, buildItem: _buildMessageItem);
+          child =
+              _SubagentGroupCard(group: block, buildItem: _buildMessageItem);
         } else {
           child = _buildUserBubble(block as ChatMessage);
         }
@@ -1082,9 +1118,14 @@ class _ChatPageState extends State<ChatPage> {
               bottomRight: Radius.circular(4),
             ),
           ),
-          child: Text(msg.content,
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 13, height: 1.5,),),
+          child: Text(
+            msg.content,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              height: 1.5,
+            ),
+          ),
         ),
       ),
     );
@@ -1115,7 +1156,9 @@ class _ChatPageState extends State<ChatPage> {
             _buildMarkdownBody(msg.content, isStreaming: msg.isStreaming),
             if (msg.isStreaming) const StreamingShimmer(),
             // Token usage footer
-            if (msg.usage != null || msg.model != null || msg.durationMs != null)
+            if (msg.usage != null ||
+                msg.model != null ||
+                msg.durationMs != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
@@ -1128,13 +1171,19 @@ class _ChatPageState extends State<ChatPage> {
                           if (msg.usage != null)
                             Text(
                               'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
-                              style: TextStyle(color: colors.textMuted, fontSize: 10),
+                              style: TextStyle(
+                                color: colors.textMuted,
+                                fontSize: 10,
+                              ),
                             ),
                           if (msg.durationMs != null) ...[
                             if (msg.usage != null) const SizedBox(width: 8),
                             Text(
                               '已工作 ${_formatDurationMs(msg.durationMs!)}',
-                              style: TextStyle(color: colors.textMuted, fontSize: 10),
+                              style: TextStyle(
+                                color: colors.textMuted,
+                                fontSize: 10,
+                              ),
                             ),
                           ],
                         ],
@@ -1145,9 +1194,10 @@ class _ChatPageState extends State<ChatPage> {
                       Text(
                         msg.model!,
                         style: TextStyle(
-                            color: colors.textMuted,
-                            fontSize: 10,
-                            fontFamily: 'monospace',),
+                          color: colors.textMuted,
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                        ),
                       ),
                   ],
                 ),
@@ -1160,11 +1210,19 @@ class _ChatPageState extends State<ChatPage> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Row(
                   children: [
-                    _msgActionIcon(colors, Icons.copy_outlined, '复制',
-                        () => _copyMessage(msg),),
+                    _msgActionIcon(
+                      colors,
+                      Icons.copy_outlined,
+                      '复制',
+                      () => _copyMessage(msg),
+                    ),
                     const SizedBox(width: 16),
-                    _msgActionIcon(colors, Icons.open_in_full, '展开',
-                        () => _expandMessage(msg),),
+                    _msgActionIcon(
+                      colors,
+                      Icons.open_in_full,
+                      '展开',
+                      () => _expandMessage(msg),
+                    ),
                     const SizedBox(width: 16),
                     if (msg.durationMs != null)
                       Text(
@@ -1191,7 +1249,12 @@ class _ChatPageState extends State<ChatPage> {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(2),
-        child: Icon(icon, size: 15, color: colors.textMuted, semanticLabel: tooltip),
+        child: Icon(
+          icon,
+          size: 15,
+          color: colors.textMuted,
+          semanticLabel: tooltip,
+        ),
       ),
     );
   }
@@ -1229,9 +1292,10 @@ class _ChatPageState extends State<ChatPage> {
                     child: Text(
                       '消息详情',
                       style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,),
+                        color: colors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -1243,7 +1307,10 @@ class _ChatPageState extends State<ChatPage> {
                   child: SelectableText(
                     msg.content,
                     style: TextStyle(
-                        color: colors.textPrimary, fontSize: 14, height: 1.6,),
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                      height: 1.6,
+                    ),
                   ),
                 ),
               ),
@@ -1286,17 +1353,20 @@ class _ChatPageState extends State<ChatPage> {
         p: TextStyle(color: colors.textPrimary, fontSize: 13, height: 1.5),
         pPadding: const EdgeInsets.only(bottom: 6),
         h1: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,),
+          color: colors.textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        ),
         h2: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 14,
-            fontWeight: FontWeight.bold,),
+          color: colors.textPrimary,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
         h3: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,),
+          color: colors.textPrimary,
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+        ),
         listBullet: TextStyle(color: colors.textPrimary, fontSize: 13),
         listBulletPadding: const EdgeInsets.only(right: 6),
         // Inline code
@@ -1456,7 +1526,14 @@ class _ChatPageState extends State<ChatPage> {
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
               child: Row(
                 children: [
-                  Text('命令', style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w600, fontSize: 15)),
+                  Text(
+                    '命令',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -1466,37 +1543,45 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
             const Divider(height: 1),
-            ..._allSlashCommands.map((cmd) => InkWell(
-              onTap: () {
-                Navigator.pop(ctx);
-                _inputController.text = cmd.command;
-                _inputController.selection = TextSelection.fromPosition(
-                  TextPosition(offset: cmd.command.length),
-                );
-                _sendMessage();
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    Text(
-                      cmd.command,
-                      style: TextStyle(color: colors.accent, fontSize: 13, fontWeight: FontWeight.w600, fontFamily: 'monospace'),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        cmd.description,
+            ..._allSlashCommands.map(
+              (cmd) => InkWell(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _inputController.text = cmd.command;
+                  _inputController.selection = TextSelection.fromPosition(
+                    TextPosition(offset: cmd.command.length),
+                  );
+                  _sendMessage();
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Text(
+                        cmd.command,
                         style: TextStyle(
-                          color: colors.textSecondary,
+                          color: colors.accent,
                           fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'monospace',
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          cmd.description,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),),
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1532,26 +1617,30 @@ class _ChatPageState extends State<ChatPage> {
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
           padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
-          child: Column(children: [
-            if (_attachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    for (final attachment in _attachments)
-                      _AttachmentChip(
-                        attachment: attachment,
-                        onRemove: () => _removeAttachment(attachment),
-                      ),
-                  ],),
+          child: Column(
+            children: [
+              if (_attachments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final attachment in _attachments)
+                          _AttachmentChip(
+                            attachment: attachment,
+                            onRemove: () => _removeAttachment(attachment),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
-            // 语义未定，先不暴露——用户 2026-09-17 定）
-            _buildSendQueueStrip(colors),
-            _buildComposerContainer(colors, isConnected),
-          ],),
+              // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
+              // 语义未定，先不暴露——用户 2026-09-17 定）
+              _buildSendQueueStrip(colors),
+              _buildComposerContainer(colors, isConnected),
+            ],
+          ),
         );
       },
     );
@@ -1566,34 +1655,36 @@ class _ChatPageState extends State<ChatPage> {
         border: Border.all(color: colors.border),
         borderRadius: BorderRadius.circular(18),
       ),
-      child: Column(children: [
-        // 输入内容独占上方整行；生成中不锁输入，提示切换为排队语
-        TextField(
-          controller: _inputController,
-          focusNode: _inputFocusNode,
-          enabled: isConnected,
-          style: TextStyle(color: colors.textPrimary, fontSize: 14.5),
-          decoration: InputDecoration(
-            hintText: !isConnected
-                ? '未连接'
-                : (_isStreaming || _isWaiting)
-                    ? '继续输入以排队后续修改'
-                    : '提出后续修改要求',
-            hintStyle: TextStyle(color: colors.textMuted, fontSize: 14),
-            border: InputBorder.none,
-            isDense: true,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Column(
+        children: [
+          // 输入内容独占上方整行；生成中不锁输入，提示切换为排队语
+          TextField(
+            controller: _inputController,
+            focusNode: _inputFocusNode,
+            enabled: isConnected,
+            style: TextStyle(color: colors.textPrimary, fontSize: 14.5),
+            decoration: InputDecoration(
+              hintText: !isConnected
+                  ? '未连接'
+                  : (_isStreaming || _isWaiting)
+                      ? '继续输入以排队后续修改'
+                      : '提出后续修改要求',
+              hintStyle: TextStyle(color: colors.textMuted, fontSize: 14),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            ),
+            maxLines: 6,
+            minLines: 1,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            onChanged: _onInputChanged,
           ),
-          maxLines: 6,
-          minLines: 1,
-          keyboardType: TextInputType.multiline,
-          textInputAction: TextInputAction.newline,
-          onChanged: _onInputChanged,
-        ),
-        const SizedBox(height: 8),
-        _buildComposerToolbar(colors, isConnected),
-      ],),
+          const SizedBox(height: 8),
+          _buildComposerToolbar(colors, isConnected),
+        ],
+      ),
     );
   }
 
@@ -1636,34 +1727,41 @@ class _ChatPageState extends State<ChatPage> {
     final modeLabel = modeNames[serverMode] ?? '权限模式';
     final modeColor = serverMode == 'yolo' ? modeOrange : colors.textSecondary;
 
-    return Row(children: [
-      iconBtn(
-        key: _plusBtnKey,
-        tip: '附加',
-        icon: Icons.add,
-        onTap: isConnected ? _showAttachPopup : null,
-      ),
-      const SizedBox(width: 4),
-      SizedBox(
-        key: _modeBtnKey,
-        height: 30,
-        child: IconButton(
-          onPressed: isConnected ? _showPermissionPopup : null,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          tooltip: '权限模式',
-          icon: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.security_outlined, size: 18, color: modeColor),
-            Text(modeLabel,
-                style: TextStyle(
+    return Row(
+      children: [
+        iconBtn(
+          key: _plusBtnKey,
+          tip: '附加',
+          icon: Icons.add,
+          onTap: isConnected ? _showAttachPopup : null,
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          key: _modeBtnKey,
+          height: 30,
+          child: IconButton(
+            onPressed: isConnected ? _showPermissionPopup : null,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tooltip: '权限模式',
+            icon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.security_outlined, size: 18, color: modeColor),
+                Text(
+                  modeLabel,
+                  style: TextStyle(
                     color: modeColor,
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,),),
-            const SizedBox(width: 2),
-            Icon(Icons.expand_more, size: 13, color: modeColor),
-          ],),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(Icons.expand_more, size: 13, color: modeColor),
+              ],
+            ),
+          ),
         ),
-      ),
-      const Spacer(),
+        const Spacer(),
         // 上下文用量：必须已有会话（新任务态不可点，语义对齐官方）
         iconBtn(
           key: _usageBtnKey,
@@ -1699,8 +1797,9 @@ class _ChatPageState extends State<ChatPage> {
             style: IconButton.styleFrom(
               backgroundColor:
                   isConnected ? const Color(0xFFE8E8E8) : colors.bgTertiary,
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
             ),
             padding: EdgeInsets.zero,
             tooltip: busy ? '停止生成' : '发送',
@@ -1711,7 +1810,8 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
         ),
-      ],);
+      ],
+    );
   }
 
   /// 输入区弹层统一骨架：底部抽屉（与工作区/分支抽屉同模式）。
@@ -1773,25 +1873,34 @@ class _ChatPageState extends State<ChatPage> {
               ListTile(
                 dense: true,
                 enabled: note == null,
-                leading: Icon(icon,
-                    size: 20,
-                    color: note == null
-                        ? colors.textPrimary
-                        : colors.textMuted,),
-                title: Row(children: [
-                  Text(label,
+                leading: Icon(
+                  icon,
+                  size: 20,
+                  color: note == null ? colors.textPrimary : colors.textMuted,
+                ),
+                title: Row(
+                  children: [
+                    Text(
+                      label,
                       style: TextStyle(
-                          color: note == null
-                              ? colors.textPrimary
-                              : colors.textMuted,
-                          fontSize: 14,),),
-                  if (note != null) ...[
-                    const SizedBox(width: 6),
-                    Text('（$note）',
+                        color: note == null
+                            ? colors.textPrimary
+                            : colors.textMuted,
+                        fontSize: 14,
+                      ),
+                    ),
+                    if (note != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '（$note）',
                         style: TextStyle(
-                            color: colors.textMuted, fontSize: 11,),),
+                          color: colors.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
                   ],
-                ],),
+                ),
                 onTap: note == null
                     ? () {
                         Navigator.pop(ctx);
@@ -1834,23 +1943,27 @@ class _ChatPageState extends State<ChatPage> {
             for (final (mode, label, subtitle, icon) in tiers)
               ListTile(
                 dense: true,
-                leading: Icon(icon,
-                    size: 20,
-                    color: mode == current
-                        ? colors.accent
-                        : colors.textSecondary,),
-                title: Text(label,
-                    style: TextStyle(
-                        color: mode == current
-                            ? colors.accent
-                            : colors.textPrimary,
-                        fontWeight: mode == current
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        fontSize: 14,),),
-                subtitle: Text(subtitle,
-                    style: TextStyle(
-                        color: colors.textMuted, fontSize: 11,),),
+                leading: Icon(
+                  icon,
+                  size: 20,
+                  color: mode == current ? colors.accent : colors.textSecondary,
+                ),
+                title: Text(
+                  label,
+                  style: TextStyle(
+                    color: mode == current ? colors.accent : colors.textPrimary,
+                    fontWeight:
+                        mode == current ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                ),
+                subtitle: Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: colors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
                 trailing: mode == current
                     ? Icon(Icons.check, size: 18, color: colors.accent)
                     : null,
@@ -1925,15 +2038,22 @@ class _ChatPageState extends State<ChatPage> {
                 children: [
                   Row(
                     children: [
-                      Text('Token 用量',
-                          style: TextStyle(
-                              color: colors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,),),
+                      Text(
+                        'Token 用量',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const Spacer(),
-                      Text('共 ${_fmtTokens(u.totalTokens)}',
-                          style: TextStyle(
-                              color: colors.textSecondary, fontSize: 12.5,),),
+                      Text(
+                        '共 ${_fmtTokens(u.totalTokens)}',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 12.5,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -1944,8 +2064,8 @@ class _ChatPageState extends State<ChatPage> {
                       height: 6,
                       child: sum == 0
                           ? ColoredBox(
-                              color:
-                                  colors.textMuted.withValues(alpha: 0.2),)
+                              color: colors.textMuted.withValues(alpha: 0.2),
+                            )
                           : Row(
                               children: [
                                 for (var i = 0; i < segments.length; i++)
@@ -1962,57 +2082,90 @@ class _ChatPageState extends State<ChatPage> {
                   for (var i = 0; i < segments.length; i++)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                              color: segColors[i], shape: BoxShape.circle,),
-                        ),
-                        const SizedBox(width: 9),
-                        Text(segments[i].$1,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: segColors[i],
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 9),
+                          Text(
+                            segments[i].$1,
                             style: TextStyle(
-                                color: colors.textSecondary, fontSize: 13,),),
-                        const Spacer(),
-                        Text(
-                          '${_fmtTokens(segments[i].$2)}'
-                          '（${sum == 0 ? 0 : (segments[i].$2 * 100 / sum).toStringAsFixed(1)}%）',
-                          style: TextStyle(
+                              color: colors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_fmtTokens(segments[i].$2)}'
+                            '（${sum == 0 ? 0 : (segments[i].$2 * 100 / sum).toStringAsFixed(1)}%）',
+                            style: TextStyle(
                               color: colors.textPrimary,
                               fontSize: 12.5,
-                              fontWeight: FontWeight.w600,),
-                        ),
-                      ],),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   Divider(height: 22, color: colors.border),
-                  Row(children: [
-                    Text('平均缓存命中率',
+                  Row(
+                    children: [
+                      Text(
+                        '平均缓存命中率',
                         style: TextStyle(
-                            color: colors.textSecondary, fontSize: 13,),),
-                    const Spacer(),
-                    Text(cacheHit == null ? '—' : '${(cacheHit * 100).toStringAsFixed(1)}%',
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        cacheHit == null
+                            ? '—'
+                            : '${(cacheHit * 100).toStringAsFixed(1)}%',
                         style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,),),
-                  ],),
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
-                  Row(children: [
-                    Text('模型请求次数',
+                  Row(
+                    children: [
+                      Text(
+                        '模型请求次数',
                         style: TextStyle(
-                            color: colors.textSecondary, fontSize: 13,),),
-                    const Spacer(),
-                    Text('${u.modelRequestCount}',
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${u.modelRequestCount}',
                         style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,),),
-                  ],),
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 10),
                   Text(
                     '引擎协议未提供上下文窗口上限与分类拆分（消息/MCP 等），'
                     '故不显示容量百分比；额度信息仅官方账号通道提供。',
-                    style: TextStyle(color: colors.textMuted, fontSize: 11, height: 1.5),
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 11,
+                      height: 1.5,
+                    ),
                   ),
                 ],
               );
@@ -2078,33 +2231,49 @@ class _ChatPageState extends State<ChatPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Text('选择模型',
+                    Row(
+                      children: [
+                        Text(
+                          '选择模型',
                           style: TextStyle(
-                              color: colors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,),),
-                      const Spacer(),
-                      Text('共 ${catalog.models.length} 个',
+                            color: colors.textPrimary,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '共 ${catalog.models.length} 个',
                           style: TextStyle(
-                              color: colors.textMuted, fontSize: 11.5,),),
-                    ],),
+                            color: colors.textMuted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ],
+                    ),
                     if (catalog.degraded)
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
-                        child: Text('引擎目录暂不可用，仅显示导入快照',
-                            style: TextStyle(
-                                color: colors.warning, fontSize: 11.5,),),
+                        child: Text(
+                          '引擎目录暂不可用，仅显示导入快照',
+                          style: TextStyle(
+                            color: colors.warning,
+                            fontSize: 11.5,
+                          ),
+                        ),
                       ),
                     for (final entry in groups.entries) ...[
                       Padding(
                         padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
-                        child: Text(entry.key,
-                            style: TextStyle(
-                                color: colors.textMuted,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.3,),),
+                        child: Text(
+                          entry.key,
+                          style: TextStyle(
+                            color: colors.textMuted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
                       ),
                       for (final m in entry.value)
                         InkWell(
@@ -2114,29 +2283,41 @@ class _ChatPageState extends State<ChatPage> {
                             await _applyModelChoice(
                               sessionId,
                               SessionModelUse(
-                                  providerId: m.providerId, modelId: m.modelId,),
+                                providerId: m.providerId,
+                                modelId: m.modelId,
+                              ),
                               retryContent: retryContent,
                             );
                           },
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 9,),
-                            child: Row(children: [
-                              Expanded(
-                                child: Text(m.modelId,
+                              horizontal: 4,
+                              vertical: 9,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    m.modelId,
                                     style: TextStyle(
-                                        color: colors.textPrimary,
-                                        fontSize: 13.5,),),
-                              ),
-                              if (catalog.defaultModel != null
-                                  && catalog.defaultModel!.key == m.key) ...[
-                                _modelTag(colors, '默认', colors.accent),
-                                const SizedBox(width: 6),
-                                Icon(Icons.check,
-                                    size: 16, color: colors.accent,),
-                              ] else if (m.source == 'imported')
-                                _modelTag(colors, '快照', colors.warning),
-                            ],),
+                                      color: colors.textPrimary,
+                                      fontSize: 13.5,
+                                    ),
+                                  ),
+                                ),
+                                if (catalog.defaultModel != null &&
+                                    catalog.defaultModel!.key == m.key) ...[
+                                  _modelTag(colors, '默认', colors.accent),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    Icons.check,
+                                    size: 16,
+                                    color: colors.accent,
+                                  ),
+                                ] else if (m.source == 'imported')
+                                  _modelTag(colors, '快照', colors.warning),
+                              ],
+                            ),
                           ),
                         ),
                     ],
@@ -2158,8 +2339,13 @@ class _ChatPageState extends State<ChatPage> {
           color: color.withValues(alpha: 0.14),
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(label,
-            style: TextStyle(color: color, fontSize: 10,),),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+          ),
+        ),
       );
 
   /// 「模型不可用」操作卡片（会话尾部）：自动自愈失败后等待用户介入——
@@ -2179,49 +2365,63 @@ class _ChatPageState extends State<ChatPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text('历史任务使用的模型已不可用',
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '历史任务使用的模型已不可用',
                   style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,),),
-            ),
-          ],),
+                    color: colors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 4),
-          Text(reason,
-              style: TextStyle(
-                  color: colors.textSecondary, fontSize: 12, height: 1.5,),),
+          Text(
+            reason,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
           const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => _showModelPopup(retryContent: content),
-                icon: const Icon(Icons.view_in_ar_outlined, size: 15),
-                label: const Text('选择可用模型重试',
-                    style: TextStyle(fontSize: 12),),
-                style: FilledButton.styleFrom(
-                  backgroundColor: colors.accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _showModelPopup(retryContent: content),
+                  icon: const Icon(Icons.view_in_ar_outlined, size: 15),
+                  label: const Text(
+                    '选择可用模型重试',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _migrateBlockedToNewSession,
-                icon: const Icon(Icons.post_add_outlined, size: 15),
-                label: const Text('新建会话', style: TextStyle(fontSize: 12)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _migrateBlockedToNewSession,
+                  icon: const Icon(Icons.post_add_outlined, size: 15),
+                  label: const Text('新建会话', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textSecondary,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
                 ),
               ),
-            ),
-          ],),
+            ],
+          ),
         ],
       ),
     );
@@ -2236,11 +2436,13 @@ class _ChatPageState extends State<ChatPage> {
     await _store.newSession();
     if (_store.activeSessionId == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('新建会话失败，请检查与大脑节点的连接'),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('新建会话失败，请检查与大脑节点的连接'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
       return;
     }
@@ -2258,8 +2460,8 @@ class _ChatPageState extends State<ChatPage> {
   }) async {
     try {
       if (sessionId != null) {
-        await ChatRuntimeService.instance
-            .setModel(sessionId, m.providerId, m.modelId);
+        final changed = await _store.setModel(m.providerId, m.modelId);
+        if (!changed) throw StateError(_store.error ?? '切换模型失败');
         _store.clearModelBlocked();
       }
       var configuredDefault = false;
@@ -2267,7 +2469,9 @@ class _ChatPageState extends State<ChatPage> {
         // 新任务态：节点默认是新会话生效的唯一途径，必设
         try {
           await NodeCatalogService.instance.configureDefault(
-              providerId: m.providerId, modelId: m.modelId,);
+            providerId: m.providerId,
+            modelId: m.modelId,
+          );
           configuredDefault = true;
         } catch (e) {
           debugPrint('[model] 设为节点默认失败: $e');
@@ -2280,11 +2484,13 @@ class _ChatPageState extends State<ChatPage> {
                 : '设默认失败，请检查与大脑节点的连接')
             : '已切换到 ${m.modelId}';
         if (sessionId != null || configuredDefault) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(msg),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(msg),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         }
       }
       if (sessionId != null &&
@@ -2315,15 +2521,16 @@ class _ChatPageState extends State<ChatPage> {
             for (final (label, value) in levels)
               ListTile(
                 dense: true,
-                title: Text(label,
-                    style: TextStyle(
-                        color: current == value
-                            ? colors.accent
-                            : colors.textPrimary,
-                        fontWeight: current == value
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        fontSize: 14,),),
+                title: Text(
+                  label,
+                  style: TextStyle(
+                    color:
+                        current == value ? colors.accent : colors.textPrimary,
+                    fontWeight:
+                        current == value ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                ),
                 trailing: current == value
                     ? Icon(Icons.check, size: 18, color: colors.accent)
                     : null,
@@ -2340,11 +2547,13 @@ class _ChatPageState extends State<ChatPage> {
       setState(() => _pendingThoughtLevel = chosen);
       _store.thoughtLevel = chosen;
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('思考档位将在新会话生效'),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('思考档位将在新会话生效'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
       return;
     }
@@ -2353,20 +2562,24 @@ class _ChatPageState extends State<ChatPage> {
     // （2026-09-17 迁移审计 split-brain #2）。失败时 store._error 已带原因。
     final ok = await _store.setThoughtLevel(chosen);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_store.error ?? '设置思考档位失败'),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_store.error ?? '设置思考档位失败'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
   void _runtimeErrorSnack(Object e) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('操作失败: $e'),
-      duration: const Duration(seconds: 3),
-      behavior: SnackBarBehavior.floating,
-    ),);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('操作失败: $e'),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   String _fmtTokens(int n) {
@@ -2448,54 +2661,82 @@ class _AttachmentChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.bgTertiary,
         border: Border.all(
-            color: attachment.error != null ? colors.error : colors.border,),
+          color: attachment.error != null ? colors.error : colors.border,
+        ),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.insert_drive_file_outlined,
-              size: 13, color: colors.textMuted,),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(attachment.name,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: colors.textPrimary, fontSize: 12,),),
-          ),
-          IconButton(
-            onPressed: onRemove,
-            constraints: const BoxConstraints.tightFor(width: 24, height: 24),
-            padding: EdgeInsets.zero,
-            tooltip: '移除附件',
-            icon: Icon(Icons.close, size: 14, color: colors.textMuted),
-          ),
-        ],),
-        if (attachment.error != null)
-          Text(attachment.error!,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.error, fontSize: 10.5),)
-        else if (attachment.done)
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.check_circle, size: 11, color: colors.success),
-            const SizedBox(width: 3),
-            Text('已上传',
-                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
-          ],)
-        else
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            SizedBox(
-              width: 60,
-              child: LinearProgressIndicator(
-                value: attachment.progress,
-                minHeight: 3,
-                color: colors.accent,
-                backgroundColor: colors.border,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.insert_drive_file_outlined,
+                size: 13,
+                color: colors.textMuted,
               ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  attachment.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: onRemove,
+                constraints:
+                    const BoxConstraints.tightFor(width: 24, height: 24),
+                padding: EdgeInsets.zero,
+                tooltip: '移除附件',
+                icon: Icon(Icons.close, size: 14, color: colors.textMuted),
+              ),
+            ],
+          ),
+          if (attachment.error != null)
+            Text(
+              attachment.error!,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.error, fontSize: 10.5),
+            )
+          else if (attachment.done)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, size: 11, color: colors.success),
+                const SizedBox(width: 3),
+                Text(
+                  '已上传',
+                  style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+                ),
+              ],
+            )
+          else
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 60,
+                  child: LinearProgressIndicator(
+                    value: attachment.progress,
+                    minHeight: 3,
+                    color: colors.accent,
+                    backgroundColor: colors.border,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${(attachment.progress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            Text('${(attachment.progress * 100).toStringAsFixed(0)}%',
-                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
-          ],),
-      ],),
+        ],
+      ),
     );
   }
 }
@@ -2510,7 +2751,8 @@ class _TurnEntry {
 class _QueuedSend {
   final String id;
   String text;
-  _QueuedSend(this.text) : id = DateTime.now().microsecondsSinceEpoch.toString();
+  _QueuedSend(this.text)
+      : id = DateTime.now().microsecondsSinceEpoch.toString();
 }
 
 class _CodeBlockBuilder extends MarkdownElementBuilder {
@@ -2592,9 +2834,10 @@ class _CodeBlockWidgetState extends State<_CodeBlockWidget> {
                 Text(
                   language?.toLowerCase() ?? 'code',
                   style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 11,
-                      fontFamily: 'monospace',),
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
                 ),
                 const Spacer(),
                 GestureDetector(
@@ -2613,9 +2856,13 @@ class _CodeBlockWidgetState extends State<_CodeBlockWidget> {
                     children: [
                       Icon(Icons.copy, size: 12, color: colors.textSecondary),
                       const SizedBox(width: 3),
-                      Text('Copy',
-                          style: TextStyle(
-                              color: colors.textSecondary, fontSize: 11,),),
+                      Text(
+                        'Copy',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -2709,7 +2956,11 @@ class _SkeletonBox extends StatefulWidget {
   final double width;
   final double height;
   final BorderRadius? borderRadius;
-  const _SkeletonBox({required this.width, required this.height, this.borderRadius});
+  const _SkeletonBox({
+    required this.width,
+    required this.height,
+    this.borderRadius,
+  });
 
   @override
   State<_SkeletonBox> createState() => _SkeletonBoxState();
@@ -2797,8 +3048,8 @@ class _SubagentGroupCardState extends State<_SubagentGroupCard> {
     final g = widget.group;
     final textCount =
         g.messages.where((m) => m.role == MessageRole.assistant).length;
-    final hasError = g.messages
-        .any((m) => m.toolCalls?.any((t) => t.isError) ?? false);
+    final hasError =
+        g.messages.any((m) => m.toolCalls?.any((t) => t.isError) ?? false);
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -2806,7 +3057,9 @@ class _SubagentGroupCardState extends State<_SubagentGroupCard> {
         color: colors.bgTertiary,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: hasError ? Colors.redAccent.withValues(alpha: 0.4) : colors.border,
+          color: hasError
+              ? Colors.redAccent.withValues(alpha: 0.4)
+              : colors.border,
         ),
       ),
       child: Column(
@@ -2819,8 +3072,11 @@ class _SubagentGroupCardState extends State<_SubagentGroupCard> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Row(
                 children: [
-                  Icon(Icons.smart_toy_outlined,
-                      size: 15, color: colors.accent,),
+                  Icon(
+                    Icons.smart_toy_outlined,
+                    size: 15,
+                    color: colors.accent,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -2828,9 +3084,10 @@ class _SubagentGroupCardState extends State<_SubagentGroupCard> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textSecondary,
-                          fontWeight: FontWeight.w600,),
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   Icon(

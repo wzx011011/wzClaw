@@ -1,18 +1,10 @@
 // ============================================================
-// chat_runtime_service — 输入区快捷钮的运行时查询/设置
+// chat_runtime_service — 输入区运行时只读查询
 //
-// 协议依据（APP-SERVER.md，2026-09-16 probe-runtime*.js 实测）：
-// - session/usage：{sessionId} → totalTokens/inputTokens/outputTokens/
-//   reasoningTokens/cacheReadTokens/modelRequestCount/...（✅ 实测可用；
-//   协议不提供 contextWindow，上下文百分比无法诚实计算，故不显示）
-// - session/setModel：{sessionId, model:{providerId, modelId}}（✅ 已实测，
-//   字符串形式被 -32602 拒）
-// - session/setThoughtLevel：{sessionId, thoughtLevel}（✅ 方法存在——level
-//   键被 zod 拒、thoughtLevel 键通过校验；档位枚举值未实测到样本，先按
-//   官方 UI 三档 low/high/max 实现，错误显性上浮）
-// - 模型目录：协议不存在（session/models 等候选全 -32601）。模型选项取
-//   本会话历史用过的模型（session/messages 的 info.modelID/providerID，
-//   已实测字段），不做假目录。
+// session/usage 实测返回 totalTokens/inputTokens/outputTokens/
+// reasoningTokens/cacheReadTokens/modelRequestCount；协议不提供 contextWindow，
+// 上下文百分比无法诚实计算。会话 mutation 统一由 ZcodeChatStore 执行并
+// 回填状态，本服务不能成为第二写入口。
 // ============================================================
 
 import 'package:flutter/foundation.dart';
@@ -48,8 +40,10 @@ class ChatRuntimeService {
 
   /// 仅测试使用：注入请求实现
   @visibleForTesting
-  static Future<dynamic> Function(String method, [Map<String, dynamic>? params])?
-      debugRequester;
+  static Future<dynamic> Function(
+    String method, [
+    Map<String, dynamic>? params,
+  ])? debugRequester;
 
   Future<dynamic> _call(String method, [Map<String, dynamic>? params]) {
     final requester = debugRequester;
@@ -59,7 +53,8 @@ class ChatRuntimeService {
 
   /// 本会话历史用过的模型（最新在前，去重，不含空值）
   Future<List<SessionModelUse>> sessionModels(String sessionId) async {
-    final r = await _call('session/messages', {'sessionId': sessionId, 'limit': 40});
+    final r =
+        await _call('session/messages', {'sessionId': sessionId, 'limit': 40});
     if (r is! Map) throw StateError('消息响应异常');
     final messages = (r['messages'] as List? ?? []);
     final seen = <String>[];
@@ -84,7 +79,8 @@ class ChatRuntimeService {
     final r = await _call('session/resume', {'sessionId': sessionId});
     if (r is! Map) throw StateError('resume 响应异常');
     final settings = r['settings'] is Map ? r['settings'] as Map : const {};
-    final modelCfg = settings['model'] is Map ? settings['model'] as Map : const {};
+    final modelCfg =
+        settings['model'] is Map ? settings['model'] as Map : const {};
     final available = modelCfg['available'] as List? ?? const [];
     final result = <SessionModelUse>[];
     for (final item in available) {
@@ -113,17 +109,8 @@ class ChatRuntimeService {
     );
   }
 
-  /// 切换模型（session/setModel 实测：对象形式，字符串会被拒）
-  Future<void> setModel(
-    String sessionId,
-    String providerId,
-    String modelId,
-  ) async {
-    await _call('session/setModel', {
-      'sessionId': sessionId,
-      'model': {'providerId': providerId, 'modelId': modelId},
-    });
-  }
+  // 模型与思考档位 mutation 已迁 ZcodeChatStore，保证协议生效与页面投影
+  // 同步更新；本服务只保留运行时读取。
 
   // 思考档位设置已迁直连栈（ZcodeChatStore.setThoughtLevel：枚举经
   // 2026-09-17 真机探针实测 low|high|max，且乐观回显 store.thoughtLevel）。

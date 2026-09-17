@@ -1,13 +1,9 @@
 // ============================================================
 // pairing_store — 多桌面配对持久化
 //
-// 旧模型只存一个配对（server_url 配对链接原文），扫码即覆盖。
-// 新模型：配对列表（按 sid 去重）+ 活动桌面（active sid），
-// landing 设备列表展示全部配对、点按切换连接。
-//
-// 兼容：server_url 继续维护为「活动配对」的链接原文——
-// 既有读取方（connectFromSavedConfiguration 兜底、设置页地址栏）
-// 零改动。首次读取时若列表为空且 server_url 有效，自动迁移入库。
+// 配对列表按 sid 去重，并单独记录活动桌面。PairingStore 是唯一持久化入口。
+// 旧 server_url 只在首次 loadAll 时迁移一次，随后无论有效与否都删除，
+// 不再双写，避免旧读取方重新引入第二份事实源。
 // ============================================================
 
 import 'dart:convert';
@@ -84,31 +80,29 @@ class PairingStore {
         debugPrint('[PairingStore] 配对列表解析失败，忽略: $e');
       }
     }
-    if (list.isEmpty) {
-      // 旧数据迁移：server_url 配对链接 → 列表首条
-      final legacyUrl = prefs.getString(_legacyUrlKey);
-      if (legacyUrl != null && legacyUrl.isNotEmpty) {
-        final parsed = parsePairingUrlAny(legacyUrl);
-        if (parsed != null) {
-          String? name;
-          try {
-            name = Uri.parse(legacyUrl).queryParameters['name'];
-          } catch (_) {}
-          list.add(StoredPairing(
+    final legacyUrl = prefs.getString(_legacyUrlKey);
+    if (list.isEmpty && legacyUrl != null && legacyUrl.isNotEmpty) {
+      // 一次性迁移：解析失败也删除旧键，防止每次启动重复尝试。
+      final parsed = parsePairingUrlAny(legacyUrl);
+      if (parsed != null) {
+        final name = Uri.tryParse(legacyUrl)?.queryParameters['name'];
+        list.add(
+          StoredPairing(
             info: ZcodePairingInfo(
               relayWsUrl: parsed.relayWsUrl,
               sid: parsed.sid,
               hash: parsed.hash,
-              desktopName: (name == null || name.isEmpty)
-                  ? '桌面 ZCode'
-                  : name,
+              desktopName: (name == null || name.isEmpty) ? '桌面 ZCode' : name,
             ),
             addedAt: DateTime.now().millisecondsSinceEpoch,
-          ),);
-          await prefs.setString(_listKey, jsonEncode([list.first.toJson()]));
-          await prefs.setString(_activeKey, list.first.info.sid);
-        }
+          ),
+        );
+        await prefs.setString(_listKey, jsonEncode([list.first.toJson()]));
+        await prefs.setString(_activeKey, list.first.info.sid);
       }
+    }
+    if (prefs.containsKey(_legacyUrlKey)) {
+      await prefs.remove(_legacyUrlKey);
     }
     _cache = list;
     _loaded = true;
@@ -134,7 +128,10 @@ class PairingStore {
     } else {
       _cache = [
         ..._cache,
-        StoredPairing(info: info, addedAt: DateTime.now().millisecondsSinceEpoch),
+        StoredPairing(
+          info: info,
+          addedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
       ];
     }
     await _persist();
@@ -147,8 +144,7 @@ class PairingStore {
     }
   }
 
-  /// 删除配对；被删的是活动桌面时活动位清空（server_url 一并清掉，
-  /// 自动重连不再生效，设备列表仍可点按重连其余桌面）
+  /// 删除配对；被删的是活动桌面时活动位清空。
   Future<void> remove(String sid) async {
     await loadAll();
     _cache = _cache.where((s) => s.info.sid != sid).toList();
@@ -157,7 +153,6 @@ class PairingStore {
     if (active == sid) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_activeKey);
-      await prefs.remove(_legacyUrlKey);
     }
   }
 
@@ -166,38 +161,16 @@ class PairingStore {
     return prefs.getString(_activeKey);
   }
 
-  /// 设活动桌面，并把 server_url 同步为该配对链接原文（旧读取方兼容）
+  /// 设置活动桌面；不存在的 sid 不写入。
   Future<void> setActiveSid(String? sid) async {
     final prefs = await SharedPreferences.getInstance();
     if (sid == null || sid.isEmpty) {
       await prefs.remove(_activeKey);
-      await prefs.remove(_legacyUrlKey);
       return;
     }
     await loadAll();
-    final hit = _cache.where((s) => s.info.sid == sid).firstOrNull;
-    if (hit == null) return;
+    if (!_cache.any((s) => s.info.sid == sid)) return;
     await prefs.setString(_activeKey, sid);
-    await prefs.setString(_legacyUrlKey, _pairingUrl(hit));
-  }
-
-  /// 由配对信息还原配对链接（name 参数携带桌面名）
-  String _pairingUrl(StoredPairing sp) {
-    final uri = Uri.parse(sp.info.relayWsUrl);
-    final host = uri.host;
-    final query = <String, String>{
-      'sid': sp.info.sid,
-      'hash': sp.info.hash,
-      if (sp.info.desktopName != null) 'name': sp.info.desktopName!,
-    };
-    // https 形态即完整配对链接（settings/_parseAndValidate 会归一化升级 wss）
-    return Uri(
-      scheme: 'https',
-      host: host,
-      port: uri.hasPort ? uri.port : null,
-      path: '/pair',
-      queryParameters: query,
-    ).toString();
   }
 
   Future<void> _persist() async {

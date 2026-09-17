@@ -12,7 +12,6 @@ import 'package:flutter/foundation.dart';
 
 import '../models/goal_snapshot.dart';
 import '../zcode/zcode_chat_store.dart';
-import 'connection_manager.dart';
 
 class GoalStore extends ChangeNotifier {
   GoalStore();
@@ -42,8 +41,7 @@ class GoalStore extends ChangeNotifier {
     _loading = true;
     notifyListeners();
     try {
-      final result = await ConnectionManager.instance
-          .zcodeRequest('session/goal', {'sessionId': sid});
+      final result = await ZcodeChatStore.instance.goalShow();
       _snapshot = parseGoalSnapshot(result);
       _threads = await ZcodeChatStore.instance.fetchSubagentThreads();
     } catch (e) {

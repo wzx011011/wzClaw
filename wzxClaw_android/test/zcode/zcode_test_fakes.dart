@@ -17,7 +17,8 @@ import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 final String fakeHash = '${'A' * 43}=';
 
 /// 合法配对 URL
-String get pairingUrl => 'https://zcode.5945.top/pair?sid=device-sid-1&hash=$fakeHash';
+String get pairingUrl =>
+    'https://zcode.5945.top/pair?sid=device-sid-1&hash=$fakeHash';
 
 /// relay 客户端替身：同公共 API，request 走注册的 handler
 class FakeZcodeRelayClient implements ZcodeRelayClient {
@@ -49,8 +50,10 @@ class FakeZcodeRelayClient implements ZcodeRelayClient {
   void close() => closed = true;
 
   @override
-  Future<dynamic> request(String method,
-      [Map<String, dynamic>? params,]) async {
+  Future<dynamic> request(
+    String method, [
+    Map<String, dynamic>? params,
+  ]) async {
     requests.add(MapEntry(method, params));
     final handler = handlers[method];
     if (handler == null) throw Exception('测试未注册 $method 的处理器');
@@ -105,10 +108,13 @@ ZcodeChatStore pairedStore(
   ZcodeSessionCache? cache,
 }) {
   final store = ZcodeChatStore(
-    client: fake,
     cache: cache ?? FakeZcodeSessionCache(),
   );
-  expect(store.pair(pairingUrl), isTrue);
+  store.attach(
+    fake,
+    desktopId: 'device-sid-1',
+    desktopName: '测试桌面',
+  );
   return store;
 }
 
@@ -134,9 +140,16 @@ class FakeServerSession {
   /// send 落库 user 消息（返回分配的消息 id）
   String addSend(Map<String, dynamic>? params) {
     final id = 'srv-u-${messages.length}';
-    messages.add(fakeMsg('user', [
-      {'type': 'text', 'text': params?['content']?.toString() ?? ''},
-    ], id: id, created: 100 + messages.length,),);
+    messages.add(
+      fakeMsg(
+        'user',
+        [
+          {'type': 'text', 'text': params?['content']?.toString() ?? ''},
+        ],
+        id: id,
+        created: 100 + messages.length,
+      ),
+    );
     return id;
   }
 
@@ -277,16 +290,18 @@ void pushEvent(
   Map<String, dynamic> payload = const {},
   String? turnId,
 }) {
-  store.debugHandleNotify(ZcodeFrame(
-    method: 'session/event',
-    params: {
-      'deliveryKind': 'web-remote-replayable',
-      'eventId': 'ev-$sessionId-$seq',
-      'seq': seq,
-      'sessionId': sessionId,
-      if (turnId != null) 'turnId': turnId,
-      'type': type,
-      'payload': payload,
-    },
-  ),);
+  store.debugHandleNotify(
+    ZcodeFrame(
+      method: 'session/event',
+      params: {
+        'deliveryKind': 'web-remote-replayable',
+        'eventId': 'ev-$sessionId-$seq',
+        'seq': seq,
+        'sessionId': sessionId,
+        if (turnId != null) 'turnId': turnId,
+        'type': type,
+        'payload': payload,
+      },
+    ),
+  );
 }

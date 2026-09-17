@@ -35,7 +35,7 @@ void main() {
     ZcodeKeepAliveController.debugAndroidOverride = true;
     ZcodeKeepAliveController.linkedProvider = () => true;
 
-    c.didChangeAppLifecycleState(AppLifecycleState.paused);
+    c.handleLifecycleState(AppLifecycleState.paused);
     await Future<void>.delayed(Duration.zero);
 
     expect(c.debugForegroundCalls, contains('start'));
@@ -47,7 +47,7 @@ void main() {
     ZcodeKeepAliveController.debugAndroidOverride = true;
     ZcodeKeepAliveController.linkedProvider = () => true;
 
-    c.didChangeAppLifecycleState(AppLifecycleState.paused);
+    c.handleLifecycleState(AppLifecycleState.paused);
     await Future<void>.delayed(Duration.zero);
 
     expect(c.debugForegroundCalls, isNot(contains('start')));
@@ -59,7 +59,7 @@ void main() {
     ZcodeKeepAliveController.debugAndroidOverride = true;
     ZcodeKeepAliveController.linkedProvider = () => false;
 
-    c.didChangeAppLifecycleState(AppLifecycleState.paused);
+    c.handleLifecycleState(AppLifecycleState.paused);
     await Future<void>.delayed(Duration.zero);
 
     expect(c.debugForegroundCalls, isNot(contains('start')));
@@ -71,7 +71,7 @@ void main() {
     ZcodeKeepAliveController.debugAndroidOverride = true;
     ZcodeKeepAliveController.linkedProvider = () => true;
 
-    c.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    c.handleLifecycleState(AppLifecycleState.resumed);
     await Future<void>.delayed(Duration.zero);
 
     expect(c.debugForegroundCalls, contains('stop'));

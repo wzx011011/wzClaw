@@ -1,16 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_colors.dart';
+import 'models/connection_state.dart';
 import 'pages/files_placeholder_page.dart';
 import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
+import 'services/connection_manager.dart';
 import 'services/goal_store.dart';
-import 'services/push_wake_service.dart';
+import 'zcode/zcode_chat_store.dart';
 import 'zcode/zcode_keepalive_controller.dart';
 import 'zcode/zcode_notifier.dart';
 
@@ -34,20 +37,9 @@ void main() async {
   // Load persisted accent color
   final savedAccent = prefs.getString('accent_color') ?? 'green';
   accentNotifier.value = savedAccent;
-  // PushWakeService init (notification channel setup, permission request) is not
-  // needed before the first frame — defer so runApp() is called immediately.
-  unawaited(PushWakeService.instance.initialize());
-  GoalStore.instance; // 尽早构建（面板打开即有实例）
-  // ZCode 任务完成通知：渠道创建 + 权限申请（幂等；当前聊天栈
-  // services/chat_store 的 turn done 也会调用它，不再依赖 zcode 桌面注册表先加载）
-  unawaited(ZcodeNotifier.instance.initialize());
-  // 后台保活控制器（幂等）：注册生命周期观察——paused 起前台服务、
-  // 回前台停服务并对注册表内各桌面 store 做快速重连快检。
-  // 注意：registry.restore() 此处**有意不调用**——当前聊天 UI 走
-  // ConnectionManager（自建 client，回前台快检在 _resumeCheck），
-  // 提前恢复注册表会为每个桌面开无 UI 消费端的平行连接；等 zcode
-  // 聊天页落地时随页接线。
-  unawaited(ZcodeKeepAliveController.instance.initialize());
+  GoalStore.instance;
+  await ZcodeNotifier.instance.initialize();
+  await ZcodeKeepAliveController.instance.initialize();
   runApp(const WzxClawApp());
 }
 
@@ -80,8 +72,80 @@ ThemeData _buildTheme(AppColors colors, Brightness brightness) {
 }
 
 /// Root widget for wzxClaw Android.
-class WzxClawApp extends StatelessWidget {
+class WzxClawApp extends StatefulWidget {
   const WzxClawApp({super.key});
+
+  @override
+  State<WzxClawApp> createState() => _WzxClawAppState();
+}
+
+class _WzxClawAppState extends State<WzxClawApp> with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    ZcodeNotifier.instance.onTapPayload = _handleNotificationTap;
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (state != null) _forwardLifecycle(state);
+  }
+
+  @override
+  void dispose() {
+    ZcodeNotifier.instance.onTapPayload = null;
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _forwardLifecycle(state);
+  }
+
+  void _forwardLifecycle(AppLifecycleState state) {
+    ConnectionManager.instance.handleLifecycleState(state);
+    ZcodeKeepAliveController.instance.handleLifecycleState(state);
+    ZcodeNotifier.instance.handleLifecycleState(state);
+  }
+
+  Future<void> _handleNotificationTap(String? payload) async {
+    if (payload == null || payload.isEmpty) return;
+    String? desktopId;
+    String? sessionId = payload;
+    if (payload.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map) {
+          desktopId = decoded['d']?.toString();
+          sessionId = decoded['s']?.toString();
+        }
+      } catch (e) {
+        debugPrint('[notification] 无法解析通知 payload: $e');
+        return;
+      }
+    }
+    if (desktopId != null &&
+        desktopId != ConnectionManager.instance.selectedDesktopId) {
+      final found = await ConnectionManager.instance.connectToStored(desktopId);
+      if (!found) return;
+    } else if (ConnectionManager.instance.state ==
+        WsConnectionState.disconnected) {
+      await ConnectionManager.instance.connectFromSavedConfiguration();
+    }
+    if (ConnectionManager.instance.state != WsConnectionState.connected) {
+      try {
+        await ConnectionManager.instance.stateStream
+            .firstWhere((state) => state == WsConnectionState.connected)
+            .timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        return;
+      }
+    }
+    if (sessionId == null || sessionId.isEmpty) return;
+    await ZcodeChatStore.instance.openSession(sessionId);
+    _navigatorKey.currentState?.pushNamedAndRemoveUntil('/chat', (_) => false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,6 +157,7 @@ class WzxClawApp extends StatelessWidget {
           builder: (context, accent, _) {
             final isGreen = accent == 'green';
             return MaterialApp(
+              navigatorKey: _navigatorKey,
               title: 'wzxClaw',
               theme: _buildTheme(
                 isGreen ? AppColors.lightGreen : AppColors.light,

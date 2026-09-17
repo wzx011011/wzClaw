@@ -9,6 +9,8 @@
 // - x/model/configure {providerId,modelId} → 默认模型落盘 companion
 //   （0600，不写 ~/.zcode）+ 对活跃会话即时 setModel；
 //   返回 {ok, appliedToActive, default}。
+// - x/workspaces/list → {workspaces:[绝对路径], importedAt}；仅表示用户从
+//   本机 ZCode 配置导入的候选工作区，不伪造会话或在线状态。
 // 手机端新会话的默认模型应用见 startNewConversation 集成。
 // ============================================================
 
@@ -19,6 +21,7 @@ import 'connection_manager.dart';
 class NodeModelEntry {
   final String providerId;
   final String modelId;
+
   /// 引擎实测可用（engine）还是仅快照收录（imported，未证实可用）
   final bool available;
   final String source;
@@ -35,6 +38,7 @@ class NodeModelEntry {
 class NodeModelCatalog {
   final List<NodeModelEntry> models;
   final NodeModelEntry? defaultModel;
+
   /// true = 引擎目录拉取失败，仅返回了导入快照（UI 应提示降级）
   final bool degraded;
   const NodeModelCatalog({
@@ -55,8 +59,10 @@ class NodeCatalogService {
   static final NodeCatalogService instance = NodeCatalogService._();
 
   @visibleForTesting
-  static Future<dynamic> Function(String method, [Map<String, dynamic>? params])?
-      debugRequester;
+  static Future<dynamic> Function(
+    String method, [
+    Map<String, dynamic>? params,
+  ])? debugRequester;
 
   Future<dynamic> _call(String method, [Map<String, dynamic>? params]) {
     final requester = debugRequester;
@@ -70,12 +76,14 @@ class NodeCatalogService {
     if (r is! Map) throw StateError('目录响应异常');
     final models = (r['models'] as List? ?? [])
         .whereType<Map>()
-        .map((m) => NodeModelEntry(
-              providerId: m['providerId']?.toString() ?? '',
-              modelId: m['modelId']?.toString() ?? '',
-              available: m['available'] == true,
-              source: m['source']?.toString() ?? '',
-            ),)
+        .map(
+          (m) => NodeModelEntry(
+            providerId: m['providerId']?.toString() ?? '',
+            modelId: m['modelId']?.toString() ?? '',
+            available: m['available'] == true,
+            source: m['source']?.toString() ?? '',
+          ),
+        )
         .where((m) => m.providerId.isNotEmpty && m.modelId.isNotEmpty)
         .toList();
     final def = r['default'];
@@ -96,6 +104,19 @@ class NodeCatalogService {
           : null,
       degraded: r['degraded'] == true,
     );
+  }
+
+  /// Companion 导入快照中的工作区路径。引擎会话工作区仍由
+  /// ZcodeChatStore.sessions 提供；UI 负责去重合并两种真实来源。
+  Future<List<String>> importedWorkspaces() async {
+    final r = await _call('x/workspaces/list');
+    if (r is! Map) throw StateError('工作区响应异常');
+    return (r['workspaces'] as List? ?? const [])
+        .whereType<String>()
+        .map((path) => path.trim())
+        .where((path) => path.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
   }
 
   /// 设置节点默认模型；同时尽量对活跃会话即时生效。

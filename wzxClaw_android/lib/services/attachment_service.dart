@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'connection_manager.dart';
@@ -28,6 +28,25 @@ class AttachmentUpload {
 class AttachmentService {
   static const _chunkBytes = 256 * 1024; // base64 后 ~349KB，低于 relay 1MB 帧限
 
+  @visibleForTesting
+  static Future<XFile?> Function(ImageSource source)? debugPicker;
+
+  @visibleForTesting
+  static Future<dynamic> Function(
+    String method, [
+    Map<String, dynamic>? params,
+  ])? debugRequester;
+
+  static Future<dynamic> _request(
+    String method, [
+    Map<String, dynamic>? params,
+  ]) {
+    final requester = debugRequester;
+    return requester != null
+        ? requester(method, params)
+        : ConnectionManager.instance.zcodeRequest(method, params);
+  }
+
   /// 选图（相册/拍照）并上传；用户取消返回 null
   static Future<AttachmentUpload?> pickAndUpload({
     required ImageSource source,
@@ -36,7 +55,10 @@ class AttachmentService {
   }) async {
     final XFile? picked;
     try {
-      picked = await ImagePicker().pickImage(source: source, imageQuality: 90);
+      final picker = debugPicker;
+      picked = picker != null
+          ? await picker(source)
+          : await ImagePicker().pickImage(source: source, imageQuality: 90);
     } catch (e) {
       return _failed('选择${_sourceName(source)}失败: $e');
     }
@@ -60,38 +82,50 @@ class AttachmentService {
     void Function(AttachmentUpload)? onChanged,
   }) async {
     void ping() => onChanged?.call(up);
+    String? uploadId;
     try {
-      final b = await ConnectionManager.instance.zcodeRequest(
+      final b = await _request(
         'x/file/begin',
         {'name': up.name, 'size': bytes.length},
       );
-      final uploadId =
+      uploadId =
           b is Map && b['uploadId'] is String ? b['uploadId'] as String : null;
       if (uploadId == null || uploadId.isEmpty) {
-        throw 'x/file/begin 未返回 uploadId';
+        throw StateError('x/file/begin 未返回 uploadId');
       }
       for (var off = 0; off < bytes.length; off += _chunkBytes) {
         final end =
             off + _chunkBytes > bytes.length ? bytes.length : off + _chunkBytes;
-        final r =
-            await ConnectionManager.instance.zcodeRequest('x/file/chunk', {
+        final r = await _request('x/file/chunk', {
           'uploadId': uploadId,
           'data': base64Encode(bytes.sublist(off, end)),
         });
-        if (r is Map && r['received'] is num) {
-          up.received = (r['received'] as num).toInt();
+        if (r is! Map || r['received'] is! num) {
+          throw StateError('x/file/chunk 未返回 received');
         }
+        final received = (r['received'] as num).toInt();
+        if (received < up.received || received > bytes.length) {
+          throw StateError('x/file/chunk 返回非法 received: $received');
+        }
+        up.received = received;
         ping();
       }
-      final c = await ConnectionManager.instance
-          .zcodeRequest('x/file/commit', {'uploadId': uploadId});
-      if (c is Map && c['filePath'] is String) {
-        up.nodePath = c['filePath'] as String;
-      } else {
-        up.error = 'commit 未返回节点路径';
+      final c = await _request('x/file/commit', {'uploadId': uploadId});
+      final path = c is Map ? c['filePath']?.toString() : null;
+      if (path == null || path.trim().isEmpty) {
+        throw StateError('x/file/commit 未返回节点路径');
       }
+      up.received = bytes.length;
+      up.nodePath = path;
     } catch (e) {
       up.error = '上传失败: $e';
+      if (uploadId != null) {
+        try {
+          await _request('x/file/abort', {'uploadId': uploadId});
+        } catch (abortError) {
+          debugPrint('[attachment] 清理失败的上传 $uploadId: $abortError');
+        }
+      }
     }
     ping();
     return up;

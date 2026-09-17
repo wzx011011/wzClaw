@@ -17,10 +17,8 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/android_foreground_keepalive.dart';
-import 'zcode_chat_store.dart';
-import 'zcode_desktop_registry.dart';
 
-class ZcodeKeepAliveController with WidgetsBindingObserver {
+class ZcodeKeepAliveController {
   ZcodeKeepAliveController._();
 
   static final ZcodeKeepAliveController instance = ZcodeKeepAliveController._();
@@ -44,21 +42,11 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
   @visibleForTesting
   final List<String> debugForegroundCalls = <String>[];
 
-  /// 全部桌面 store（多桌面：每个桌面独立连接与状态）
-  Iterable<ZcodeChatStore> get _stores => ZcodeDesktopRegistry.instance.stores;
-
   bool get _isAndroid => debugAndroidOverride || Platform.isAndroid;
 
   bool get _linked => linkedProvider?.call() ?? false;
 
-  /// 是否应运行前台服务：Android + 开关开 +（活跃链路存活 或 任一 v3 桌面已配对）
-  bool get _shouldRun {
-    if (!_isAndroid || !_enabled) return false;
-    if (_linked) return true;
-    return _stores.any(
-      (s) => s.pairing != null && s.connState != ZcodeConnState.idle,
-    );
-  }
+  bool get _shouldRun => _isAndroid && _enabled && _linked;
 
   Future<void> _fgStart() async {
     debugForegroundCalls.add('start');
@@ -70,11 +58,10 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
     await AndroidForegroundKeepAlive.instance.stop();
   }
 
-  /// 读 pref 并注册生命周期观察（幂等；App 启动时调用一次）
+  /// 读取偏好（幂等；生命周期由根组件转发）。
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
-    WidgetsBinding.instance.addObserver(this);
     try {
       final prefs = await SharedPreferences.getInstance();
       _enabled = prefs.getBool(_prefKey) ?? false;
@@ -95,8 +82,7 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
     }
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void handleLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
         if (_shouldRun) {
@@ -105,13 +91,6 @@ class ZcodeKeepAliveController with WidgetsBindingObserver {
         break;
       case AppLifecycleState.resumed:
         unawaited(_fgStop());
-        // 任一桌面已配对但连接不健康 → 立即重连（不等退避计时器）
-        for (final store in _stores) {
-          if (store.pairing != null &&
-              store.connState != ZcodeConnState.matched) {
-            unawaited(store.reconnect());
-          }
-        }
         break;
       default:
         break;

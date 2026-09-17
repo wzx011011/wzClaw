@@ -8,9 +8,8 @@
 //   仅后台/最小化时弹出，避免前台打扰
 // - 点击通知 → onTapPayload 回调（路由跳转由 UI 层接线）
 //
-// 运行时使用 ZcodeNotifier.instance 单例（与 PushWakeService 风格一致）；
-// 测试通过 setInstanceForTest 注入替身。
-// 仅以 Android 为主（现有 App 就是 Android）。
+// 运行时使用 ZcodeNotifier.instance 单例；通知偏好在本类内持久化并生效，
+// 生命周期状态由 App 根入口转发。测试通过 setInstanceForTest 注入替身。
 // ============================================================
 
 import 'dart:convert';
@@ -18,16 +17,15 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 通知渠道
 const String _channelId = 'zcode_remote';
 const String _channelName = 'ZCode 远程任务';
+const String _enabledKey = 'push_notifications_enabled';
 
-/// ZCode 远程任务通知器
-///
-/// 混入 [WidgetsBindingObserver] 仅为跟踪应用前后台状态（前台守卫用），
-/// 观察者懒挂（首次 showTaskDone 时），可经 dispose 正确移除。
-class ZcodeNotifier with WidgetsBindingObserver {
+/// ZCode 远程任务通知器。
+class ZcodeNotifier {
   /// 公开构造便于测试替换替身；运行时请使用 [instance]。
   ZcodeNotifier();
 
@@ -53,19 +51,21 @@ class ZcodeNotifier with WidgetsBindingObserver {
 
   FlutterLocalNotificationsPlugin? _plugin;
   bool _initialized = false;
+  bool _enabled = true;
 
-  // ---------- 前台守卫：生命周期观察 ----------
-
-  /// 最近一次观察到的应用生命周期状态（null = 尚未收到任何事件）
+  /// 最近一次由根生命周期入口转发的状态（null 保守视为后台）。
   AppLifecycleState? _lifecycleState;
-
-  /// 观察者是否已挂到 WidgetsBinding（懒挂幂等标记）
-  bool _observerAttached = false;
 
   /// 初始化插件、通知渠道并申请权限（幂等；仅 Android 生效）
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _enabled = prefs.getBool(_enabledKey) ?? true;
+    } catch (e) {
+      debugPrint('[zcode-notifier] 读取通知偏好失败: $e');
+    }
     if (!Platform.isAndroid) return;
 
     try {
@@ -102,6 +102,14 @@ class ZcodeNotifier with WidgetsBindingObserver {
     }
   }
 
+  bool get enabled => _enabled;
+
+  Future<void> setEnabled(bool enabled) async {
+    _enabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_enabledKey, enabled);
+  }
+
   /// 任务完成/失败通知
   ///
   /// 前台守卫：App 处于 [AppLifecycleState.resumed]（前台可见可交互）时，
@@ -121,9 +129,7 @@ class ZcodeNotifier with WidgetsBindingObserver {
     String? desktopId,
     String? desktopName,
   }) {
-    // 懒挂生命周期观察者：首次真正需要判断前后台时才注册（幂等）
-    _ensureObserverAttached();
-    if (_lifecycleState == AppLifecycleState.resumed) return; // 前台跳过
+    if (!_enabled || _lifecycleState == AppLifecycleState.resumed) return;
 
     final ok = status == 'success';
     final title = desktopName == null || desktopName.isEmpty
@@ -159,51 +165,27 @@ class ZcodeNotifier with WidgetsBindingObserver {
     // 尽力而为能力：展示失败只留观测，不允许未捕获异步异常冒泡
     plugin
         .show(
-          2001,
-          title,
-          body,
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              _channelId,
-              _channelName,
-              channelDescription: 'ZCode 远程任务完成/失败提醒',
-              importance: Importance.high,
-              priority: Priority.high,
-            ),
-          ),
-          payload: payload,
-        )
+      2001,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          _channelName,
+          channelDescription: 'ZCode 远程任务完成/失败提醒',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      payload: payload,
+    )
         .catchError((Object error) {
-          debugPrint('[zcode-notifier] 通知展示失败: $error');
-        });
+      debugPrint('[zcode-notifier] 通知展示失败: $error');
+    });
   }
 
-  /// 懒挂 WidgetsBindingObserver（幂等）。
-  ///
-  /// 挂载时用 Binding 当前的 lifecycleState 播种，避免“挂载前引擎已派发过
-  /// 状态”导致首条通知误判前后台；此后由 didChangeAppLifecycleState 持续刷新。
-  /// 用 ??= 而非直接赋值：测试/复用实例场景下已显式注入过状态时尊重现有值。
-  void _ensureObserverAttached() {
-    if (_observerAttached) return;
-    _observerAttached = true;
-    _lifecycleState ??= WidgetsBinding.instance.lifecycleState;
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  /// 移除生命周期观察者并复位挂载标记。
-  ///
-  /// 单例随 App 全程存活，生产路径无需调用；测试替换/复用实例时清理，
-  /// 避免观察者泄漏与重复回调。
-  @visibleForTesting
-  void dispose() {
-    if (!_observerAttached) return;
-    _observerAttached = false;
-    WidgetsBinding.instance.removeObserver(this);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 仅记录最新状态：resumed = 前台可交互，其余均视为不在前台
+  /// 根生命周期入口转发；resumed 视为前台，其余状态均可通知。
+  void handleLifecycleState(AppLifecycleState state) {
     _lifecycleState = state;
   }
 

@@ -1,143 +1,66 @@
 # wzxClaw Android
 
-**[中文](#中文) | [English](#english)**
+wzxClaw 的 Flutter 手机遥控器。应用通过自托管 NAS relay 与 Windows Companion 配对，控制 Companion 所在机器上的 ZCode app-server 会话。
 
----
+## 连接模型
 
-<a name="中文"></a>
-## 中文
+```text
+Android App
+  └─ WSS: wss://zcode.5945.top/ws
+       └─ sid/hash 房间
+            └─ Windows Companion + ZCode app-server
+```
 
-[wzxClaw](https://github.com/wzx011011/wzClaw) AI 编程 IDE 的 Flutter 手机伴侣应用。
+应用不再依赖 ngrok 或旧 Electron IDE 的 Mobile Bridge。当前页面直接消费 `ZcodeChatStore`，连接由 `ConnectionManager` 与 `lib/zcode/` 协作完成，协议形状以 `relay/zcode/APP-SERVER.md` 的实测记录为准。
 
-### 简介
+## 配对
 
-通过 WebSocket 隧道（ngrok）连接到运行中的 wzxClaw 桌面端，让你随时随地通过手机进行 AI 对话。发送消息、查看 AI 流式响应、监控工具执行过程——一切尽在 Android 端。
+1. 在大脑节点启动 `companion_app`，或运行 `relay/zcode/companion.js`。
+2. 确认 Companion 已连接 `wss://zcode.5945.top/ws`，并显示配对二维码。
+3. 在 Android 应用中扫描二维码或打开配对链接。
+4. 应用从链接读取 relay origin、`sid` 和 `hash`，完成质询认证后进入对应房间。
+5. 配对信息会安全保存；同一 Companion 正常重启或重连时无需重新扫码。
 
-### 功能特性
+配对二维码、配对 URL、`sid` 和 `hash` 都是持有者凭据。不要截图外传，不要写入日志或提交到 Git。
 
-- **实时对话** — 发送消息，逐 Token 流式显示 AI Agent 的回复
-- **WebSocket 桥接** — 通过 ngrok 隧道 URL 连接 wzxClaw 桌面端
-- **语音输入** — 长按麦克风按钮进行语音转文字（中文设备自动使用中文识别）
-- **深色主题** — 自定义 `AppColors` 设计系统，Midnight 深色配色
-- **会话管理** — 列出所有对话，支持继续历史会话或新建会话
-- **工具执行卡片** — 内联展示 FileRead、FileWrite、Bash 等工具调用的实时过程
+## 功能
 
-### 系统要求
+- ZCode 会话列表、创建、切换与流式对话
+- 工具调用、权限请求和 AskUser 交互
+- 多 Companion 节点注册与切换
+- 工作区、文件附件、Git 分支与状态操作
+- 本地 SQLite 会话缓存、通知与前后台保活
+- 语音输入和二维码扫描
 
-- Android 6.0+（API 23+）
-- wzxClaw 桌面端已启动并开启 Mobile Bridge
-- 桌面端提供的 ngrok 隧道 URL
+## 从源码验证
 
-### 安装
-
-从 [Releases](../../releases) 下载最新 APK，安装到设备上（如提示需开启「允许安装未知来源应用」）。
-
-#### 从源码构建
+前置条件为 Flutter stable 与 Java 17。
 
 ```bash
-# 前置条件：Flutter 3.x stable，Java 17
 flutter pub get
-flutter build apk --release
-# APK 路径：build/app/outputs/flutter-apk/app-release.apk
+flutter analyze --no-fatal-infos
+flutter test
 ```
 
-### 使用方法
+## Release 构建纪律
 
-1. 启动 wzxClaw 桌面端
-2. 在设置 → Mobile 中开启隧道，复制 ngrok URL
-3. 打开 wzxClaw Android，将 URL 粘贴到连接页面
-4. 点击**连接** — 握手成功后进入对话界面
+1. 每次出包前递增 `pubspec.yaml` 的 patch 版本和 `+buildNumber`，确保 Android `versionCode` 单调递增。
+2. 若构建曾被取消，先执行 `flutter clean`，再重新获取依赖并完整构建。
+3. 构建命令为 `flutter build apk --release`。
+4. 用 Android SDK 的 `apksigner verify` 验证签名存在且 APK 可验证，再执行 ZIP 完整性检查。
+5. 正式文件命名为 `wzxClaw-android-release-vX.Y.Z.apk`。
+6. 正式 APK 上传到 NAS `/volume1/share/zcode/`，并在上传后比对 SHA-256；不要放到旧的 relay build 目录。
 
-### 技术栈
+当前 Android 工程的 release build 使用 debug signing。根 release workflow 因此只生成经过校验的候选 artifact，不会创建正式 GitHub Release，也不会自动宣称已上传 NAS。正式分发需要在受控环境完成签名策略确认、NAS 上传和哈希复核。
 
-| 层级 | 技术 |
-|---|---|
-| 框架 | Flutter 3（Dart） |
-| 状态管理 | Provider + StreamController.broadcast() |
-| WebSocket | `web_socket_channel` |
-| 语音识别 | `speech_to_text` |
-| 权限申请 | `permission_handler` |
-| 设计系统 | 自定义 `AppColors` 主题扩展 |
+## 目录
 
-### 项目结构
-
-```
+```text
 lib/
-├── config/            # AppColors、常量配置
-├── models/            # ChatMessage、SessionMeta、WsMessage、ConnectionState
-├── services/          # WebSocketService、VoiceInputService、ConnectionManager
-├── widgets/           # MicButton、ToolCallCard、StreamingText 等
-└── screens/           # ConnectionScreen、ChatScreen、SessionListScreen
+├── config/       # 应用配置与主题
+├── models/       # 页面和连接模型
+├── pages/        # 首页、设置、扫码、目标和文件页面
+├── services/     # 连接、配对、附件、Git、节点目录等服务
+├── widgets/      # 聊天、工具、权限和导航组件
+└── zcode/        # app-server 会话状态、relay 客户端、反向请求与缓存
 ```
-
----
-
-<a name="english"></a>
-## English
-
-Flutter mobile companion app for the [wzxClaw](https://github.com/wzx011011/wzClaw) AI coding IDE.
-
-### Overview
-
-Connects to a running wzxClaw desktop instance over a WebSocket tunnel (ngrok), giving you full chat access from your phone. Send messages, view streaming AI responses, and monitor tool execution — all from Android.
-
-### Features
-
-- **Real-time Chat** — send messages and see token-by-token streaming from the AI agent
-- **WebSocket bridge** — connects to wzxClaw desktop via ngrok tunnel URL
-- **Voice input** — long-press mic button for speech-to-text using system locale (Chinese devices get Chinese recognition)
-- **Dark theme** — custom `AppColors` design system with a dark Midnight palette
-- **Session management** — lists all conversations, resume or start new sessions
-- **Tool execution cards** — inline display of FileRead, FileWrite, Bash, and other tool calls as they happen
-
-### Requirements
-
-- Android 6.0+ (API 23+)
-- wzxClaw desktop running with the Mobile Bridge enabled (Settings → Mobile)
-- ngrok tunnel URL from the desktop app
-
-### Installation
-
-Download the latest APK from [Releases](../../releases), install it on your device (enable "Install from unknown sources" if prompted).
-
-#### Build from source
-
-```bash
-# Prerequisites: Flutter 3.x stable, Java 17
-flutter pub get
-flutter build apk --release
-# APK at: build/app/outputs/flutter-apk/app-release.apk
-```
-
-### Usage
-
-1. Start wzxClaw on your desktop
-2. In Settings → Mobile, enable the tunnel and copy the ngrok URL
-3. Open wzxClaw Android, paste the URL on the connection screen
-4. Tap **Connect** — the chat panel opens when the handshake succeeds
-
-### Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Framework | Flutter 3 (Dart) |
-| State | Provider + StreamController.broadcast() |
-| WebSocket | `web_socket_channel` |
-| Voice | `speech_to_text` |
-| Permissions | `permission_handler` |
-| Design | Custom `AppColors` theme extension |
-
-### Project structure
-
-```
-lib/
-├── config/            # AppColors, constants
-├── models/            # ChatMessage, SessionMeta, WsMessage, ConnectionState
-├── services/          # WebSocketService, VoiceInputService, ConnectionManager
-├── widgets/           # MicButton, ToolCallCard, StreamingText, …
-└── screens/           # ConnectionScreen, ChatScreen, SessionListScreen
-```
-
-### License
-
-Personal use. Not open-sourced.

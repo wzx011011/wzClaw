@@ -1,26 +1,14 @@
 // ============================================================
-// connection_manager — 连接管理（换芯版）
+// connection_manager — ZCode 连接唯一 owner
 //
-// 【壳】类名/单例/公开签名与 f25b231 完全一致——UI、ChatStore、
-// SessionSyncService 只依赖 WsTransport 接口与本类公开成员，零改动。
-//
-// 【芯】旧实现（旧 relay 子协议/token 鉴权/心跳超时/离线队列/多桌面
-// 路由）整体废弃。内部 = ZcodeRelayClient（HMAC 认证 + 保活 ping +
-// 指数退避重连，经 198 项测试打磨）+ 翻译层（app-server 帧 ↔ 旧
-// WsEvents 事件形状）。
-//
-// 对上层伪装：
-// - messageStream 产出旧事件形状（stream:agent:* / session:*:response），
-//   ChatStore 的事件处理逻辑零改动
-// - desktopsStream 产出单"桌面"（配对的大脑节点）
-// - connect() 接受配对链接（https://host/pair?sid=..&hash=..&name=..），
-//   凭据持久化于 server_url（配对链接原文）
+// 唯一创建并关闭 ZcodeRelayClient（主连接及短时在线 probe），负责配对切换、
+// 重连、状态流和通用 x/* 请求。PairingStore 是唯一配对持久化；收到的
+// app-server 帧经 attach/ingest 投给单例 ZcodeChatStore。
 // ============================================================
 
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/connection_state.dart';
@@ -32,9 +20,8 @@ import 'pairing_store.dart';
 import 'pairing_url.dart';
 import '../zcode/zcode_relay_client.dart';
 
-class ConnectionManager with WidgetsBindingObserver {
+class ConnectionManager {
   ConnectionManager._() {
-    WidgetsBinding.instance.addObserver(this);
     // 保活判定的链路数据源注入（依赖倒置：controller 不反向 import 本类）
     ZcodeKeepAliveController.linkedProvider =
         () => _stateNow != WsConnectionState.disconnected;
@@ -71,7 +58,8 @@ class ConnectionManager with WidgetsBindingObserver {
 
   final StreamController<String?> _selectedDesktopIdController =
       StreamController<String?>.broadcast();
-  Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
+  Stream<String?> get selectedDesktopIdStream =>
+      _selectedDesktopIdController.stream;
 
   bool get desktopOnline => _desktops.any((d) => d.online);
   Stream<bool> get desktopOnlineStream =>
@@ -80,7 +68,9 @@ class ConnectionManager with WidgetsBindingObserver {
   String? get desktopIdentity {
     final sid = _pairing?.sid;
     final d = _desktops.where((d) => d.desktopId == sid).firstOrNull ??
-        (_desktops.any((d) => d.online) ? _desktops.firstWhere((d) => d.online) : null);
+        (_desktops.any((d) => d.online)
+            ? _desktops.firstWhere((d) => d.online)
+            : null);
     final name = d?.name;
     return (name != null && name.isNotEmpty) ? name : null;
   }
@@ -107,13 +97,13 @@ class ConnectionManager with WidgetsBindingObserver {
   // ---- 连接 ----
 
   /// [url] 为配对链接：https://host/pair?sid=..&hash=..（&name=.. 可选）
-  void connect(String url) {
+  Future<bool> connect(String url) async {
     final parsed = parsePairingUrlAny(url);
     if (parsed == null) {
       lastError = '连接地址无效：请使用配对链接';
       _errorController.add(lastError!);
       _setState(WsConnectionState.disconnected);
-      return;
+      return false;
     }
     disconnect();
     final name = _paramOf(url, 'name');
@@ -124,9 +114,17 @@ class ConnectionManager with WidgetsBindingObserver {
       hash: parsed.hash,
       desktopName: (name == null || name.isEmpty) ? null : name,
     );
-    // 多配对：入库并设为活动桌面（持久化失败不阻断连接）
-    unawaited(PairingStore.instance.upsert(_pairing!));
+    try {
+      await PairingStore.instance.upsert(_pairing!);
+      await PairingStore.instance.setActiveSid(parsed.sid);
+    } catch (e) {
+      lastError = '保存配对失败: $e';
+      _errorController.add(lastError!);
+      _pairing = null;
+      return false;
+    }
     _connectPairing();
+    return true;
   }
 
   void _connectPairing() {
@@ -151,7 +149,11 @@ class ConnectionManager with WidgetsBindingObserver {
     // R1 换接线桥：连接交给直连栈供帧（聊天数据源正在切换 ZcodeChatStore，
     // 见 .planning/PLAN-chat-rewire.md）。翻译层暂留喂工作区/标题数据源
     // （SessionSyncService），R1 收尾即零消费方，R3 删除。
-    ZcodeChatStore.instance.attachExternal(client);
+    ZcodeChatStore.instance.attach(
+      client,
+      desktopId: pairing.sid,
+      desktopName: _desktopName ?? pairing.desktopName ?? '桌面 ZCode',
+    );
     client.connect();
   }
 
@@ -258,10 +260,42 @@ class ConnectionManager with WidgetsBindingObserver {
   /// 未连接或未配对时抛 StateError。
   Future<dynamic> zcodeRequest(String method, [Map<String, dynamic>? params]) {
     final client = _client;
-    if (client == null || _stateNow != WsConnectionState.connected || !client.paired) {
+    if (client == null ||
+        _stateNow != WsConnectionState.connected ||
+        !client.paired) {
       throw StateError('未连接桌面');
     }
     return client.request(method, params);
+  }
+
+  /// 短连接探测也由连接层创建，页面不直接拥有 ZcodeRelayClient。
+  Future<bool> probePairing(
+    ZcodePairingInfo pairing, {
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final completer = Completer<bool>();
+    late final ZcodeRelayClient probe;
+    probe = ZcodeRelayClient(
+      pairing: pairing,
+      socketFactory: debugSocketFactory,
+      onStateChange: (state, paired) {
+        if (completer.isCompleted) return;
+        if (state == ZcodeRelayState.matched) completer.complete(true);
+        if (state == ZcodeRelayState.waiting ||
+            state == ZcodeRelayState.closed) {
+          completer.complete(false);
+        }
+      },
+    );
+    try {
+      probe.connect();
+      return await completer.future.timeout(timeout, onTimeout: () => false);
+    } catch (e) {
+      debugPrint('[connection] 桌面在线探测失败: $e');
+      return false;
+    } finally {
+      probe.close();
+    }
   }
 
   // ---- 桌面选择（单桌面语义：保留 API 兼容，无路由作用）----
@@ -292,18 +326,9 @@ class ConnectionManager with WidgetsBindingObserver {
         final hit = stored.where((s) => s.info.sid == active).firstOrNull ??
             stored.first;
         _desktopName = hit.info.desktopName;
-            _pairing = hit.info;
+        _pairing = hit.info;
         _connectPairing();
-        return;
       }
-      final prefs = await SharedPreferences.getInstance();
-      final serverUrl = prefs.getString('server_url');
-      if (serverUrl == null || serverUrl.isEmpty) return;
-      if (parsePairingUrlAny(serverUrl) == null) {
-        _errorController.add('保存的连接配置不是有效的配对链接，请在设置中重新配置');
-        return;
-      }
-      connect(serverUrl);
     } catch (e) {
       _errorController.add('恢复连接配置失败: $e');
     } finally {
@@ -311,8 +336,7 @@ class ConnectionManager with WidgetsBindingObserver {
     }
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void handleLifecycleState(AppLifecycleState state) {
     // 保活/重连由 ZcodeRelayClient 自理（ping + 指数退避）；
     // 前台唤醒时仅在断线状态下触发一次配置恢复
     if (state == AppLifecycleState.resumed) {
@@ -330,6 +354,7 @@ class ConnectionManager with WidgetsBindingObserver {
   void disconnect() {
     _client?.close();
     _client = null;
+    ZcodeChatStore.instance.detach();
     _selectedDesktopId = null;
     _selectedDesktopIdController.add(null);
     _setState(WsConnectionState.disconnected);
@@ -357,4 +382,3 @@ class ConnectionManager with WidgetsBindingObserver {
     }
   }
 }
-

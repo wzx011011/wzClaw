@@ -1,16 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
-import '../services/app_restore_state.dart';
 import '../services/connection_manager.dart';
 import '../services/pairing_store.dart';
 import '../services/pairing_url.dart';
-import '../zcode/zcode_relay_client.dart';
 import 'qr_scanner_page.dart';
 
 class LandingPage extends StatefulWidget {
@@ -21,7 +18,7 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin {
   WsConnectionState _state = WsConnectionState.disconnected;
   List<DesktopInfo> _desktops = [];
   String? _serverHost;
@@ -43,8 +40,6 @@ class _LandingPageState extends State<LandingPage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -63,8 +58,7 @@ class _LandingPageState extends State<LandingPage>
       if (s == WsConnectionState.connected && _pendingAutoSelectSid != null) {
         final sid = _pendingAutoSelectSid!;
         _pendingAutoSelectSid = null;
-        if (mounted &&
-            ConnectionManager.instance.selectedDesktopId == sid) {
+        if (mounted && ConnectionManager.instance.selectedDesktopId == sid) {
           _onSelectDesktop(DesktopInfo(desktopId: sid, connectedAt: 0));
         }
       }
@@ -75,25 +69,17 @@ class _LandingPageState extends State<LandingPage>
     });
 
     // 多配对：设备列表持久常驻 + 探测其余桌面在线状态
-    unawaited(ConnectionManager.instance.refreshDesktops().then((_) {
-      if (mounted) _refreshOnlineStatus();
-    }),);
+    unawaited(
+      ConnectionManager.instance.refreshDesktops().then((_) {
+        if (mounted) _refreshOnlineStatus();
+      }),
+    );
 
     _autoConnect();
   }
 
-  /// 回前台重探在线状态：后台期间探测结果全部过期（Android 冻结定时器，
-  /// 连接也多半被回收），继续显示旧「在线/离线」就是假状态
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && mounted) {
-      _refreshOnlineStatus();
-    }
-  }
-
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _stateSub?.cancel();
     _desktopsSub?.cancel();
@@ -101,15 +87,13 @@ class _LandingPageState extends State<LandingPage>
   }
 
   Future<void> _autoConnect() async {
-    final prefs = await SharedPreferences.getInstance();
-    final serverUrl = prefs.getString('server_url');
-    if (serverUrl != null && serverUrl.isNotEmpty) {
-      try {
-        final host = Uri.parse(serverUrl).host;
-        if (mounted) setState(() => _serverHost = host);
-      } catch (_) {}
-    }
-    // 恢复上次活动桌面（多配对存储优先，旧 server_url 兜底）
+    final pairings = await PairingStore.instance.loadAll();
+    final active = await PairingStore.instance.activeSid();
+    final selected = pairings.where((p) => p.info.sid == active).firstOrNull ??
+        (pairings.isEmpty ? null : pairings.first);
+    final uri =
+        selected == null ? null : Uri.tryParse(selected.info.relayWsUrl);
+    if (mounted && uri != null) setState(() => _serverHost = uri.host);
     if (ConnectionManager.instance.state == WsConnectionState.disconnected) {
       unawaited(ConnectionManager.instance.connectFromSavedConfiguration());
     }
@@ -127,7 +111,6 @@ class _LandingPageState extends State<LandingPage>
   void _navigateToChat() {
     if (_didNavigate) return;
     _didNavigate = true;
-    AppRestoreState.setLastRoute('/chat');
     Navigator.pushNamed(context, '/chat').then((_) {
       // 从聊天返回设备列表：恢复可进入状态并刷新在线探测
       _didNavigate = false;
@@ -165,17 +148,23 @@ class _LandingPageState extends State<LandingPage>
           Container(
             width: 8,
             height: 8,
-            decoration:
-                const BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
+            decoration: const BoxDecoration(
+              color: Colors.orange,
+              shape: BoxShape.circle,
+            ),
           ),
           const SizedBox(width: 10),
-          Text('连接中',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
+          Text(
+            '连接中',
+            style: TextStyle(color: colors.textPrimary, fontSize: 13),
+          ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text('· $host',
-                style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis,),
+            child: Text(
+              '· $host',
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       ),
@@ -202,19 +191,26 @@ class _LandingPageState extends State<LandingPage>
                 BoxDecoration(color: colors.textMuted, shape: BoxShape.circle),
           ),
           const SizedBox(width: 10),
-          Text('未连接',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
+          Text(
+            '未连接',
+            style: TextStyle(color: colors.textPrimary, fontSize: 13),
+          ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text('· $host',
-                style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis,),
+            child: Text(
+              '· $host',
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           GestureDetector(
             onTap: () => unawaited(
-                ConnectionManager.instance.connectFromSavedConfiguration(),),
-            child:
-                Text('重连', style: TextStyle(color: colors.accent, fontSize: 12)),
+              ConnectionManager.instance.connectFromSavedConfiguration(),
+            ),
+            child: Text(
+              '重连',
+              style: TextStyle(color: colors.accent, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -239,7 +235,10 @@ class _LandingPageState extends State<LandingPage>
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: _isConnected && _desktops.isNotEmpty
-            ? Text('wzxClaw', style: TextStyle(color: colors.textPrimary, fontSize: 18))
+            ? Text(
+                'wzxClaw',
+                style: TextStyle(color: colors.textPrimary, fontSize: 18),
+              )
             : null,
         actions: [
           IconButton(
@@ -296,12 +295,19 @@ class _LandingPageState extends State<LandingPage>
               color: colors.accent.withValues(alpha: 0.9),
             ),
             const SizedBox(height: 16),
-            Text('wzxClaw',
-                style: TextStyle(color: colors.textPrimary, fontSize: 28,
-                    fontWeight: FontWeight.bold,),),
+            Text(
+              'wzxClaw',
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 6),
-            Text('AI 编程助手',
-                style: TextStyle(color: colors.textSecondary, fontSize: 14),),
+            Text(
+              'AI 编程助手',
+              style: TextStyle(color: colors.textSecondary, fontSize: 14),
+            ),
             const SizedBox(height: 48),
             Text(
               '扫描桌面端的二维码\n快速连接到你的工作站',
@@ -320,7 +326,8 @@ class _LandingPageState extends State<LandingPage>
                   backgroundColor: colors.accent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
               ),
             ),
@@ -334,7 +341,8 @@ class _LandingPageState extends State<LandingPage>
                   foregroundColor: colors.textSecondary,
                   side: BorderSide(color: colors.border),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: const Text('手动配置'),
               ),
@@ -368,12 +376,16 @@ class _LandingPageState extends State<LandingPage>
             },
           ),
           const SizedBox(height: 24),
-          Text('正在连接 Relay 服务器',
-              style: TextStyle(color: colors.textPrimary, fontSize: 16),),
+          Text(
+            '正在连接 Relay 服务器',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),
+          ),
           const SizedBox(height: 6),
           if (_serverHost != null)
-            Text(_serverHost!,
-                style: TextStyle(color: colors.textMuted, fontSize: 13),),
+            Text(
+              _serverHost!,
+              style: TextStyle(color: colors.textMuted, fontSize: 13),
+            ),
           const SizedBox(height: 32),
           TextButton(
             onPressed: () => ConnectionManager.instance.disconnect(),
@@ -396,26 +408,39 @@ class _LandingPageState extends State<LandingPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.computer_outlined, size: 56, color: colors.textMuted),
+                Icon(
+                  Icons.computer_outlined,
+                  size: 56,
+                  color: colors.textMuted,
+                ),
                 const SizedBox(height: 16),
-                Text('等待桌面端上线',
-                    style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),),
+                Text(
+                  '等待桌面端上线',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Text('请在电脑上打开 wzxClaw',
-                    style: TextStyle(color: colors.textSecondary, fontSize: 13),),
+                Text(
+                  '请在电脑上打开 wzxClaw',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                ),
                 const SizedBox(height: 24),
                 OutlinedButton.icon(
                   onPressed: () => Navigator.pushNamed(context, '/settings'),
-                  icon: Icon(Icons.qr_code_scanner, color: colors.textSecondary),
-                  label: Text('重新扫码',
-                      style: TextStyle(color: colors.textSecondary),),
+                  icon:
+                      Icon(Icons.qr_code_scanner, color: colors.textSecondary),
+                  label: Text(
+                    '重新扫码',
+                    style: TextStyle(color: colors.textSecondary),
+                  ),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: colors.border),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ],
@@ -442,11 +467,14 @@ class _LandingPageState extends State<LandingPage>
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
             children: [
-              Text('设备',
-                  style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,),),
+              Text(
+                '设备',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const Spacer(),
               IconButton(
                 onPressed: _refreshOnlineStatus,
@@ -454,8 +482,10 @@ class _LandingPageState extends State<LandingPage>
                 tooltip: '刷新在线状态',
                 visualDensity: VisualDensity.compact,
               ),
-              Text('$onlineCount/${_desktops.length} 在线',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
+              Text(
+                '$onlineCount/${_desktops.length} 在线',
+                style: TextStyle(color: colors.textMuted, fontSize: 12),
+              ),
             ],
           ),
         ),
@@ -482,10 +512,15 @@ class _LandingPageState extends State<LandingPage>
             padding: const EdgeInsets.only(bottom: 12),
             child: TextButton.icon(
               onPressed: _addDesktopViaScan,
-              icon: Icon(Icons.qr_code_scanner,
-                  size: 16, color: colors.textMuted,),
-              label: Text('扫码添加桌面',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12),),
+              icon: Icon(
+                Icons.qr_code_scanner,
+                size: 16,
+                color: colors.textMuted,
+              ),
+              label: Text(
+                '扫码添加桌面',
+                style: TextStyle(color: colors.textMuted, fontSize: 12),
+              ),
             ),
           ),
         ),
@@ -526,10 +561,12 @@ class _LandingPageState extends State<LandingPage>
     final pairingUrl = normalizeQrScanToServerUrl(raw);
     final parsed = pairingUrl != null ? parsePairingUrlAny(pairingUrl) : null;
     if (parsed == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('不是桌面端配对二维码'),
-        duration: Duration(seconds: 2),
-      ),);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('不是桌面端配对二维码'),
+          duration: Duration(seconds: 2),
+        ),
+      );
       return;
     }
     _pendingAutoSelectSid = parsed.sid;
@@ -537,7 +574,7 @@ class _LandingPageState extends State<LandingPage>
         await ConnectionManager.instance.connectToStored(parsed.sid);
     if (!switched) {
       // 新桌面：connect() 会入库并连接
-      ConnectionManager.instance.connect(pairingUrl!);
+      unawaited(ConnectionManager.instance.connect(pairingUrl!));
     }
   }
 
@@ -556,10 +593,14 @@ class _LandingPageState extends State<LandingPage>
           children: [
             const SizedBox(height: 8),
             ListTile(
-              leading: Icon(d.online ? Icons.login : Icons.link,
-                  color: colors.accent,),
-              title: Text(d.online ? '进入此桌面' : '连接此桌面',
-                  style: TextStyle(color: colors.textPrimary),),
+              leading: Icon(
+                d.online ? Icons.login : Icons.link,
+                color: colors.accent,
+              ),
+              title: Text(
+                d.online ? '进入此桌面' : '连接此桌面',
+                style: TextStyle(color: colors.textPrimary),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _onDeviceTap(d);
@@ -567,8 +608,7 @@ class _LandingPageState extends State<LandingPage>
             ),
             ListTile(
               leading: Icon(Icons.delete_outline, color: colors.error),
-              title:
-                  Text('删除此桌面', style: TextStyle(color: colors.error)),
+              title: Text('删除此桌面', style: TextStyle(color: colors.error)),
               onTap: () {
                 Navigator.pop(ctx);
                 _confirmRemovePairing(d);
@@ -588,8 +628,10 @@ class _LandingPageState extends State<LandingPage>
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgElevated,
         title: Text('删除桌面', style: TextStyle(color: colors.textPrimary)),
-        content: Text('将移除「${d.name ?? '桌面 ZCode'}」的配对，需要重新扫码才能再连接。确定删除吗？',
-            style: TextStyle(color: colors.textSecondary),),
+        content: Text(
+          '将移除「${d.name ?? '桌面 ZCode'}」的配对，需要重新扫码才能再连接。确定删除吗？',
+          style: TextStyle(color: colors.textSecondary),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -603,10 +645,11 @@ class _LandingPageState extends State<LandingPage>
       ),
     ).then((confirmed) {
       if (confirmed != true) return;
-      unawaited(ConnectionManager.instance.removePairing(d.desktopId)
-          .then((_) {
-        if (mounted) setState(() => _probeStatus.remove(d.desktopId));
-      }),);
+      unawaited(
+        ConnectionManager.instance.removePairing(d.desktopId).then((_) {
+          if (mounted) setState(() => _probeStatus.remove(d.desktopId));
+        }),
+      );
     });
   }
 
@@ -625,28 +668,8 @@ class _LandingPageState extends State<LandingPage>
   }
 
   Future<void> _probeOne(StoredPairing sp) async {
-    final completer = Completer<bool>();
-    final client = ZcodeRelayClient(
-      pairing: sp.info,
-      onStateChange: (state, paired) {
-        if (completer.isCompleted) return;
-        if (state == ZcodeRelayState.matched) completer.complete(true);
-        if (state == ZcodeRelayState.waiting) completer.complete(false);
-      },
-    );
-    // 超时视为离线（relay 不可达/网络异常/凭据失效）
-    Timer(const Duration(seconds: 6), () {
-      if (!completer.isCompleted) completer.complete(false);
-    });
-    try {
-      client.connect();
-      final online = await completer.future;
-      client.close();
-      if (mounted) setState(() => _probeStatus[sp.info.sid] = online);
-    } catch (_) {
-      client.close();
-      if (mounted) setState(() => _probeStatus[sp.info.sid] = false);
-    }
+    final online = await ConnectionManager.instance.probePairing(sp.info);
+    if (mounted) setState(() => _probeStatus[sp.info.sid] = online);
   }
 
   _DeviceStatus _statusFor(DesktopInfo d) {
@@ -677,21 +700,28 @@ class _LandingPageState extends State<LandingPage>
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: colors.success, shape: BoxShape.circle),
+            decoration:
+                BoxDecoration(color: colors.success, shape: BoxShape.circle),
           ),
           const SizedBox(width: 10),
-          Text('Relay 已连接',
-              style: TextStyle(color: colors.textPrimary, fontSize: 13),),
+          Text(
+            'Relay 已连接',
+            style: TextStyle(color: colors.textPrimary, fontSize: 13),
+          ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text('· $host',
-                style: TextStyle(color: colors.textMuted, fontSize: 12),
-                overflow: TextOverflow.ellipsis,),
+            child: Text(
+              '· $host',
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           GestureDetector(
             onTap: _onDisconnect,
-            child: Text('断开',
-                style: TextStyle(color: colors.error, fontSize: 12),),
+            child: Text(
+              '断开',
+              style: TextStyle(color: colors.error, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -734,8 +764,7 @@ class _DesktopCardState extends State<_DesktopCard>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _fadeAnim =
-        CurvedAnimation(parent: _fadeController, curve: Curves.easeIn);
+    _fadeAnim = CurvedAnimation(parent: _fadeController, curve: Curves.easeIn);
 
     // Staggered entrance: delay by index * 50ms
     Future.delayed(Duration(milliseconds: widget.index * 50), () {
@@ -810,8 +839,9 @@ class _DesktopCardState extends State<_DesktopCard>
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
           side: BorderSide(
-              color:
-                  status == _DeviceStatus.online ? colors.accent : colors.border,),
+            color:
+                status == _DeviceStatus.online ? colors.accent : colors.border,
+          ),
         ),
         color: colors.bgSecondary,
         child: InkWell(
@@ -829,22 +859,30 @@ class _DesktopCardState extends State<_DesktopCard>
                     color: colors.bgTertiary,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(_platformIcon(d.platform), size: 24, color: colors.accent),
+                  child: Icon(
+                    _platformIcon(d.platform),
+                    size: 24,
+                    color: colors.accent,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label,
-                          style: TextStyle(
-                              color: colors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,),),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       const SizedBox(height: 4),
-                      Text(subtitle,
-                          style:
-                              TextStyle(color: colors.textMuted, fontSize: 12),),
+                      Text(
+                        subtitle,
+                        style: TextStyle(color: colors.textMuted, fontSize: 12),
+                      ),
                     ],
                   ),
                 ),
@@ -861,13 +899,16 @@ class _DesktopCardState extends State<_DesktopCard>
                       Container(
                         width: 6,
                         height: 6,
-                        decoration:
-                            BoxDecoration(color: badgeColor, shape: BoxShape.circle),
+                        decoration: BoxDecoration(
+                          color: badgeColor,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                       const SizedBox(width: 5),
-                      Text(badgeText,
-                          style:
-                              TextStyle(color: badgeColor, fontSize: 11),),
+                      Text(
+                        badgeText,
+                        style: TextStyle(color: badgeColor, fontSize: 11),
+                      ),
                     ],
                   ),
                 ),

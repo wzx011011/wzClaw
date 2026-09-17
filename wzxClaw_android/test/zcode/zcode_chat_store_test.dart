@@ -13,7 +13,6 @@
 // ============================================================
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,11 +21,9 @@ import 'package:wzxclaw_android/models/chat_message.dart';
 import 'package:wzxclaw_android/zcode/zcode_reverse_models.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
-import 'package:wzxclaw_android/zcode/zcode_pairing.dart';
 import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
 import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 import 'zcode_test_fakes.dart';
-
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -39,115 +36,6 @@ void main() {
     ZcodeNotifier.resetInstanceForTest();
   });
 
-  group('配对', () {
-    test('pair：解析失败返回 false 并设置 error', () {
-      final fake = FakeZcodeRelayClient();
-      final store = ZcodeChatStore(client: fake);
-
-      expect(store.pair('https://zcode.5945.top/pair?sid=x&hash=bad'), isFalse);
-      expect(store.pair('not a url'), isFalse);
-      expect(store.error, isNotNull);
-      expect(store.pairing, isNull);
-      expect(store.connState, ZcodeConnState.idle);
-    });
-
-    test('pair：成功解析、连接并持久化', () async {
-      final fake = FakeZcodeRelayClient();
-      final store = ZcodeChatStore(client: fake);
-
-      expect(store.pair(pairingUrl), isTrue);
-      expect(store.pairing?.sid, 'device-sid-1');
-      expect(store.pairing?.relayWsUrl, 'wss://zcode.5945.top/ws');
-      expect(store.error, isNull);
-      expect(store.connState, ZcodeConnState.matched);
-      expect(fake.connectCount, 1);
-
-      // 异步落盘
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(Duration.zero);
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getString('wzxclaw-zcode-pairing');
-      expect(saved, isNotNull);
-      final info =
-          ZcodePairingInfo.fromJson(jsonDecode(saved!) as Map<String, dynamic>);
-      expect(info?.sid, 'device-sid-1');
-    });
-
-    test('restore：读取持久化并恢复连接 + 拉会话列表', () async {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        'wzxclaw-zcode-pairing',
-        jsonEncode({
-          'relayWsUrl': 'wss://zcode.5945.top/ws',
-          'sid': 'sid-9',
-          'hash': fakeHash,
-        }),
-      );
-      final fake = FakeZcodeRelayClient();
-      fake.handlers['session/list'] = (_) => {'sessions': []};
-      final store = ZcodeChatStore(client: fake);
-
-      await store.restore();
-      expect(store.pairing?.sid, 'sid-9');
-      expect(store.connState, ZcodeConnState.matched);
-      expect(fake.requests.map((e) => e.key), contains('session/list'));
-    });
-
-    test('restore：已配对时触发显式重连（修复 #20，按钮不再无效）', () async {
-      final fake = FakeZcodeRelayClient();
-      fake.handlers['session/list'] = (_) => {'sessions': []};
-      final store = pairedStore(fake); // pair() 已 connect 一次
-      expect(fake.connectCount, 1);
-      final listCallsBefore =
-          fake.requests.where((e) => e.key == 'session/list').length;
-
-      // 已配对状态下的 restore（会话列表页"重连"按钮的入口）
-      await store.restore();
-      expect(store.pairing, isNotNull); // 配对不丢
-      expect(store.connState, ZcodeConnState.matched);
-      expect(fake.connectCount, 2); // 显式重连：重新挂载客户端
-      expect(
-        fake.requests.where((e) => e.key == 'session/list').length,
-        greaterThan(listCallsBefore), // 重连后刷新会话列表
-      );
-    });
-
-    test('reconnect：已配对重建连接；未配对 no-op', () async {
-      // 未配对：无事可做，不抛错不建连
-      final fakeBare = FakeZcodeRelayClient();
-      final storeBare = ZcodeChatStore(client: fakeBare);
-      await storeBare.reconnect();
-      expect(fakeBare.connectCount, 0);
-      expect(storeBare.connState, ZcodeConnState.idle);
-
-      // 已配对：重连 + 刷新列表
-      final fake = FakeZcodeRelayClient();
-      fake.handlers['session/list'] = (_) => {'sessions': []};
-      final store = pairedStore(fake);
-      await store.reconnect();
-      expect(fake.connectCount, 2);
-      expect(fake.requests.any((e) => e.key == 'session/list'), isTrue);
-      expect(store.connState, ZcodeConnState.matched);
-    });
-
-    test('unpair：断开客户端、清状态与持久化', () async {
-      final fake = FakeZcodeRelayClient();
-      final store = pairedStore(fake);
-      await Future<void>.delayed(Duration.zero);
-
-      store.unpair();
-      expect(store.pairing, isNull);
-      expect(fake.closed, isTrue);
-      expect(store.sessions, isEmpty);
-      expect(store.activeSessionId, isNull);
-      expect(store.isStreaming, isFalse);
-
-      await Future<void>.delayed(Duration.zero);
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('wzxclaw-zcode-pairing'), isNull);
-    });
-  });
-
   group('会话', () {
     test('openSession：resume parts → ChatMessage 映射（tool 状态 + 截断提示）', () async {
       final fake = FakeZcodeRelayClient();
@@ -158,18 +46,55 @@ void main() {
             'projection': {'status': 'idle'},
             'messagesTruncated': true,
             'messages': [
-              fakeMsg('user', [
-                {'type': 'text', 'text': '你好'},
-              ], id: 'm1', created: 1000,),
-              fakeMsg('assistant', [
-                {'type': 'text', 'text': '回答'},
-                {'type': 'reasoning', 'text': '思考过程'},
-                // 实测 tool part 形状：callID（大写 D）、tool 为字符串、
-                // input/output/error 嵌在 state 对象里
-                {'type': 'tool', 'callID': 'tc-running', 'tool': 'FileRead', 'state': {'status': 'running', 'input': {'path': 'a.txt'}}},
-                {'type': 'tool', 'callID': 'tc-done', 'tool': 'ShellExecute', 'state': {'status': 'completed', 'input': {'command': 'ls'}, 'output': '文件列表'}},
-                {'type': 'tool', 'callID': 'tc-failed', 'tool': 'Echo', 'state': {'status': 'error', 'input': {}, 'error': 'Permission request failed'}},
-              ], id: 'm2', created: 2000, modelId: 'glm-5.3',),
+              fakeMsg(
+                'user',
+                [
+                  {'type': 'text', 'text': '你好'},
+                ],
+                id: 'm1',
+                created: 1000,
+              ),
+              fakeMsg(
+                'assistant',
+                [
+                  {'type': 'text', 'text': '回答'},
+                  {'type': 'reasoning', 'text': '思考过程'},
+                  // 实测 tool part 形状：callID（大写 D）、tool 为字符串、
+                  // input/output/error 嵌在 state 对象里
+                  {
+                    'type': 'tool',
+                    'callID': 'tc-running',
+                    'tool': 'FileRead',
+                    'state': {
+                      'status': 'running',
+                      'input': {'path': 'a.txt'},
+                    },
+                  },
+                  {
+                    'type': 'tool',
+                    'callID': 'tc-done',
+                    'tool': 'ShellExecute',
+                    'state': {
+                      'status': 'completed',
+                      'input': {'command': 'ls'},
+                      'output': '文件列表',
+                    },
+                  },
+                  {
+                    'type': 'tool',
+                    'callID': 'tc-failed',
+                    'tool': 'Echo',
+                    'state': {
+                      'status': 'error',
+                      'input': {},
+                      'error': 'Permission request failed',
+                    },
+                  },
+                ],
+                id: 'm2',
+                created: 2000,
+                modelId: 'glm-5.3',
+              ),
               fakeMsg('assistant', [], id: 'm3'), // 空 assistant → 过滤
             ],
           };
@@ -202,7 +127,10 @@ void main() {
       expect(calls[2].toolName, 'Echo'); // tool 为字符串的形态
       expect(calls[2].status, ToolCallStatus.error);
       expect(calls[2].isError, isTrue);
-      expect(calls[2].outputSummary, 'Permission request failed'); // state.error 优先展示
+      expect(
+        calls[2].outputSummary,
+        'Permission request failed',
+      ); // state.error 优先展示
 
       expect(store.isStreaming, isFalse);
       final resume = fake.requests.firstWhere((e) => e.key == 'session/resume');
@@ -251,7 +179,7 @@ void main() {
       final send = fake.requests.firstWhere((e) => e.key == 'session/send');
       expect(send.value, {'sessionId': 'sess-1', 'content': '你好，帮我看看'});
 
-      store.unpair(); // 清理轮询计时器
+      store.dispose();
     });
 
     test('sendMessage：请求异常 → error 状态且不启动轮询', () async {
@@ -317,7 +245,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(store.messages.last.content, 'Hello'); // 'Hel' 只计一次 + 'lo'
 
-      store.unpair(); // 清理轮询计时器
+      store.dispose();
     });
 
     test('state.updated：running/idle 切换 isStreaming', () async {
@@ -326,16 +254,24 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-1');
 
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {'patch': {'status': 'running'}},
-      ),);
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'patch': {'status': 'running'},
+          },
+        ),
+      );
       expect(store.isStreaming, isTrue);
 
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {'patch': {'status': 'idle'}},
-      ),);
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
       expect(store.isStreaming, isFalse);
     });
 
@@ -361,28 +297,59 @@ void main() {
       expect(store.messages.last.content, '部分回答');
 
       // token 用量通知
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'v4/telemetry/event',
-        params: {'kind': 'usage.delta', 'inputTokens': 12, 'outputTokens': 34},
-      ),);
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'v4/telemetry/event',
+          params: {
+            'kind': 'usage.delta',
+            'inputTokens': 12,
+            'outputTokens': 34,
+          },
+        ),
+      );
 
       // 权威消息（含工具调用结果，只有权威列表才有；实测 tool part 形状）
       fake.handlers['session/messages'] = (_) => {
             'messages': [
-              fakeMsg('user', [
-                {'type': 'text', 'text': 'go'},
-              ], id: 'a1', created: 1,),
-              fakeMsg('assistant', [
-                {'type': 'text', 'text': '最终回答'},
-                {'type': 'tool', 'callID': 'tc9', 'tool': 'FileWrite', 'state': {'status': 'completed', 'input': {'path': 'x.txt'}, 'output': '写入 3 行'}},
-              ], id: 'a2', created: 2,),
+              fakeMsg(
+                'user',
+                [
+                  {'type': 'text', 'text': 'go'},
+                ],
+                id: 'a1',
+                created: 1,
+              ),
+              fakeMsg(
+                'assistant',
+                [
+                  {'type': 'text', 'text': '最终回答'},
+                  {
+                    'type': 'tool',
+                    'callID': 'tc9',
+                    'tool': 'FileWrite',
+                    'state': {
+                      'status': 'completed',
+                      'input': {'path': 'x.txt'},
+                      'output': '写入 3 行',
+                    },
+                  },
+                ],
+                id: 'a2',
+                created: 2,
+              ),
             ],
           };
 
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'v4/telemetry/event',
-        params: {'kind': 'turn.terminal', 'status': 'success', 'tokenCount': 34},
-      ),);
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'v4/telemetry/event',
+          params: {
+            'kind': 'turn.terminal',
+            'status': 'success',
+            'tokenCount': 34,
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
@@ -408,8 +375,10 @@ void main() {
           fake.requests.where((e) => e.key == 'session/events').length;
       expect(eventsCount, greaterThanOrEqualTo(1));
       await Future<void>.delayed(Duration.zero);
-      expect(fake.requests.where((e) => e.key == 'session/events').length,
-          eventsCount,);
+      expect(
+        fake.requests.where((e) => e.key == 'session/events').length,
+        eventsCount,
+      );
     });
 
     test('stopGeneration：session/stop + 增量权威刷新', () async {
@@ -418,34 +387,58 @@ void main() {
       fake.handlers['session/events'] = (_) => {'events': []};
       // 状态化服务端：send 落库新消息；messages 按 afterMessageId 增量返回
       final serverMessages = <Map<String, dynamic>>[
-        fakeMsg('user', [
-          {'type': 'text', 'text': '旧问题'},
-        ], id: 'b0', created: 1,),
-        fakeMsg('assistant', [
-          {'type': 'text', 'text': '旧回答'},
-        ], id: 'b1', created: 2,),
+        fakeMsg(
+          'user',
+          [
+            {'type': 'text', 'text': '旧问题'},
+          ],
+          id: 'b0',
+          created: 1,
+        ),
+        fakeMsg(
+          'assistant',
+          [
+            {'type': 'text', 'text': '旧回答'},
+          ],
+          id: 'b1',
+          created: 2,
+        ),
       ];
       fake.handlers['session/send'] = (_) {
-        serverMessages.add(fakeMsg('user', [
-          {'type': 'text', 'text': 'go'},
-        ], id: 'u1', created: 3,),);
+        serverMessages.add(
+          fakeMsg(
+            'user',
+            [
+              {'type': 'text', 'text': 'go'},
+            ],
+            id: 'u1',
+            created: 3,
+          ),
+        );
         return {'accepted': true};
       };
       fake.handlers['session/stop'] = (_) {
         // 停止时服务端持久化被中止的 assistant 回复
-        serverMessages.add(fakeMsg('assistant', [
-          {'type': 'text', 'text': '被中止的回答'},
-        ], id: 'a1', created: 4,),);
+        serverMessages.add(
+          fakeMsg(
+            'assistant',
+            [
+              {'type': 'text', 'text': '被中止的回答'},
+            ],
+            id: 'a1',
+            created: 4,
+          ),
+        );
         return {};
       };
       fake.handlers['session/messages'] = (params) {
         final after = params?['afterMessageId'] as String?;
         if (after == null) return {'messages': List.of(serverMessages)};
-        final idx =
-            serverMessages.indexWhere((m) => m['info']['id'] == after);
+        final idx = serverMessages.indexWhere((m) => m['info']['id'] == after);
         return {
-          'messages':
-              idx < 0 ? List.of(serverMessages) : serverMessages.sublist(idx + 1),
+          'messages': idx < 0
+              ? List.of(serverMessages)
+              : serverMessages.sublist(idx + 1),
         };
       };
       final store = pairedStore(fake);
@@ -458,9 +451,8 @@ void main() {
       final stop = fake.requests.firstWhere((e) => e.key == 'session/stop');
       expect(stop.value, {'sessionId': 'sess-stop'});
       // 增量刷新只拉新增（afterMessageId = b1），乐观 user 消息被原位消解
-      final refresh = fake.requests
-          .lastWhere((e) => e.key == 'session/messages')
-          .value;
+      final refresh =
+          fake.requests.lastWhere((e) => e.key == 'session/messages').value;
       expect(refresh!['afterMessageId'], 'b1');
       expect(store.messages.length, 4); // 旧窗口 2 条 + 本回合 2 条
       expect(store.messages.where((m) => m.content == 'go'), hasLength(1));
@@ -478,7 +470,10 @@ void main() {
           'sessionId': 's1',
           'title': '最近的会话',
           'updatedAt': 5,
-          'workspace': {'workspaceKey': 'wk1', 'workspacePath': 'E:/ai/wzxClaw'},
+          'workspace': {
+            'workspaceKey': 'wk1',
+            'workspacePath': 'E:/ai/wzxClaw',
+          },
         },
       ];
       fake.handlers['session/list'] = (_) => {'sessions': sessions};
@@ -487,7 +482,10 @@ void main() {
           'sessionId': 's-new',
           'title': '新会话',
           'updatedAt': 99,
-          'workspace': {'workspaceKey': 'wk1', 'workspacePath': 'E:/ai/wzxClaw'},
+          'workspace': {
+            'workspaceKey': 'wk1',
+            'workspacePath': 'E:/ai/wzxClaw',
+          },
         });
         return {
           'session': {'sessionId': 's-new'},
@@ -535,7 +533,10 @@ void main() {
           'sessionId': 's1',
           'title': '最近的会话',
           'updatedAt': 5,
-          'workspace': {'workspaceKey': 'wk1', 'workspacePath': 'E:/ai/wzxClaw'},
+          'workspace': {
+            'workspaceKey': 'wk1',
+            'workspacePath': 'E:/ai/wzxClaw',
+          },
         },
       ];
       fake.handlers['session/list'] = (_) => {'sessions': sessions};
@@ -574,58 +575,60 @@ void main() {
 
       // 实测形状（probe-toolturn，APP-SERVER.md「工具回合实测」）：
       // method=interaction/requestPermission；options 携带各选项的 response
-      final future = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-1',
-        method: 'interaction/requestPermission',
-        params: {
-          'input': {
-            'command': "printf 'A' > probe-a.txt",
-            'description': 'Write A to probe-a.txt',
-          },
-          'reason': 'High risk tools require explicit approval',
-          'requestId': 'perm_04189f93-0000-0000-0000-000000000001',
-          'riskLevel': 'high',
-          'sessionId': 'sess-x',
-          'options': [
-            {
-              'kind': 'allow_once',
-              'optionId': 'allow_once',
-              'name': 'Allow once',
-              'response': {'decision': 'allow', 'reason': 'Approved once'},
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-1',
+          method: 'interaction/requestPermission',
+          params: {
+            'input': {
+              'command': "printf 'A' > probe-a.txt",
+              'description': 'Write A to probe-a.txt',
             },
-            {
-              'kind': 'allow_always',
-              'optionId': 'allow_project',
-              'name': 'Always allow in this project',
-              'response': {
-                'decision': 'allow',
-                'permissionUpdates': [
-                  {
-                    'behavior': 'allow',
-                    'rules': [
-                      {
-                        'ruleContent': "printf 'A' > probe-a.txt",
-                        'toolName': 'Bash',
-                      },
-                    ],
-                    'type': 'addRules',
-                  },
-                ],
-                'reason': 'Approved for this project',
+            'reason': 'High risk tools require explicit approval',
+            'requestId': 'perm_04189f93-0000-0000-0000-000000000001',
+            'riskLevel': 'high',
+            'sessionId': 'sess-x',
+            'options': [
+              {
+                'kind': 'allow_once',
+                'optionId': 'allow_once',
+                'name': 'Allow once',
+                'response': {'decision': 'allow', 'reason': 'Approved once'},
               },
-            },
-            {
-              'kind': 'deny',
-              'optionId': 'deny',
-              'name': 'Deny',
-              'response': {'decision': 'deny', 'reason': 'Denied'},
-            },
-          ],
-          'toolCallId': 'call_tc1',
-          'toolName': 'Bash',
-          'turnId': 'turn_1',
-        },
-      ),);
+              {
+                'kind': 'allow_always',
+                'optionId': 'allow_project',
+                'name': 'Always allow in this project',
+                'response': {
+                  'decision': 'allow',
+                  'permissionUpdates': [
+                    {
+                      'behavior': 'allow',
+                      'rules': [
+                        {
+                          'ruleContent': "printf 'A' > probe-a.txt",
+                          'toolName': 'Bash',
+                        },
+                      ],
+                      'type': 'addRules',
+                    },
+                  ],
+                  'reason': 'Approved for this project',
+                },
+              },
+              {
+                'kind': 'deny',
+                'optionId': 'deny',
+                'name': 'Deny',
+                'response': {'decision': 'deny', 'reason': 'Denied'},
+              },
+            ],
+            'toolCallId': 'call_tc1',
+            'toolName': 'Bash',
+            'turnId': 'turn_1',
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(store.activePermission?.toolCallId, 'call_tc1');
       expect(store.activePermission?.toolName, 'Bash');
@@ -658,55 +661,68 @@ void main() {
       expect(events.last, isNull);
 
       // 一次性批准：回放 allow_once 的 response 原文
-      final futureOnce = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-2',
-        method: 'interaction/requestPermission',
-        params: {
-          'input': {'command': 'echo hi'},
-          'toolCallId': 'call_tc2',
-          'toolName': 'Bash',
-          'options': [
-            {
-              'optionId': 'allow_once',
-              'response': {'decision': 'allow', 'reason': 'Approved once'},
-            },
-            {
-              'optionId': 'deny',
-              'response': {'decision': 'deny', 'reason': 'Denied'},
-            },
-          ],
-        },
-      ),);
+      final futureOnce = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-2',
+          method: 'interaction/requestPermission',
+          params: {
+            'input': {'command': 'echo hi'},
+            'toolCallId': 'call_tc2',
+            'toolName': 'Bash',
+            'options': [
+              {
+                'optionId': 'allow_once',
+                'response': {'decision': 'allow', 'reason': 'Approved once'},
+              },
+              {
+                'optionId': 'deny',
+                'response': {'decision': 'deny', 'reason': 'Denied'},
+              },
+            ],
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       store.respondToPermission('call_tc2', approved: true);
-      expect(await futureOnce, {'decision': 'allow', 'reason': 'Approved once'});
+      expect(
+        await futureOnce,
+        {'decision': 'allow', 'reason': 'Approved once'},
+      );
 
       // 拒绝：回放 deny 选项的 response 原文
-      final futureDeny = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-3',
-        method: 'interaction/requestPermission',
-        params: {
-          'input': {'command': 'rm -rf /'},
-          'toolCallId': 'call_tc3',
-          'toolName': 'Bash',
-          'options': [
-            {
-              'optionId': 'deny',
-              'response': {'decision': 'deny', 'reason': 'Denied'},
-            },
-          ],
-        },
-      ),);
+      final futureDeny = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-3',
+          method: 'interaction/requestPermission',
+          params: {
+            'input': {'command': 'rm -rf /'},
+            'toolCallId': 'call_tc3',
+            'toolName': 'Bash',
+            'options': [
+              {
+                'optionId': 'deny',
+                'response': {'decision': 'deny', 'reason': 'Denied'},
+              },
+            ],
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       store.respondToPermission('call_tc3', approved: false);
       expect(await futureDeny, {'decision': 'deny', 'reason': 'Denied'});
 
       // 无 options 暂存（协议漂移兜底）：按实测 schema 构造最小 result
-      final futureFallback = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-4',
-        method: 'interaction/requestPermission',
-        params: {'toolCallId': 'call_tc4', 'toolName': 'FileWrite', 'input': {}},
-      ),);
+      final futureFallback = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-4',
+          method: 'interaction/requestPermission',
+          params: {
+            'toolCallId': 'call_tc4',
+            'toolName': 'FileWrite',
+            'input': {},
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       store.respondToPermission('call_tc4', approved: false);
       expect(await futureFallback, {'decision': 'deny', 'reason': 'Denied'});
@@ -720,11 +736,13 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);
 
-      final future = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-5',
-        method: 'interaction/requestPermission',
-        params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
-      ),);
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-5',
+          method: 'interaction/requestPermission',
+          params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(store.activePermission?.toolCallId, 'tc-2');
       expect(store.activePermission?.toolName, 'ShellExecute');
@@ -739,19 +757,21 @@ void main() {
       final events = <AskUserQuestion?>[];
       final sub = store.askUserStream.listen(events.add);
 
-      final future = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-3',
-        method: 'interaction/askUser',
-        params: {
-          'questionId': 'q-1',
-          'question': '选哪个？',
-          'options': [
-            {'label': 'A', 'description': '选项A'},
-            {'label': 'B', 'description': '选项B'},
-          ],
-          'multiSelect': false,
-        },
-      ),);
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-3',
+          method: 'interaction/askUser',
+          params: {
+            'questionId': 'q-1',
+            'question': '选哪个？',
+            'options': [
+              {'label': 'A', 'description': '选项A'},
+              {'label': 'B', 'description': '选项B'},
+            ],
+            'multiSelect': false,
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(store.activeAskUser?.questionId, 'q-1');
       expect(store.activeAskUser?.question, '选哪个？');
@@ -777,29 +797,35 @@ void main() {
 
       // method 含 interaction 但形状不符（缺 question/options）
       expect(
-        () => store.debugHandleReverseRequest(const ZcodeFrame(
-          id: 'server-4',
-          method: 'interaction/prompt',
-          params: {'foo': 1},
-        ),),
+        () => store.debugHandleReverseRequest(
+          const ZcodeFrame(
+            id: 'server-4',
+            method: 'interaction/prompt',
+            params: {'foo': 1},
+          ),
+        ),
         throwsA(isA<Exception>()),
       );
       // 权限请求缺关键字段
       expect(
-        () => store.debugHandleReverseRequest(const ZcodeFrame(
-          id: 'server-5',
-          method: 'interaction/requestPermission',
-          params: {'input': {}},
-        ),),
+        () => store.debugHandleReverseRequest(
+          const ZcodeFrame(
+            id: 'server-5',
+            method: 'interaction/requestPermission',
+            params: {'input': {}},
+          ),
+        ),
         throwsA(isA<Exception>()),
       );
       // 完全未知的反向请求
       expect(
-        () => store.debugHandleReverseRequest(const ZcodeFrame(
-          id: 'server-6',
-          method: 'workspace/open',
-          params: {},
-        ),),
+        () => store.debugHandleReverseRequest(
+          const ZcodeFrame(
+            id: 'server-6',
+            method: 'workspace/open',
+            params: {},
+          ),
+        ),
         throwsA(isA<Exception>()),
       );
       expect(store.activePermission, isNull);
@@ -810,11 +836,13 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);
 
-      final future = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-7',
-        method: 'interaction/requestPermission',
-        params: {'toolCallId': 'tc-x', 'toolName': 'FileRead'},
-      ),);
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-7',
+          method: 'interaction/requestPermission',
+          params: {'toolCallId': 'tc-x', 'toolName': 'FileRead'},
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(store.activePermission, isNotNull);
 
@@ -823,7 +851,7 @@ void main() {
         future,
         throwsA(isA<ZcodeReverseRejectException>()),
       );
-      store.unpair();
+      store.dispose();
       await done;
       expect(store.activePermission, isNull);
     });
@@ -836,25 +864,27 @@ void main() {
       final sub = store.permissionStream.listen(events.add);
       addTearDown(sub.cancel);
 
-      final future = store.debugHandleReverseRequest(const ZcodeFrame(
-        id: 'server-9',
-        method: 'interaction/requestPermission',
-        params: {
-          'input': {'command': 'echo hi'},
-          'toolCallId': 'call_dc1',
-          'toolName': 'Bash',
-          'options': [
-            {
-              'optionId': 'allow_once',
-              'response': {'decision': 'allow', 'reason': 'Approved once'},
-            },
-            {
-              'optionId': 'deny',
-              'response': {'decision': 'deny', 'reason': 'Denied'},
-            },
-          ],
-        },
-      ),);
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-9',
+          method: 'interaction/requestPermission',
+          params: {
+            'input': {'command': 'echo hi'},
+            'toolCallId': 'call_dc1',
+            'toolName': 'Bash',
+            'options': [
+              {
+                'optionId': 'allow_once',
+                'response': {'decision': 'allow', 'reason': 'Approved once'},
+              },
+              {
+                'optionId': 'deny',
+                'response': {'decision': 'deny', 'reason': 'Denied'},
+              },
+            ],
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(store.activePermission?.toolCallId, 'call_dc1');
 
@@ -926,12 +956,16 @@ void main() {
       expect(store.modelCatalog.first.displayName, 'GLM-5.3');
       expect(store.modelCatalog.first.reasoning, isTrue);
       expect(store.modelCatalog.first.contextWindow, 200000);
-      expect(store.modelCatalog.first.ref,
-          'builtin:bigmodel-coding-plan/glm-5.3',);
+      expect(
+        store.modelCatalog.first.ref,
+        'builtin:bigmodel-coding-plan/glm-5.3',
+      );
       expect(store.currentModelRef, 'builtin:bigmodel-coding-plan/glm-5.3');
 
       final ok = await store.setModel(
-          'builtin:bigmodel-coding-plan', 'glm-5.3-flash',);
+        'builtin:bigmodel-coding-plan',
+        'glm-5.3-flash',
+      );
       expect(ok, isTrue);
       expect(setModelParams.single, {
         'sessionId': 'sess-m',
@@ -941,7 +975,10 @@ void main() {
         },
       });
       // 乐观回填当前模型
-      expect(store.currentModelRef, 'builtin:bigmodel-coding-plan/glm-5.3-flash');
+      expect(
+        store.currentModelRef,
+        'builtin:bigmodel-coding-plan/glm-5.3-flash',
+      );
     });
 
     test('未打开会话时 setModel 失败并置 error', () async {
@@ -968,16 +1005,11 @@ void main() {
   });
 
   group('同步层重构（P1.2）', () {
-    test('单例：无注入构造返回 app 作用域实例，注入构造全新实例', () {
+    test('单例：生产无参构造固定返回 app 作用域实例', () {
       final a = ZcodeChatStore();
       final b = ZcodeChatStore();
       expect(a, same(ZcodeChatStore.instance));
       expect(b, same(a));
-      final fake = FakeZcodeRelayClient();
-      expect(
-        ZcodeChatStore(client: fake),
-        isNot(same(ZcodeChatStore.instance)),
-      );
     });
 
     test('视口加载：忽略 resume 的 messages 数组，以 session/messages 尾窗为准', () async {
@@ -987,14 +1019,26 @@ void main() {
       fake.handlers['session/resume'] = (_) => {
             'projection': {'status': 'idle'},
             'messages': [
-              fakeMsg('user', [
-                {'type': 'text', 'text': '陈旧消息'},
-              ], id: 'stale-1', created: 1,),
+              fakeMsg(
+                'user',
+                [
+                  {'type': 'text', 'text': '陈旧消息'},
+                ],
+                id: 'stale-1',
+                created: 1,
+              ),
             ],
           };
-      server.session('sess-v').messages.add(fakeMsg('assistant', [
-        {'type': 'text', 'text': '最新回答'},
-      ], id: 'fresh-1', created: 2,),);
+      server.session('sess-v').messages.add(
+            fakeMsg(
+              'assistant',
+              [
+                {'type': 'text', 'text': '最新回答'},
+              ],
+              id: 'fresh-1',
+              created: 2,
+            ),
+          );
       final store = pairedStore(fake);
 
       await store.openSession('sess-v');
@@ -1007,14 +1051,16 @@ void main() {
       final server = FakeSessionServer()..bind(fake);
       // 50 条服务端消息：尾窗只应取回最新 40 条（m10..m49，升序）
       for (var i = 0; i < 50; i++) {
-        server.session('sess-big').messages.add(fakeMsg(
-              i.isEven ? 'user' : 'assistant',
-              [
-                {'type': 'text', 'text': 'm$i'},
-              ],
-              id: 'm$i',
-              created: i,
-            ),);
+        server.session('sess-big').messages.add(
+              fakeMsg(
+                i.isEven ? 'user' : 'assistant',
+                [
+                  {'type': 'text', 'text': 'm$i'},
+                ],
+                id: 'm$i',
+                created: i,
+              ),
+            );
       }
       final store = pairedStore(fake);
 
@@ -1032,17 +1078,34 @@ void main() {
       // 正常路径直通；若服务端漂移返回降序页，投票兜底应翻转为升序展示。
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
-      server.session('sess-asc').messages.addAll([
-        fakeMsg('user', [
-          {'type': 'text', 'text': '最早'},
-        ], id: 'p1', created: 1,),
-        fakeMsg('assistant', [
-          {'type': 'text', 'text': '中间'},
-        ], id: 'p2', created: 2,),
-        fakeMsg('assistant', [
-          {'type': 'text', 'text': '最新'},
-        ], id: 'p3', created: 3,),
-      ],);
+      server.session('sess-asc').messages.addAll(
+        [
+          fakeMsg(
+            'user',
+            [
+              {'type': 'text', 'text': '最早'},
+            ],
+            id: 'p1',
+            created: 1,
+          ),
+          fakeMsg(
+            'assistant',
+            [
+              {'type': 'text', 'text': '中间'},
+            ],
+            id: 'p2',
+            created: 2,
+          ),
+          fakeMsg(
+            'assistant',
+            [
+              {'type': 'text', 'text': '最新'},
+            ],
+            id: 'p3',
+            created: 3,
+          ),
+        ],
+      );
       final store = pairedStore(fake);
       await store.openSession('sess-asc');
       // 升序服务端页：直通展示（旧→新）
@@ -1051,12 +1114,22 @@ void main() {
       // 降序服务端页（异常兜底）：翻转为旧→新
       fake.handlers['session/messages'] = (_) => {
             'messages': [
-              fakeMsg('assistant', [
-                {'type': 'text', 'text': '新'},
-              ], id: 'q2', created: 20,),
-              fakeMsg('user', [
-                {'type': 'text', 'text': '旧'},
-              ], id: 'q1', created: 10,),
+              fakeMsg(
+                'assistant',
+                [
+                  {'type': 'text', 'text': '新'},
+                ],
+                id: 'q2',
+                created: 20,
+              ),
+              fakeMsg(
+                'user',
+                [
+                  {'type': 'text', 'text': '旧'},
+                ],
+                id: 'q1',
+                created: 10,
+              ),
             ],
           };
       final store2 = pairedStore(fake);
@@ -1084,12 +1157,14 @@ void main() {
       var seq = 0;
       void push(String type, Map<String, dynamic> payload) {
         seq++;
-        pushEvent(store,
-            sessionId: 'sess-p',
-            type: type,
-            seq: seq,
-            turnId: 'turn-1',
-            payload: payload,);
+        pushEvent(
+          store,
+          sessionId: 'sess-p',
+          type: type,
+          seq: seq,
+          turnId: 'turn-1',
+          payload: payload,
+        );
       }
 
       push('turn.started', {'messageId': 'srv-u-x', 'input': 'hi'});
@@ -1147,48 +1222,67 @@ void main() {
       expect(fake.requests.any((e) => e.key == 'session/events'), isFalse);
     });
 
-    test('工具回合：turn.completed(toolCallCount>0) 走增量权威刷新（afterMessageId 水位）', () async {
+    test('工具回合：turn.completed(toolCallCount>0) 走增量权威刷新（afterMessageId 水位）',
+        () async {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
       // 预置历史形成水位
-      server.session('sess-t').messages.add(fakeMsg('user', [
-        {'type': 'text', 'text': '旧问题'},
-      ], id: 'h1', created: 1,),);
+      server.session('sess-t').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '旧问题'},
+              ],
+              id: 'h1',
+              created: 1,
+            ),
+          );
       final store = pairedStore(fake);
       await store.openSession('sess-t');
       expect(store.messages, hasLength(1)); // 打开时拉到尾窗
 
       await store.sendMessage('写文件');
-      pushEvent(store,
-          sessionId: 'sess-t',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 'turn-t',
-          payload: {
-            'assistantMessageId': 'msg-a2',
-            'delta': '正在写',
-            'kind': 'text_delta',
-          },);
-      // 服务端回合落库（user 已由 send 落库；assistant 带工具结果）
-      server.session('sess-t').messages.add(fakeMsg('assistant', [
-        {'type': 'text', 'text': '写完了'},
-        {
-          'type': 'tool',
-          'callID': 'tc1',
-          'tool': 'FileWrite',
-          'state': {'status': 'completed', 'output': '写入 3 行'},
+      pushEvent(
+        store,
+        sessionId: 'sess-t',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 'turn-t',
+        payload: {
+          'assistantMessageId': 'msg-a2',
+          'delta': '正在写',
+          'kind': 'text_delta',
         },
-      ], id: 'msg-a2', created: 2,),);
-      pushEvent(store,
-          sessionId: 'sess-t',
-          type: 'turn.completed',
-          seq: 2,
-          turnId: 'turn-t',
-          payload: {
-            'response': '写完了',
-            'toolCallCount': 1,
-            'resultType': 'success',
-          },);
+      );
+      // 服务端回合落库（user 已由 send 落库；assistant 带工具结果）
+      server.session('sess-t').messages.add(
+            fakeMsg(
+              'assistant',
+              [
+                {'type': 'text', 'text': '写完了'},
+                {
+                  'type': 'tool',
+                  'callID': 'tc1',
+                  'tool': 'FileWrite',
+                  'state': {'status': 'completed', 'output': '写入 3 行'},
+                },
+              ],
+              id: 'msg-a2',
+              created: 2,
+            ),
+          );
+      pushEvent(
+        store,
+        sessionId: 'sess-t',
+        type: 'turn.completed',
+        seq: 2,
+        turnId: 'turn-t',
+        payload: {
+          'response': '写完了',
+          'toolCallCount': 1,
+          'resultType': 'success',
+        },
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
@@ -1210,25 +1304,34 @@ void main() {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
       // 预置历史形成水位 h1
-      server.session('sess-w').messages.add(fakeMsg('user', [
-        {'type': 'text', 'text': '旧问题'},
-      ], id: 'h1', created: 1,),);
+      server.session('sess-w').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '旧问题'},
+              ],
+              id: 'h1',
+              created: 1,
+            ),
+          );
       final store = pairedStore(fake);
       await store.openSession('sess-w');
       expect(store.messages, hasLength(1));
 
       await store.sendMessage('写文件');
       // 流式占位采纳 assistantMessageId msg-a1——服务端权威列表此刻还没有它
-      pushEvent(store,
-          sessionId: 'sess-w',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 'turn-w',
-          payload: {
-            'assistantMessageId': 'msg-a1',
-            'delta': '正在写',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-w',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 'turn-w',
+        payload: {
+          'assistantMessageId': 'msg-a1',
+          'delta': '正在写',
+          'kind': 'text_delta',
+        },
+      );
 
       // 回合在途时发生一次权威合并（真实场景：切走再切回，openSession
       // 重拉尾窗）。服务端此刻只有 h1 + user（assistant 尚未落库）。
@@ -1239,26 +1342,35 @@ void main() {
 
       // 服务端此刻落库 assistant（msg-a1 带工具结果）。若占位曾推进水位
       //（afterMessageId 已被抬到 msg-a1），此消息的最终版本将永远拉不回。
-      server.session('sess-w').messages.add(fakeMsg('assistant', [
-        {'type': 'text', 'text': '写完了'},
-        {
-          'type': 'tool',
-          'callID': 'tc-w',
-          'tool': 'FileWrite',
-          'state': {'status': 'completed', 'output': 'ok'},
-        },
-      ], id: 'msg-a1', created: 2,),);
+      server.session('sess-w').messages.add(
+            fakeMsg(
+              'assistant',
+              [
+                {'type': 'text', 'text': '写完了'},
+                {
+                  'type': 'tool',
+                  'callID': 'tc-w',
+                  'tool': 'FileWrite',
+                  'state': {'status': 'completed', 'output': 'ok'},
+                },
+              ],
+              id: 'msg-a1',
+              created: 2,
+            ),
+          );
       // turn.completed(带工具) → 增量权威刷新
-      pushEvent(store,
-          sessionId: 'sess-w',
-          type: 'turn.completed',
-          seq: 2,
-          turnId: 'turn-w',
-          payload: {
-            'response': '写完了',
-            'toolCallCount': 1,
-            'resultType': 'success',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-w',
+        type: 'turn.completed',
+        seq: 2,
+        turnId: 'turn-w',
+        payload: {
+          'response': '写完了',
+          'toolCallCount': 1,
+          'resultType': 'success',
+        },
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
@@ -1278,17 +1390,19 @@ void main() {
 
     test('lastProtoId 只认已确认（synced）条目——缓存水位推导不被占位污染', () {
       final state = ZcodeSessionState('sess-z');
-      state.mergeAuthoritative([
-        ZcodeSessionItem(
-          message: ChatMessage(
-            role: MessageRole.user,
-            content: 'q',
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1),
+      state.mergeAuthoritative(
+        [
+          ZcodeSessionItem(
+            message: ChatMessage(
+              role: MessageRole.user,
+              content: 'q',
+              createdAt: DateTime.fromMillisecondsSinceEpoch(1),
+            ),
+            protoId: 'm1',
+            synced: true,
           ),
-          protoId: 'm1',
-          synced: true,
-        ),
-      ],);
+        ],
+      );
       expect(state.lastProtoId, 'm1');
       // 流式占位采纳了更新的 protoId，但仍未确认：不得成为水位推导对象
       state.ensureStreamingPlaceholder();
@@ -1296,17 +1410,19 @@ void main() {
       state.appendTextDelta('partial');
       expect(state.lastProtoId, 'm1');
       // 占位被权威版本消解（synced 置真）后才可推进
-      state.mergeAuthoritative([
-        ZcodeSessionItem(
-          message: ChatMessage(
-            role: MessageRole.assistant,
-            content: 'partial+full',
-            createdAt: DateTime.fromMillisecondsSinceEpoch(2),
+      state.mergeAuthoritative(
+        [
+          ZcodeSessionItem(
+            message: ChatMessage(
+              role: MessageRole.assistant,
+              content: 'partial+full',
+              createdAt: DateTime.fromMillisecondsSinceEpoch(2),
+            ),
+            protoId: 'msg-a1',
+            synced: true,
           ),
-          protoId: 'msg-a1',
-          synced: true,
-        ),
-      ],);
+        ],
+      );
       expect(state.lastProtoId, 'msg-a1');
     });
 
@@ -1316,42 +1432,48 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-A');
       await store.sendMessage('A 任务');
-      pushEvent(store,
-          sessionId: 'sess-A',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 't-A',
-          payload: {
-            'assistantMessageId': 'msg-a',
-            'delta': '部分A',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-A',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 't-A',
+        payload: {
+          'assistantMessageId': 'msg-a',
+          'delta': '部分A',
+          'kind': 'text_delta',
+        },
+      );
       expect(store.messages.last.content, '部分A');
 
       // A 流式中途切到 B
       await store.openSession('sess-B');
       expect(store.activeSessionId, 'sess-B');
       // A 的增量继续到达（后台）：不得进入 B 视口
-      pushEvent(store,
-          sessionId: 'sess-A',
-          type: 'model.streaming',
-          seq: 2,
-          turnId: 't-A',
-          payload: {
-            'assistantMessageId': 'msg-a',
-            'delta': '更多A',
-            'kind': 'text_delta',
-          },);
-      pushEvent(store,
-          sessionId: 'sess-B',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 't-B',
-          payload: {
-            'assistantMessageId': 'msg-b',
-            'delta': 'B 内容',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-A',
+        type: 'model.streaming',
+        seq: 2,
+        turnId: 't-A',
+        payload: {
+          'assistantMessageId': 'msg-a',
+          'delta': '更多A',
+          'kind': 'text_delta',
+        },
+      );
+      pushEvent(
+        store,
+        sessionId: 'sess-B',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 't-B',
+        payload: {
+          'assistantMessageId': 'msg-b',
+          'delta': 'B 内容',
+          'kind': 'text_delta',
+        },
+      );
       final bContents = store.messages.map((m) => m.content).toList();
       expect(bContents, isNot(contains('部分A')));
       expect(bContents, isNot(contains('更多A')));
@@ -1363,16 +1485,18 @@ void main() {
       expect(store.messages.last.content, '部分A更多A');
       expect(store.isStreaming, isTrue);
       // B 的后续增量不泄漏进 A
-      pushEvent(store,
-          sessionId: 'sess-B',
-          type: 'model.streaming',
-          seq: 2,
-          turnId: 't-B',
-          payload: {
-            'assistantMessageId': 'msg-b',
-            'delta': '后续B',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-B',
+        type: 'model.streaming',
+        seq: 2,
+        turnId: 't-B',
+        payload: {
+          'assistantMessageId': 'msg-b',
+          'delta': '后续B',
+          'kind': 'text_delta',
+        },
+      );
       expect(
         store.messages.map((m) => m.content),
         isNot(contains('后续B')),
@@ -1417,26 +1541,30 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-r');
       await store.sendMessage('hi');
-      pushEvent(store,
-          sessionId: 'sess-r',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 't-r',
-          payload: {
-            'assistantMessageId': 'msg-r',
-            'delta': 'A',
-            'kind': 'text_delta',
-          },);
-      pushEvent(store,
-          sessionId: 'sess-r',
-          type: 'model.streaming',
-          seq: 2,
-          turnId: 't-r',
-          payload: {
-            'assistantMessageId': 'msg-r',
-            'delta': 'B',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-r',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 't-r',
+        payload: {
+          'assistantMessageId': 'msg-r',
+          'delta': 'A',
+          'kind': 'text_delta',
+        },
+      );
+      pushEvent(
+        store,
+        sessionId: 'sess-r',
+        type: 'model.streaming',
+        seq: 2,
+        turnId: 't-r',
+        payload: {
+          'assistantMessageId': 'msg-r',
+          'delta': 'B',
+          'kind': 'text_delta',
+        },
+      );
       expect(store.messages.last.content, 'AB');
 
       // 断线期间 seq 3 发生在服务端；重连时补放混入已应用的 seq 2
@@ -1478,14 +1606,28 @@ void main() {
       final cache = FakeZcodeSessionCache();
       final fake1 = FakeZcodeRelayClient();
       final server1 = FakeSessionServer()..bind(fake1);
-      server1.session('sess-c').messages.add(fakeMsg('user', [
-        {'type': 'text', 'text': '历史问题'},
-      ], id: 'h1', created: 1,),);
-      server1.session('sess-c').messages.add(fakeMsg('assistant', [
-        {'type': 'text', 'text': '历史回答'},
-      ], id: 'h2', created: 2,),);
-      final store1 = ZcodeChatStore(client: fake1, cache: cache);
-      expect(store1.pair(pairingUrl), isTrue);
+      server1.session('sess-c').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '历史问题'},
+              ],
+              id: 'h1',
+              created: 1,
+            ),
+          );
+      server1.session('sess-c').messages.add(
+            fakeMsg(
+              'assistant',
+              [
+                {'type': 'text', 'text': '历史回答'},
+              ],
+              id: 'h2',
+              created: 2,
+            ),
+          );
+      final store1 = ZcodeChatStore(cache: cache)
+        ..attach(fake1, desktopId: 'device-sid-1', desktopName: '测试桌面');
       await store1.openSession('sess-c');
       expect(store1.messages, hasLength(2));
       await Future<void>.delayed(Duration.zero); // persistSession 为 unawaited
@@ -1496,13 +1638,15 @@ void main() {
       // 重建 store（模拟 App 重启）：缓存先出，水位恢复驱动增量刷新
       final fake2 = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake2); // 服务端视角该会话为空
-      final store2 = ZcodeChatStore(client: fake2, cache: cache);
-      expect(store2.pair(pairingUrl), isTrue);
+      final store2 = ZcodeChatStore(cache: cache)
+        ..attach(fake2, desktopId: 'device-sid-1', desktopName: '测试桌面');
       await store2.openSession('sess-c');
       expect(store2.messages.map((m) => m.content), contains('历史回答'));
       expect(
-        fake2.requests.any((e) =>
-            e.key == 'session/messages' && e.value?['afterMessageId'] == 'h2',),
+        fake2.requests.any(
+          (e) =>
+              e.key == 'session/messages' && e.value?['afterMessageId'] == 'h2',
+        ),
         isTrue,
       );
     });
@@ -1522,8 +1666,8 @@ void main() {
       ];
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = ZcodeChatStore(client: fake, cache: cache);
-      expect(store.pair(pairingUrl), isTrue);
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
       await store.openSession('sess-o');
       expect(store.messages, hasLength(80)); // 缓存尾窗
 
@@ -1542,30 +1686,34 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-A');
       await store.sendMessage('A 任务');
-      pushEvent(store,
-          sessionId: 'sess-A',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 't-A',
-          payload: {
-            'assistantMessageId': 'msg-ab',
-            'delta': '答案A',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-A',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 't-A',
+        payload: {
+          'assistantMessageId': 'msg-ab',
+          'delta': '答案A',
+          'kind': 'text_delta',
+        },
+      );
       await store.openSession('sess-B');
 
       // A 的回合在后台结束（纯文本 → 本地收尾）
-      pushEvent(store,
-          sessionId: 'sess-A',
-          type: 'turn.completed',
-          seq: 2,
-          turnId: 't-A',
-          payload: {
-            'response': '答案A',
-            'tokenCount': 7,
-            'toolCallCount': 0,
-            'resultType': 'success',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-A',
+        type: 'turn.completed',
+        seq: 2,
+        turnId: 't-A',
+        payload: {
+          'response': '答案A',
+          'tokenCount': 7,
+          'toolCallCount': 0,
+          'resultType': 'success',
+        },
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
@@ -1589,24 +1737,26 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-m');
       // 注入可用模型列表（state.updated 全量快照）
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {
-          'sessionId': 'sess-m',
-          'patch': {
-            'model': {
-              'available': [
-                {
-                  'ref': {
-                    'providerId': 'builtin:bigmodel-coding-plan',
-                    'modelId': 'glm-5.3',
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-m',
+            'patch': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {
+                      'providerId': 'builtin:bigmodel-coding-plan',
+                      'modelId': 'glm-5.3',
+                    },
                   },
-                },
-              ],
+                ],
+              },
             },
           },
-        },
-      ),);
+        ),
+      );
       var sendCalls = 0;
       fake.handlers['session/send'] = (_) {
         sendCalls++;
@@ -1632,8 +1782,10 @@ void main() {
       // probe-modelheal4 验证时序：setModel → close → resume（重新物化）→ 重发
       final keys = fake.requests.map((e) => e.key).toList();
       final resendIdx = keys.lastIndexOf('session/send');
-      expect(keys.sublist(resendIdx - 3, resendIdx + 1),
-          ['session/setModel', 'session/close', 'session/resume', 'session/send'],);
+      expect(
+        keys.sublist(resendIdx - 3, resendIdx + 1),
+        ['session/setModel', 'session/close', 'session/resume', 'session/send'],
+      );
       expect(store.error, isNull);
       expect(store.isStreaming, isTrue); // 重发被接受，回合在途
       expect(store.messages.where((m) => m.content == 'hi'), hasLength(1));
@@ -1668,7 +1820,9 @@ void main() {
         if (sendCalls == 1) {
           // 真机实测形态：错误帧 -32031（非字符串 result）
           throw const ZcodeRequestException(
-              -32031, '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',);
+            -32031,
+            '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',
+          );
         }
         return {'accepted': true};
       };
@@ -1695,25 +1849,29 @@ void main() {
       FakeSessionServer().bind(fake);
       final store = pairedStore(fake);
       await store.openSession('sess-e2');
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {
-          'sessionId': 'sess-e2',
-          'patch': {
-            'model': {
-              'available': [
-                {
-                  'ref': {'providerId': 'p', 'modelId': 'm'},
-                },
-              ],
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-e2',
+            'patch': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {'providerId': 'p', 'modelId': 'm'},
+                  },
+                ],
+              },
             },
           },
-        },
-      ),);
+        ),
+      );
       // 即使按 probe-modelheal4 时序 setModel + close + resume 重新物化，
       // 重发仍可能以错误帧 -32031 被拒（provider 真不可用）→ 提示新建会话
       fake.handlers['session/send'] = (_) => throw const ZcodeRequestException(
-          -32031, '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',);
+            -32031,
+            '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。',
+          );
       fake.handlers['session/setModel'] = (_) => {'ok': true};
 
       await store.sendMessage('hi');
@@ -1721,8 +1879,10 @@ void main() {
       // 自愈链完整走过（setModel → close → resume → 重发）
       final keys = fake.requests.map((e) => e.key).toList();
       final resendIdx = keys.lastIndexOf('session/send');
-      expect(keys.sublist(resendIdx - 3, resendIdx + 1),
-          ['session/setModel', 'session/close', 'session/resume', 'session/send'],);
+      expect(
+        keys.sublist(resendIdx - 3, resendIdx + 1),
+        ['session/setModel', 'session/close', 'session/resume', 'session/send'],
+      );
       expect(store.error, contains('新建会话'));
       expect(store.isStreaming, isFalse);
       expect(store.messages.last.isStreaming, isFalse); // 占位已终结
@@ -1747,21 +1907,23 @@ void main() {
       FakeSessionServer().bind(fake);
       final store = pairedStore(fake);
       await store.openSession('sess-m3');
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {
-          'sessionId': 'sess-m3',
-          'patch': {
-            'model': {
-              'available': [
-                {
-                  'ref': {'providerId': 'p', 'modelId': 'm'},
-                },
-              ],
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-m3',
+            'patch': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {'providerId': 'p', 'modelId': 'm'},
+                  },
+                ],
+              },
             },
           },
-        },
-      ),);
+        ),
+      );
       fake.handlers['session/send'] = (_) => '配额已耗尽，请稍后再试';
       fake.handlers['session/setModel'] = (_) => {};
 
@@ -1774,46 +1936,74 @@ void main() {
     test('权威合并：含多条未匹配 assistant 的工具回合消息不丢失', () async {
       final fake = FakeZcodeRelayClient();
       final server = FakeSessionServer()..bind(fake);
-      server.session('sess-mm').messages.add(fakeMsg('user', [
-        {'type': 'text', 'text': '旧问题'},
-      ], id: 'h1', created: 1,),);
+      server.session('sess-mm').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '旧问题'},
+              ],
+              id: 'h1',
+              created: 1,
+            ),
+          );
       final store = pairedStore(fake);
       await store.openSession('sess-mm');
       await store.sendMessage('执行任务');
-      pushEvent(store,
-          sessionId: 'sess-mm',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 'turn-mm',
-          payload: {
-            'assistantMessageId': 'msg-am',
-            'delta': '开始',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-mm',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 'turn-mm',
+        payload: {
+          'assistantMessageId': 'msg-am',
+          'delta': '开始',
+          'kind': 'text_delta',
+        },
+      );
       // 服务端回合：user + 文本 assistant + 工具 assistant + 结果文本
       // （典型 agent 回合：text → tool → text 多条 assistant 消息）
-      server.session('sess-mm').messages.addAll([
-        fakeMsg('assistant', [
-          {'type': 'text', 'text': '我先看看'},
-        ], id: 'msg-am', created: 2,),
-        fakeMsg('assistant', [
-          {
-            'type': 'tool',
-            'callID': 'tc1',
-            'tool': 'FileWrite',
-            'state': {'status': 'completed'},
-          },
-        ], id: 'msg-tool', created: 3,),
-        fakeMsg('assistant', [
-          {'type': 'text', 'text': '写完了'},
-        ], id: 'msg-final', created: 4,),
-      ],);
-      pushEvent(store,
-          sessionId: 'sess-mm',
-          type: 'turn.completed',
-          seq: 2,
-          turnId: 'turn-mm',
-          payload: {'toolCallCount': 1, 'resultType': 'success'},);
+      server.session('sess-mm').messages.addAll(
+        [
+          fakeMsg(
+            'assistant',
+            [
+              {'type': 'text', 'text': '我先看看'},
+            ],
+            id: 'msg-am',
+            created: 2,
+          ),
+          fakeMsg(
+            'assistant',
+            [
+              {
+                'type': 'tool',
+                'callID': 'tc1',
+                'tool': 'FileWrite',
+                'state': {'status': 'completed'},
+              },
+            ],
+            id: 'msg-tool',
+            created: 3,
+          ),
+          fakeMsg(
+            'assistant',
+            [
+              {'type': 'text', 'text': '写完了'},
+            ],
+            id: 'msg-final',
+            created: 4,
+          ),
+        ],
+      );
+      pushEvent(
+        store,
+        sessionId: 'sess-mm',
+        type: 'turn.completed',
+        seq: 2,
+        turnId: 'turn-mm',
+        payload: {'toolCallCount': 1, 'resultType': 'success'},
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
@@ -1833,39 +2023,45 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-dup');
       await store.sendMessage('hi');
-      pushEvent(store,
-          sessionId: 'sess-dup',
-          type: 'model.streaming',
-          seq: 1,
-          turnId: 'turn-dup',
-          payload: {
-            'assistantMessageId': 'msg-dup',
-            'delta': '答案',
-            'kind': 'text_delta',
-          },);
-      // state.updated idle 兜底先到（跨通道顺序无保证）
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {
-          'sessionId': 'sess-dup',
-          'patch': {'status': 'idle'},
+      pushEvent(
+        store,
+        sessionId: 'sess-dup',
+        type: 'model.streaming',
+        seq: 1,
+        turnId: 'turn-dup',
+        payload: {
+          'assistantMessageId': 'msg-dup',
+          'delta': '答案',
+          'kind': 'text_delta',
         },
-      ),);
+      );
+      // state.updated idle 兜底先到（跨通道顺序无保证）
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-dup',
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       expect(notifier.shown, hasLength(1));
 
       // turn.completed(turnId) 后到：不重复通知/刷新
-      pushEvent(store,
-          sessionId: 'sess-dup',
-          type: 'turn.completed',
-          seq: 2,
-          turnId: 'turn-dup',
-          payload: {
-            'response': '答案',
-            'toolCallCount': 0,
-            'resultType': 'success',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-dup',
+        type: 'turn.completed',
+        seq: 2,
+        turnId: 'turn-dup',
+        payload: {
+          'response': '答案',
+          'toolCallCount': 0,
+          'resultType': 'success',
+        },
+      );
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       expect(notifier.shown, hasLength(1));
@@ -1897,16 +2093,18 @@ void main() {
       expect(store.messages.last.content, '轮询增量');
 
       // 推送恢复：降级轮询停止（不再产生新的 session/events 请求）
-      pushEvent(store,
-          sessionId: 'sess-wd',
-          type: 'model.streaming',
-          seq: 2,
-          turnId: 't-wd',
-          payload: {
-            'assistantMessageId': 'msg-wd',
-            'delta': '推送增量',
-            'kind': 'text_delta',
-          },);
+      pushEvent(
+        store,
+        sessionId: 'sess-wd',
+        type: 'model.streaming',
+        seq: 2,
+        turnId: 't-wd',
+        payload: {
+          'assistantMessageId': 'msg-wd',
+          'delta': '推送增量',
+          'kind': 'text_delta',
+        },
+      );
       final eventsCount =
           fake.requests.where((e) => e.key == 'session/events').length;
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -1915,7 +2113,7 @@ void main() {
         eventsCount,
       );
       expect(store.messages.last.content, '轮询增量推送增量');
-      store.unpair(); // 清理计时器
+      store.dispose();
     });
   });
 
@@ -1936,10 +2134,10 @@ void main() {
         isA<MapEntry<String, Map<String, dynamic>?>>()
             .having((e) => e.key, 'method', 'session/setMode')
             .having(
-              (e) => e.value,
-              'params',
-              {'sessionId': 'sess-mode', 'mode': 'yolo'},
-            ),
+          (e) => e.value,
+          'params',
+          {'sessionId': 'sess-mode', 'mode': 'yolo'},
+        ),
       );
       // 乐观更新（不采纳响应快照的 build 口径）
       expect(store.sessionMode, 'yolo');
@@ -1967,15 +2165,17 @@ void main() {
       await store.openSession('sess-mode2');
       await store.setMode('edit');
 
-      store.debugHandleNotify(const ZcodeFrame(
-        method: 'state.updated',
-        params: {
-          'sessionId': 'sess-mode2',
-          'patch': {
-            'mode': {'current': 'auto'},
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-mode2',
+            'patch': {
+              'mode': {'current': 'auto'},
+            },
           },
-        },
-      ),);
+        ),
+      );
       expect(store.sessionMode, 'auto');
     });
 
@@ -1996,8 +2196,8 @@ void main() {
       final cache = FakeZcodeSessionCache();
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
-      final store = ZcodeChatStore(client: fake, cache: cache);
-      expect(store.pair(pairingUrl), isTrue);
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
 
       await store.clearLocalCache();
       expect(cache.clearAllCalls, 1);

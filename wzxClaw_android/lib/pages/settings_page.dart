@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,11 +9,10 @@ import 'qr_scanner_page.dart';
 import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
-import '../services/push_wake_service.dart';
-import '../services/secure_settings.dart';
 import '../services/pairing_url.dart' show normalizeQrScanToServerUrl;
 import '../zcode/zcode_chat_store.dart';
 import '../zcode/zcode_keepalive_controller.dart';
+import '../zcode/zcode_notifier.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -23,14 +24,11 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final _serverUrlController = TextEditingController();
-  final _tokenController = TextEditingController();
-  bool _obscureToken = true;
   bool _loading = true;
   bool _pushEnabled = true;
   bool _backgroundKeepAliveEnabled = false;
   String _appVersion = '';
 
-  static const _serverUrlKey = 'server_url';
   static const _pushEnabledKey = 'push_notifications_enabled';
   static const _backgroundKeepAliveEnabledKey = 'background_keepalive_enabled';
 
@@ -43,17 +41,15 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _serverUrlController.dispose();
-    _tokenController.dispose();
     super.dispose();
   }
 
   Future<void> _loadSavedValues() async {
     final prefs = await SharedPreferences.getInstance();
     final package = await PackageInfo.fromPlatform();
-    _serverUrlController.text = prefs.getString(_serverUrlKey) ?? '';
     _pushEnabled = prefs.getBool(_pushEnabledKey) ?? true;
     _backgroundKeepAliveEnabled =
-      prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
+        prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
     if (!mounted) return;
     setState(() {
       _appVersion = '${package.version}+${package.buildNumber}';
@@ -61,65 +57,25 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  Future<void> _saveValues() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_serverUrlKey, _serverUrlController.text.trim());
-    if (_tokenController.text.trim().isNotEmpty) {
-      await SecureSettings.setAuthToken(_tokenController.text.trim());
-    }
-  }
-
-  void _connect() {
-    _connectSafely();
-  }
+  void _connect() => unawaited(_connectSafely());
 
   Future<void> _connectSafely() async {
-    final serverUrl = _serverUrlController.text.trim();
-    if (serverUrl.isEmpty) return;
-
-    final uri = _parseAndValidateServerUrl(serverUrl);
-    if (uri == null) return;
-
-    final token = _tokenController.text.trim().isNotEmpty
-        ? _tokenController.text.trim()
-        : await SecureSettings.getAuthToken();
-
-    await _saveValues();
-
-    final params = Map<String, String>.from(uri.queryParameters);
-    params['role'] = 'mobile';
-    if (token.isNotEmpty) {
-      params['token'] = token;
-    }
-    final fullUrl = uri.replace(queryParameters: params).toString();
-    ConnectionManager.instance.connect(fullUrl);
-
-    // 返回首页（LandingPage），清除导航栈
-    if (mounted) {
+    final pairingUrl = _parsePairingUrl(_serverUrlController.text);
+    if (pairingUrl == null) return;
+    final connected = await ConnectionManager.instance.connect(pairingUrl);
+    if (mounted && connected) {
       Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
     }
   }
 
-  Uri? _parseAndValidateServerUrl(String raw) {
-    // 配对链接（https://…/pair?sid=..&hash=..）与扫码结果同构：
-    // 先归一化升级为 wss 再校验，手动粘贴不再被「只认 wss」误拒
-    if (!raw.trimLeft().toLowerCase().startsWith('ws')) {
-      final normalized = normalizeQrScanToServerUrl(raw);
-      if (normalized != null) raw = normalized;
-    }
-    final uri = Uri.tryParse(raw);
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      _showConnectionError('服务器地址格式不正确');
+  String? _parsePairingUrl(String raw) {
+    final normalized = normalizeQrScanToServerUrl(raw.trim());
+    if (normalized == null) {
+      _showConnectionError('请输入桌面端生成的配对链接');
       return null;
     }
-    if (uri.scheme == 'wss') return uri;
-    if (uri.scheme == 'ws' && _isLocalHost(uri.host)) return uri;
-    _showConnectionError('请使用 wss:// 连接；本机调试可使用 ws://localhost');
-    return null;
+    return normalized;
   }
-
-  bool _isLocalHost(String host) =>
-      host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
   void _showConnectionError(String message) {
     if (!mounted) return;
@@ -134,7 +90,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _togglePushNotifications(bool value) async {
     setState(() => _pushEnabled = value);
-    await PushWakeService.instance.setEnabled(value);
+    await ZcodeNotifier.instance.setEnabled(value);
   }
 
   Future<void> _toggleBackgroundKeepAlive(bool value) async {
@@ -148,8 +104,10 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgPrimary,
-        title: Text('清空本地缓存？',
-            style: TextStyle(color: colors.textPrimary),),
+        title: Text(
+          '清空本地缓存？',
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           '将清除手机端所有已缓存的会话与消息。'
           '若当前已连接桌面，会立即重新同步；否则下次连接时再同步。',
@@ -158,13 +116,17 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('取消',
-                style: TextStyle(color: colors.textSecondary),),
+            child: Text(
+              '取消',
+              style: TextStyle(color: colors.textSecondary),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('清空',
-                style: TextStyle(color: colors.accent),),
+            child: Text(
+              '清空',
+              style: TextStyle(color: colors.accent),
+            ),
           ),
         ],
       ),
@@ -193,8 +155,10 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(builder: (context) => const QrScannerPage()),
     );
     if (result != null && result.isNotEmpty && mounted) {
-      final isWebSocket = result.startsWith('wss://') || result.startsWith('ws://');
-      final isHttp = result.startsWith('https://') || result.startsWith('http://');
+      final isWebSocket =
+          result.startsWith('wss://') || result.startsWith('ws://');
+      final isHttp =
+          result.startsWith('https://') || result.startsWith('http://');
       if (!isWebSocket && !isHttp) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -204,49 +168,11 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         return;
       }
-      try {
-        // 新配对链接（sid+hash）：scheme 升级后原样填入地址栏，链接即完整
-        // 凭据，不走旧 token 提取/剥参（剥掉 sid/hash 会直接配对失败）
-        final pairingUrl = normalizeQrScanToServerUrl(result);
-        if (pairingUrl != null) {
-          final validated = _parseAndValidateServerUrl(pairingUrl);
-          if (validated == null) return;
-          _serverUrlController.text = pairingUrl;
-          _tokenController.text = '';
-          setState(() {});
-          _saveValues();
-          _connect();
-          return;
-        }
-        final uri = Uri.parse(result);
-        // Extract token from QR code URL query params
-        final token = uri.queryParameters['token'] ?? '';
-        // Convert http/https → ws/wss for WebSocket; strip token from URL
-        // (token goes in the separate token field, _connect() re-adds it)
-        final wsScheme = uri.scheme == 'https'
-            ? 'wss'
-            : uri.scheme == 'http'
-                ? 'ws'
-                : uri.scheme;
-        final serverUrl = uri
-            .replace(scheme: wsScheme, queryParameters: {})
-            .toString();
-        final validated = _parseAndValidateServerUrl(serverUrl);
-        if (validated == null) return;
-        _serverUrlController.text = serverUrl;
-        _tokenController.text = token;
-        setState(() {});
-        _saveValues();
-        _connect();
-        // _connect() already navigates to LandingPage
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('二维码内容无法解析'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      final pairingUrl = _parsePairingUrl(result);
+      if (pairingUrl == null) return;
+      _serverUrlController.text = pairingUrl;
+      setState(() {});
+      await _connectSafely();
     }
   }
 
@@ -266,9 +192,9 @@ class _SettingsPageState extends State<SettingsPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // -- Server URL field with scan button --
+                // -- Pairing link field with scan button --
                 Text(
-                  '服务器地址',
+                  '配对链接',
                   style: TextStyle(color: colors.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
@@ -279,7 +205,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         controller: _serverUrlController,
                         style: TextStyle(color: colors.textPrimary),
                         decoration: InputDecoration(
-                          hintText: 'wss://5945.top/relay/',
+                          hintText: 'https://…/pair?sid=…&hash=…',
                           hintStyle: TextStyle(color: colors.textMuted),
                           filled: true,
                           fillColor: colors.bgSecondary,
@@ -296,50 +222,15 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      icon: Icon(Icons.qr_code_scanner,
-                          color: colors.accent, size: 28,),
+                      icon: Icon(
+                        Icons.qr_code_scanner,
+                        color: colors.accent,
+                        size: 28,
+                      ),
                       onPressed: _scanQrCode,
                       tooltip: '扫描二维码',
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
-
-                // -- Token field --
-                Text(
-                  'Token',
-                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _tokenController,
-                  obscureText: _obscureToken,
-                  style: TextStyle(color: colors.textPrimary),
-                  decoration: InputDecoration(
-                    hintText: '输入连接令牌',
-                    hintStyle: TextStyle(color: colors.textMuted),
-                    filled: true,
-                    fillColor: colors.bgSecondary,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
-                    ),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscureToken
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color: colors.textSecondary,
-                      ),
-                      onPressed: () {
-                        setState(() => _obscureToken = !_obscureToken);
-                      },
-                    ),
-                  ),
                 ),
                 const SizedBox(height: 24),
 
@@ -408,8 +299,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                   Text(
                                     '当前状态: ',
                                     style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontSize: 14,),
+                                      color: colors.textSecondary,
+                                      fontSize: 14,
+                                    ),
                                   ),
                                   Text(
                                     state.label,
@@ -444,13 +336,19 @@ class _SettingsPageState extends State<SettingsPage> {
 
                 // -- Push notification toggle --
                 SwitchListTile(
-                  title: Text('推送通知',
-                      style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),),
+                  title: Text(
+                    '推送通知',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                    ),
+                  ),
                   subtitle: Text(
-                  'AI 工作区完成时发送通知，并在点开后快速重连',
-                  style: TextStyle(
-                    color: colors.textSecondary, fontSize: 13,),
+                    'AI 工作区完成时发送通知，并在点开后快速重连',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   value: _pushEnabled,
                   activeTrackColor: colors.accent.withValues(alpha: 0.4),
@@ -462,13 +360,19 @@ class _SettingsPageState extends State<SettingsPage> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 ),
                 SwitchListTile(
-                  title: Text('后台保持连接',
-                      style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),),
+                  title: Text(
+                    '后台保持连接',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                    ),
+                  ),
                   subtitle: Text(
                     '切到后台后启用常驻通知与前台服务，尽量保持 Relay 在线',
                     style: TextStyle(
-                        color: colors.textSecondary, fontSize: 13,),
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   value: _backgroundKeepAliveEnabled,
                   activeTrackColor: colors.accent.withValues(alpha: 0.4),
@@ -493,17 +397,23 @@ class _SettingsPageState extends State<SettingsPage> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: ListTile(
-                    leading: Icon(Icons.cleaning_services_outlined,
-                        color: colors.accent,),
+                    leading: Icon(
+                      Icons.cleaning_services_outlined,
+                      color: colors.accent,
+                    ),
                     title: Text(
                       '清空本地缓存',
                       style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
                     ),
                     subtitle: Text(
                       '清除手机端缓存的消息和会话元数据；下次打开会从桌面端重新同步',
                       style: TextStyle(
-                          color: colors.textSecondary, fontSize: 12,),
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
                     ),
                     onTap: _confirmAndClearCache,
                     shape: RoundedRectangleBorder(
@@ -530,9 +440,24 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       child: Row(
                         children: [
-                          _themeButton('跟随系统', ThemeMode.system, currentMode, colors),
-                          _themeButton('浅色', ThemeMode.light, currentMode, colors),
-                          _themeButton('深色', ThemeMode.dark, currentMode, colors),
+                          _themeButton(
+                            '跟随系统',
+                            ThemeMode.system,
+                            currentMode,
+                            colors,
+                          ),
+                          _themeButton(
+                            '浅色',
+                            ThemeMode.light,
+                            currentMode,
+                            colors,
+                          ),
+                          _themeButton(
+                            '深色',
+                            ThemeMode.dark,
+                            currentMode,
+                            colors,
+                          ),
                         ],
                       ),
                     );
@@ -552,9 +477,21 @@ class _SettingsPageState extends State<SettingsPage> {
                   builder: (context, currentAccent, _) {
                     return Row(
                       children: [
-                        _accentButton('紫色', 'purple', const Color(0xFF7C3AED), currentAccent, colors),
+                        _accentButton(
+                          '紫色',
+                          'purple',
+                          const Color(0xFF7C3AED),
+                          currentAccent,
+                          colors,
+                        ),
                         const SizedBox(width: 8),
-                        _accentButton('绿色', 'green', const Color(0xFF10B981), currentAccent, colors),
+                        _accentButton(
+                          '绿色',
+                          'green',
+                          const Color(0xFF10B981),
+                          currentAccent,
+                          colors,
+                        ),
                       ],
                     );
                   },
@@ -567,7 +504,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   stream: ConnectionManager.instance.stateStream,
                   initialData: ConnectionManager.instance.state,
                   builder: (context, connSnap) {
-                    final connState = connSnap.data ?? WsConnectionState.disconnected;
+                    final connState =
+                        connSnap.data ?? WsConnectionState.disconnected;
                     return StreamBuilder<String?>(
                       stream: ConnectionManager.instance.desktopIdentityStream,
                       initialData: ConnectionManager.instance.desktopIdentity,
@@ -589,13 +527,17 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('桌面端',
-                                  style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,),),
+                              Text(
+                                '桌面端',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                               const SizedBox(height: 8),
-                              if (connState == WsConnectionState.connected && identity != null)
+                              if (connState == WsConnectionState.connected &&
+                                  identity != null)
                                 Row(
                                   children: [
                                     Container(
@@ -611,7 +553,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                       desktop?.platform != null
                                           ? '$identity · ${desktop!.platform}'
                                           : identity,
-                                      style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 14,
+                                      ),
                                     ),
                                   ],
                                 )
@@ -651,7 +596,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       .instance.selectedWorkspacePath;
                                   if (wsPath != null &&
                                       wsPath.isNotEmpty &&
-                                      connState == WsConnectionState.connected) {
+                                      connState ==
+                                          WsConnectionState.connected) {
                                     return Padding(
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
@@ -659,7 +605,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                             .replaceAll('\\', '/')
                                             .split('/')
                                             .last,
-                                        style: TextStyle(color: colors.textMuted, fontSize: 12),
+                                        style: TextStyle(
+                                          color: colors.textMuted,
+                                          fontSize: 12,
+                                        ),
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     );
@@ -690,21 +639,36 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _themeButton(String label, ThemeMode mode, ThemeMode current, AppColors colors) {
+  Widget _themeButton(
+    String label,
+    ThemeMode mode,
+    ThemeMode current,
+    AppColors colors,
+  ) {
     final selected = mode == current;
     return Expanded(
       child: GestureDetector(
         onTap: () async {
           themeNotifier.value = mode;
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('theme_mode', mode == ThemeMode.light ? 'light' : mode == ThemeMode.dark ? 'dark' : 'system');
+          await prefs.setString(
+            'theme_mode',
+            mode == ThemeMode.light
+                ? 'light'
+                : mode == ThemeMode.dark
+                    ? 'dark'
+                    : 'system',
+          );
         },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? colors.accent.withValues(alpha: 0.15) : Colors.transparent,
+            color: selected
+                ? colors.accent.withValues(alpha: 0.15)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: selected ? Border.all(color: colors.accent, width: 1.5) : null,
+            border:
+                selected ? Border.all(color: colors.accent, width: 1.5) : null,
           ),
           child: Text(
             label,
@@ -720,7 +684,13 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _accentButton(String label, String accent, Color color, String current, AppColors colors) {
+  Widget _accentButton(
+    String label,
+    String accent,
+    Color color,
+    String current,
+    AppColors colors,
+  ) {
     final selected = accent == current;
     return Expanded(
       child: GestureDetector(
@@ -732,7 +702,8 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? color.withValues(alpha: 0.15) : Colors.transparent,
+            color:
+                selected ? color.withValues(alpha: 0.15) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: selected ? Border.all(color: color, width: 1.5) : null,
           ),
