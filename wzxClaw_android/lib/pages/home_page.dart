@@ -733,7 +733,15 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                _buildWorkspaceChip(colors),
+                // 工作区 + 分支选择：只出现在新建会话页
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildWorkspaceChip(colors),
+                    const SizedBox(width: 10),
+                    _buildBranchChip(colors),
+                  ],
+                ),
                 const SizedBox(height: 36),
                 Wrap(
                   spacing: 10,
@@ -1415,26 +1423,13 @@ class _ChatPageState extends State<ChatPage> {
             ? keyboardInset
             : MediaQuery.paddingOf(context).bottom;
 
-        final busy = _isStreaming || _isWaiting;
-
         return AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
           padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
           child: Column(children: [
-            // 工作区/分支胶囊行：生成中收起（V3 规格）
-            if (isConnected && !busy)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-                child: Row(
-                  children: [
-                    _buildWorkspaceChip(colors),
-                    const SizedBox(width: 8),
-                    _buildBranchChip(colors),
-                  ],
-                ),
-              ),
-            // 消息排队条：流式期间发送的内容在此排队（↑立即/编辑/删除/拖拽）
+            // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
+            // 语义未定，先不暴露——用户 2026-09-17 定）
             _buildSendQueueStrip(colors),
             _buildComposerContainer(colors, isConnected),
           ],),
