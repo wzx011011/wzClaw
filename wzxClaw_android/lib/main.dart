@@ -5,9 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_colors.dart';
 import 'pages/files_placeholder_page.dart';
+import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
+import 'services/goal_store.dart';
 import 'services/push_wake_service.dart';
 import 'zcode/zcode_keepalive_controller.dart';
 import 'zcode/zcode_notifier.dart';
@@ -35,6 +37,7 @@ void main() async {
   // PushWakeService init (notification channel setup, permission request) is not
   // needed before the first frame — defer so runApp() is called immediately.
   unawaited(PushWakeService.instance.initialize());
+  GoalStore.instance; // 尽早构建（面板打开即有实例）
   // ZCode 任务完成通知：渠道创建 + 权限申请（幂等；当前聊天栈
   // services/chat_store 的 turn done 也会调用它，不再依赖 zcode 桌面注册表先加载）
   unawaited(ZcodeNotifier.instance.initialize());
@@ -104,6 +107,7 @@ class WzxClawApp extends StatelessWidget {
               routes: {
                 '/': (context) => const LandingPage(),
                 '/chat': (context) => const ChatPage(),
+                '/goal-panel': (context) => const GoalPanelPage(),
                 '/settings': (context) => const SettingsPage(),
                 // app-server 未实测到文件树/读取接口；保留旧深链但不再触发会超时的旧协议。
                 '/files': (context) => const FilesPlaceholderPage(),
