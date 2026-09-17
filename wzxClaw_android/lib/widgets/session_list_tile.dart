@@ -7,6 +7,7 @@ import '../zcode/zcode_chat_store.dart';
 /// R1 换接线：数据源 = ZcodeSessionMeta（引擎 session/list 实测字段）。
 /// 引擎无 rename/delete/本地消息数概念——相关 UI 随旧栈退役（D5 显式降级）。
 /// [pinned] = 本地置顶（SharedPreferences 记忆，非引擎能力）。
+/// [busy] = 正在处理（转圈）；[resultDot] = 已完成待查看（绿点）。
 class SessionListTile extends StatelessWidget {
   const SessionListTile({
     super.key,
@@ -14,12 +15,16 @@ class SessionListTile extends StatelessWidget {
     required this.isActive,
     required this.onTap,
     this.pinned = false,
+    this.busy = false,
+    this.resultDot = false,
   });
 
   final ZcodeSessionMeta session;
   final bool isActive;
   final VoidCallback onTap;
   final bool pinned;
+  final bool busy;
+  final bool resultDot;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +51,29 @@ class SessionListTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      if (running) ...[
+                      // 状态提示（标题前）：处理中转圈 > 完成绿点 >
+                      // 引擎 running 脉冲点
+                      if (busy) ...[
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            color: colors.accent,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ] else if (resultDot) ...[
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: colors.success,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ] else if (running) ...[
                         _RunningDot(color: colors.success),
                         const SizedBox(width: 5),
                       ],

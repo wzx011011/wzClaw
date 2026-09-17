@@ -27,6 +27,11 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
   Set<String> _archivedIds = {};
   bool _showArchived = false;
 
+  // 会话状态指示：最近一次构建时在跑的会话 / 完成 待查看的绿点
+  // （内存态——应用重启后绿点不追溯，正在跑的由 store 实时状态恢复）
+  final Set<String> _busySeen = {};
+  final Set<String> _resultDots = {};
+
   @override
   void initState() {
     super.initState();
@@ -527,6 +532,21 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 .toList();
 
             final activeId = store.activeSessionId;
+
+            // 状态转换跟踪：运行中 → 记住；从运行转为非运行 → 挂绿点
+            // （点开会话时清除）。绿点只在「看过它跑」的前提下出现，
+            // 不伪造官方的云端未读语义。
+            for (final s in sessions) {
+              final busy = store.isSessionBusy(s.sessionId) ||
+                  s.status == 'running';
+              if (busy) {
+                _busySeen.add(s.sessionId);
+                _resultDots.remove(s.sessionId);
+              } else if (_busySeen.remove(s.sessionId)) {
+                _resultDots.add(s.sessionId);
+              }
+            }
+
             Widget mainList;
             if (sessions.isEmpty) {
               final allArchived = _archivedIds.isNotEmpty;
@@ -617,6 +637,8 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                       child: SessionListTile(
                         session: session,
                         pinned: _pinnedIds.contains(session.sessionId),
+                        busy: store.isSessionBusy(session.sessionId),
+                        resultDot: _resultDots.contains(session.sessionId),
                         isActive: session.sessionId == activeId,
                         onTap: () => _onSessionTap(context, session),
                       ),
@@ -695,7 +717,9 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     ZcodeSessionMeta session,
   ) async {
     // 统一入口：openSession（materialize + 订阅 + 补放）；抽屉先收起，
-    // 拉取在后台继续
+    // 拉取在后台继续。点开即消费完成绿点。
+    _resultDots.remove(session.sessionId);
+    _busySeen.remove(session.sessionId);
     unawaited(ZcodeChatStore.instance.openSession(session.sessionId));
     if (context.mounted) Navigator.pop(context);
   }

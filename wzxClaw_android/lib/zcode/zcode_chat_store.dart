@@ -301,6 +301,14 @@ class ZcodeChatStore extends ChangeNotifier {
 
   bool get isStreaming => _activeState?.isStreaming ?? false;
 
+  /// 该会话是否正在本进程内运行（流式/等待中；后台会话同样覆盖）。
+  /// 抽屉状态指示用——meta.status 跨进程可能 stale（实测 running 显示
+  /// 为 idle），只有本进程状态是权威实时的。
+  bool isSessionBusy(String sessionId) {
+    final s = _states[sessionId];
+    return s != null && (s.isStreaming || s.isWaitingForResponse);
+  }
+
   /// 当前视口会话是否正被桌面端应用运行（-32004；ChatPage 显示状态条用）
   bool get remoteActiveElsewhere =>
       _activeState?.remoteActiveElsewhere ?? false;
