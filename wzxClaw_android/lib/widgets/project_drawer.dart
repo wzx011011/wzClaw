@@ -21,22 +21,25 @@ class ProjectDrawer extends StatefulWidget {
 
 class _ProjectDrawerState extends State<ProjectDrawer> {
   static const _kPinnedKey = 'wzxclaw-zcode-pinned-sessions';
+  static const _kArchivedKey = 'wzxclaw-zcode-archived-sessions';
 
   Set<String> _pinnedIds = {};
+  Set<String> _archivedIds = {};
+  bool _showArchived = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPins();
+    _loadLocalState();
   }
 
-  Future<void> _loadPins() async {
+  Future<void> _loadLocalState() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    setState(
-      () => _pinnedIds =
-          (prefs.getStringList(_kPinnedKey) ?? const []).toSet(),
-    );
+    setState(() {
+      _pinnedIds = (prefs.getStringList(_kPinnedKey) ?? const []).toSet();
+      _archivedIds = (prefs.getStringList(_kArchivedKey) ?? const []).toSet();
+    });
   }
 
   Future<void> _togglePin(String sessionId) async {
@@ -46,6 +49,16 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     await prefs.setStringList(_kPinnedKey, next.toList());
     if (!mounted) return;
     setState(() => _pinnedIds = next);
+  }
+
+  /// 归档 = 本地隐藏（引擎无归档概念）：主列表不显示，收进「已归档」折叠区
+  Future<void> _toggleArchive(String sessionId) async {
+    final next = Set<String>.from(_archivedIds);
+    if (!next.remove(sessionId)) next.add(sessionId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kArchivedKey, next.toList());
+    if (!mounted) return;
+    setState(() => _archivedIds = next);
   }
 
   @override
@@ -508,20 +521,24 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
           listenable: ZcodeChatStore.instance,
           builder: (context, _) {
             final store = ZcodeChatStore.instance;
-            final sessions = store.sessions;
+            // 主列表 = 未归档会话（归档的收进底部折叠区）
+            final sessions = store.sessions
+                .where((s) => !_archivedIds.contains(s.sessionId))
+                .toList();
 
+            final activeId = store.activeSessionId;
+            Widget mainList;
             if (sessions.isEmpty) {
-              return Padding(
+              final allArchived = _archivedIds.isNotEmpty;
+              mainList = Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Text(
-                  '暂无会话记录\n连接大脑节点后自动加载',
+                  allArchived ? '会话已全部归档\n可在下方展开查看' : '暂无会话记录\n连接大脑节点后自动加载',
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
-            }
-
-            final activeId = store.activeSessionId;
+            } else {
             // 按工作区分组（对齐官方移动端）：组 = workspaceKey（缺省回退
             // workspacePath / 未分组）；组内保持引擎排序（新→旧），
             // 组间按各组最新会话时间排序
@@ -544,7 +561,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             final orderedKeys = groups.keys.toList()
               ..sort((a, b) => newest(groups[b]!).compareTo(newest(groups[a]!)));
 
-            return Column(
+            mainList = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (final key in orderedKeys) ...[
@@ -584,6 +601,12 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                           onTap: () => _togglePin(session.sessionId),
                         ),
                         SwipeAction(
+                          label: '归档',
+                          icon: Icons.archive_outlined,
+                          color: const Color(0xFF8B5CF6),
+                          onTap: () => _toggleArchive(session.sessionId),
+                        ),
+                        SwipeAction(
                           label: '结束',
                           icon: Icons.stop_circle_outlined,
                           color: colors.error,
@@ -599,6 +622,66 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                       ),
                     ),
                 ],
+              ],
+            );
+            }
+
+            // ── 已归档折叠区：归档会话本地隐藏于此，可取消归档或直接打开 ──
+            final archivedSessions = store.sessions
+                .where((s) => _archivedIds.contains(s.sessionId))
+                .toList()
+              ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                mainList,
+                if (archivedSessions.isNotEmpty)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkWell(
+                        onTap: () =>
+                            setState(() => _showArchived = !_showArchived),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                          child: Row(children: [
+                            Icon(
+                              _showArchived
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 14,
+                              color: colors.textMuted,
+                            ),
+                            const SizedBox(width: 6),
+                            Text('已归档 ${archivedSessions.length}',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.textMuted,),),
+                          ],),
+                        ),
+                      ),
+                      if (_showArchived)
+                        for (final session in archivedSessions)
+                          SwipeActionsTile(
+                            actions: [
+                              SwipeAction(
+                                label: '取消归档',
+                                icon: Icons.unarchive_outlined,
+                                color: colors.accent,
+                                onTap: () =>
+                                    _toggleArchive(session.sessionId),
+                              ),
+                            ],
+                            child: SessionListTile(
+                              session: session,
+                              isActive: session.sessionId == activeId,
+                              onTap: () => _onSessionTap(context, session),
+                            ),
+                          ),
+                    ],
+                  ),
               ],
             );
           },
