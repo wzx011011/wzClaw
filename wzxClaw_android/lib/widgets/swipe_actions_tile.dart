@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_colors.dart';
+
 /// 左滑操作定义
 class SwipeAction {
   const SwipeAction({
@@ -15,7 +17,8 @@ class SwipeAction {
   final VoidCallback onTap;
 }
 
-/// 飞书式左滑操作瓦片：向左拖动露出右侧操作按钮，松手吸附开/合。
+/// 飞书式左滑操作瓦片：向左拖动时右侧按钮**随露出比例渐进伸缩**
+/// （颜色加深、图标文字放大），松手过半吸附全开、否则收合。
 /// 垂直滚动不受影响（仅注册水平拖动手势）；打开时点按内容区先收起。
 class SwipeActionsTile extends StatefulWidget {
   const SwipeActionsTile({
@@ -25,7 +28,7 @@ class SwipeActionsTile extends StatefulWidget {
     this.onOpenedChanged,
   });
 
-  /// 依次从左到右排列（最靠右的离内容最近，符合飞书习惯）
+  /// 依次从左到右排列（最靠右的离内容最近，最先露出）
   final List<SwipeAction> actions;
   final Widget child;
 
@@ -60,42 +63,25 @@ class _SwipeActionsTileState extends State<SwipeActionsTile> {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    // 已露出宽度（px）：随手指实时变化，驱动按钮渐进伸缩
+    final revealed = -_dx.clamp(-_maxSwipe, 0.0);
     return Stack(
       children: [
-        // 背景：右侧操作按钮
+        // 背景：右侧操作按钮——颜色加深、图标文字随露出比例伸缩长大
         Positioned.fill(
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              for (final action in widget.actions)
-                GestureDetector(
-                  onTap: () {
-                    _snapTo(0);
-                    action.onTap();
-                  },
-                  child: Container(
-                    width: _actionWidth,
-                    color: action.color,
-                    alignment: Alignment.center,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(action.icon, size: 20, color: Colors.white),
-                        const SizedBox(height: 4),
-                        Text(action.label,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12,),),
-                      ],
-                    ),
-                  ),
-                ),
+              for (var i = 0; i < widget.actions.length; i++)
+                _buildActionBg(i, widget.actions[i], revealed),
             ],
           ),
         ),
         // 前景内容：水平拖动平移。必须自带不透明底色——瓦片本身透明，
         // 否则合上时背后按钮直接透出（2026-09-17 真机事故）
         AnimatedContainer(
-          duration: _dragging ? Duration.zero : const Duration(milliseconds: 150),
+          duration:
+              _dragging ? Duration.zero : const Duration(milliseconds: 150),
           curve: Curves.easeOutCubic,
           transform: Matrix4.translationValues(_dx, 0, 0),
           color: colors.bgPrimary,
@@ -115,6 +101,40 @@ class _SwipeActionsTileState extends State<SwipeActionsTile> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 单个操作按钮背景：第 index 个（从左数）需要露出越过
+  /// (N-1-index)*72px 才开始显现，随露出进度伸缩（透明度+缩放）
+  Widget _buildActionBg(int index, SwipeAction action, double revealed) {
+    final start = (widget.actions.length - 1 - index) * _actionWidth;
+    final t = ((revealed - start) / _actionWidth).clamp(0.0, 1.0);
+    return GestureDetector(
+      onTap: () {
+        _snapTo(0);
+        action.onTap();
+      },
+      child: Container(
+        width: _actionWidth,
+        color: action.color.withValues(alpha: 0.35 + 0.65 * t),
+        alignment: Alignment.center,
+        child: Opacity(
+          opacity: t,
+          child: Transform.scale(
+            scale: 0.55 + 0.45 * t,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(action.icon, size: 20, color: Colors.white),
+                const SizedBox(height: 4),
+                Text(action.label,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 12,),),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
