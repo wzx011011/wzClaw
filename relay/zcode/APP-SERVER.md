@@ -500,3 +500,19 @@ app-server 实现；无头容器部署需让引擎 cwd 指向一个含 `app-serv
 （`data.reason=X_GIT_FAILED`，git 非零退出或启动失败，message 为 stderr 首行）；未知
 x/ 方法为 `-32000`（ERR_UNHANDLED）。已知限制：companion 进程的 PATH 需含 git
 （计划任务环境实测可用；若无 git 报数值失败码，显性失败不静默）。
+
+
+## 附件入口实测（2026-09-17，probe-attach.js / probe-attach2.js）
+
+背景：官方图片部件形状（model-io 日志实测）为
+`{type:'image', image:<base64>, mediaType:'image/png'}`，用户消息 content
+为部件数组（text/image 交错）。
+
+| 实验 | 结果 |
+| --- | --- |
+| `session/send` content 传部件数组 | ❌ **-32602 ZodError**：`content: expected string, received array`——入口只收字符串 |
+| 图片落盘工作区 + 文本引用路径（"用 Read 读 red.png"） | ✅ **成立**：agent 调 Read → 引擎自动转 analyze_image（云端 URL）→ turn.terminal success |
+
+**结论（附件实施方案）**：手机附件一律走「上传落盘工作区 + 消息文本引用
+路径」，引擎侧 Read→视觉管线自洽。类型无关：任意文件可传可引用；
+图片/PDF/文本可被深度理解（模型模态决定），二进制为存档档。
