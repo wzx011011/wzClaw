@@ -61,6 +61,9 @@ flutter test           # 382 项
 #    versionCode 单调递增，手机上能看出是否最新版；
 # 2. 产物统一放 NAS `/volume1/share/zcode/`，文件名带版本：
 #    wzxClaw-android-release-vX.Y.Z.apk（不带版本的旧文件删掉，避免分不清）
+# 3. （2026-09-17 教训）被取消过的构建产物不可信——gradle 会在损坏增量上
+#    "续"出截断 zip（报成功但手机报解析错误）。取消后必须 flutter clean
+#    重建；上架前先 apksigner verify + zip 完整性检查，再 scp + 哈希比对
 flutter build apk --release
 
 # companion（PC 常驻节点）
