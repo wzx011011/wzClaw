@@ -71,6 +71,9 @@ class _ChatPageState extends State<ChatPage> {
   String? _lastThinking;
   String? _lastShownError;
 
+  /// 新任务态选择的思考档位：引擎无节点级默认档位，暂存到会话创建后补发
+  String? _pendingThoughtLevel;
+
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
   // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
   final List<_QueuedSend> _sendQueue = [];
@@ -281,7 +284,8 @@ class _ChatPageState extends State<ChatPage> {
     _scrollToBottom();
     // 直连栈：先建会话（引擎 create），成功后发首条
     await _store.newSession();
-    if (_store.activeSessionId == null) {
+    final newSid = _store.activeSessionId;
+    if (newSid == null) {
       // 失败不蒸发：排队来源回插队首（保持原顺序），输入来源回填输入框
       if (requeueOnFailure != null) {
         setState(() => _sendQueue.insert(0, requeueOnFailure));
@@ -298,6 +302,16 @@ class _ChatPageState extends State<ChatPage> {
         );
       }
       return;
+    }
+    // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息）
+    final pendingLevel = _pendingThoughtLevel;
+    if (pendingLevel != null) {
+      _pendingThoughtLevel = null;
+      try {
+        await ChatRuntimeService.instance.setThoughtLevel(newSid, pendingLevel);
+      } catch (e) {
+        debugPrint('[effort] 新会话补发思考档位失败: $e');
+      }
     }
     unawaited(_store.sendMessage(text));
   }
@@ -1543,11 +1557,14 @@ class _ChatPageState extends State<ChatPage> {
           onTap: isConnected ? _showAttachPopup : null,
         ),
         const Spacer(),
+        // 上下文用量：必须已有会话（新任务态不可点，语义对齐官方）
         iconBtn(
           key: _usageBtnKey,
           tip: '上下文用量',
           icon: Icons.donut_large,
-          onTap: isConnected ? _showUsagePopup : null,
+          onTap: isConnected && _store.activeSessionId != null
+              ? _showUsagePopup
+              : null,
         ),
         const SizedBox(width: 2),
         iconBtn(
@@ -1889,9 +1906,10 @@ class _ChatPageState extends State<ChatPage> {
   /// 引擎 resume 目录（会话内切换）。快照独有模型标注「快照」——可用性
   /// 未经引擎证实，点选走既有 setModel 链路失败会显性提示。
   /// [retryContent] 非空时（模型不可用错误卡片进入），切换成功后自动重发原文。
-  Future<void> _showModelPopup({String? retryContent}) async {
+  Future<void> _showModelPopup() async {
+    // 新任务态（无会话）也允许选模型：目录与默认模型是节点级（x/model/*），
+    // 选择落盘为节点默认、将要创建的会话应用（companion 实测语义）
     final sessionId = _store.activeSessionId;
-    if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     final catalogFuture = NodeCatalogService.instance.modelCatalog();
@@ -1973,9 +1991,6 @@ class _ChatPageState extends State<ChatPage> {
                               sessionId,
                               SessionModelUse(
                                   providerId: m.providerId, modelId: m.modelId,),
-                              retryContent,
-                              alsoSetDefault: catalog.defaultModel == null
-                                  || catalog.defaultModel!.key != m.key,
                             );
                           },
                           child: Padding(
@@ -2022,52 +2037,57 @@ class _ChatPageState extends State<ChatPage> {
             style: TextStyle(color: color, fontSize: 10,),),
       );
 
-  /// 应用模型选择：会话内 setModel →（可选）设为节点默认 → 提示 →
-  /// [retryContent] 非空时重发原文。设默认失败不回滚会话内切换（两者语义独立）。
+  /// 应用模型选择：有会话 → 会话内 setModel（非默认模型时顺带设节点默认）；
+  /// 无会话（新任务态）→ 仅落盘节点默认（新会话应用，companion 实测语义）。
+  /// [retryContent] 已随模型错误卡退役，恒为空。
   Future<void> _applyModelChoice(
-    String sessionId,
+    String? sessionId,
     SessionModelUse m,
-    String? retryContent, {
-    bool alsoSetDefault = false,
-  }) async {
+  ) async {
     try {
-      await ChatRuntimeService.instance
-          .setModel(sessionId, m.providerId, m.modelId,);
-      if (alsoSetDefault) {
+      if (sessionId != null) {
+        await ChatRuntimeService.instance
+            .setModel(sessionId, m.providerId, m.modelId);
+      }
+      var configuredDefault = false;
+      if (sessionId == null) {
+        // 新任务态：节点默认是新会话生效的唯一途径，必设
         try {
           await NodeCatalogService.instance.configureDefault(
               providerId: m.providerId, modelId: m.modelId,);
+          configuredDefault = true;
         } catch (e) {
-          debugPrint('[model] 设为节点默认失败（不影响本会话）: $e');
+          debugPrint('[model] 设为节点默认失败: $e');
         }
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(alsoSetDefault
-              ? '已切换到 ${m.modelId}，并设为节点默认'
-              : '已切换到 ${m.modelId}',),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),);
-      }
-      // 从「模型不可用」卡片进入：切完立即重发被阻塞的原文；仍被拒会再次
-      // 触发链上自动自愈并回卡片
-      if (retryContent != null && retryContent.isNotEmpty) {
-        await _store.sendMessage(retryContent);
+        final msg = sessionId == null
+            ? (configuredDefault
+                ? '已设为节点默认 ${m.modelId}，新会话生效'
+                : '设默认失败，请检查与大脑节点的连接')
+            : '已切换到 ${m.modelId}';
+        if (sessionId != null || configuredDefault) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(msg),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),);
+        }
       }
     } catch (e) {
       if (mounted) _runtimeErrorSnack(e);
     }
   }
 
-  /// 思考档位弹层：低/高/最高（对齐官方三档；枚举无读回方法，选中态仅在
-  /// 本次选择后标记，失败显性提示）
+  /// 思考档位弹层：低/高/最高（对齐官方三档）。会话内 = 引擎
+  /// session/setThoughtLevel；新任务态 = 暂存待应用档位，会话创建后自动补发
+  /// （引擎无节点级默认档位，只能会话级设置——已按实测协议确认）。
   Future<void> _showEffortPopup() async {
     final sessionId = _store.activeSessionId;
-    if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     const levels = [('低', 'low'), ('高', 'high'), ('最高', 'max')];
+    final current = _store.thoughtLevel;
     final chosen = await _showComposerSheet<String>(
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
@@ -2079,7 +2099,16 @@ class _ChatPageState extends State<ChatPage> {
                 dense: true,
                 title: Text(label,
                     style: TextStyle(
-                        color: colors.textPrimary, fontSize: 14,),),
+                        color: current == value
+                            ? colors.accent
+                            : colors.textPrimary,
+                        fontWeight: current == value
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        fontSize: 14,),),
+                trailing: current == value
+                    ? Icon(Icons.check, size: 18, color: colors.accent)
+                    : null,
                 onTap: () => Navigator.pop(ctx, value),
               ),
           ],
@@ -2087,6 +2116,17 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
     if (chosen == null) return;
+    if (sessionId == null) {
+      setState(() => _pendingThoughtLevel = chosen);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('思考档位将在新会话生效'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),);
+      }
+      return;
+    }
     try {
       await ChatRuntimeService.instance.setThoughtLevel(sessionId, chosen);
       if (mounted) {
