@@ -1380,6 +1380,7 @@ class _ChatPageState extends State<ChatPage> {
   // ── Input bar（V3 容器式：输入整行在上、工具栏在下；弹层自按钮向上展开） ──
 
   final GlobalKey _plusBtnKey = GlobalKey();
+  final GlobalKey _modeBtnKey = GlobalKey();
   final GlobalKey _usageBtnKey = GlobalKey();
   final GlobalKey _modelBtnKey = GlobalKey();
   final GlobalKey _effortBtnKey = GlobalKey();
@@ -1468,10 +1469,11 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 工具栏：左「+」，右「用量 · 模型 · 档位 · 发送/停止」。
-  /// 窄屏收纳：宽度不足时模式名收起为纯盾形图标（V3：图标组与发送永不移除）。
-  /// R1 降级（Q2）：权限模式按钮暂撤——四档 UI ↔ 引擎模式映射词典 R2 落地后恢复。
+  /// 工具栏：左「+ · 权限模式」，右「用量 · 模型 · 档位 · 发送/停止」。
+  /// 权限模式弹层直连栈化：展示引擎权威模式，选择经 store.setMode 直发。
   Widget _buildComposerToolbar(AppColors colors, bool isConnected) {
+    // 官方样式：完全访问激活色
+    const modeOrange = Color(0xFFE8A33D);
     final busy = _isStreaming || _isWaiting;
 
     Widget iconBtn({
@@ -1493,8 +1495,47 @@ class _ChatPageState extends State<ChatPage> {
           ),
         );
 
-    return LayoutBuilder(builder: (context, cons) {
-      return Row(children: [
+    // UI 四档 ↔ 引擎模式映射（词典同 CM._uiToServerMode；语义最近对应，
+    // 非等价：always-ask↔build、accept-edits↔edit；auto 显示回落 build）
+    const modeNames = {
+      'build': '变更前确认',
+      'edit': '自动编辑',
+      'plan': '计划模式',
+      'yolo': '完全访问',
+      'auto': '变更前确认',
+    };
+    final serverMode = _store.sessionMode;
+    final modeLabel = modeNames[serverMode] ?? '权限模式';
+    final modeColor = serverMode == 'yolo' ? modeOrange : colors.textSecondary;
+
+    return Row(children: [
+      iconBtn(
+        key: _plusBtnKey,
+        tip: '附加',
+        icon: Icons.add,
+        onTap: isConnected ? _showAttachPopup : null,
+      ),
+      const SizedBox(width: 4),
+      SizedBox(
+        key: _modeBtnKey,
+        height: 30,
+        child: IconButton(
+          onPressed: isConnected ? _showPermissionPopup : null,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          tooltip: '权限模式',
+          icon: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.security_outlined, size: 18, color: modeColor),
+            Text(modeLabel,
+                style: TextStyle(
+                    color: modeColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,),),
+            const SizedBox(width: 2),
+            Icon(Icons.expand_more, size: 13, color: modeColor),
+          ],),
+        ),
+      ),
+      const Spacer(),
         iconBtn(
           key: _plusBtnKey,
           tip: '附加',
@@ -1547,7 +1588,6 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
       ],);
-    },);
   }
 
   /// 输入区弹层统一骨架：底部抽屉（与工作区/分支抽屉同模式）。
@@ -1634,6 +1674,58 @@ class _ChatPageState extends State<ChatPage> {
     ).then((value) {
       if (value == 'commands') _showCommandSheet();
     });
+  }
+
+  /// 权限模式弹层（直连栈版）：展示引擎权威模式（state.updated 快照回填），
+  /// 选择经 store.setMode 直发。词典与 CM._uiToServerMode 同源——UI 四档 ↔
+  /// 引擎枚举语义最近对应（非等价：always-ask↔build、accept-edits↔edit），
+  /// auto 显示回落 build 档。
+  Future<void> _showPermissionPopup() async {
+    _inputFocusNode.unfocus();
+    const tiers = [
+      ('build', '变更前确认', '改文件前先问我。', Icons.pan_tool_outlined),
+      ('edit', '自动编辑', '自动编辑文件。', Icons.shield_outlined),
+      ('plan', '计划模式', '编辑前先出计划。', Icons.checklist_outlined),
+      ('yolo', '完全访问', '减少确认次数。', Icons.lock_open_outlined),
+    ];
+    final colors = AppColors.of(context);
+    final current = _store.sessionMode;
+    final chosen = await _showComposerSheet<String>(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (mode, label, subtitle, icon) in tiers)
+              ListTile(
+                dense: true,
+                leading: Icon(icon,
+                    size: 20,
+                    color: mode == current
+                        ? colors.accent
+                        : colors.textSecondary,),
+                title: Text(label,
+                    style: TextStyle(
+                        color: mode == current
+                            ? colors.accent
+                            : colors.textPrimary,
+                        fontWeight: mode == current
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        fontSize: 14,),),
+                subtitle: Text(subtitle,
+                    style: TextStyle(
+                        color: colors.textMuted, fontSize: 11,),),
+                trailing: mode == current
+                    ? Icon(Icons.check, size: 18, color: colors.accent)
+                    : null,
+                onTap: () => Navigator.pop(ctx, mode),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) unawaited(_store.setMode(chosen));
   }
 
   /// 上下文用量弹层：session/usage 实测数据。对齐官方「上下文容量」面板的
