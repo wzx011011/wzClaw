@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
 import 'package:highlight/highlight.dart' show highlight;
@@ -12,6 +13,7 @@ import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
 import '../services/app_restore_state.dart';
+import '../services/attachment_service.dart';
 import '../services/connection_manager.dart';
 import '../services/node_catalog_service.dart';
 import '../services/git_service.dart';
@@ -69,6 +71,46 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 新任务态选择的思考档位：引擎无节点级默认档位，暂存到会话创建后补发
   String? _pendingThoughtLevel;
+  String? _pendingPermissionMode;
+
+  /// 待发送附件：上传成功后路径会作为消息文本引用交给 agent 的 Read 工具。
+  final List<AttachmentUpload> _attachments = [];
+
+  String _composeOutgoing(String text, Iterable<AttachmentUpload> attachments) {
+    final refs = attachments
+        .map((a) => '[附件已上传到节点: ${a.nodePath}]')
+        .join('\n');
+    return refs.isEmpty ? text : '$refs\n$text';
+  }
+
+  void _removeSentAttachments(Iterable<AttachmentUpload> attachments) {
+    setState(() => _attachments.removeWhere(attachments.contains));
+  }
+
+  Future<void> _pickAndUploadAttachment({required bool camera}) async {
+    final upload = await AttachmentService.pickAndUpload(
+      source: camera ? ImageSource.camera : ImageSource.gallery,
+      onCreated: (record) {
+        if (mounted) setState(() => _attachments.add(record));
+      },
+      onChanged: (_) {
+        if (mounted) setState(() {});
+      },
+    );
+    if (upload != null && upload.error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(upload.error!),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _removeAttachment(AttachmentUpload attachment) {
+    setState(() => _attachments.remove(attachment));
+  }
 
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
   // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
@@ -224,21 +266,29 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _sendMessage() {
-    final text = _inputController.text.trim();
-    if (text.isEmpty) return;
     if (ConnectionManager.instance.state != WsConnectionState.connected) return;
+    final inputText = _inputController.text.trim();
+    final readyAttachments = _attachments.where((a) => a.done).toList();
+    if (inputText.isEmpty && readyAttachments.isEmpty) return;
+    final text = _composeOutgoing(inputText, readyAttachments);
     // 流式进行中：改为排队（对齐官方 ZCode「继续输入以排队后续修改」）
     if (_isStreaming || _isWaiting) {
       setState(() => _sendQueue.add(_QueuedSend(text)));
+      _removeSentAttachments(readyAttachments);
       _inputController.clear();
       return;
     }
     // Option A：没有活动会话 = 处于「新任务」欢迎态，首条消息触发建会话
     if (_store.activeSessionId == null) {
-      _startNewConversation(text);
+      _startNewConversation(
+        text,
+        attachments: readyAttachments,
+        retryText: inputText,
+      );
       return;
     }
     unawaited(_store.sendMessage(text));
+    _removeSentAttachments(readyAttachments);
     _inputController.clear();
     _scrollToBottom();
   }
@@ -275,6 +325,8 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _startNewConversation(
     String text, {
     _QueuedSend? requeueOnFailure,
+    List<AttachmentUpload> attachments = const [],
+    String? retryText,
   }) async {
     _inputController.clear();
     _scrollToBottom();
@@ -286,7 +338,7 @@ class _ChatPageState extends State<ChatPage> {
       if (requeueOnFailure != null) {
         setState(() => _sendQueue.insert(0, requeueOnFailure));
       } else {
-        _inputController.text = text;
+        _inputController.text = retryText ?? text;
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -306,7 +358,13 @@ class _ChatPageState extends State<ChatPage> {
       _pendingThoughtLevel = null;
       await _store.setThoughtLevel(pendingLevel);
     }
+    final pendingMode = _pendingPermissionMode;
+    if (pendingMode != null) {
+      _pendingPermissionMode = null;
+      await _store.setMode(pendingMode);
+    }
     unawaited(_store.sendMessage(text));
+    if (attachments.isNotEmpty) _removeSentAttachments(attachments);
   }
 
   Future<void> _editQueued(_QueuedSend item) async {
@@ -1475,6 +1533,20 @@ class _ChatPageState extends State<ChatPage> {
           curve: Curves.easeOutCubic,
           padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
           child: Column(children: [
+            if (_attachments.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (final attachment in _attachments)
+                      _AttachmentChip(
+                        attachment: attachment,
+                        onRemove: () => _removeAttachment(attachment),
+                      ),
+                  ],),
+                ),
+              ),
             // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
             // 语义未定，先不暴露——用户 2026-09-17 定）
             _buildSendQueueStrip(colors),
@@ -1679,27 +1751,33 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 「+」附加菜单：对齐官方四项。当前链路仅「/ 选择能力」真实可用，
-  /// 其余显式标注暂不支持，不做假入口（设计原则：不做假的成功响应）。
+  /// 「+」附加菜单：图片经 companion x/file/* 上传，路径作为消息引用发送。
+  /// 其他尚无底层实现的项目保持禁用，不提供伪入口。
   Future<void> _showAttachPopup() async {
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
     final items = [
-      ('添加附件', '暂不支持'),
-      ('使用 @ 添加上下文', '暂不支持'),
-      ('使用 / 选择能力', null),
-      ('使用 \$ 选择技能', '暂不支持'),
+      ('gallery', Icons.attach_file, '添加附件（图片）', null),
+      ('camera', Icons.photo_camera_outlined, '拍照附件', null),
+      ('commands', Icons.terminal, '使用 / 选择能力', null),
+      ('context', Icons.data_object, '使用 @ 添加上下文', '暂不支持'),
+      ('skill', Icons.bolt, r'使用 $ 选择技能', '暂不支持'),
     ];
-    await _showComposerSheet<String>(
+    await _showComposerSheet<void>(
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final (label, note) in items)
+            for (final (action, icon, label, note) in items)
               ListTile(
                 dense: true,
                 enabled: note == null,
+                leading: Icon(icon,
+                    size: 20,
+                    color: note == null
+                        ? colors.textPrimary
+                        : colors.textMuted,),
                 title: Row(children: [
                   Text(label,
                       style: TextStyle(
@@ -1716,16 +1794,21 @@ class _ChatPageState extends State<ChatPage> {
                 ],),
                 onTap: note == null
                     ? () {
-                        Navigator.pop(ctx, 'commands');
+                        Navigator.pop(ctx);
+                        if (action == 'gallery') {
+                          unawaited(_pickAndUploadAttachment(camera: false));
+                        } else if (action == 'camera') {
+                          unawaited(_pickAndUploadAttachment(camera: true));
+                        } else if (action == 'commands') {
+                          _showCommandSheet();
+                        }
                       }
                     : null,
               ),
           ],
         ),
       ),
-    ).then((value) {
-      if (value == 'commands') _showCommandSheet();
-    });
+    );
   }
 
   /// 权限模式弹层（直连栈版）：展示引擎权威模式（state.updated 快照回填），
@@ -1741,7 +1824,7 @@ class _ChatPageState extends State<ChatPage> {
       ('yolo', '完全访问', '减少确认次数。', Icons.lock_open_outlined),
     ];
     final colors = AppColors.of(context);
-    final current = _store.sessionMode;
+    final current = _pendingPermissionMode ?? _store.sessionMode;
     final chosen = await _showComposerSheet<String>(
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
@@ -1777,7 +1860,12 @@ class _ChatPageState extends State<ChatPage> {
         ),
       ),
     );
-    if (chosen != null) unawaited(_store.setMode(chosen));
+    if (chosen == null) return;
+    if (_store.activeSessionId == null) {
+      setState(() => _pendingPermissionMode = chosen);
+      return;
+    }
+    unawaited(_store.setMode(chosen));
   }
 
   /// 上下文用量弹层：session/usage 实测数据。对齐官方「上下文容量」面板的
@@ -2343,6 +2431,74 @@ class _ChatPageState extends State<ChatPage> {
 }
 
 // ── Custom code block builder with syntax highlight + copy ────────────
+
+class _AttachmentChip extends StatelessWidget {
+  const _AttachmentChip({required this.attachment, required this.onRemove});
+
+  final AttachmentUpload attachment;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 200),
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        border: Border.all(
+            color: attachment.error != null ? colors.error : colors.border,),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.insert_drive_file_outlined,
+              size: 13, color: colors.textMuted,),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(attachment.name,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colors.textPrimary, fontSize: 12,),),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            constraints: const BoxConstraints.tightFor(width: 24, height: 24),
+            padding: EdgeInsets.zero,
+            tooltip: '移除附件',
+            icon: Icon(Icons.close, size: 14, color: colors.textMuted),
+          ),
+        ],),
+        if (attachment.error != null)
+          Text(attachment.error!,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.error, fontSize: 10.5),)
+        else if (attachment.done)
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.check_circle, size: 11, color: colors.success),
+            const SizedBox(width: 3),
+            Text('已上传',
+                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
+          ],)
+        else
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            SizedBox(
+              width: 60,
+              child: LinearProgressIndicator(
+                value: attachment.progress,
+                minHeight: 3,
+                color: colors.accent,
+                backgroundColor: colors.border,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text('${(attachment.progress * 100).toStringAsFixed(0)}%',
+                style: TextStyle(color: colors.textMuted, fontSize: 10.5),),
+          ],),
+      ],),
+    );
+  }
+}
 
 /// 排队中的待发消息（见 _sendQueue）
 /// 回合块条目：一个回合内的有序消息切片（工具 + 助手文本，不含用户消息）
