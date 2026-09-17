@@ -59,6 +59,7 @@ class _SwipeActionsTileState extends State<SwipeActionsTile> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
     return Stack(
       children: [
         // 背景：右侧操作按钮
@@ -91,11 +92,13 @@ class _SwipeActionsTileState extends State<SwipeActionsTile> {
             ],
           ),
         ),
-        // 前景内容：水平拖动平移
+        // 前景内容：水平拖动平移。必须自带不透明底色——瓦片本身透明，
+        // 否则合上时背后按钮直接透出（2026-09-17 真机事故）
         AnimatedContainer(
           duration: _dragging ? Duration.zero : const Duration(milliseconds: 150),
           curve: Curves.easeOutCubic,
           transform: Matrix4.translationValues(_dx, 0, 0),
+          color: colors.bgPrimary,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onHorizontalDragStart: (_) => _dragging = true,
