@@ -25,11 +25,17 @@ NAS relay**（`wss://zcode.5945.top/ws` 烧入为默认值，可在设置里改�
   同目录单实例锁 `companion.lock` 保证与旧实例互斥。
 - **与旧计划任务二选一**：如果 `wzxClawZcodeCompanion` 计划任务还在跑，本 App
   启动会报 `ALREADY_RUNNING`（日志可见）。用本 App 前先停用/删除该计划任务。
-- **首启 ZCode 健康检查**：完整窗口只读检测本机独立安装的 ZCode 与 `~/.zcode`
+- **首启 ZCode 健康检查**：完整窗口只读检测本机 ZCode 与 `~/.zcode`
   的安全摘要，并实际启动短生命周期 app-server `session/list` 探针；只有探针
   通过后才连接 relay、生成二维码。API Key、OAuth、SSH/MCP 登录态、配对信息、
-  远程工作区、会话和日志绝不导入、展示或经 relay 传输。Companion 不下载、复制、
-  打包或分发 ZCode runtime，也不会改写 ZCode 文件。
+  远程工作区、会话和日志绝不导入、展示或经 relay 传输，也不会改写 ZCode 文件。
+- **runtime 三级回退（2026-09-17 策略更新）**：本机官方安装优先（宿主用同
+  目录 `ZCode.exe`，版本随官方更新）→ 安装包**内嵌 runtime**（extraResources
+  携带 `zcode.cjs` + 官方 packages，宿主为 Companion 自身 exe 的 Node 模式，
+  Electron 41 起 Node 含 `node:sqlite` 可承载）→ PATH `zcode`。内嵌仅限自用
+  安装包，**不公开分发**；登录态仍依赖 `~/.zcode`（未登录时 gate 给出引导）。
+  构建由 `scripts/prepare-runtime.js`（predist 钩子）自动完成，CI 无源时产出
+  无 runtime 形态，两种形态都被 `test:package` 双模式断言钉住。
 
 ## 开发与打包
 
