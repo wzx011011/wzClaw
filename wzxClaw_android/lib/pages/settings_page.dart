@@ -385,6 +385,45 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
 
+                // -- Connection diagnostics --
+                Text(
+                  '连接诊断',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.bgSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.network_check,
+                      color: colors.accent,
+                    ),
+                    title: Text(
+                      '查看连接日志与路径体检',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '连接尝试/失败原因一览；可测 IPv4/IPv6 可达性并复制报告上报',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/connection-diagnostics'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
                 // -- Clear local cache --
                 Text(
                   '本地数据',

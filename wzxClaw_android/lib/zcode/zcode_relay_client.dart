@@ -45,6 +45,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'zcode_pairing.dart';
+import 'connection_diagnostics.dart';
 
 /// 重连延迟上限（指数退避封顶）
 const int _kMaxReconnectMs = 60 * 1000;
@@ -144,9 +145,13 @@ class ZcodeRelayClient {
     final factory = _socketFactory ?? _defaultConnect;
     final WebSocketChannel socket;
     try {
-      socket = factory(Uri.parse(_pairing.relayWsUrl));
-    } catch (_) {
+      final uri = Uri.parse(_pairing.relayWsUrl);
+      ConnectionDiagnostics.instance.noteTarget(uri);
+      ConnectionDiagnostics.instance.record('尝试', '连接 ${uri.host}:${uri.port}');
+      socket = factory(uri);
+    } catch (e) {
       // 工厂同步抛错视作建连失败，走重连
+      ConnectionDiagnostics.instance.record('建连失败', '工厂抛错: $e');
       _scheduleReconnect();
       return;
     }
@@ -231,11 +236,13 @@ class ZcodeRelayClient {
   Future<void> _authInitWhenReady(WebSocketChannel socket) async {
     try {
       await socket.ready;
-    } catch (_) {
+    } catch (e) {
+      ConnectionDiagnostics.instance.record('建连失败', 'TLS/网络: $e');
       _onSocketClosed(socket); // 建连失败，走断线流程
       return;
     }
     if (_socket == socket) {
+      ConnectionDiagnostics.instance.record('已连接', '发送认证');
       _send({'type': 'auth_init', 'role': 'probe', 'device_sid': _pairing.sid});
     }
   }
@@ -277,6 +284,10 @@ class ZcodeRelayClient {
           // 原则把下一跳顶到长档，短档反复撞墙只会白刷拒绝日志。
           final code = msg['code']?.toString() ?? 'UNKNOWN';
           if (code == 'CAPACITY') _nextDelayFloorMs = 50 * 1000;
+          ConnectionDiagnostics.instance.record(
+            'relay拒绝',
+            '$code ${(msg['message'] ?? '请求被拒绝')}',
+          );
           _onRelayError?.call(
             code,
             (msg['message'] ?? '请求被拒绝').toString(),
@@ -297,6 +308,10 @@ class ZcodeRelayClient {
       case 'auth_ack':
       case 'pair_status_ack':
         final matched = msg['pair_status'] == 'matched';
+        ConnectionDiagnostics.instance.record(
+          '配对',
+          matched ? '成功' : '已认证，等待配对',
+        );
         _setState(
           matched ? ZcodeRelayState.matched : ZcodeRelayState.waiting,
           matched,
@@ -415,6 +430,10 @@ class ZcodeRelayClient {
   /// 断线统一处理（对端关闭 / 建连失败 / 流错误 / 死链主动关闭）
   void _onSocketClosed(WebSocketChannel socket) {
     if (_socket != socket) return; // 过期连接的事件，忽略
+    ConnectionDiagnostics.instance.record(
+      '断开',
+      '连接断开（已重试 $_reconnectAttempts 次）',
+    );
     _socket = null;
     _subscription?.cancel();
     _subscription = null;
@@ -433,6 +452,10 @@ class ZcodeRelayClient {
     final delay = _nextReconnectDelay();
     _scheduledReconnectDelay = delay;
     _reconnectAttempts++;
+    ConnectionDiagnostics.instance.record(
+      '重连',
+      '${delay.inMilliseconds}ms 后第 $_reconnectAttempts 次重试',
+    );
     _reconnectTimer = Timer(delay, () {
       _scheduledReconnectDelay = null;
       _reconnectTimer = null;
