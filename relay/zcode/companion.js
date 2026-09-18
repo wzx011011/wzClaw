@@ -117,7 +117,7 @@ function probeAppServer(resolved, { cwd, env, timeoutMs = 8000 } = {}) {
     const timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }), timeoutMs).unref();
     try {
       child = spawn(resolved.command, [...resolved.args, 'app-server', '--cwd', cwd], {
-        cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+        cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: true,
         env: runtimeProcessEnv(resolved, env),
       });
       child.stdout.setEncoding('utf8');
@@ -172,7 +172,8 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
   catch (error) { return { category: error.code === 'NOT_LOGGED_IN' ? 'not-logged-in' : 'auth-store-unreadable', source: resolved.source, version: versionText, detailCode: error.code, doctorWarning: doctor.ok ? null : doctor.code }; }
   // app-server 探针失败可能是偶发（子进程启动竞态/与桌面引擎的资源瞬时冲突，
   // 2026-09-17 GUI 实测同环境时通时断）：短间隔重试，偏向「多等」而非一票否决。
-  let probe = null; let attempt = 0; const maxAttempts = 3;
+  // 探针失败只延迟 descriptor 就绪（设备保持在线），最坏 6×2.5s≈15s 后如实上报。
+  let probe = null; let attempt = 0; const maxAttempts = 6;
   for (;;) {
     attempt += 1;
     probe = await probeAppServer(resolved, {
@@ -180,7 +181,7 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
       env: { ...env, ANTHROPIC_API_KEY: token },
     });
     if (probe.ok || attempt >= maxAttempts) break;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1200).unref());
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 2500).unref());
   }
   if (probe.attempts === undefined) probe.attempts = attempt;
   return probe.ok
@@ -232,8 +233,13 @@ class AppServerBridge {
     this.spawnChild();
   }
   spawnChild() {
+    // detached：Electron 壳（GUI）父进程下，非 detached 的子 runtime 会出现
+    // stdio 黑洞——进程活着但不吐任何帧（2026-09-17 实测 session/list 35s
+    // 超时、gate 预检静默 EXIT_1）；detached 给子进程独立进程组后消失。
+    // node CLI 父进程下该标志无副作用。宿主 GUI 关闭时 stop() 会显式杀子进程。
     const child = spawn(this.command, [...this.args, 'app-server', '--cwd', this.cwd], {
       cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: this.env,
+      detached: true, windowsHide: true,
     });
     this.child = child; this.buffer = '';
     // setEncoding 让 Node 在流层面按 UTF-8 边界解码：多字节中文跨 chunk 时
@@ -334,6 +340,10 @@ class AppServerBridge {
 function createCompanion(options = {}) {
   const {
     relayUrl, cwd = process.cwd(), zcodeCommand, v2ConfigPath,
+    // 受管 runtime（GUI 门禁）：relay 在线与 runtime 健康解耦——设备先注册
+    // 上线（引擎未就绪时 paired-no-model），预检成功后经 setRuntimeDescriptor
+    // 热注入并起桥。CLI 模式（默认）维持 zcodeCommand/本机即时解析。
+    runtimeManaged = false,
     stateDir, midFile, snapshotPath,
     logger = () => {}, onPairing = () => {}, onStateChange = () => {},
     reconnectDelayMs = 5000,
@@ -364,6 +374,9 @@ function createCompanion(options = {}) {
   let bridge = null;
   let bridgeStarted = false;
   let bridgeDead = false; // 重启预算耗尽后为真,直到下一次成功起桥
+  // 受管 runtime 的已验证 descriptor（setRuntimeDescriptor 注入）：
+  // null = 预检未完成，起桥需等待。
+  let managedDescriptor = null;
   let pairing = null; // { sid, passHash, url }
   let authStage = 'idle'; // idle → registered → challenged → authenticated
   let reconnectTimer = null;
@@ -449,6 +462,15 @@ function createCompanion(options = {}) {
     // 全新 bridge（其预算是全新的，等于绕过预算无限快拉），直接走 !bridge
     // 分支回 ERR_UNHANDLED；冷却过后才允许整体重试。
     if (bridgeDead && Date.now() - bridgeDeadAt < bridgeCooldownMs) return;
+    // 受管 runtime：descriptor 未就绪（预检未完成/失败）时不起桥，设备保持
+    // 在线（paired-no-model），稍后 setRuntimeDescriptor 热启；CLI 模式维持
+    // 即时解析（zcodeCommand 注入或本机默认解析）。
+    const resolved = runtimeManaged ? managedDescriptor
+      : (zcodeCommand || defaultZcodeCommand());
+    if (runtimeManaged && !resolved) {
+      log('bridge-waiting-runtime', '');
+      return;
+    }
     let token;
     try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
     catch (error) {
@@ -459,12 +481,14 @@ function createCompanion(options = {}) {
     }
     bridgeStarted = true;
     bridgeDead = false;
-    const resolved = zcodeCommand || defaultZcodeCommand();
     bridge = new AppServerBridge({
       command: resolved.command, args: resolved.args, cwd,
       // 统一经 runtimeProcessEnv：Electron 壳内注入 ELECTRON_RUN_AS_NODE（否则
       // spawn 出来的是 Chromium 实例而非 stdio node 子进程），并剥离宿主
-      // CHROME_/ELECTRON_/ZCODE_ 变量（crashpad 管道串扰 + 外层进程噪声）。
+      // CHROME_/ELECTRON_ 内部变量（crashpad 管道串扰）。ZCODE_* 必须保留——
+      // 桌面端为子进程设置的 ZCODE_BUILTIN_PROVIDER_CONFIG_FILE 等是必需配置，
+      // 剥掉会让 runtime 因「无法定位 Built-in Provider Config」直接退 1
+      // （2026-09-17 实测矩阵）。
       env: runtimeProcessEnv(resolved, { ...process.env, ANTHROPIC_API_KEY: token }),
       maxRestarts: bridgeMaxRestarts, restartDelayMs: bridgeRestartDelayMs,
       restartWindowMs: bridgeRestartWindowMs,
@@ -574,9 +598,13 @@ function createCompanion(options = {}) {
     }
     startBridge();
     if (!bridge) {
-      // 桥不可用（未登录/spawn 失败/重启预算耗尽）：回明确错误而非静默挂起。
+      // 桥不可用（未登录/spawn 失败/重启预算耗尽/runtime 预检未完成）：
+      // 回明确错误而非静默挂起。
       if (frame.method && frame.id != null && matchedUp) {
-        send({ type: 'data', payload: { id: frame.id, error: { code: ERR_UNHANDLED, message: 'companion 桥不可用：app-server 未启动或桌面未登录 ZCode' } } });
+        const waiting = runtimeManaged && !managedDescriptor;
+        send({ type: 'data', payload: { id: frame.id, error: { code: ERR_UNHANDLED, message: waiting
+          ? 'companion 引擎预检未完成：设备已在线，稍后自动可用，请稍候重试'
+          : 'companion 桥不可用：app-server 未启动或桌面未登录 ZCode' } } });
       }
       return;
     }
@@ -669,6 +697,10 @@ function createCompanion(options = {}) {
     });
     if (!resume || resume.error) throw safeError('X_MODEL_BRIDGE_DOWN');
     const settings = resume && resume.result && resume.result.settings;
+    // settings.model.available 是引擎投影的可用目录（实测权威）。
+    // settings.model.current 只证明「该会话当前正用这个模型」，不是可选目录
+    // 证据（current 可指向已失效模型），不得并入 available——手机端把
+    // current 冒充可选项会让选择打到不可用模型上。
     const available = settings && settings.model && Array.isArray(settings.model.available)
       ? settings.model.available : [];
     engineModelCatalog = available
@@ -1104,6 +1136,18 @@ function createCompanion(options = {}) {
     start() {
       if (stopped) throw safeError('ALREADY_STOPPED');
       connect();
+    },
+    // 受管 runtime：门禁预检成功后热注入已验证 descriptor 并按需起桥。
+    // 同一条 relay 链路上生效——不重连、不重注册、配对身份不变。
+    setRuntimeDescriptor(descriptor) {
+      if (!runtimeManaged) throw safeError('INVALID_STATE');
+      if (!isObject(descriptor) || typeof descriptor.command !== 'string' || !descriptor.command
+        || !Array.isArray(descriptor.args) || !descriptor.args.every((a) => typeof a === 'string')) {
+        throw safeError('INVALID_RUNTIME_DESCRIPTOR');
+      }
+      managedDescriptor = { command: descriptor.command, args: [...descriptor.args] };
+      log('runtime-descriptor-set', typeof descriptor.source === 'string' ? descriptor.source : '');
+      if (matchedUp) startBridge();
     },
     get pairingUrl() { return pairing ? pairing.url : null; },
     get state() {

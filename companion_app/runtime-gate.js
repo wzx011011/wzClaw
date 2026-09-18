@@ -1,16 +1,17 @@
 'use strict';
 
-// Runtime 健康门：每次检查绑定配置快照与代次。较早检查的迟到结果不得启动
-// 新配置；任何重新检查都会先停掉旧 companion，保证 UI 状态与真实链路一致。
-function createRuntimeGate({ probe, start, stop, onStatus, onFailure }) {
+// Runtime 健康门：只负责「本机 ZCode runtime 预检」与 descriptor 交付。
+// 不拥有 relay/device 控制面——设备在线（注册、配对码、断线重连）与
+// runtime 健康是两个正交状态，引擎预检失败不得拖垮设备在线（2026-09-18
+// 手机反复断线事故根因：probe 失败曾被当成整机开关）。每次检查绑定配置
+// 快照与代次：较早检查的迟到结果不得交付给新配置。
+function createRuntimeGate({ probe, apply, onStatus, onFailure }) {
   let generation = 0;
   let current = Promise.resolve(null);
 
   async function check(config) {
     const mine = ++generation;
     const snapshot = Object.freeze({ relayUrl: config.relayUrl, cwd: config.cwd });
-    await stop();
-    if (mine !== generation) return null;
     onStatus({ category: 'checking', source: null, version: null, detailCode: null });
 
     const task = Promise.resolve()
@@ -19,9 +20,16 @@ function createRuntimeGate({ probe, start, stop, onStatus, onFailure }) {
         if (mine !== generation) return null;
         onStatus(status);
         if (status.category === 'ready') {
-          await start(Object.freeze({ ...snapshot, runtimeDescriptor: status.runtimeDescriptor || null }));
+          // ready 必携带 descriptor（probeZcodeRuntime 契约）；缺失按失败
+          // 处理而非静默跳过——静默丢弃=缺陷。
+          if (status.runtimeDescriptor) {
+            await apply(status.runtimeDescriptor);
+          } else {
+            onFailure({ ...status, category: 'app-server-failed', detailCode: 'BAD_DESCRIPTOR' });
+          }
+        } else {
+          onFailure(status);
         }
-        else onFailure(status);
         return status;
       })
       .catch((error) => {

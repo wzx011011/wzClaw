@@ -191,9 +191,23 @@ function publicRuntimeStatus(status = runtimeStatus) {
   };
 }
 
-async function stopCompanion() {
+// relay/device 控制面与 runtime 健康解耦（2026-09-18 定）：companion 一旦
+// 创建就保持注册在线——引擎预检失败只降级为「已配对（引擎未就绪）」，不再
+// 整机下线（此前 probe 失败被当成整机开关，手机端因此反复断线重连）。
+// 只有 relay/工作目录配置变化才重建链路；重试运行时永不触碰已在线连接。
+let companionCfgKey = null;
+let lifecycleQueue = Promise.resolve();
+function serializedLifecycle(fn) {
+  const run = lifecycleQueue.then(fn, fn);
+  lifecycleQueue = run.then(() => {}, () => {});
+  return run;
+}
+const currentCfgKey = () => `${cfg.relayUrl}|${cfg.cwd}`;
+
+async function stopCompanionUnlocked() {
   const running = companion;
   companion = null;
+  companionCfgKey = null;
   pairingUrl = null;
   qrDataUrl = null;
   broadcast('pairing', { url: null, qr: null });
@@ -202,11 +216,18 @@ async function stopCompanion() {
   }
 }
 
+async function stopCompanion() {
+  return serializedLifecycle(stopCompanionUnlocked);
+}
+
 function initRuntimeGate() {
   runtimeGate = createRuntimeGate({
     probe: (snapshot) => probeZcodeRuntime({ cwd: snapshot.cwd }),
-    start: async (snapshot) => startCompanion(snapshot),
-    stop: stopCompanion,
+    // 预检成功只交付 descriptor：同一条在线链路上热启引擎，不重连不重注册。
+    apply: async (descriptor) => {
+      if (!companion) throw new Error('companion-not-running');
+      companion.setRuntimeDescriptor(descriptor);
+    },
     onStatus: (status) => {
       if (status.category !== runtimeStatus.category
         || status.detailCode !== runtimeStatus.detailCode) {
@@ -222,8 +243,8 @@ function initRuntimeGate() {
       broadcast('runtime-status', publicRuntimeStatus());
     },
     onFailure: (status) => {
-      lastState = 'runtime-unavailable';
-      updateTray();
+      // 只更新 runtime 面板；连接状态由 onStateChange 独立驱动，引擎预检
+      // 失败不再改写 lastState/托盘（设备保持在线）。
       pushLog('runtime-preflight-failed', status.category);
     },
   });
@@ -231,50 +252,59 @@ function initRuntimeGate() {
 
 function ensureRuntimeThenStart() {
   if (!runtimeGate) initRuntimeGate();
-  return runtimeGate.check({ relayUrl: cfg.relayUrl, cwd: cfg.cwd })
+  // 先保证设备在线（引擎未就绪也注册可配对），再跑预检；预检结果只决定
+  // 引擎何时可用，不决定设备是否在线。
+  return startCompanion()
+    .then(() => runtimeGate.check({ relayUrl: cfg.relayUrl, cwd: cfg.cwd }))
     .then(() => publicRuntimeStatus());
 }
 
-function startCompanion(snapshot) {
-  const startConfig = snapshot || { relayUrl: cfg.relayUrl, cwd: cfg.cwd };
-  pairingUrl = null;
-  qrDataUrl = null;
-  // 注册共享密钥：与 CLI companion 同源（~/.wzxclaw/zcode-companion/relay-
-  // secret）。NAS relay 设了 REGISTRATION_SECRET，注册必须携带 proof——
-  // 不读这个文件，旧房间过期后的重注册会被 AUTH_FAILED 拒绝，陷入
-  // 「连接即断」的重连循环（2026-09-16 首启实测踩坑）。
-  const registrationSecret = resolveRegistrationSecret() || undefined;
-  try {
-    companion = createCompanion({
-      relayUrl: startConfig.relayUrl,
-      cwd: startConfig.cwd,
-      stateDir: companionStateDir(),
-      snapshotPath: importSnapshotPath(),
-      ...(startConfig.runtimeDescriptor ? { zcodeCommand: startConfig.runtimeDescriptor } : {}),
-      registrationSecret,
-      logger: (event, detail) => pushLog(event, detail),
-      onPairing: (url) => {
-        pairingUrl = url;
-        QRCode.toDataURL(url, { width: 480, margin: 1 })
-          .then((qr) => {
-            qrDataUrl = qr;
-            broadcast('pairing', { url, qr });
-          })
-          .catch(() => broadcast('pairing', { url, qr: null }));
-      },
-      onStateChange: (state) => {
-        lastState = state;
-        broadcast('state', { state });
-        updateTray();
-      },
-    });
-    companion.start();
-    pushLog('app-companion-started', startConfig.relayUrl);
-  } catch (e) {
-    // 典型：ALREADY_RUNNING（旧计划任务 companion 还在跑）——如实上屏
-    pushLog('app-companion-error', e.code || String(e.message || e));
-    broadcast('companion-error', { message: e.code || String(e.message || e) });
-  }
+function startCompanion() {
+  return serializedLifecycle(async () => {
+    if (companion && companionCfgKey === currentCfgKey()) return; // 在线且配置未变：直接复用
+    if (companion) await stopCompanionUnlocked(); // 配置变化才重建链路
+    pairingUrl = null;
+    qrDataUrl = null;
+    // 注册共享密钥：与 CLI companion 同源（~/.wzxclaw/zcode-companion/relay-
+    // secret）。NAS relay 设了 REGISTRATION_SECRET，注册必须携带 proof——
+    // 不读这个文件，旧房间过期后的重注册会被 AUTH_FAILED 拒绝，陷入
+    // 「连接即断」的重连循环（2026-09-16 首启实测踩坑）。
+    const registrationSecret = resolveRegistrationSecret() || undefined;
+    try {
+      companion = createCompanion({
+        relayUrl: cfg.relayUrl,
+        cwd: cfg.cwd,
+        // 受管 runtime：descriptor 由预检热注入；未就绪时设备保持在线
+        // （paired-no-model），引擎可用后自动起桥。
+        runtimeManaged: true,
+        stateDir: companionStateDir(),
+        snapshotPath: importSnapshotPath(),
+        registrationSecret,
+        logger: (event, detail) => pushLog(event, detail),
+        onPairing: (url) => {
+          pairingUrl = url;
+          QRCode.toDataURL(url, { width: 480, margin: 1 })
+            .then((qr) => {
+              qrDataUrl = qr;
+              broadcast('pairing', { url, qr });
+            })
+            .catch(() => broadcast('pairing', { url, qr: null }));
+        },
+        onStateChange: (state) => {
+          lastState = state;
+          broadcast('state', { state });
+          updateTray();
+        },
+      });
+      companion.start();
+      companionCfgKey = currentCfgKey();
+      pushLog('app-companion-started', cfg.relayUrl);
+    } catch (e) {
+      // 典型：ALREADY_RUNNING（旧计划任务 companion 还在跑）——如实上屏
+      pushLog('app-companion-error', e.code || String(e.message || e));
+      broadcast('companion-error', { message: e.code || String(e.message || e) });
+    }
+  });
 }
 
 // ---- 窗口 ----
@@ -421,6 +451,7 @@ function updateTray() {
 function stateText(s) {
   switch (s) {
     case 'paired': return '已配对';
+    case 'paired-no-model': return '已配对（引擎未就绪）';
     case 'waiting-pairing': return '等待手机配对';
     case 'app-server-started': return '已配对';
     case 'app-server-dead': return '桥异常';

@@ -459,6 +459,58 @@ test('未登录（无 token）时优雅降级：配对成功但不起桥，手�
   assert.equal(companion.state, 'paired-no-model');
 });
 
+test('受管 runtime：descriptor 未就绪保持在线（paired-no-model），热注入后同链路起桥', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-managed-'));
+  let pairingCalls = 0;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    runtimeManaged: true,
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: () => {},
+    onPairing: () => { pairingCalls += 1; },
+    onStateChange: () => {},
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const parsed = new URL(companion.pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  // 设备在线（已配对）而引擎预检未完成：paired-no-model，不再整机离线
+  // （2026-09-18 手机反复断线事故的回归锚：probe 失败曾把 device 拖下线）。
+  await waitFor(() => companion.state === 'paired-no-model');
+
+  // descriptor 未就绪：手机帧得到明确错误而非静默挂起
+  client.send({ type: 'data', payload: { id: 7, method: 'session/list', params: {} } });
+  const early = await client.next((m) => m.type === 'data' && m.payload?.id === 7);
+  assert.equal(early.payload.error.code, -32000);
+
+  // 非法 descriptor 必须显式拒绝，不得进入受管状态
+  assert.throws(() => companion.setRuntimeDescriptor({ command: '', args: [] }),
+    /INVALID_RUNTIME_DESCRIPTOR/);
+  assert.equal(companion.state, 'paired-no-model');
+
+  // 热注入已验证 descriptor：同一条 relay 链路起桥——不重连、不重注册、
+  // 配对身份（配对 URL/房间）不变，手机端无感。
+  companion.setRuntimeDescriptor({
+    command: process.execPath, args: [FAKE_APP_SERVER], source: 'installed',
+  });
+  await waitFor(() => companion.state === 'paired');
+  assert.equal(pairingCalls, 1);
+
+  client.send({ type: 'data', payload: { id: 8, method: 'session/list', params: {} } });
+  const okReply = await client.next((m) => m.type === 'data' && m.payload?.id === 8);
+  assert.deepEqual(okReply.payload.result.sessions, [{ sessionId: 'sess_mock', title: 'mock' }]);
+});
+
 test('会话中途 relay 错误帧不烧凭据：重连接管原房间，配对码保持有效', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-errmid-'));

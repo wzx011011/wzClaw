@@ -108,6 +108,14 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
 - **companion 勿挂在代理任务托管里**：会被回收（曾静默 exit 1）；用计划任务。
 - **确定性房间号**：房间 id 由 (pass_hash, mid) 派生、口令落盘
   `~/.wzxclaw/zcode-companion/`——重启/重连不换码，手机配对一次长期有效。
+- **设备在线与引擎健康解耦（2026-09-18 定）**：GUI companion 先注册 relay
+  上线，runtime 预检只经 `setRuntimeDescriptor` 热注入引擎（未就绪时
+  `paired-no-model`，模型目录走导入快照降级）；预检失败/重试绝不重建
+  relay 链路（此前 probe 失败被当整机开关，手机对空房间无限断线重连）。
+  relay/工作目录配置变化才是重建链路的唯一条件。
+- **模型目录权威（2026-09-18 实测）**：app-server 无独立目录方法，
+  `settings.model.available` 是可用目录唯一投影；`settings.model.current`
+  只是会话当前选中，不是可用性证据，禁止并入目录（详见 APP-SERVER.md）。
 - 代码注释中文；测试与实现同目录；Windows 下 node 测试注意路径与进程清理。
 - **架构收敛完成（2026-09-17）**：R3 已执行——历史翻译壳模块
   `zcode_protocol_translate` / `ChatStore` / `ws_transport` / `session_sync` 已删除；

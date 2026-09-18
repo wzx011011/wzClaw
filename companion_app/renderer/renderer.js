@@ -3,13 +3,23 @@
 const $ = (id) => document.getElementById(id);
 const logs = [];
 
+// 事件推送只带 state 枚举：文案映射与主进程 stateText 同源维护。
+const STATE_TEXT = {
+  paired: '已配对',
+  'paired-no-model': '已配对（引擎未就绪）',
+  'waiting-pairing': '等待手机配对',
+  'app-server-started': '已配对',
+  'app-server-dead': '桥异常',
+  disconnected: '未连接',
+};
+
 function setState(state, text) {
   const dot = $('dot');
   dot.className = 'dot';
   if (state === 'paired' || state === 'app-server-started') dot.classList.add('paired');
-  else if (state === 'waiting-pairing') dot.classList.add('waiting');
+  else if (state === 'waiting-pairing' || state === 'paired-no-model') dot.classList.add('waiting');
   else if (state === 'app-server-dead' || state === 'companion-error') dot.classList.add('bad');
-  $('stateText').textContent = text || state;
+  $('stateText').textContent = text || STATE_TEXT[state] || state;
 }
 
 function pushLog(event, detail) {

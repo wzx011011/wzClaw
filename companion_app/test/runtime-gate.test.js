@@ -10,15 +10,16 @@ function deferred() {
   return { promise, resolve };
 }
 
-test('旧配置检查迟到完成时不得启动新配置', async () => {
+test('旧配置检查迟到完成时不得交付给新配置', async () => {
   const first = deferred();
   const probes = [];
-  const starts = [];
-  let stops = 0;
+  const applies = [];
   const gate = createRuntimeGate({
-    probe: (cfg) => { probes.push(cfg); return probes.length === 1 ? first.promise : Promise.resolve({ category: 'ready' }); },
-    start: async (cfg) => { starts.push(cfg); },
-    stop: async () => { stops += 1; },
+    probe: (cfg) => {
+      probes.push(cfg);
+      return probes.length === 1 ? first.promise : Promise.resolve({ category: 'ready', runtimeDescriptor: { command: 'n', args: ['b'], source: 'installed' } });
+    },
+    apply: async (d) => { applies.push(d); },
     onStatus: () => {},
     onFailure: () => {},
   });
@@ -27,43 +28,50 @@ test('旧配置检查迟到完成时不得启动新配置', async () => {
   await Promise.resolve();
   const b = gate.check({ relayUrl: 'wss://b/ws', cwd: 'B' });
   await b;
-  first.resolve({ category: 'ready' });
+  first.resolve({ category: 'ready', runtimeDescriptor: { command: 'old', args: ['x'], source: 'installed' } });
   await a;
 
-  assert.equal(stops, 2);
-  assert.deepEqual(starts, [{ relayUrl: 'wss://b/ws', cwd: 'B', runtimeDescriptor: null }]);
+  assert.equal(applies.length, 1); // 只有新配置的检查交付
 });
 
-test('预检返回的 runtime descriptor 绑定到长期 companion 启动', async () => {
-  const starts = [];
-  const descriptor = Object.freeze({ command: 'ZCode.exe', args: ['zcode.cjs'], source: 'installed' });
-  const gate = createRuntimeGate({
-    probe: async () => ({ category: 'ready', runtimeDescriptor: descriptor }),
-    start: async (cfg) => { starts.push(cfg); },
-    stop: async () => {},
-    onStatus: () => {},
-    onFailure: () => {},
-  });
-
-  await gate.check({ relayUrl: 'wss://relay/ws', cwd: 'C' });
-  assert.equal(starts.length, 1);
-  assert.equal(starts[0].runtimeDescriptor, descriptor);
-});
-
-test('重新检查失败先停止旧 companion 且不重启', async () => {
-  let running = true;
-  const starts = [];
+test('ready 的 descriptor 交付给 apply；失败走 onFailure 且不交付', async () => {
+  const applies = [];
   const failures = [];
+  const descriptor = Object.freeze({ command: 'ZCode.exe', args: ['zcode.cjs'], source: 'installed' });
+  let flip = false;
   const gate = createRuntimeGate({
-    probe: async () => ({ category: 'version-failed', detailCode: 'EXIT_1' }),
-    start: async (cfg) => { running = true; starts.push(cfg); },
-    stop: async () => { running = false; },
+    probe: async () => (flip
+      ? { category: 'version-failed', source: 'installed', version: null, detailCode: 'EXIT_1' }
+      : { category: 'ready', runtimeDescriptor: descriptor }),
+    apply: async (d) => { applies.push(d); },
     onStatus: () => {},
     onFailure: (status) => failures.push(status.category),
   });
 
   await gate.check({ relayUrl: 'wss://relay/ws', cwd: 'C' });
-  assert.equal(running, false);
-  assert.deepEqual(starts, []);
+  assert.deepEqual(applies, [descriptor]);
+  assert.deepEqual(failures, []);
+
+  // 预检失败：不交付，也不触碰控制面（gate 没有 stop/start 概念——
+  // 设备在线由宿主管理，引擎失败只报状态）。
+  flip = true;
+  await gate.check({ relayUrl: 'wss://relay/ws', cwd: 'C' });
+  assert.equal(applies.length, 1);
   assert.deepEqual(failures, ['version-failed']);
+});
+
+test('ready 但缺 descriptor 必须按失败处理而非静默跳过', async () => {
+  const applies = [];
+  const failures = [];
+  const gate = createRuntimeGate({
+    probe: async () => ({ category: 'ready', runtimeDescriptor: undefined }),
+    apply: async (d) => { applies.push(d); },
+    onStatus: () => {},
+    onFailure: (status) => failures.push(status),
+  });
+
+  await gate.check({ relayUrl: 'wss://relay/ws', cwd: 'C' });
+  assert.deepEqual(applies, []);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].detailCode, 'BAD_DESCRIPTOR');
 });

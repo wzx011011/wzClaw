@@ -101,6 +101,41 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
   → provider["builtin:bigmodel-coding-plan"].options.apiKey`（无 token 则失败，
   提示桌面端登录）。
 
+## 模型可用目录（2026-09-18 实测定论）
+
+**没有独立的目录查询方法**：`session/models` / `model/list` / `provider/list` /
+`session/providers` 全部 `-32601`。目录只能从会话快照投影取得：
+
+- `session/resume` / `session/create` 响应的 `settings.model.available[]`
+  （每项 `{ref:{providerId,modelId}, label, contextWindow?, reasoning?, …}`）
+  是 **app-server 投影的可用目录权威**——Provider Registry 已合并
+  内置发布配置 + 个人配置 + 账号权益后的最终结果。
+- `settings.model.current` 只是**该会话当前选中的模型**，不是可用目录证据
+  （可指向已失效模型）；不得并入 available 冒充可选项（companion 侧曾有
+  此错误实现，已回退并有注释锚定）。
+- `session/read` / `session/subscribe(includeSnapshot:true)` 走
+  `modelAvailability:"current"`，最多返回一个当前模型，同样不是目录源。
+
+**套餐动态模型（如 glm-5.3-flash）的来源链**（本机 3.12.3 / CLI 0.16.5 实测）：
+
+1. 官方发布配置：配置端点 `/api/v1/client/configs?app_version&platform` →
+   `data.configs.builtin_provider_config_json`（下载 URL）→ revisioned
+   `zcode-builtin.json`（本机 revision 28，schemaVersion 1）。Individual/Team
+   Coding Plan 声明 `GLM-5.3`、`GLM-5.3-Flash`；Start Plan 另有
+   `GLM-5.3-Flash`/`GLM-5.2`/`GLM-5-Turbo`。落盘于
+   `~/.zcode/v2/runtime/provider/<platform>/<version>/endpoint-<hash>/`。
+2. 桌面端把权益物化进 `~/.zcode/v2/config.json`
+   `provider["builtin:bigmodel-coding-plan"].models`（本机含小写
+   `glm-5.3-flash`、`glm-5.3-highspeed`——**模型 ID 大小写敏感，精确匹配**，
+   与发布配置的大写 `GLM-5.3-Flash` 是两套并存的 ID 空间）。
+3. app-server 启动时经 `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` 等 env 拿到
+   release（剥离该变量会「无法定位 Built-in Provider Config」直接退 1），
+   合并后经 `settings.model.available` 投影。
+
+**结论**：手机端目录 = `x/model/catalog`（engine available + 导入快照），
+引擎侧以 `session/resume.settings.model.available` 为唯一可用性依据；
+会话要用的具体模型 ID 一律以实测投影的原始大小写为准，不做大小写归一。
+
 ## session/send 后的完整事件序列（实测）
 
 ```
