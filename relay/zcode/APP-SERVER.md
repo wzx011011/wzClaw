@@ -136,6 +136,32 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
 引擎侧以 `session/resume.settings.model.available` 为唯一可用性依据；
 会话要用的具体模型 ID 一律以实测投影的原始大小写为准，不做大小写归一。
 
+**套餐模型注入独立引擎（2026-09-18 实测定稿，companion 已实现）**：
+独立 runtime 的目录里没有 coding-plan 模型——`provider/updateAccountConfig`
+推送即使载荷合法也不物化（桌面专用路径）。可用配方：
+
+1. 实时列表：`GET {bigmodel}/api/anthropic/v1/models`，header
+   `x-api-key: <桌面登录态 token>`（http 200，data[].id 即模型 ID，
+   全小写：glm-4.5…glm-5.3-flash；与 paas/v4/models 一致）。
+2. 注入：在「个人 provider 配置」（`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`，
+   默认 `~/.zcode/v2/provider_config.json`，release 格式）副本中追加：
+   - `providerRules` 条目：`{providerId, providerName, config:{group:
+     "standard-personal", personalModelIds, modelOrder, access:{type:
+     "api-key", apiKey}}}` ——【条目不得带 enabled 字段，带上整个
+     provider 静默失效】；
+   - `modelConfigRules.providerModelRules` 每模型一条
+     `{providerId, modelId, config:{properties:{}}}`，label/ctx/reasoning
+     元数据由 builtin release 的正则规则自动补全。
+3. spawn 时以 env 覆盖指向副本，引擎原生物化套餐模型（实测 10/10，
+   glm-5.3-flash ctx=1M、maxOut=128K、reasoning low/high/max）。
+4. 选择：`session/setModel` 参数 `{sessionId, model:{providerId, modelId,
+   options:{reasoningLevel}}}`（model 是对象不是字符串；reasoningLevel
+   必须取目录 reasoning.levels 的 value，如 high/max）。
+
+其他实测：独立引擎存在反向请求 `startup/storageState`（连发 5 次，
+不阻塞 session/create，companion 暂不代答）；`session/models` 等目录
+方法均 -32601。
+
 ## session/send 后的完整事件序列（实测）
 
 ```

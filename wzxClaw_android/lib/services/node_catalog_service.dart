@@ -25,14 +25,40 @@ class NodeModelEntry {
   /// 引擎实测可用（engine）还是仅快照收录（imported，未证实可用）
   final bool available;
   final String source;
+
+  /// 显示名（模型 label，如 GLM-5.3-Flash；缺省回退 modelId）
+  final String label;
+
+  /// provider 显示名（如 BigModel / Claude CLI；缺省回退 providerId）
+  final String providerLabel;
+
+  /// 视觉输入支持（properties.inputFormat.supportsImage）
+  final bool vision;
+
+  /// 上下文窗口（token 数；null = 引擎未提供）
+  final int? contextWindow;
+
+  /// 套餐组（companion 注入的 BigModel 套餐 provider），手机端置顶展示
+  final bool planGroup;
   const NodeModelEntry({
     required this.providerId,
     required this.modelId,
     required this.available,
     required this.source,
+    this.label = '',
+    this.providerLabel = '',
+    this.vision = false,
+    this.contextWindow,
+    this.planGroup = false,
   });
 
   String get key => '$providerId/$modelId';
+
+  /// 弹层分组名：provider 显示名优先，回退 providerId
+  String groupLabel(String fallback) => providerLabel.isNotEmpty ? providerLabel : fallback;
+
+  /// 行显示名：模型 label 优先，回退 modelId
+  String get displayLabel => label.isNotEmpty ? label : modelId;
 }
 
 class NodeModelCatalog {
@@ -82,6 +108,11 @@ class NodeCatalogService {
             modelId: m['modelId']?.toString() ?? '',
             available: m['available'] == true,
             source: m['source']?.toString() ?? '',
+            label: m['label']?.toString() ?? '',
+            providerLabel: m['providerLabel']?.toString() ?? '',
+            vision: m['vision'] == true,
+            contextWindow: m['contextWindow'] is int ? m['contextWindow'] as int : null,
+            planGroup: m['planGroup'] == true,
           ),
         )
         .where((m) => m.providerId.isNotEmpty && m.modelId.isNotEmpty)

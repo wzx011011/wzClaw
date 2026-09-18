@@ -54,6 +54,11 @@ class _ChatPageState extends State<ChatPage> {
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
+
+  /// 回合运行中的 1Hz 心跳：增量暂停时页面不重建，tok/s 衰减与
+  /// 「正在工作… Xs」会冻结——心跳补上这两个读数的时间维度
+  /// （每秒一次 setState，远低于流式期逐增量重建的频率）
+  Timer? _busyTickTimer;
   StreamSubscription<WsConnectionState>? _connectionStateSub;
   final FocusNode _inputFocusNode = FocusNode();
 
@@ -172,6 +177,7 @@ class _ChatPageState extends State<ChatPage> {
     _store.removeListener(_onStoreChanged);
     _connectionStateSub?.cancel();
     _reconnectDebounceTimer?.cancel();
+    _busyTickTimer?.cancel();
     _queueFlushTimer?.cancel();
     _thinkingCtrl.close();
     _inputController.dispose();
@@ -207,6 +213,16 @@ class _ChatPageState extends State<ChatPage> {
       _isWaiting = _store.isWaitingForResponse;
       _isSessionLoading = _store.sessionOpening;
     });
+    // 回合运行中起 1Hz 心跳（tok/s 衰减/已耗时不随增量暂停而冻结）
+    final busy = _isStreaming || _isWaiting;
+    if (busy && _busyTickTimer == null) {
+      _busyTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else if (!busy) {
+      _busyTickTimer?.cancel();
+      _busyTickTimer = null;
+    }
     if ((_isStreaming || _isWaiting) &&
         !_showScrollFab &&
         _displayMessages.isNotEmpty) {
@@ -1025,6 +1041,15 @@ class _ChatPageState extends State<ChatPage> {
                   ? Duration(milliseconds: _store.lastTurnMs!)
                   : null,
               think: think,
+              // 回合指标：运行中实时（tok/s 为估算），完成后最近一次权威值
+              firstTokenMs: busy
+                  ? _store.firstTokenLatencyMs
+                  : (isLast ? _store.lastFirstTokenMs : null),
+              tokensPerSecond: busy
+                  ? _store.estimatedTokensPerSecond
+                  : (isLast ? _store.lastTurnTokensPerSecond : null),
+              tpsIsEstimate: busy,
+              busyElapsed: busy ? _store.streamElapsed : null,
             ),
             defaultCollapsed: isLast ? null : true,
             answerBuilder: _buildMarkdownBody,
@@ -2242,13 +2267,26 @@ class _ChatPageState extends State<ChatPage> {
                 );
               } else {
                 final catalog = snap.data!;
-                // Provider 分组头（官方样式：provider 名 + 计数），模型行
-                // 选中态 ✓、默认/快照角标
+                // 层级分组（对齐桌面选择器）：provider 显示名分组、套餐组置顶；
+                // 组头点击折叠/展开，默认展开套餐组与含默认模型的组
                 final groups = <String, List<NodeModelEntry>>{};
                 for (final m in catalog.models) {
-                  (groups[m.providerId] ??= []).add(m);
+                  (groups[m.groupLabel(m.providerId)] ??= []).add(m);
                 }
-                body = Column(
+                final orderedNames = [
+                  ...groups.keys.where((n) => groups[n]!.any((m) => m.planGroup)),
+                  ...groups.keys.where((n) => !groups[n]!.any((m) => m.planGroup)),
+                ];
+                final defaultKey = catalog.defaultModel?.key;
+                final expandedGroups = <String>{
+                  for (final name in orderedNames)
+                    if (groups[name]!.any((m) => m.planGroup || m.key == defaultKey)) name,
+                };
+                if (expandedGroups.isEmpty && orderedNames.isNotEmpty) {
+                  expandedGroups.add(orderedNames.first);
+                }
+                body = StatefulBuilder(
+                  builder: (sheetCtx, setModalState) => Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2283,66 +2321,95 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                         ),
                       ),
-                    for (final entry in groups.entries) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
-                        child: Text(
-                          entry.key,
-                          style: TextStyle(
-                            color: colors.textMuted,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3,
+                    for (final name in orderedNames) ...[
+                      InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => setModalState(() {
+                          if (!expandedGroups.remove(name)) expandedGroups.add(name);
+                        }),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
+                          child: Row(
+                            children: [
+                              Text(
+                                name,
+                                style: TextStyle(
+                                  color: colors.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${groups[name]!.length}',
+                                style: TextStyle(
+                                  color: colors.textMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const Spacer(),
+                              Icon(
+                                expandedGroups.contains(name)
+                                    ? Icons.keyboard_arrow_up
+                                    : Icons.keyboard_arrow_down,
+                                size: 18,
+                                color: colors.textMuted,
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                      for (final m in entry.value)
-                        InkWell(
-                          borderRadius: BorderRadius.circular(8),
-                          onTap: () async {
-                            Navigator.of(ctx).pop();
-                            await _applyModelChoice(
-                              sessionId,
-                              SessionModelUse(
-                                providerId: m.providerId,
-                                modelId: m.modelId,
+                      if (expandedGroups.contains(name))
+                        for (final m in groups[name]!)
+                          InkWell(
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () async {
+                              Navigator.of(sheetCtx).pop();
+                              await _applyModelChoice(
+                                sessionId,
+                                SessionModelUse(
+                                  providerId: m.providerId,
+                                  modelId: m.modelId,
+                                ),
+                                retryContent: retryContent,
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 9,
                               ),
-                              retryContent: retryContent,
-                            );
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 9,
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    m.modelId,
-                                    style: TextStyle(
-                                      color: colors.textPrimary,
-                                      fontSize: 13.5,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      m.displayLabel,
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 13.5,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                if (catalog.defaultModel != null &&
-                                    catalog.defaultModel!.key == m.key) ...[
-                                  _modelTag(colors, '默认', colors.accent),
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    Icons.check,
-                                    size: 16,
-                                    color: colors.accent,
-                                  ),
-                                ] else if (m.source == 'imported')
-                                  _modelTag(colors, '快照', colors.warning),
-                              ],
+                                  if (m.vision)
+                                    _modelTag(colors, '视觉', colors.textMuted),
+                                  if (catalog.defaultModel != null &&
+                                      catalog.defaultModel!.key == m.key) ...[
+                                    _modelTag(colors, '默认', colors.accent),
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.check,
+                                      size: 16,
+                                      color: colors.accent,
+                                    ),
+                                  ] else if (m.source == 'imported')
+                                    _modelTag(colors, '快照', colors.warning),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
                     ],
                   ],
+                ),
                 );
               }
               return body;

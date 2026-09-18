@@ -1318,6 +1318,20 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   assert.equal(cat.payload.result.default, null);
   assert.equal(cat.payload.result.degraded, false);
 
+  // 目录透传契约：引擎元数据原样到达手机端（层级弹层数据源）
+  const glmX = byKey.get('builtin:p1/glm-x');
+  assert.equal(glmX.label, 'GLM-X');
+  assert.equal(glmX.providerLabel, 'P1 Name');
+  assert.equal(glmX.contextWindow, 200000);
+  assert.equal(glmX.maxOutputTokens, 32000);
+  assert.equal(glmX.vision, true);
+  assert.deepEqual(glmX.reasoning.levels, [{ value: 'high', label: 'high' }]);
+  assert.equal(glmX.reasoning.defaultLevel, 'high');
+  const mini = byKey.get('builtin:p1/glm-mini');
+  assert.equal(mini.label, 'glm-mini');
+  assert.equal(mini.vision, false);
+  assert.equal(mini.reasoning, null);
+
   // x/model/configure：默认模型落盘（0600）+ 对活跃会话即时 setModel
   ask(21, 'x/model/configure', { providerId: 'builtin:p1', modelId: 'glm-x' });
   const conf = await client.next((m) => m.type === 'data' && m.payload.id === 21);

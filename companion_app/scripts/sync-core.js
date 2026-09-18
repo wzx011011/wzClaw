@@ -9,6 +9,7 @@ const targetRoot = path.join(appRoot, 'cclient');
 const files = Object.freeze([
   'companion.js',
   'lib/constants.js',
+  'lib/plan-overlay.js',
   'lib/proof.js',
   'lib/protocol.js',
   'lib/runtime-resolver.js',

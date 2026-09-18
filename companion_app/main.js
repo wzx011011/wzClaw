@@ -15,7 +15,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require
 const path = require('node:path');
 const fs = require('node:fs');
 const QRCode = require('qrcode');
-const { createCompanion, resolveRegistrationSecret, probeZcodeRuntime } = require('./cclient/companion');
+const { createCompanion, resolveRegistrationSecret, probeZcodeRuntime, fetchPlanModelIds } = require('./cclient/companion');
 const { detectZcode, normalizeImportSelection, buildImportManifest, bundledRuntimePath } = require('./zcode-integration');
 const { applyImport, snapshotSummary } = require('./zcode-importer');
 const { createRuntimeGate } = require('./runtime-gate');
@@ -277,6 +277,8 @@ function startCompanion() {
         // 受管 runtime：descriptor 由预检热注入；未就绪时设备保持在线
         // （paired-no-model），引擎可用后自动起桥。
         runtimeManaged: true,
+        // 套餐模型注入：起桥前拉套餐目录生成 overlay（失败降级为现状）
+        planModelFetch: fetchPlanModelIds,
         stateDir: companionStateDir(),
         snapshotPath: importSnapshotPath(),
         registrationSecret,

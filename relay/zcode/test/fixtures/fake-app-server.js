@@ -40,7 +40,11 @@ process.stdin.on('data', (chunk) => {
       if (frame.method === 'session/resume') {
         send({ id: frame.id, result: { messages: [], session: {},
           settings: { model: { available: [
-            { ref: { providerId: 'builtin:p1', modelId: 'glm-x' } },
+            { ref: { providerId: 'builtin:p1', modelId: 'glm-x' },
+              label: 'GLM-X', providerLabel: 'P1 Name',
+              contextWindow: 200000, maxOutputTokens: 32000,
+              properties: { inputFormat: { supportsText: true, supportsImage: true } },
+              reasoning: { levels: [{ value: 'high', label: 'high' }], defaultLevel: 'high' } },
             { ref: { providerId: 'builtin:p1', modelId: 'glm-mini' } },
           ] } } } });
       } else if (frame.method === 'session/list') {
