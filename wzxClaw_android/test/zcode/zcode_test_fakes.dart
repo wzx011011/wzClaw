@@ -53,6 +53,7 @@ class FakeZcodeRelayClient implements ZcodeRelayClient {
   Future<dynamic> request(
     String method, [
     Map<String, dynamic>? params,
+    Duration? timeout,
   ]) async {
     requests.add(MapEntry(method, params));
     final handler = handlers[method];

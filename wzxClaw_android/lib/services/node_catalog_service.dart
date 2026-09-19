@@ -150,14 +150,19 @@ class NodeCatalogService {
         .toList(growable: false);
   }
 
-  /// 设置节点默认模型；同时尽量对活跃会话即时生效。
+  /// 设置节点默认模型（审查 P2-9 语义拆分）：只落盘默认值、新会话生效；
+  /// 绝不隐式修改已有会话。唯一例外是显式传 [applySessionTarget]（目标
+  /// sessionId），用于「模型不可用自愈」流程对当前会话的重试。
   Future<ConfigureResult> configureDefault({
     required String providerId,
     required String modelId,
+    String? applySessionTarget,
   }) async {
     final r = await _call('x/model/configure', {
       'providerId': providerId,
       'modelId': modelId,
+      if (applySessionTarget != null && applySessionTarget.isNotEmpty)
+        'applySessionTarget': applySessionTarget,
     });
     if (r is! Map || r['ok'] != true) throw StateError('设置默认模型失败');
     return ConfigureResult(

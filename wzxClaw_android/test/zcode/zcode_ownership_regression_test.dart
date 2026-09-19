@@ -1189,4 +1189,123 @@ void main() {
       expect(await store.debugRounds('trace-b'), isEmpty);
     });
   });
+
+  group('二轮残余守卫（2026-09-19 复核清单）', () {
+    test('unknown-send 确认 read 在途时开始 T2：迟到的 idle 采样不得收尾 T2', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-uk2').status = 'idle';
+      // 挂起确认用的 session/read
+      final readGate = Completer<Map<String, dynamic>>();
+      var sendDone = false;
+      fake.handlers['session/send'] = (_, [__]) {
+        sendDone = true;
+        throw TimeoutException('请求超时', const Duration(seconds: 30));
+      };
+      fake.handlers['session/read'] = (params) {
+        if (!sendDone) {
+          return {
+            'projection': {'status': 'idle'},
+          };
+        }
+        return readGate.future;
+      };
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-uk2');
+      // 不 await：该发送会进入 unknown-send 确认流程，挂在 read 门上
+      //（await 会与门互锁）
+      unawaited(store.sendMessage('T-unknown'));
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(store.isStreaming, isTrue);
+
+      // 确认在途时开始 T2（同样不 await：也会进入确认流程挂 read 门）
+      unawaited(store.sendMessage('T2'));
+      pushEvent(store,
+        sessionId: 'session-uk2', type: 'turn.started', seq: 1,
+        turnId: 'turn-t2',
+        payload: {'messageId': 'user-t2', 'input': 'T2'},);
+      expect(store.isStreaming, isTrue);
+
+      // 迟到的 idle 采样返回
+      readGate.complete({'projection': {'status': 'idle'}});
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(store.isStreaming, isTrue,
+        reason: '迟到的 unknown-send 采样不得终结 T2',);
+      expect(store.isWaitingForResponse, isTrue);
+    });
+
+    test('补齐窗口未覆盖的截断项保留标记，窗口内的清除', () async {
+      final cache = FakeZcodeSessionCache();
+      cache.messages['sess-bl'] = [
+        ZcodeSessionItem(
+          protoId: 'old-1',
+          synced: true,
+          dirty: false,
+          truncated: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            processParts: const [ChatProcessPart.text('窗口外的截断项')],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(500),
+          ),
+        ),
+        ZcodeSessionItem(
+          protoId: 'new-1',
+          synced: true,
+          dirty: false,
+          truncated: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            processParts: const [ChatProcessPart.text('窗口内的截断项…')],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ),
+      ];
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      fake.handlers['session/messages'] = (params) {
+        // 补齐请求（limit = 截断数2+8 = 10）：只返回 new-1 的权威内容
+        if (params?['limit'] == 10) {
+          return {
+            'messages': [
+              fakeMsg(
+                'assistant',
+                [
+                  {'type': 'text', 'text': '窗口内已补齐的完整内容'},
+                ],
+                id: 'new-1',
+                created: 1000,
+              ),
+            ],
+          };
+        }
+        return {'messages': []};
+      };
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
+      addTearDown(store.dispose);
+      await store.openSession('sess-bl');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      final byId = {
+        for (final e in store.debugItems('sess-bl')) e.protoId!: e,
+      };
+      expect(
+        byId['new-1']!.truncated,
+        isFalse,
+        reason: '窗口内被权威替换的条目清除标记',
+      );
+      expect(
+        byId['old-1']!.truncated,
+        isTrue,
+        reason: '窗口外未取到的条目保留标记待下次补齐',
+      );
+    });
+  });
 }

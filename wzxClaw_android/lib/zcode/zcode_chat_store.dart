@@ -855,8 +855,19 @@ class ZcodeChatStore extends ChangeNotifier {
       final messages = result is Map ? result['messages'] as List? : null;
       if (messages == null || messages.isEmpty) return;
       _mergeServerMessages(state, {'messages': messages});
+      // 只清「本次回拉窗口实际覆盖」的标记（残余守卫）：merge 是按 protoId
+      // 原位替换，被权威内容替换过的条目才恢复完整；窗口外（如 limit 截断
+      // 未取到的更早消息）保留标记待下次补齐
+      final fetched = <String>{
+        for (final m in messages)
+          if (m is Map && m['info'] is Map)
+            if (_protocolMessageId(m['info'] as Map) case final fid?)
+              fid,
+      };
       for (final e in state.items) {
-        if (e.truncated) e.truncated = false; // 权威替换后恢复完整
+        if (e.truncated && e.protoId != null && fetched.contains(e.protoId)) {
+          e.truncated = false; // 权威替换后恢复完整
+        }
       }
       unawaited(_persistSession(state));
       if (_isActive(state) && state.epoch == epoch) notifyListeners();
@@ -1120,6 +1131,9 @@ class ZcodeChatStore extends ChangeNotifier {
     ZcodeSessionState state,
     Object cause,
   ) async {
+    // 确认在途期间可能开始新回合（T2）：迟到的「当时 idle/running」采样
+    // 不得收尾 T2——与 P1-6b 重连确认同一竞态形状，捕获代次核对（残余守卫）
+    final confirmGen = state.turnGeneration;
     final client = _client;
     if (client == null || !client.paired) {
       state.isWaitingForResponse = false;
@@ -1134,6 +1148,7 @@ class ZcodeChatStore extends ChangeNotifier {
       final read = await client.request('session/read', {
         'sessionId': state.sessionId,
       });
+      if (state.turnGeneration != confirmGen) return; // T2 已接管：丢弃采样
       final proj = read is Map ? read['projection'] : null;
       final status = proj is Map ? proj['status']?.toString() : null;
       if (status == 'running') {
@@ -1154,7 +1169,8 @@ class ZcodeChatStore extends ChangeNotifier {
         return;
       }
       if (status == 'idle') {
-        // 回合已结束（或从未送达）：权威刷新收敛到服务端真相
+        // 回合已结束（或从未送达）：权威刷新收敛到服务端真相。
+        // _refreshAuthoritative 内部按发起时代次决定是否收尾，不会误杀新回合
         state.isWaitingForResponse = false;
         state.isStreaming = false;
         state.finalizeStreaming();
@@ -3764,6 +3780,11 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 仅测试使用：模拟 relay 状态变化（重连/断线补放路径）
   @visibleForTesting
+  /// 仅测试使用：会话时间线条目（截断标记断言用）
+  @visibleForTesting
+  List<ZcodeSessionItem> debugItems(String sessionId) =>
+      List.unmodifiable(_states[sessionId]?.items ?? const []);
+
   void debugSimulateRelayState(ZcodeRelayState state, bool paired) =>
       _onRelayStateChange(state, paired);
 

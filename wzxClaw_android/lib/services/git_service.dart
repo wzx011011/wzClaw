@@ -87,6 +87,9 @@ class GitService {
       currentBranch.value = null;
       return;
     }
+    // 并发合并（审查 P2-11 半）：放大路径修复后仍可能并发触发（切工作区+
+    // 完成刷新），晚到的旧工作区结果不得覆盖新工作区
+    final seq = ++_refreshBranchSeq;
     final bound = debugRequester != null
         ? null
         : ConnectionManager.instance.boundRequester();
@@ -101,13 +104,19 @@ class GitService {
           ConnectionManager.instance.connectionGeneration != generation) {
         return; // 在途期间已换代：旧节点结果不覆盖
       }
+      if (seq != _refreshBranchSeq) {
+        return; // 已有更新的刷新请求：本次结果作废（旧覆新守卫）
+      }
       final branch = (r is Map) ? (r['branch']?.toString() ?? '') : '';
       currentBranch.value = branch.isEmpty ? null : branch;
     } catch (_) {
-      // 非 git 仓库 / detached HEAD / 通道失败：如实降级，不猜
-      currentBranch.value = null;
+      // 非 git 仓库 / detached HEAD / 通道失败：如实降级，不猜。
+      // 失败同样受 seq 守卫——旧请求的失败不得清掉新工作区的分支
+      if (seq == _refreshBranchSeq) currentBranch.value = null;
     }
   }
+
+  int _refreshBranchSeq = 0;
 
   /// 分支列表（含 current 标记）
   Future<List<GitBranchInfo>> branches(String workspacePath) async {

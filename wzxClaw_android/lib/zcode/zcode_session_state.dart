@@ -847,8 +847,9 @@ class ZcodeSessionState {
   /// 头部插入截断提示（降级路径使用 resume 的 messages 数组且被
   /// companion 截断时）
   void insertHeadNotice(String notice) {
-    items.insert(
-      0,
+    // 头部插入统一走 prependHistory：流式占位下标必须同步平移，否则后续
+    // model.response 重对会落到旧下标的行（与 P1-4 翻历史同型竞态）
+    prependHistory([
       ZcodeSessionItem(
         message: ChatMessage(
           role: MessageRole.assistant,
@@ -856,6 +857,6 @@ class ZcodeSessionState {
           createdAt: _clock(),
         ),
       ),
-    );
+    ]);
   }
 }

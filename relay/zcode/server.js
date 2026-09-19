@@ -287,6 +287,14 @@ function createRelay(options = {}) {
       const nonce = state.nonce; state.nonce = null;
       const room = state.room;
       if (!nonce || !room || msg.device_sid !== room.sid || state.authenticated) return fail(state, 'AUTH_FAILED');
+      // 房间代次校验（审查 P2 其他确认项）：挑战在途期间房间可能因 TTL 过期
+      // 被 findRoom 删除并重新注册（同 sid 新对象）——state.room 还指着已
+      // 脱离 rooms 的旧对象，认证通过后会操作僵尸房间持续 waiting。
+      // findRoom 按存活表重取并要求同一对象，失效即重新认证。
+      if (findRoom(room.sid) !== room) {
+        state.room = null;
+        return fail(state, 'AUTH_FAILED');
+      }
       // pass_hash 本身作为字符串密钥，不能先进行 base64 解码。形状检查（base64url
       // 定长 43，hex 不认）与 timingSafeEqual 常量时间比较收口在共享 lib/proof.js
       // （companion 侧推导/Dart 侧等价实现语义一致）。

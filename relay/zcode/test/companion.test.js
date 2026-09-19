@@ -1446,7 +1446,19 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
     onPairing: (url) => { pairingUrl = url; },
   });
   const client = phone(relayUrl);
+  // setModel 观测探针（P2-9 断言：谁被 setModel 全记录在此）
+  const setModelProbe = path.join(stateDir, 'setmodel-probe.txt');
+  process.env.SETMODEL_PROBE = setModelProbe;
+  const setModelTargets = () => {
+    try {
+      return fs
+        .readFileSync(setModelProbe, 'utf8')
+        .split(String.fromCharCode(10))
+        .filter((l) => l.trim());
+    } catch { return []; }
+  };
   cleanup(t, [
+    () => { delete process.env.SETMODEL_PROBE; },
     () => companion.stop(),
     () => { client.close(); },
     () => relay.close(),
@@ -1491,14 +1503,33 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   assert.equal(mini.vision, false);
   assert.equal(mini.reasoning, null);
 
-  // x/model/configure：默认模型落盘（0600）+ 对活跃会话即时 setModel
+  // x/model/configure（审查 P2-9 语义拆分）：默认只落盘、绝不隐式改已有
+  // 会话——引擎替身若有活跃会话，不带 applySessionTarget 的调用不得发
+  // setModel
   ask(21, 'x/model/configure', { providerId: 'builtin:p1', modelId: 'glm-x' });
   const conf = await client.next((m) => m.type === 'data' && m.payload.id === 21);
   assert.equal(conf.payload.result.ok, true);
-  assert.equal(conf.payload.result.appliedToActive, true);
+  assert.equal(conf.payload.result.appliedToActive, false,
+    '默认行为只落盘，不得隐式改已有会话');
+  assert.deepEqual(setModelTargets(), [],
+    '未显式指定目标时不得对任何会话 setModel');
+
+  // 显式 applySessionTarget：只对指定会话 setModel
+  ask(211, 'x/model/configure', {
+    providerId: 'builtin:p1', modelId: 'glm-mini',
+    applySessionTarget: 'engine-session-1',
+  });
+  const conf2 = await client.next((m) => m.type === 'data' && m.payload.id === 211);
+  assert.equal(conf2.payload.result.ok, true);
+  assert.equal(conf2.payload.result.appliedToActive, true);
+  assert.equal(conf2.payload.result.default.modelId, 'glm-mini');
+  await waitFor(() => setModelTargets().includes('engine-session-1'), 3000);
+  assert.equal(setModelTargets().filter((t) => t === 'engine-session-1').length, 1,
+    '显式目标才 setModel，且只命中指定会话');
   const defaultFile = path.join(stateDir, 'model-default.json');
   const saved = JSON.parse(fs.readFileSync(defaultFile, 'utf8'));
-  assert.deepEqual([saved.providerId, saved.modelId], ['builtin:p1', 'glm-x']);
+  // 第二次 configure（显式目标）已把默认更新为 glm-mini：落盘跟随最新值
+  assert.deepEqual([saved.providerId, saved.modelId], ['builtin:p1', 'glm-mini']);
   // Windows 上 writeFileSync 的 mode 不剥离组/其他位（0o600 → 0o666），
   // 0600 语义只在 POSIX 生效：断言属主读写位存在即可
   if (process.platform !== 'win32') {
@@ -1509,7 +1540,7 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   ask(22, 'x/model/catalog', {});
   const cat2 = await client.next((m) => m.type === 'data' && m.payload.id === 22);
   assert.deepEqual(cat2.payload.result.default,
-    { providerId: 'builtin:p1', modelId: 'glm-x' });
+    { providerId: 'builtin:p1', modelId: 'glm-mini' });
   ask(23, 'x/model/configure', { providerId: 'builtin:p1/x', modelId: 'm' });
   const bad = await client.next((m) => m.type === 'data' && m.payload.id === 23);
   assert.equal(bad.payload.error.code, -32100);

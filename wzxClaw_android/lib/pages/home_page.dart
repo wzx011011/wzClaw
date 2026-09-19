@@ -529,8 +529,10 @@ class _ChatPageState extends State<ChatPage> {
 
     _scrollController.addListener(_onScroll);
 
-    // 工作区选择态在直连栈 store 里（欢迎页选择/最近会话回退）；
-    // 变化时刷新当前分支（companion x/* 扩展，见 git_service.dart）
+    // 工作区选择态在直连栈 store 里（欢迎页选择/最近会话回退）。
+    // 审查 P2-11：store 的 notifyListeners 每次流式增量都会触发——绝不能
+    // 把全量聊天通知当领域事件来 spawn git。_onWorkspaceChanged 内部按
+    // 「工作区身份变化 + 有限频率」门卫，流式风暴下零 git 子进程。
     _store.addListener(_onWorkspaceChanged);
     _onWorkspaceChanged();
 
@@ -676,10 +678,24 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 工作区选择变化（欢迎页选择/最近会话回退）→ 分支刷新 + chip 刷新
+  /// 上次触发 git 刷新的工作区身份（null=未触发过）
+  String? _lastGitWorkspace;
+  DateTime _lastGitRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _gitRefreshMinInterval = Duration(seconds: 3);
+
   void _onWorkspaceChanged() {
     if (!mounted) return;
     final path = _store.selectedWorkspacePath;
     setState(() => _workspaceName = _workspaceDisplayName(path));
+    // 审查 P2-11 门卫（与身份比较配套，见 git_service.refreshBranch 的
+    // 旧覆新守卫）：仅工作区身份变化，或距上次刷新超过最小间隔才真正
+    // spawn git；流式增量（身份不变、间隔不足）在此被拦为零成本
+    final identityChanged = path != _lastGitWorkspace;
+    final throttled =
+        DateTime.now().difference(_lastGitRefreshAt) < _gitRefreshMinInterval;
+    if (!identityChanged && throttled) return;
+    _lastGitWorkspace = path;
+    _lastGitRefreshAt = DateTime.now();
     GitService.instance.refreshBranch(path);
   }
 

@@ -565,10 +565,35 @@ function createCompanion(options = {}) {
     let pid = NaN;
     try { pid = parseInt(fs.readFileSync(lockFile, 'utf8'), 10); } catch { /* 首次运行 */ }
     // 同进程的第二个实例 pid 相同，同样视为已持有锁（stop() 会删锁，正常重取不受影响）
-    if (Number.isInteger(pid) && pid > 0 && isPidAlive(pid)) {
+    if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && isPidAlive(pid)) {
       throw safeError('ALREADY_RUNNING');
     }
-    fs.writeFileSync(lockFile, String(process.pid), { mode: 0o600 });
+    // 原子获取（审查 P2 其他确认项）：O_EXCL 语义下 create 为独占步骤——
+    // 两个实例同时通过「读 pid→写文件」的旧竞态窗口（双 PID 交错均可成功）
+    // 在此被文件系统原子性挡住；EEXIST 时重读 pid 复核（陈旧锁接管路径）
+    try {
+      const fd = fs.openSync(lockFile, 'wx', 0o600);
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    // EEXIST：锁文件存在但读到的 pid 已死（陈旧锁）——接管：删后重走原子创建
+    if (Number.isInteger(pid) && pid > 0 && !isPidAlive(pid)) {
+      try { fs.unlinkSync(lockFile); } catch { /* 并发接管者已删 */ }
+      try {
+        const fd = fs.openSync(lockFile, 'wx', 0o600);
+        fs.writeSync(fd, String(process.pid));
+        fs.closeSync(fd);
+        return;
+      } catch (error2) {
+        if (error2.code === 'EEXIST') throw safeError('ALREADY_RUNNING');
+        throw error2;
+      }
+    }
+    // 锁在且持有者活着（含本进程重复启动）
+    throw safeError('ALREADY_RUNNING');
   })();
 
   function send(value) {
@@ -1321,23 +1346,23 @@ function createCompanion(options = {}) {
             throw safeError('X_BAD_PARAMS');
           }
           writeModelDefault(p.providerId, p.modelId);
-          // 对活跃会话即时生效：setModel 失败不回滚默认值（新会话仍会应用），
-          // 如实返回 appliedToActive 供 UI 提示
+          // 审查 P2-9：「设节点默认」与「改指定会话模型」语义分离——只有
+          // 调用方显式给 applySessionTarget（目标 sessionId）才对已有会话
+          // setModel；绝不自作主张改 session/list 第一项（那可能是用户
+          // 正在跑的无关会话）。默认行为 = 只落盘默认值，新会话生效。
           let appliedToActive = false;
-          try {
-            const list = await bridgeRequest({ id: nextLocalId(), method: 'session/list' });
-            const sessions = list && list.result && Array.isArray(list.result.sessions)
-              ? list.result.sessions : [];
-            const active = sessions.find((s) => s && typeof s.sessionId === 'string');
-            if (active) {
+          let appliedTarget = null;
+          if (typeof p.applySessionTarget === 'string' && p.applySessionTarget.trim()) {
+            appliedTarget = p.applySessionTarget.trim();
+            try {
               const r = await bridgeRequest({
                 id: nextLocalId(), method: 'session/setModel',
-                params: { sessionId: active.sessionId,
+                params: { sessionId: appliedTarget,
                   model: { providerId: p.providerId, modelId: p.modelId } },
               });
               appliedToActive = Boolean(r && !r.error);
-            }
-          } catch { /* 桥不可用：默认值已落盘，新会话会应用 */ }
+            } catch { /* setModel 失败不回滚默认值（新会话仍会应用） */ }
+          }
           reply({ id: frame.id, result: {
             ok: true, appliedToActive,
             default: { providerId: p.providerId, modelId: p.modelId },

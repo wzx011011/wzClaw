@@ -72,6 +72,22 @@ class _PendingRequest {
 }
 
 /// relay 客户端（probe 角色）
+/// 按方法族的请求 deadline 表（审查 P2-12）：默认档 30s；有副作用、
+/// 节点端执行窗口更长的命令显式给更长档——手机先超时会造成「手机报失败、
+/// 节点仍完成」的两张皮。不在表内的方法走默认档。
+const Map<String, Duration> kRequestDeadlines = {
+  'x/git/push': Duration(seconds: 90), // companion 侧 60s 执行窗 + 传输余量
+  'x/git/commit': Duration(seconds: 60),
+  'x/file/commit': Duration(seconds: 60),
+  'session/compact': Duration(seconds: 120), // 引擎压缩长上下文可达分钟级
+  'session/fork': Duration(seconds: 60), // checkpoint 恢复+复制
+  'session/create': Duration(seconds: 45), // 引擎物化+模型目录
+  'session/resume': Duration(seconds: 45), // 大历史物化
+};
+
+Duration requestDeadlineFor(String method, Duration fallback) =>
+    kRequestDeadlines[method] ?? fallback;
+
 class ZcodeRelayClient {
   ZcodeRelayClient({
     required ZcodePairingInfo pairing,
@@ -192,16 +208,22 @@ class ZcodeRelayClient {
 
   /// 发起 ZCode Protocol 请求；未配对时抛 StateError；超时/错误帧抛 Exception
   /// 返回 result（Map/List/其他），错误帧抛 ZcodeRequestException（含 code/message）
-  Future<dynamic> request(String method, [Map<String, dynamic>? params]) {
+  Future<dynamic> request(
+    String method, [
+    Map<String, dynamic>? params,
+    Duration? timeout,
+  ]) {
     if (_socket == null || _state != ZcodeRelayState.matched) {
       throw StateError('未连接到 ZCode（配对未完成）');
     }
+    // deadline 表优先（P2-12），注入 fallback 兜底
+    final effective = timeout ?? requestDeadlineFor(method, _requestTimeout);
     final id = _nextRequestId++;
     final completer = Completer<dynamic>();
-    final timer = Timer(_requestTimeout, () {
+    final timer = Timer(effective, () {
       _pending.remove(id);
       if (!completer.isCompleted) {
-        completer.completeError(TimeoutException('请求超时: $method', _requestTimeout));
+        completer.completeError(TimeoutException('请求超时: $method', effective));
       }
     });
     _pending[id] = _PendingRequest(completer, timer);
