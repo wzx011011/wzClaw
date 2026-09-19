@@ -20,6 +20,7 @@ import '../services/file_download_service.dart';
 import '../services/node_catalog_service.dart';
 import '../services/git_service.dart';
 import '../services/chat_runtime_service.dart';
+import '../zcode/zcode_session_state.dart';
 import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
@@ -31,6 +32,7 @@ import '../widgets/project_drawer.dart';
 import '../widgets/turn_block.dart';
 import '../widgets/workspace_switcher_sheet.dart';
 import '../widgets/markdown_path_link.dart';
+import '../widgets/markdown_table_export.dart';
 import '../zcode/zcode_chat_store.dart';
 
 class ChatPage extends StatefulWidget {
@@ -119,18 +121,27 @@ class _ChatPageState extends State<ChatPage> {
       : _store.selectedWorkspacePath;
 
   Future<void> _pickAndUploadAttachment({required bool camera}) async {
+    // 回调归属固定在发起时的节点（审查 P1-2）：上传完成回调不得把附件
+    // 塞进当前节点的列表——塞进发起节点的桶，切回时自然可见。
+    final originNodeKey = ConnectionManager.instance.selectedDesktopId ?? '';
+    void addToOrigin(AttachmentUpload record) {
+      final bucket =
+          _attachmentsByNode.putIfAbsent(originNodeKey, () => []);
+      if (!bucket.contains(record)) bucket.add(record);
+      if (mounted) setState(() {});
+    }
+
     final upload = await AttachmentService.pickAndUpload(
       source: camera ? ImageSource.camera : ImageSource.gallery,
-      onCreated: (record) {
-        if (mounted) setState(() => _attachments.add(record));
-      },
+      onCreated: (record) => addToOrigin(record),
       onChanged: (_) {
         if (mounted) setState(() {});
       },
       workspacePath: _attachmentWorkspacePath,
     );
-    if (upload != null && !_attachments.contains(upload) && mounted) {
-      setState(() => _attachments.add(upload));
+    if (upload != null && mounted &&
+        _attachmentsByNode[originNodeKey]?.contains(upload) != true) {
+      addToOrigin(upload);
     }
     if (upload != null && upload.error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -240,11 +251,59 @@ class _ChatPageState extends State<ChatPage> {
                   _inputFocusNode.requestFocus();
                 },
               ),
+              ListTile(
+                leading: Icon(
+                  Icons.call_split_outlined,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
+                title: Text(
+                  '分叉会话（从此处探索）',
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                ),
+                subtitle: Text(
+                  '以当前会话为底创建副本，原会话保持不变（需已有工作区检查点）',
+                  style: TextStyle(color: colors.textMuted, fontSize: 11),
+                ),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  final confirmed = await _confirmDialog(
+                    '分叉当前会话？',
+                    '将以当前会话为底创建副本并打开，原会话保持不变。'
+                    '要求会话已有工作区检查点。',
+                  );
+                  if (confirmed) await _store.forkSession();
+                },
+              ),
             ],
           ),
         );
       },
     );
+  }
+
+  /// 通用确认弹层（危险/重要操作双确认纪律）
+  Future<bool> _confirmDialog(String title, String body) async {
+    final colors = AppColors.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgSecondary,
+        title: Text(title, style: TextStyle(color: colors.textPrimary, fontSize: 16)),
+        content: Text(body, style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消', style: TextStyle(color: colors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('分叉', style: TextStyle(color: colors.accent)),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   // ── 文件下载到手机（确认 → 可预览 → 再确认保存）────────────────────
@@ -260,6 +319,9 @@ class _ChatPageState extends State<ChatPage> {
       _showDownloadConfirmSheet(existing.first);
       return;
     }
+    // 登记归属固定在发起时的节点（审查 P1-2）：begin 返回时可能已切节点，
+    // 任务必须进发起节点的桶而不是当前列表
+    final originNodeKey = ConnectionManager.instance.selectedDesktopId ?? '';
     final task = await FileDownloadService.begin(
       nodePath,
       workspacePath: _attachmentWorkspacePath,
@@ -275,7 +337,14 @@ class _ChatPageState extends State<ChatPage> {
       );
       return;
     }
-    setState(() => _downloads.add(task));
+    final bucket = _downloadsByNode.putIfAbsent(originNodeKey, () => []);
+    if (!bucket.any((t) => identical(t, task))) bucket.add(task);
+    // 发起节点仍是当前节点时立即可见；已切走则只入桶，切回时由
+    // _syncFromStore 换手显示
+    if ((ConnectionManager.instance.selectedDesktopId ?? '') == originNodeKey) {
+      _downloads = bucket;
+    }
+    setState(() {});
     _showDownloadConfirmSheet(task);
   }
 
@@ -1052,6 +1121,12 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: () =>
                 setState(() => _showStatusPanel = !_showStatusPanel),
           ),
+          // 全局快捷面板（对齐官方命令面板 Ctrl+K）：任务/操作实时搜索
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: '快捷面板',
+            onPressed: _showQuickActionsSheet,
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: '设置',
@@ -1532,8 +1607,13 @@ class _ChatPageState extends State<ChatPage> {
         style: TextStyle(color: colors.textPrimary, fontSize: 13, height: 1.5),
       );
     }
-    return MarkdownBody(
-      data: content,
+    // 表格导出（对齐官方「复制 Markdown / 下载 CSV」）：按 GFM 切分内容，
+    // 无表格走原单段渲染；有表格时分段渲染并在每个表格上方挂导出条。
+    final segments = segmentMarkdown(content);
+    final hasTables = segments.any((seg) => seg.table != null);
+
+    Widget renderMd(String data) => MarkdownBody(
+      data: data,
       selectable: true,
       extensionSet: md.ExtensionSet.gitHubFlavored,
       styleSheet: MarkdownStyleSheet(
@@ -1612,6 +1692,104 @@ class _ChatPageState extends State<ChatPage> {
           );
         }
       },
+    );
+
+    if (!hasTables) return renderMd(content);
+    // 有表格：分段渲染 + 每表挂导出条（复制 Markdown / 下载 CSV）
+    final messenger = ScaffoldMessenger.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final seg in segments) ...[
+          if (seg.table != null)
+            _buildTableExportBar(seg.table!, messenger),
+          renderMd(seg.text),
+        ],
+      ],
+    );
+  }
+
+  /// 表格导出操作条（对齐官方表格头部的「复制 Markdown / 下载 CSV」）
+  Widget _buildTableExportBar(MdTableBlock table, ScaffoldMessengerState messenger) {
+    final colors = AppColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 2),
+      child: Row(
+        children: [
+          Icon(Icons.table_chart_outlined, size: 13, color: colors.textSecondary),
+          const SizedBox(width: 4),
+          Text(
+            '表格 ${table.rows.isEmpty ? '' : '· ${table.rows.length - 1} 行数据 '}',
+            style: TextStyle(color: colors.textSecondary, fontSize: 11),
+          ),
+          const Spacer(),
+          _tableExportChip(
+            colors,
+            label: '复制 Markdown',
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: table.raw));
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('表格 Markdown 已复制'),
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
+          const SizedBox(width: 6),
+          _tableExportChip(
+            colors,
+            label: '下载 CSV',
+            onTap: () async {
+              final csv = toCsv(table.rows);
+              try {
+                final uri = await FileDownloadService.saveGeneratedFile(
+                  name: 'table-${DateTime.now().millisecondsSinceEpoch}.csv',
+                  mime: 'text/csv',
+                  bytes: Uint8List.fromList(csv.codeUnits),
+                );
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('CSV 已保存：$uri'),
+                    duration: const Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              } catch (e) {
+                // 下载通道不可用（模拟器/桌面预览）：回退复制 CSV，不做假成功
+                Clipboard.setData(ClipboardData(text: csv));
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('下载通道不可用（$e），已复制 CSV 到剪贴板'),
+                    duration: const Duration(seconds: 3),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableExportChip(
+    AppColors colors, {
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(label, style: TextStyle(color: colors.textSecondary, fontSize: 11)),
+      ),
     );
   }
 
@@ -1785,6 +1963,8 @@ class _ChatPageState extends State<ChatPage> {
   final GlobalKey _plusBtnKey = GlobalKey();
   final GlobalKey _modeBtnKey = GlobalKey();
   final GlobalKey _usageBtnKey = GlobalKey();
+  final GlobalKey _bgTasksBtnKey = GlobalKey();
+  String _quickQuery = '';
   final GlobalKey _modelBtnKey = GlobalKey();
   final GlobalKey _effortBtnKey = GlobalKey();
   final GlobalKey _queueBtnKey = GlobalKey();
@@ -1991,6 +2171,16 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
         const Spacer(),
+        // 后台任务徽章（对齐官方「后台任务」chip）：仅在有未终态任务时显示
+        if (isConnected && _runningBackgroundJobs.isNotEmpty)
+          iconBtn(
+            key: _bgTasksBtnKey,
+            tip: _backgroundTasksTip(),
+            icon: Icons.task_outlined,
+            onTap: _showBackgroundTasksSheet,
+            color: colors.accent,
+          ),
+        const SizedBox(width: 2),
         // 上下文用量：必须已有会话（新任务态不可点，语义对齐官方）
         iconBtn(
           key: _usageBtnKey,
@@ -2228,21 +2418,451 @@ class _ChatPageState extends State<ChatPage> {
     unawaited(_store.setMode(chosen));
   }
 
+  /// 全局快捷面板（对齐官方命令面板）：搜索框实时过滤「任务 + 操作」，
+  /// 点击直达。文件搜索不在本期（远端检索需 x/fs 新扩展，显式不做不做假）。
+  Future<void> _showQuickActionsSheet() async {
+    _inputFocusNode.unfocus();
+    final colors = AppColors.of(context);
+    await _showComposerSheet<void>(
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final query = _quickQuery.trim().toLowerCase();
+          final tasks = _store.sessions
+              .where(
+                (s) =>
+                    query.isEmpty ||
+                    s.title.toLowerCase().contains(query),
+              )
+              .toList(growable: false);
+          final ops = <(String, IconData, VoidCallback)>[
+            (
+              '新任务',
+              Icons.add_comment_outlined,
+              () {
+                Navigator.pop(ctx);
+                _store.closeSessionView();
+              },
+            ),
+            (
+              '刷新会话列表',
+              Icons.refresh,
+              () {
+                Navigator.pop(ctx);
+                unawaited(_store.refreshSessions());
+              },
+            ),
+            (
+              '打开状态面板',
+              Icons.monitor_heart_outlined,
+              () {
+                Navigator.pop(ctx);
+                setState(() => _showStatusPanel = !_showStatusPanel);
+              },
+            ),
+            (
+              '切换桌面端',
+              Icons.swap_horiz_outlined,
+              () {
+                Navigator.pop(ctx);
+                Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+              },
+            ),
+            (
+              '设置',
+              Icons.settings_outlined,
+              () {
+                Navigator.pop(ctx);
+                Navigator.pushNamed(context, '/settings');
+              },
+            ),
+          ].where((op) => query.isEmpty || op.$1.toLowerCase().contains(query)).toList();
+
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: '搜索任务或操作',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                  onChanged: (v) => setSheetState(() => _quickQuery = v),
+                ),
+                const SizedBox(height: 10),
+                if (tasks.isNotEmpty) ...[
+                  _quickSectionLabel(colors, '任务'),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: tasks.length,
+                      itemBuilder: (ctx, i) {
+                        final task = tasks[i];
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            Icons.chat_bubble_outline,
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                          title: Text(
+                            task.title.isEmpty ? '（无标题）' : task.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.textPrimary, fontSize: 13.5,
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            unawaited(_store.openSession(task.sessionId));
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                if (ops.isNotEmpty) ...[
+                  _quickSectionLabel(colors, '操作'),
+                  for (final (label, icon, action) in ops)
+                    ListTile(
+                      dense: true,
+                      leading: Icon(icon, size: 18, color: colors.textSecondary),
+                      title: Text(
+                        label,
+                        style: TextStyle(color: colors.textPrimary, fontSize: 13.5),
+                      ),
+                      onTap: action,
+                    ),
+                ],
+                if (tasks.isEmpty && ops.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Center(
+                      child: Text(
+                        '没有匹配的任务或操作',
+                        style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _quickSectionLabel(AppColors colors, String label) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 2),
+      child: Text(
+        label,
+        style: TextStyle(color: colors.textMuted, fontSize: 11),
+      ),
+    );
+  }
+
+  // 后台任务 kind → 中文标签（0.16.9 实测枚举 bash|subagent|workflow）
+  static const _bgJobKindLabels = {
+    'bash': 'Bash',
+    'subagent': '子智能体',
+    'workflow': '工作流',
+  };
+
+  // 后台任务 status → 中文标签（0.16.9 实测枚举）
+  static const _bgJobStatusLabels = {
+    'running': '运行中',
+    'completed': '已完成',
+    'failed': '失败',
+    'timed_out': '超时',
+    'cancelled': '已取消',
+    'spawn_error': '启动失败',
+    'lost': '失联',
+  };
+
+  bool _bgJobRunning(Map<String, dynamic> job) =>
+      (job['status']?.toString() ?? 'running') == 'running';
+
+  /// 未终态（运行中）的后台任务——徽章计数与 tip 口径
+  List<Map<String, dynamic>> get _runningBackgroundJobs =>
+      _store.activeBackgroundJobs.where(_bgJobRunning).toList();
+
+  String _backgroundTasksTip() {
+    final jobs = _runningBackgroundJobs;
+    final byKind = <String, int>{};
+    for (final j in jobs) {
+      final kind = j['kind']?.toString() ?? 'bash';
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+    }
+    final detail = byKind.entries
+        .map((e) => '${_bgJobKindLabels[e.key] ?? e.key} ${e.value}')
+        .join(' · ');
+    return '后台任务（${jobs.length}）：$detail';
+  }
+
+  /// 后台任务 sheet：列出任务（kind/描述/状态），可取消项带取消按钮
+  ///（session/cancelBackgroundTask，schema 已钉）。任务列表来自
+  /// state.updated backgroundJobs 投影（推送整体替换，无需轮询）。
+  Future<void> _showBackgroundTasksSheet() async {
+    _inputFocusNode.unfocus();
+    final colors = AppColors.of(context);
+    await _showComposerSheet<void>(
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+        child: ListenableBuilder(
+          listenable: _store,
+          builder: (ctx, _) {
+            final jobs = _store.activeBackgroundJobs;
+            if (jobs.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Center(
+                  child: Text(
+                    '没有后台任务',
+                    style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                  ),
+                ),
+              );
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '后台任务（${jobs.length}）',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                for (final job in jobs)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.bgTertiary,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _bgJobKindLabels[job['kind']?.toString()] ??
+                                (job['kind']?.toString() ?? '任务'),
+                            style: TextStyle(
+                              color: colors.textSecondary, fontSize: 11,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            (job['description'] ?? job['command'] ??
+                                    job['taskId'] ?? '')
+                                .toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.textPrimary, fontSize: 12.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _bgJobStatusLabels[job['status']?.toString()] ??
+                              (job['status']?.toString() ?? ''),
+                          style: TextStyle(
+                            color: _bgJobRunning(job)
+                                ? colors.accent
+                                : colors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                        if (_bgJobRunning(job) &&
+                            job['cancellable'] != false &&
+                            job['taskId'] != null)
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: '取消任务',
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () async {
+                              final taskId = job['taskId']!.toString();
+                              // 跨 async 用页级 messenger（先捕获，不依赖
+                              // 弹层 ctx 存活）
+                              final messenger = ScaffoldMessenger.of(context);
+                              final err = await ZcodeChatStore.instance
+                                  .cancelBackgroundTask(taskId);
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    err['message']?.toString() ??
+                                        (err['stopped'] == true
+                                            ? '已请求取消：$taskId'
+                                            : '取消失败：$taskId'),
+                                  ),
+                                  duration: const Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // contextUsage.source → 中文标签词典（0.16.9 实测枚举，APP-SERVER.md 定论；
+  // 未收录枚举原样显示 key——静默丢弃 = 缺陷）
+  static const _contextSourceLabels = {
+    'system_prompt': '系统提示词',
+    'meta_user_context': '其他',
+    'skills': '技能',
+    'tool_prompt': '工具提示',
+    'system_tool_schemas': '系统工具',
+    'mcp_tool_schemas': 'MCP 工具',
+    'messages': '消息',
+  };
+
+  static const _capacitySegColors = [
+    Color(0xFF3B82F6),
+    Color(0xFF10B981),
+    Color(0xFFA855F7),
+    Color(0xFFF59E0B),
+    Color(0xFFEF4444),
+    Color(0xFF06B6D4),
+    Color(0xFF84CC16),
+  ];
+
+  /// 官方同款「上下文容量」视图：进度条（used/size）+ 分类占比 + 缓存命中率
+  Widget _buildContextCapacityBody(AppColors colors, ZcodeContextUsage cu) {
+    final pct = cu.size > 0 ? cu.used / cu.size : 0.0;
+    final sorted = [...cu.breakdown]..sort((a, b) => b.chars.compareTo(a.chars));
+    final totalChars = sorted.fold<int>(0, (n, e) => n + e.chars);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('上下文容量', style: TextStyle(color: colors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+            Text(
+              '${_formatTokenCount(cu.used)}/${_formatTokenCount(cu.size)}（${(pct * 100).toStringAsFixed(1)}%）',
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: pct.clamp(0.0, 1.0),
+            minHeight: 8,
+            backgroundColor: colors.textSecondary.withValues(alpha: 0.15),
+            valueColor: AlwaysStoppedAnimation(
+              pct > 0.9 ? const Color(0xFFEF4444) : const Color(0xFF3B82F6),
+            ),
+          ),
+        ),
+        if (sorted.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          for (var i = 0; i < sorted.length; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8, height: 8,
+                    decoration: BoxDecoration(
+                      color: _capacitySegColors[i % _capacitySegColors.length],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _contextSourceLabels[sorted[i].source] ?? sorted[i].source,
+                      style: TextStyle(color: colors.textPrimary, fontSize: 12.5),
+                    ),
+                  ),
+                  Text(
+                    totalChars > 0
+                        ? '${(sorted[i].chars / totalChars * 100).toStringAsFixed(1)}%'
+                        : '0%',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+        ],
+        if (cu.cacheHitRate != null) ...[
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('平均缓存命中率', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+              Text(
+                '${(cu.cacheHitRate! * 100).toStringAsFixed(1)}%',
+                style: TextStyle(color: colors.textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 令牌数缩写：≥1 万以「万」计（对齐官方 7.1万/100万 形态）
+  static String _formatTokenCount(int n) {
+    if (n >= 10000) {
+      final w = n / 10000;
+      return w == w.roundToDouble()
+          ? '${w.toStringAsFixed(0)}万'
+          : '${w.toStringAsFixed(1)}万';
+    }
+    return '$n';
+  }
+
   /// 上下文用量弹层：session/usage 实测数据。对齐官方「上下文容量」面板的
-  /// 信息结构（标题行 + 分段占比条 + 彩点明细），但只展示协议实测字段——
-  /// 协议无 contextWindow（不显示容量百分比）、无分类拆分（消息/MCP 等官方
-  /// 分类来自其云端计费，不可伪造）。缓存命中率 = 缓存读/(输入+缓存读)，实测可导出。
+  /// 信息结构（标题行 + 分段占比条 + 彩点明细）。contextUsage 快照可用时
+  /// 由 _buildContextCapacityBody 接管（官方同款）；本视图为回退路径。
   Future<void> _showUsagePopup() async {
     final sessionId = _store.activeSessionId;
     if (sessionId == null) return;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
+    // 0.16.9 state.updated contextUsage 已到 → 官方同款容量视图（推送数据，
+    // 无需请求）；未到（空闲快照不带）→ 回退 session/usage 令牌明细视图
+    final capacity = _store.activeContextUsage;
     // future 只构造一次（弹层构建期间不会重发请求）
     final usageFuture = ChatRuntimeService.instance.usage(sessionId);
     await _showComposerSheet(
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-        child: FutureBuilder<ChatUsageInfo>(
+        child: capacity != null
+            ? _buildContextCapacityBody(colors, capacity)
+            : FutureBuilder<ChatUsageInfo>(
           future: usageFuture,
           builder: (ctx, snap) {
             Widget body;
