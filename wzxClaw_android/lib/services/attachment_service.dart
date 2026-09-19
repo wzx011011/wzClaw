@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'connection_manager.dart';
+import 'transfer_rate_limiter.dart';
 
 /// 待发送附件的上传状态（页面持有列表，字段可变随进度更新）
 class AttachmentUpload {
@@ -27,6 +28,10 @@ class AttachmentUpload {
 /// 见 APP-SERVER.md「附件入口实测」。
 class AttachmentService {
   static const _chunkBytes = 256 * 1024; // base64 后 ~349KB，低于 relay 1MB 帧限
+
+  /// 上传分块客户端限速（审查 P2-5）：relay 硬限 10s/16MiB 超额断连，
+  /// 主动限到 10MiB/10s 给聊天/权限控制流留余量
+  static final TransferRateLimiter _rateLimiter = TransferRateLimiter();
 
   @visibleForTesting
   static Future<XFile?> Function(ImageSource source)? debugPicker;
@@ -83,7 +88,9 @@ class AttachmentService {
     );
   }
 
-  /// 分块上传字节流到节点工作区（begin → chunk* → commit）
+  /// 分块上传字节流到节点工作区（begin → chunk* → commit）。
+  /// 整条流在开始时绑定一次连接（审查 P1-2）：中途切节点绝不把后续分块
+  /// 发往新节点——绑定入口检测到代次漂移即终止并清理。
   static Future<AttachmentUpload> upload(
     AttachmentUpload up,
     Uint8List bytes, {
@@ -91,9 +98,14 @@ class AttachmentService {
     String? workspacePath,
   }) async {
     void ping() => onChanged?.call(up);
+    final bound = debugRequester != null
+        ? null
+        : ConnectionManager.instance.boundRequester();
+    Future<dynamic> req(String method, [Map<String, dynamic>? params]) =>
+        bound != null ? bound(method, params) : _request(method, params);
     String? uploadId;
     try {
-      final b = await _request('x/file/begin', {
+      final b = await req('x/file/begin', {
         'name': up.name,
         'size': bytes.length,
         if (workspacePath != null && workspacePath.isNotEmpty)
@@ -107,7 +119,8 @@ class AttachmentService {
       for (var off = 0; off < bytes.length; off += _chunkBytes) {
         final end =
             off + _chunkBytes > bytes.length ? bytes.length : off + _chunkBytes;
-        final r = await _request('x/file/chunk', {
+        await _rateLimiter.acquire(end - off);
+        final r = await req('x/file/chunk', {
           'uploadId': uploadId,
           'data': base64Encode(bytes.sublist(off, end)),
         });
@@ -121,7 +134,7 @@ class AttachmentService {
         up.received = received;
         ping();
       }
-      final c = await _request('x/file/commit', {'uploadId': uploadId});
+      final c = await req('x/file/commit', {'uploadId': uploadId});
       final path = c is Map ? c['filePath']?.toString() : null;
       if (path == null || path.trim().isEmpty) {
         throw StateError('x/file/commit 未返回节点路径');
@@ -132,7 +145,7 @@ class AttachmentService {
       up.error = '上传失败: $e';
       if (uploadId != null) {
         try {
-          await _request('x/file/abort', {'uploadId': uploadId});
+          await req('x/file/abort', {'uploadId': uploadId});
         } catch (abortError) {
           debugPrint('[attachment] 清理失败的上传 $uploadId: $abortError');
         }

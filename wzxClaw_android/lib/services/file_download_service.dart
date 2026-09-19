@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/file_types.dart';
 import '../zcode/zcode_relay_client.dart';
 import 'connection_manager.dart';
+import 'transfer_rate_limiter.dart';
 
 /// 下载任务生命周期：
 /// awaitingChoice（begin 完成，等用户选预览/直接下载）
@@ -69,6 +70,10 @@ class FileDownloadTask {
 /// → 应用缓存临时文件 → 系统查看器预览 / MediaStore 存入下载文件夹。
 /// 协议契约见 relay/zcode/APP-SERVER.md「文件下载（x/file/download*）」。
 class FileDownloadService {
+  /// 下载分块客户端限速（审查 P2-5）：relay 硬限 10s/16MiB 超额断连，
+  /// 主动限到 10MiB/10s 给交互控制流留余量
+  static final TransferRateLimiter _rateLimiter = TransferRateLimiter();
+
   @visibleForTesting
   static Future<dynamic> Function(
     String method, [
@@ -189,6 +194,13 @@ class FileDownloadService {
     if (task.phase != FileDownloadPhase.awaitingChoice) return;
     task.phase = FileDownloadPhase.pulling;
     ping();
+    // 整条拉取流绑定开始时的连接（审查 P1-2）：中途切节点绝不把后续分块
+    // 发往新节点——代次漂移即抛错终止，走统一清理。
+    final bound = debugRequester != null
+        ? null
+        : ConnectionManager.instance.boundRequester();
+    Future<dynamic> req(String method, [Map<String, dynamic>? params]) =>
+        bound != null ? bound(method, params) : _request(method, params);
     try {
       final root = await _tempRoot();
       final tempPath =
@@ -198,10 +210,11 @@ class FileDownloadService {
       task._tempPath = tempPath;
       var offset = 0;
       var guard = 0;
+      var emptyStreak = 0; // 连续零进展块计数（提前 EOF 检测）
       while (true) {
         guard += 1;
         if (guard > 100000) throw StateError('分块循环未按预期终止');
-        final r = await _request('x/file/download/chunk', {
+        final r = await req('x/file/download/chunk', {
           'downloadId': task.downloadId,
           'offset': offset,
         });
@@ -215,13 +228,24 @@ class FileDownloadService {
         // 检查必须在写入前——append 模式会把已删的临时文件再建出来。
         if (task.phase != FileDownloadPhase.pulling) {
           await _cleanupTemp(task);
-          await _abort(task);
+          await _abort(task, bound: bound);
           return;
         }
         final bytes = base64Decode(data);
         if (offset + bytes.length != received.toInt()) {
           throw StateError('chunk received 与数据长度不符');
         }
+        if (bytes.isEmpty) {
+          // 提前 EOF 缺口（审查 P2-5）：源文件被截短后服务端反复返回空块
+          // 且 eof 永不置位——零进展立即终止，不得循环到上限或触发限流
+          emptyStreak++;
+          if (emptyStreak >= 2) {
+            throw StateError('源文件提前结束（已收 $offset/${task.size} 字节）');
+          }
+        } else {
+          emptyStreak = 0;
+        }
+        await _rateLimiter.acquire(bytes.length);
         await sink.writeAsBytes(bytes, mode: FileMode.append);
         offset = received.toInt();
         task.received = offset;
@@ -247,7 +271,7 @@ class FileDownloadService {
       }
     } catch (e) {
       await _cleanupTemp(task);
-      await _abort(task);
+      await _abort(task, bound: bound);
       // 用户已取消（终态 cancelled）：归 cancel 所有，不覆盖成 failed
       if (task.phase == FileDownloadPhase.pulling) {
         task.phase = FileDownloadPhase.failed;
@@ -299,6 +323,33 @@ class FileDownloadService {
     await _abort(task);
   }
 
+  /// 本地生成的文件落 MediaStore（表格 CSV 等导出场景；复用下载通道的
+  /// save 桥）。返回保存位置 uri；失败抛错（不做假成功）。
+  static Future<String> saveGeneratedFile({
+    required String name,
+    required String mime,
+    required List<int> bytes,
+  }) async {
+    final root = await _tempRoot();
+    final path =
+        '${root.path}${Platform.pathSeparator}${DateTime.now().millisecondsSinceEpoch}-$name';
+    await File(path).writeAsBytes(bytes, flush: true);
+    try {
+      final res = await _bridge('save', {'name': name, 'mime': mime, 'srcPath': path});
+      if (res == null || res['ok'] == false) {
+        throw StateError('保存失败（${res?['reason'] ?? 'unavailable'}）');
+      }
+      final uri = res['uri'];
+      if (uri is! String || uri.isEmpty) {
+        throw StateError('保存失败（原生层未返回保存位置）');
+      }
+      return uri;
+    } finally {
+      // MediaStore 已复制内容：临时文件即焚
+      try { await File(path).delete(); } catch (_) {}
+    }
+  }
+
   static Future<void> _openViewer(FileDownloadTask task) async {
     final res = await _bridge('preview', {
       'path': task._tempPath,
@@ -328,11 +379,15 @@ class FileDownloadService {
     await _cleanupTemp(task);
   }
 
-  static Future<void> _abort(FileDownloadTask task) async {
+  static Future<void> _abort(
+    FileDownloadTask task, {
+    Future<dynamic> Function(String, [Map<String, dynamic>?])? bound,
+  }) async {
     final id = task.downloadId;
     if (id == null) return;
     try {
-      await _request('x/file/download/abort', {'downloadId': id});
+      final req = bound ?? _request;
+      await req('x/file/download/abort', {'downloadId': id});
     } catch (e) {
       debugPrint('[file-download] abort 失败（30 分钟过期兜底）: $e');
     }

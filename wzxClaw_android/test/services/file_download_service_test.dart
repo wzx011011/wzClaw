@@ -370,6 +370,42 @@ void main() {
     expect(chunkCalls, 1, reason: '第二次 pull 应被 awaitingChoice 门卫忽略');
     expect(task.phase, FileDownloadPhase.previewing);
   });
+
+  test('提前 EOF：零进展空块立即终止，不循环到上限（审查 P2-5）', () async {
+    var chunkCalls = 0;
+    FileDownloadService.debugRequester = (method, [params]) async {
+      switch (method) {
+        case 'x/file/download/begin':
+          return {'downloadId': 'dl-eof', 'name': 'trunc.bin', 'size': 1000};
+        case 'x/file/download/chunk':
+          chunkCalls++;
+          final offset = params?['offset'] as int;
+          if (offset == 0) {
+            // 第一块正常 500 字节
+            return {
+              'data': base64Encode(List.generate(500, (i) => i & 0xff)),
+              'received': 500,
+              'eof': false,
+            };
+          }
+          // 源文件被截短：反复返回空块且 eof 永不置位
+          return {'data': '', 'received': 500, 'eof': false};
+        default:
+          fail('unexpected method $method');
+      }
+    };
+
+    final task = await FileDownloadService.begin('ignored');
+    await FileDownloadService.pull(task, forPreview: true);
+
+    expect(task.phase, FileDownloadPhase.failed);
+    expect(task.error, contains('提前结束'));
+    expect(
+      chunkCalls,
+      lessThanOrEqualTo(3),
+      reason: '零进展必须在第 2 个空块内终止，不得循环到上限',
+    );
+  });
 }
 
 File? _soleTempFile(Directory root) {

@@ -42,10 +42,14 @@ class ZcodeSessionCache {
   // 直接换新文件名 → 旧 schema 文件永远打不开；旧文件顺手删除
   // （尽力而为）。数据库不做迁移、不做降级、不跑 onUpgrade。
   // ============================================================
-  static const _dbName = 'wzxclaw_zcode_cache_canonical.db';
+  static const _dbName = 'wzxclaw_zcode_cache_canonical_v2.db';
 
-  /// 被硬切换作废的旧文件名（启动首次建库时删掉，避免残留）
-  static const _legacyDbName = 'wzxclaw_zcode_cache.db';
+  /// 被硬切换作废的旧文件名（启动首次建库时删掉，避免残留）。
+  /// v2：zcode_messages 增加 truncated 列（审查 P2-10 截断标记持久化）。
+  static const _legacyDbNames = [
+    'wzxclaw_zcode_cache_canonical.db',
+    'wzxclaw_zcode_cache.db',
+  ];
 
   /// 单条过程行/单条消息的本地缓存上限。运行时和引擎历史保留完整值；
   /// 这里只约束 SQLite 副本，避免一次命令输出撑爆整个会话缓存。
@@ -57,9 +61,11 @@ class ZcodeSessionCache {
   Future<Database> _ensureDb() async {
     if (_db != null) return _db!;
     // 旧 schema 文件作废：首次建库前尽力删除（失败不影响任何功能）。
-    try {
-      await deleteDatabase(_legacyDbName);
-    } catch (_) {}
+    for (final legacy in _legacyDbNames) {
+      try {
+        await deleteDatabase(legacy);
+      } catch (_) {}
+    }
     _db = await openDatabase(
       _dbName,
       version: 1,
@@ -80,6 +86,7 @@ class ZcodeSessionCache {
         agent TEXT,
         turn_id TEXT,
         process_parts_json TEXT NOT NULL,
+        truncated INTEGER NOT NULL DEFAULT 0,
         input_tokens INTEGER,
         output_tokens INTEGER,
         duration_ms INTEGER
@@ -208,6 +215,7 @@ class ZcodeSessionCache {
 
   Map<String, dynamic> _toRow(String sessionId, ZcodeSessionItem it) {
     final m = it.message;
+    final (encodedParts, truncated) = _encodeProcessParts(m.processParts);
     return {
       'session_id': sessionId,
       'proto_id': it.protoId,
@@ -216,17 +224,25 @@ class ZcodeSessionCache {
       'model': m.model,
       'agent': m.agent,
       'turn_id': it.turnId,
-      'process_parts_json': _encodeProcessParts(m.processParts),
+      'process_parts_json': encodedParts,
+      'truncated': truncated ? 1 : 0,
       'input_tokens': m.usage?.inputTokens,
       'output_tokens': m.usage?.outputTokens,
       'duration_ms': m.durationMs,
     };
   }
 
-  String _encodeProcessParts(List<ChatProcessPart> parts) {
-    var cached = parts.map(_cacheProcessPart).toList(growable: false);
+  /// 返回 (编码 JSON, 是否发生截断)。截断标记随行持久化（审查 P2-10）：
+  /// 读回时区分「服务端确认过」与「本地保存了完整内容」，联网后按窗口补齐。
+  (String, bool) _encodeProcessParts(List<ChatProcessPart> parts) {
+    var truncated = false;
+    var cached = parts.map((part) {
+      final capped = _cacheProcessPart(part);
+      if (_partContentChanged(part, capped)) truncated = true;
+      return capped;
+    }).toList(growable: false);
     var encoded = jsonEncode(cached.map((part) => part.toJson()).toList());
-    if (encoded.length <= _kMaxCachedMessageChars) return encoded;
+    if (encoded.length <= _kMaxCachedMessageChars) return (encoded, truncated);
 
     // 第二档保留全部顺序和类型，压缩文本/工具详情；超限则只保留前 128 行
     // 并追加诊断标记。运行时与服务端权威历史不受此限制。
@@ -244,11 +260,21 @@ class ZcodeSessionCache {
         )
         .toList(growable: false);
     encoded = jsonEncode(cached.map((part) => part.toJson()).toList());
-    if (encoded.length <= _kMaxCachedMessageChars) return encoded;
+    if (encoded.length <= _kMaxCachedMessageChars) return (encoded, truncated);
 
     final reduced = cached.take(128).toList(growable: true)
       ..add(const ChatProcessPart.marker('cache-truncated'));
-    return jsonEncode(reduced.map((part) => part.toJson()).toList());
+    truncated = true;
+    return (jsonEncode(reduced.map((part) => part.toJson()).toList()), truncated);
+  }
+
+  /// 截断判定：限流前后文本/工具详情是否发生变化
+  bool _partContentChanged(ChatProcessPart before, ChatProcessPart after) {
+    if (before.text != after.text) return true;
+    final bt = before.toolCall;
+    final at = after.toolCall;
+    if (bt == null || at == null) return false;
+    return bt.inputFull != at.inputFull || bt.outputFull != at.outputFull;
   }
 
   ChatProcessPart _cacheProcessPart(ChatProcessPart part) {
@@ -295,6 +321,9 @@ class ZcodeSessionCache {
       protoId: row['proto_id'] as String?,
       turnId: row['turn_id'] as String?,
       synced: true, // 缓存里的消息均已获服务端确认
+      // 截断标记（审查 P2-10）：synced=身份确认，truncated=内容不完整，
+      // 两者独立——联网后按窗口补齐截断项
+      truncated: row['truncated'] == 1,
       dirty: false, // 已持久化，无需重写
       message: ChatMessage(
         id: row['id'] as int?,
