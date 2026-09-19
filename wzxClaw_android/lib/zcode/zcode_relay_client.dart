@@ -346,6 +346,9 @@ class ZcodeRelayClient {
             ZcodeRequestException(
               (error['code'] as num?)?.toInt() ?? -32000,
               (error['message'] ?? '未知错误').toString(),
+              error['data'] is Map
+                  ? Map<String, dynamic>.from(error['data'] as Map)
+                  : null,
             ),
           );
         }
@@ -569,11 +572,17 @@ class ZcodeRelayClient {
   }
 }
 
-/// ZCode 请求错误（错误帧）
+/// ZCode 请求错误（错误帧）。[data] 为 error.data 原文——companion x/*
+/// 族把可读分类放在 data.reason（见 protocol.js 约定），分类必须读这里，
+/// 不许对 message 做字符串嗅探。
 class ZcodeRequestException implements Exception {
   final int code;
   final String message;
-  const ZcodeRequestException(this.code, this.message);
+  final Map<String, dynamic>? data;
+  const ZcodeRequestException(this.code, this.message, [this.data]);
+
+  /// error.data.reason 快捷读取（缺省 null）
+  String? get reason => data?['reason']?.toString();
 
   @override
   String toString() => 'ZcodeRequestException($code): $message';

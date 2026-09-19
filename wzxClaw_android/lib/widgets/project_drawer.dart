@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
@@ -21,6 +22,7 @@ class ProjectDrawer extends StatefulWidget {
 class _ProjectDrawerState extends State<ProjectDrawer> {
   static const _kPinnedKey = 'wzxclaw-zcode-pinned-sessions';
   static const _kArchivedKey = 'wzxclaw-zcode-archived-sessions';
+  static const _kAliasesKey = 'wzxclaw-zcode-session-aliases';
 
   Set<String> _pinnedIds = {};
   Set<String> _archivedIds = {};
@@ -31,10 +33,24 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
   final Set<String> _busySeen = {};
   final Set<String> _resultDots = {};
 
+  // 会话搜索：非空时忽略工作区范围，跨工作区按标题过滤
+  bool _searchOpen = false;
+  String _sessionQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  // 会话本地备注名（SharedPreferences，非引擎能力；显示与搜索均生效）
+  Map<String, String> _aliases = {};
+
   @override
   void initState() {
     super.initState();
     _loadLocalState();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadLocalState() async {
@@ -43,6 +59,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     setState(() {
       _pinnedIds = (prefs.getStringList(_kPinnedKey) ?? const []).toSet();
       _archivedIds = (prefs.getStringList(_kArchivedKey) ?? const []).toSet();
+      final rawAliases = prefs.getString(_kAliasesKey);
+      if (rawAliases != null) {
+        final decoded = jsonDecode(rawAliases);
+        if (decoded is Map) {
+          _aliases = decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+        }
+      }
     });
   }
 
@@ -83,7 +106,6 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 _buildSessionSection(context, colors),
                 Divider(color: colors.border, height: 1),
                 _buildGoalPanelEntry(context, colors),
-                _buildFileBrowseEntry(context, colors),
               ],
             ),
           ),
@@ -351,6 +373,58 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     return store.sessions.where(inScope).toList();
   }
 
+  /// 备注/改备注：空文本 = 清除备注（回退引擎标题）
+  Future<void> _editAlias(
+      BuildContext context, String sessionId, String fallbackTitle,) async {
+    final colors = AppColors.of(context);
+    final controller = TextEditingController(text: _aliases[sessionId] ?? '');
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgElevated,
+        title: Text(
+          '会话备注',
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          style: TextStyle(color: colors.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: fallbackTitle,
+            hintStyle: TextStyle(color: colors.textMuted, fontSize: 13),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text('取消', style: TextStyle(color: colors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: Text('保存', style: TextStyle(color: colors.accent)),
+          ),
+        ],
+      ),
+    );
+    if (saved == null) return; // 未提交（取消）
+    if (!mounted) return;
+    setState(() {
+      if (saved.isEmpty) {
+        _aliases.remove(sessionId);
+      } else {
+        _aliases[sessionId] = saved;
+      }
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kAliasesKey, jsonEncode(_aliases));
+    } catch (_) {/* 备注尽力而为 */}
+  }
+
   /// Workspace section — 显示当前工作区及切换按钮。
   Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
     return ListenableBuilder(
@@ -482,21 +556,6 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
-    return ListTile(
-      leading: Icon(Icons.folder_open, color: colors.textSecondary, size: 20),
-      title: Text(
-        '浏览文件',
-        style: TextStyle(color: colors.textSecondary, fontSize: 14),
-      ),
-      dense: true,
-      onTap: () {
-        Navigator.pop(context);
-        Navigator.pushNamed(context, '/files');
-      },
-    );
-  }
-
   /// 会话区 —— Option A：数据源为手机本地索引（只含手机创建/导入的
   /// 会话），引擎 session/list 仅在「从引擎导入」时显式拉取。
   Widget _buildSessionSection(BuildContext context, AppColors colors) {
@@ -519,6 +578,26 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 ),
               ),
               const Spacer(),
+              // 会话搜索：跨工作区按标题过滤
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    if (_searchOpen) {
+                      _searchController.clear();
+                      _sessionQuery = '';
+                    }
+                    _searchOpen = !_searchOpen;
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    _searchOpen ? Icons.search_off : Icons.search,
+                    size: 16,
+                    color: _searchOpen ? colors.accent : colors.textMuted,
+                  ),
+                ),
+              ),
               // 新任务：进入欢迎态（首条消息时才建引擎会话）
               Builder(
                 builder: (context) => GestureDetector(
@@ -561,13 +640,48 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             ],
           ),
         ),
+        if (_searchOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '跨工作区搜索会话标题',
+                hintStyle:
+                    TextStyle(color: colors.textMuted, fontSize: 12),
+                prefixIcon: Icon(Icons.search,
+                    size: 16, color: colors.textMuted,),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              onChanged: (v) => setState(() => _sessionQuery = v),
+            ),
+          ),
         ListenableBuilder(
           listenable: ZcodeChatStore.instance,
           builder: (context, _) {
         final store = ZcodeChatStore.instance;
-        // 主列表 = 当前工作区的未归档会话（对齐官方：列表跟随上方
-        // 选中的工作区）
-        final sessions = _scopedSessions();
+        // 搜索非空：忽略工作区范围，跨工作区按标题过滤；否则 = 当前
+        // 工作区的未归档会话（对齐官方：列表跟随上方选中的工作区）
+        final query = _sessionQuery.trim().toLowerCase();
+        final sessions = query.isEmpty
+            ? _scopedSessions()
+            : store.sessions
+                .where(
+                  (s) =>
+                      !_archivedIds.contains(s.sessionId) &&
+                      (_aliases[s.sessionId] ?? s.title)
+                          .toLowerCase()
+                          .contains(query),
+                )
+                .toList();
 
             final activeId = store.activeSessionId;
 
@@ -594,11 +708,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Text(
-                  hasElsewhere
-                      ? '当前工作区暂无会话\n可切换工作区查看其他会话'
-                      : (allArchived
-                          ? '会话已全部归档\n可在下方展开查看'
-                          : '暂无会话记录\n连接大脑节点后自动加载'),
+                  query.isNotEmpty
+                      ? '没有匹配「${_sessionQuery.trim()}」的会话'
+                      : hasElsewhere
+                          ? '当前工作区暂无会话\n可切换工作区查看其他会话'
+                          : (allArchived
+                              ? '会话已全部归档\n可在下方展开查看'
+                              : '暂无会话记录\n连接大脑节点后自动加载'),
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
@@ -628,6 +744,14 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                           onTap: () => _togglePin(session.sessionId),
                         ),
                         SwipeAction(
+                          label:
+                              _aliases[session.sessionId] == null ? '备注' : '改备注',
+                          icon: Icons.edit_note,
+                          color: colors.textSecondary,
+                          onTap: () => _editAlias(
+                              context, session.sessionId, session.title,),
+                        ),
+                        SwipeAction(
                           label: '归档',
                           icon: Icons.archive_outlined,
                           color: const Color(0xFF8B5CF6),
@@ -643,6 +767,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                       ],
                       child: SessionListTile(
                         session: session,
+                        alias: _aliases[session.sessionId],
                         pinned: _pinnedIds.contains(session.sessionId),
                         busy: store.isSessionBusy(session.sessionId),
                         resultDot: _resultDots.contains(session.sessionId),

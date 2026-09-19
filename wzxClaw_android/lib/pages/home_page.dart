@@ -7,13 +7,16 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
 import 'package:highlight/highlight.dart' show highlight;
 import 'package:markdown/markdown.dart' as md;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/chat_message.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
+import '../models/ui_prefs.dart';
 import '../services/attachment_service.dart';
 import '../services/connection_manager.dart';
+import '../services/file_download_service.dart';
 import '../services/node_catalog_service.dart';
 import '../services/git_service.dart';
 import '../services/chat_runtime_service.dart';
@@ -21,13 +24,13 @@ import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/git_branch_sheet.dart';
+import '../widgets/status_panel_card.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/project_drawer.dart';
 
-import '../widgets/streaming_shimmer.dart';
-import '../widgets/tool_call_list.dart';
 import '../widgets/turn_block.dart';
 import '../widgets/workspace_switcher_sheet.dart';
+import '../widgets/markdown_path_link.dart';
 import '../zcode/zcode_chat_store.dart';
 
 class ChatPage extends StatefulWidget {
@@ -51,6 +54,9 @@ class _ChatPageState extends State<ChatPage> {
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   String? _workspaceName;
+
+  /// 悬浮状态面板开关（AppBar 心跳图标切换）
+  bool _showStatusPanel = false;
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
@@ -60,6 +66,7 @@ class _ChatPageState extends State<ChatPage> {
   /// （每秒一次 setState，远低于流式期逐增量重建的频率）
   Timer? _busyTickTimer;
   StreamSubscription<WsConnectionState>? _connectionStateSub;
+  StreamSubscription<String>? _uiNoticesSub;
   final FocusNode _inputFocusNode = FocusNode();
 
   /// 直连栈数据源（R1 换接线）：连接层不变（ConnectionManager 供帧），
@@ -79,6 +86,20 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 待发送附件：上传成功后路径会作为消息文本引用交给 agent 的 Read 工具。
   final List<AttachmentUpload> _attachments = [];
+
+  /// 活动下载任务（确认中/拉取中/预览待保存）。终态即移除并按结果提示，
+  /// 状态不持久化（消息行会被权威合并原位替换，挂消息本体必被覆盖）。
+  final List<FileDownloadTask> _downloads = [];
+
+  /// 输入草稿（按会话上下文：activeSessionId ?? '__new__'）。切会话/
+  /// 新任务各留各的；当前草稿持久化（composer_draft_*），重启可恢复。
+  final Map<String, String> _drafts = {};
+  String _draftKey = '__new__';
+  Timer? _draftPersistTimer;
+
+  /// 上滑加载更早的进行中标记与「已到最早」提示（每会话提示一次）
+  bool _loadingOlder = false;
+  bool _oldestNoticeShown = false;
 
   String _composeOutgoing(String text, Iterable<AttachmentUpload> attachments) {
     final refs = attachments.map((a) => '[附件已上传到节点: ${a.nodePath}]').join('\n');
@@ -117,6 +138,270 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => _attachments.remove(attachment));
   }
 
+  /// 当前草稿持久化（单对键：最后活动上下文才恢复，避免键无限增长）
+  Future<void> _persistCurrentDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('composer_draft_sid', _draftKey);
+      await prefs.setString('composer_draft_text', _drafts[_draftKey] ?? '');
+    } catch (_) {/* 草稿尽力而为 */}
+  }
+
+  Future<void> _restorePersistedDraft(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedSid = prefs.getString('composer_draft_sid');
+      final savedText = prefs.getString('composer_draft_text');
+      if (savedSid != key || savedText == null || savedText.isEmpty) return;
+      if (_inputController.text.isNotEmpty) return; // 已有输入不覆盖
+      _drafts[key] = savedText;
+      _inputController.text = savedText;
+      _inputController.selection =
+          TextSelection.collapsed(offset: savedText.length);
+    } catch (_) {/* 草稿尽力而为 */}
+  }
+
+  /// 发送/入队即消费草稿：内存与持久化同步清
+  void _consumeDraft() {
+    _drafts.remove(_draftKey);
+    _draftPersistTimer?.cancel();
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('composer_draft_sid');
+        await prefs.remove('composer_draft_text');
+      } catch (_) {}
+    }());
+  }
+
+  /// AI 回答长按菜单：复制全文 / 引用到输入框
+  void _showTurnActions(String answerMarkdown) {
+    final colors = AppColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(
+                  Icons.copy_all_outlined,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
+                title: Text(
+                  '复制全文',
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                ),
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: answerMarkdown));
+                  Navigator.pop(sheetContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('回答已复制'),
+                      duration: Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.reply_outlined,
+                  size: 20,
+                  color: colors.textSecondary,
+                ),
+                title: Text(
+                  '引用到输入框',
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  final quoted = answerMarkdown
+                      .split('\n')
+                      .map((line) => '> $line')
+                      .join('\n');
+                  final current = _inputController.text;
+                  _inputController.text =
+                      current.isEmpty ? '$quoted\n' : '$current\n$quoted\n';
+                  _inputController.selection = TextSelection.collapsed(
+                    offset: _inputController.text.length,
+                  );
+                  _inputFocusNode.requestFocus();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ── 文件下载到手机（确认 → 可预览 → 再确认保存）────────────────────
+
+  /// 下载入口：正文 file:// 链接与 Write 工具行下载图标都汇到这里。
+  /// 先 begin 拿文件名/大小（工作区外在此步报错），再弹确认面板；
+  /// 同一路径已有进行中的任务时不重复登记，直接重开确认面板。
+  Future<void> _startFileDownload(String nodePath) async {
+    final existing = _downloads
+        .where((t) => t.nodePath == nodePath && !t.isFinished)
+        .toList();
+    if (existing.isNotEmpty) {
+      _showDownloadConfirmSheet(existing.first);
+      return;
+    }
+    final task = await FileDownloadService.begin(nodePath);
+    if (!mounted) return;
+    if (task.phase == FileDownloadPhase.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(task.error ?? '无法下载该文件'),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() => _downloads.add(task));
+    _showDownloadConfirmSheet(task);
+  }
+
+  void _showDownloadConfirmSheet(FileDownloadTask task) {
+    final colors = AppColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.insert_drive_file_outlined,
+                      size: 18,
+                      color: colors.textMuted,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        task.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_formatBytes(task.size)} · 节点工作区文件',
+                  style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          FileDownloadService.pull(
+                            task,
+                            forPreview: true,
+                            onChanged: _onDownloadChanged,
+                          );
+                        },
+                        icon: const Icon(Icons.visibility_outlined, size: 16),
+                        label: const Text('预览'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          FileDownloadService.pull(
+                            task,
+                            forPreview: false,
+                            onChanged: _onDownloadChanged,
+                          );
+                        },
+                        icon: const Icon(Icons.download_outlined, size: 16),
+                        label: const Text('直接下载'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: task.nodePath));
+                      Navigator.pop(sheetContext);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('节点路径已复制'),
+                          duration: Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    child: Text(
+                      '复制节点路径',
+                      style: TextStyle(color: colors.textMuted, fontSize: 13),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 服务回调：终态在 setState 内出列并按结果提示；进行中仅刷新 chip
+  void _onDownloadChanged(FileDownloadTask task) {
+    if (!mounted) return;
+    setState(() {
+      if (task.isFinished) _downloads.remove(task);
+    });
+    if (!task.isFinished) return;
+    String message;
+    switch (task.phase) {
+      case FileDownloadPhase.saved:
+        message = '已保存到${_savedLabel(task)}';
+      case FileDownloadPhase.failed:
+        message = task.error ?? '下载失败';
+      default:
+        return; // cancelled：放弃预览/主动取消不打扰
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// 保存位置的可读标签（当前唯一保存路径 = 公共下载文件夹）
+  String _savedLabel(FileDownloadTask task) => '下载文件夹：${task.name}';
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
   // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
   final List<_QueuedSend> _sendQueue = [];
@@ -143,6 +428,20 @@ class _ChatPageState extends State<ChatPage> {
     // 否则发送按钮形态短暂错误、消息会直发而非入队
     _store.addListener(_onStoreChanged);
     _syncFromStore(initial: true);
+    // 回车发送偏好变化时重建输入栏（textInputAction 跟随）
+    UiPrefs.enterToSend.addListener(_onUiPrefChanged);
+
+    // store 轻量通告（如反向请求等待超时）→ SnackBar
+    _uiNoticesSub = _store.uiNotices.listen((message) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    });
 
     _scrollController.addListener(_onScroll);
 
@@ -175,7 +474,13 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _store.removeListener(_onStoreChanged);
+    UiPrefs.enterToSend.removeListener(_onUiPrefChanged);
+    _uiNoticesSub?.cancel();
     _connectionStateSub?.cancel();
+    _draftPersistTimer?.cancel();
+    // 退出前持久化当前草稿（先入 map，异步写 prefs 不再碰 controller）
+    _drafts[_draftKey] = _inputController.text;
+    if (_inputController.text.isNotEmpty) unawaited(_persistCurrentDraft());
     _reconnectDebounceTimer?.cancel();
     _busyTickTimer?.cancel();
     _queueFlushTimer?.cancel();
@@ -189,20 +494,35 @@ class _ChatPageState extends State<ChatPage> {
   /// store → 页面状态单向同步（ChangeNotifier 单一入口）
   void _onStoreChanged() => _syncFromStore();
 
+  void _onUiPrefChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _syncFromStore({bool initial = false}) {
     if (!mounted) return;
     final sid = _store.activeSessionId;
     if (sid != _lastRenderedSessionId) {
+      // 草稿按会话上下文换手：存旧、载新（切会话不再丢输入）
+      if (!initial) _drafts[_draftKey] = _inputController.text;
+      _draftKey = sid ?? '__new__';
       _lastRenderedSessionId = sid;
       if (!initial) {
         _showScrollFab = false;
         _slashSuggestions = [];
-        _inputController.clear();
+        _loadingOlder = false;
+        _oldestNoticeShown = false;
+        _inputController.text = _drafts[_draftKey] ?? '';
+        _inputController.selection = TextSelection.collapsed(
+          offset: _inputController.text.length,
+        );
         // 排队消息属于原会话上下文，切会话即清（不留到别的会话发出）
         _sendQueue.clear();
+      } else {
+        // 冷启动恢复：持久化草稿仅当会话上下文匹配时载入
+        unawaited(_restorePersistedDraft(_draftKey));
       }
     }
-    final thinking = _store.thinkingContent;
+    final thinking = _store.liveThinkingText;
     if (thinking != _lastThinking) {
       _lastThinking = thinking;
       _thinkingCtrl.add(thinking);
@@ -268,8 +588,10 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _onScroll() {
-    if (_scrollController.position.pixels <= 50) {
-      unawaited(_store.loadOlderMessages());
+    if (_scrollController.position.pixels <= 50 &&
+        !_loadingOlder &&
+        _store.activeSessionId != null) {
+      unawaited(_loadOlderWithFeedback());
     }
     // Show/hide scroll-to-bottom FAB
     final distanceFromBottom = _scrollController.position.maxScrollExtent -
@@ -280,8 +602,38 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  /// 上滑加载更早：加载中顶部细进度条；一次无新增 = 到底，提示一次
+  Future<void> _loadOlderWithFeedback() async {
+    setState(() => _loadingOlder = true);
+    try {
+      final added = await _store.loadOlderMessages();
+      if (added == 0 && mounted && !_oldestNoticeShown) {
+        _oldestNoticeShown = true; // 每会话只提示一次，不反复打扰
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('已经是最早的消息了'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
+  }
+
   void _sendMessage() {
-    if (ConnectionManager.instance.state != WsConnectionState.connected) return;
+    if (ConnectionManager.instance.state != WsConnectionState.connected) {
+      // 不静默丢弃：提示并保留输入（用户打完字点发送必须有下文）
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('未连接桌面，消息未发送'),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final inputText = _inputController.text.trim();
     final readyAttachments = _attachments.where((a) => a.done).toList();
     if (inputText.isEmpty && readyAttachments.isEmpty) return;
@@ -291,6 +643,7 @@ class _ChatPageState extends State<ChatPage> {
       setState(() => _sendQueue.add(_QueuedSend(text)));
       _removeSentAttachments(readyAttachments);
       _inputController.clear();
+      _consumeDraft();
       return;
     }
     // Option A：没有活动会话 = 处于「新任务」欢迎态，首条消息触发建会话
@@ -305,6 +658,7 @@ class _ChatPageState extends State<ChatPage> {
     unawaited(_store.sendMessage(text));
     _removeSentAttachments(readyAttachments);
     _inputController.clear();
+    _consumeDraft();
     _scrollToBottom();
   }
 
@@ -344,6 +698,7 @@ class _ChatPageState extends State<ChatPage> {
     String? retryText,
   }) async {
     _inputController.clear();
+    _consumeDraft();
     _scrollToBottom();
     // 直连栈：先建会话（引擎 create），成功后发首条
     await _store.newSession();
@@ -554,7 +909,7 @@ class _ChatPageState extends State<ChatPage> {
               leading: Icon(Icons.copy, color: colors.textSecondary),
               title: Text('复制文本', style: TextStyle(color: colors.textPrimary)),
               onTap: () {
-                Clipboard.setData(ClipboardData(text: msg.content));
+                Clipboard.setData(ClipboardData(text: msg.text));
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -572,7 +927,7 @@ class _ChatPageState extends State<ChatPage> {
                     Text('重新发送', style: TextStyle(color: colors.textPrimary)),
                 onTap: () {
                   Navigator.pop(ctx);
-                  unawaited(_store.sendMessage(msg.content));
+                  unawaited(_store.sendMessage(msg.text));
                 },
               ),
             ListTile(
@@ -580,7 +935,7 @@ class _ChatPageState extends State<ChatPage> {
               title: Text('分享', style: TextStyle(color: colors.textPrimary)),
               onTap: () {
                 Navigator.pop(ctx);
-                Clipboard.setData(ClipboardData(text: msg.content));
+                Clipboard.setData(ClipboardData(text: msg.text));
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('已复制到剪贴板'),
@@ -629,10 +984,10 @@ class _ChatPageState extends State<ChatPage> {
         title: _buildTitle(colors),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
-          // 切换桃面：返回设备列表（LandingPage）重新选择/切换桌面
+          // 切换桌面：返回设备列表（LandingPage）重新选择/切换桌面
           IconButton(
             icon: const Icon(Icons.swap_horiz_outlined),
-            tooltip: '切换桃面端',
+            tooltip: '切换桌面端',
             onPressed: () {
               Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
             },
@@ -646,6 +1001,16 @@ class _ChatPageState extends State<ChatPage> {
               _store.closeSessionView();
             },
           ),
+          // 悬浮状态面板：Git 工具/目标/进程/智能体一站式（官方 chat.statusPanel 还原）
+          IconButton(
+            icon: Icon(
+              Icons.monitor_heart_outlined,
+              color: _showStatusPanel ? colors.accent : null,
+            ),
+            tooltip: '状态面板',
+            onPressed: () =>
+                setState(() => _showStatusPanel = !_showStatusPanel),
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: '设置',
@@ -654,62 +1019,78 @@ class _ChatPageState extends State<ChatPage> {
         ],
       ),
       drawer: const ProjectDrawer(),
-      body: Column(
+      // 悬浮状态面板挂在消息层之上（Stack 顶层；面板自带拖动/胶囊）
+      body: Stack(
         children: [
-          StreamBuilder<String?>(
-            stream: ConnectionManager.instance.errorStream,
-            initialData: ConnectionManager.instance.lastError,
-            builder: (context, errorSnap) {
-              return StreamBuilder<List<DesktopInfo>>(
-                stream: ConnectionManager.instance.desktopsStream,
-                initialData: ConnectionManager.instance.desktops,
-                builder: (context, desktopsSnap) {
-                  final desktops = desktopsSnap.data ?? const [];
-                  return ConnectionStatusBar(
-                    state: _visibleConnectionState,
-                    desktopIdentity: ConnectionManager.instance.desktopIdentity,
-                    desktopOnline: desktops.any((d) => d.online),
-                    errorMessage: errorSnap.data,
-                    workspaceName: _workspaceName,
+          Column(
+            children: [
+              StreamBuilder<String?>(
+                stream: ConnectionManager.instance.errorStream,
+                initialData: ConnectionManager.instance.lastError,
+                builder: (context, errorSnap) {
+                  return StreamBuilder<List<DesktopInfo>>(
+                    stream: ConnectionManager.instance.desktopsStream,
+                    initialData: ConnectionManager.instance.desktops,
+                    builder: (context, desktopsSnap) {
+                      final desktops = desktopsSnap.data ?? const [];
+                      return ConnectionStatusBar(
+                        state: _visibleConnectionState,
+                        desktopIdentity:
+                            ConnectionManager.instance.desktopIdentity,
+                        desktopOnline: desktops.any((d) => d.online),
+                        errorMessage: errorSnap.data,
+                        workspaceName: _workspaceName,
+                      );
+                    },
                   );
                 },
-              );
-            },
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                _buildMessageList(),
-                // Scroll-to-bottom FAB
-                if (_showScrollFab)
-                  Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: AnimatedOpacity(
-                      opacity: _showScrollFab ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 200),
-                      child: FloatingActionButton.small(
-                        onPressed: () {
-                          _scrollToBottom();
-                          setState(() => _showScrollFab = false);
-                        },
-                        backgroundColor: colors.bgElevated,
-                        child: Icon(
-                          Icons.keyboard_arrow_down,
-                          color: colors.textPrimary,
+              ),
+              Expanded(
+                child: Stack(
+                  children: [
+                    _buildMessageList(),
+                    // Scroll-to-bottom FAB
+                    if (_showScrollFab)
+                      Positioned(
+                        right: 12,
+                        bottom: 12,
+                        child: AnimatedOpacity(
+                          opacity: _showScrollFab ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 200),
+                          child: FloatingActionButton.small(
+                            onPressed: () {
+                              _scrollToBottom();
+                              setState(() => _showScrollFab = false);
+                            },
+                            backgroundColor: colors.bgElevated,
+                            child: Icon(
+                              Icons.keyboard_arrow_down,
+                              color: colors.textPrimary,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
+                  ],
+                ),
+              ),
+              if (_store.activePermission != null)
+                PermissionBar(request: _store.activePermission!),
+              if (_store.activeAskUser != null)
+                AskUserBar(question: _store.activeAskUser!),
+              _buildSlashSuggestions(),
+              _buildInputBar(),
+            ],
           ),
-          if (_store.activePermission != null)
-            PermissionBar(request: _store.activePermission!),
-          if (_store.activeAskUser != null)
-            AskUserBar(question: _store.activeAskUser!),
-          _buildSlashSuggestions(),
-          _buildInputBar(),
+          if (_showStatusPanel)
+            FloatingStatusPanel(
+              onClose: () => setState(() => _showStatusPanel = false),
+              onOpenBranchSheet: (wsPath) {
+                if (wsPath.isEmpty) return;
+                showGitBranchSheet(context, workspacePath: wsPath);
+              },
+              sessionBusy: _isStreaming || _isWaiting,
+              workspacePath: _store.selectedWorkspacePath,
+            ),
         ],
       ),
     );
@@ -962,12 +1343,10 @@ class _ChatPageState extends State<ChatPage> {
 
     final showBlockedCard = _store.modelBlockedContent != null &&
         _store.modelBlockedSessionId == _store.activeSessionId;
-    // Group consecutive tool messages together
-    final grouped = _groupMessages(_displayMessages);
 
-    // ── 回合分桶：用户消息独立成块；连续过程（工具/助手文本）合成一个
-    // 回合块（TurnBlockView 按真实顺序内联思考/工具/叙述）。
-    // 子智能体线程保持独立卡片。
+    // ── 回合分桶（canonical timeline）：用户消息独立成块；assistant 消息
+    //（含 info.agent 子智能体消息）按序进入回合块，TurnBlockView 按引擎
+    // 原序渲染思考/正文/工具/子智能体行。没有任何旁路分组。
     final blocks = <Object>[];
     var turnBuf = <ChatMessage>[];
     void flushTurn() {
@@ -976,17 +1355,7 @@ class _ChatPageState extends State<ChatPage> {
       turnBuf = <ChatMessage>[];
     }
 
-    for (final item in grouped) {
-      if (item is _SubagentGroup) {
-        flushTurn();
-        blocks.add(item);
-        continue;
-      }
-      if (item is _ToolGroup) {
-        turnBuf.addAll(item.messages);
-        continue;
-      }
-      final msg = item as ChatMessage;
+    for (final msg in _displayMessages) {
       if (msg.role == MessageRole.user) {
         flushTurn();
         blocks.add(msg);
@@ -1002,7 +1371,7 @@ class _ChatPageState extends State<ChatPage> {
     final prevCount = _previousGroupCount > 0 ? _previousGroupCount : itemCount;
     _previousGroupCount = blocks.length;
 
-    return ListView.builder(
+    final list = ListView.builder(
       controller: _scrollController,
       // 左右 16：与抽屉/欢迎页留白一致；原 4px 内容几乎贴屏幕边
       //（2026-09-18 用户反馈左右间距太小）
@@ -1017,22 +1386,6 @@ class _ChatPageState extends State<ChatPage> {
         if (block is _TurnEntry) {
           final isLast = index == blocks.length - 1;
           final busy = isLast && (_isStreaming || _isWaiting);
-          TurnThinkData? think;
-          if (busy) {
-            think = TurnThinkData(
-              running: true,
-              content: _store.thinkingContent,
-            );
-          } else if (isLast &&
-              (_store.lastThinkingContent.isNotEmpty ||
-                  _store.lastThinkingMs != null)) {
-            think = TurnThinkData(
-              duration: _store.lastThinkingMs == null
-                  ? null
-                  : Duration(milliseconds: _store.lastThinkingMs!),
-              content: _store.lastThinkingContent,
-            );
-          }
           child = TurnBlockView(
             vm: buildTurnVM(
               block.messages,
@@ -1040,7 +1393,6 @@ class _ChatPageState extends State<ChatPage> {
               totalDuration: !busy && isLast && _store.lastTurnMs != null
                   ? Duration(milliseconds: _store.lastTurnMs!)
                   : null,
-              think: think,
               // 回合指标：运行中实时（tok/s 为估算），完成后最近一次权威值
               firstTokenMs: busy
                   ? _store.firstTokenLatencyMs
@@ -1052,11 +1404,12 @@ class _ChatPageState extends State<ChatPage> {
               busyElapsed: busy ? _store.streamElapsed : null,
             ),
             defaultCollapsed: isLast ? null : true,
-            answerBuilder: _buildMarkdownBody,
+            // 流式中降级纯文本（防半截 markdown 裸露 + 逐 chunk 全量重解析）
+            answerBuilder: (md, streaming) =>
+                _buildMarkdownBody(md, isStreaming: streaming),
+            onDownloadFile: _startFileDownload,
+            onAnswerLongPress: _showTurnActions,
           );
-        } else if (block is _SubagentGroup) {
-          child =
-              _SubagentGroupCard(group: block, buildItem: _buildMessageItem);
         } else {
           child = _buildUserBubble(block as ChatMessage);
         }
@@ -1067,61 +1420,17 @@ class _ChatPageState extends State<ChatPage> {
         return child;
       },
     );
+    // 上滑加载更早时顶部细进度条（有反馈，不再无声）
+    if (_loadingOlder) {
+      return Column(
+        children: [
+          const LinearProgressIndicator(minHeight: 2),
+          Expanded(child: list),
+        ],
+      );
+    }
+    return list;
   }
-
-  /// Group consecutive tool messages into _ToolGroup objects.
-  /// 子智能体消息（isSubagentMessage）优先按 agent 连续折叠为
-  /// _SubagentGroup——与主时间线分离，修复主/子消息混排。
-  List<dynamic> _groupMessages(List<ChatMessage> messages) {
-    final result = <dynamic>[];
-    List<ChatMessage>? currentToolGroup;
-    List<ChatMessage>? currentSubGroup;
-
-    void flushToolGroup() {
-      if (currentToolGroup != null) {
-        result.add(_ToolGroup(currentToolGroup!));
-        currentToolGroup = null;
-      }
-    }
-
-    void flushSubGroup() {
-      if (currentSubGroup != null) {
-        result.add(_SubagentGroup(currentSubGroup!));
-        currentSubGroup = null;
-      }
-    }
-
-    for (final msg in messages) {
-      if (msg.isSubagentMessage) {
-        flushToolGroup();
-        (currentSubGroup ??= []).add(msg);
-        continue;
-      }
-      flushSubGroup();
-      if (msg.role == MessageRole.tool) {
-        (currentToolGroup ??= []).add(msg);
-      } else {
-        result.add(msg);
-      }
-    }
-    flushToolGroup();
-    flushSubGroup();
-    return result;
-  }
-
-  Widget _buildMessageItem(ChatMessage msg) {
-    switch (msg.role) {
-      case MessageRole.user:
-        return _buildUserBubble(msg);
-      case MessageRole.assistant:
-        return _buildAssistantBlock(msg);
-      case MessageRole.tool:
-        // Should not reach here — tools are grouped by _groupMessages
-        return ToolCallGroup(tools: [msg]);
-    }
-  }
-
-  // ── User bubble ────────────────────────────────────────────────────
 
   // ── User bubble ────────────────────────────────────────────────────
 
@@ -1146,7 +1455,7 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
           child: Text(
-            msg.content,
+            msg.text,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -1158,207 +1467,9 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  // ── Assistant block with Markdown ──────────────────────────────────
-
-  Widget _buildAssistantBlock(ChatMessage msg) {
-    final colors = AppColors.of(context);
-    return GestureDetector(
-      onLongPress: () => _showMessageActions(msg),
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: colors.assistantBubble,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(4),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(16),
-            bottomRight: Radius.circular(16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildMarkdownBody(msg.content, isStreaming: msg.isStreaming),
-            if (msg.isStreaming) const StreamingShimmer(),
-            // Token usage footer
-            if (msg.usage != null ||
-                msg.model != null ||
-                msg.durationMs != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    if (msg.usage != null || msg.durationMs != null)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (msg.usage != null)
-                            Text(
-                              'In: ${_formatTokens(msg.usage!.inputTokens)} · Out: ${_formatTokens(msg.usage!.outputTokens)}',
-                              style: TextStyle(
-                                color: colors.textMuted,
-                                fontSize: 10,
-                              ),
-                            ),
-                          if (msg.durationMs != null) ...[
-                            if (msg.usage != null) const SizedBox(width: 8),
-                            Text(
-                              '已工作 ${_formatDurationMs(msg.durationMs!)}',
-                              style: TextStyle(
-                                color: colors.textMuted,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ],
-                      )
-                    else
-                      const SizedBox.shrink(),
-                    if (msg.model != null)
-                      Text(
-                        msg.model!,
-                        style: TextStyle(
-                          color: colors.textMuted,
-                          fontSize: 10,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            // 消息操作行（对齐官方尾部）：复制/展开/时长。
-            // 👍👎 不做：反馈接口协议不存在（session/feedback 等候选全 -32601，
-            // 官方发往其云端），不做假按钮。
-            if (!msg.isStreaming)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  children: [
-                    _msgActionIcon(
-                      colors,
-                      Icons.copy_outlined,
-                      '复制',
-                      () => _copyMessage(msg),
-                    ),
-                    const SizedBox(width: 16),
-                    _msgActionIcon(
-                      colors,
-                      Icons.open_in_full,
-                      '展开',
-                      () => _expandMessage(msg),
-                    ),
-                    const SizedBox(width: 16),
-                    if (msg.durationMs != null)
-                      Text(
-                        _formatClock(msg.durationMs!),
-                        style: TextStyle(color: colors.textMuted, fontSize: 10),
-                      ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _msgActionIcon(
-    AppColors colors,
-    IconData icon,
-    String tooltip,
-    VoidCallback onTap,
-  ) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(6),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(2),
-        child: Icon(
-          icon,
-          size: 15,
-          color: colors.textMuted,
-          semanticLabel: tooltip,
-        ),
-      ),
-    );
-  }
-
-  void _copyMessage(ChatMessage msg) {
-    Clipboard.setData(ClipboardData(text: msg.content));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制'),
-        duration: Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  /// 全屏展开：大段回复可滚动、可选中复制
-  void _expandMessage(ChatMessage msg) {
-    final colors = AppColors.of(context);
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog.fullscreen(
-        backgroundColor: colors.bgPrimary,
-        child: SafeArea(
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  const SizedBox(width: 4),
-                  IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: Icon(Icons.close, color: colors.textPrimary),
-                    tooltip: '关闭',
-                  ),
-                  Expanded(
-                    child: Text(
-                      '消息详情',
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: SelectableText(
-                    msg.content,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 14,
-                      height: 1.6,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 时长 mm:ss（官方消息尾部样式）
-  String _formatClock(int ms) {
-    final total = (ms / 1000).round();
-    final minutes = total ~/ 60;
-    final seconds = total % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-
   Widget _buildMarkdownBody(String rawContent, {bool isStreaming = false}) {
     final colors = AppColors.of(context);
-    // Strip <details>...</details> blocks — tool outputs are shown via ToolCallGroup
+    // Strip <details>...</details> blocks — tool outputs render as tool rows
     final content =
         rawContent.replaceAll(RegExp(r'<details[\s\S]*?</details>'), '').trim();
     if (content.isEmpty) return const SizedBox.shrink();
@@ -1430,7 +1541,16 @@ class _ChatPageState extends State<ChatPage> {
       builders: {
         'code': _CodeBlockBuilder(),
       },
+      // 裸绝对路径（已知扩展名）→ file:// 链接，挂在解析层：代码块/
+      // 行内 code/已有链接由 markdown 解析器语义天然保护
+      inlineSyntaxes: [filePathLinkSyntax],
       onTapLink: (text, href, title) {
+        final nodePath = href == null ? null : fileLinkToPath(href);
+        if (nodePath != null) {
+          // 节点文件链接（正文转链/工具产物/AI 手写）→ 确认下载
+          _startFileDownload(nodePath);
+          return;
+        }
         if (href != null) {
           Clipboard.setData(ClipboardData(text: href));
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1445,23 +1565,15 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000) {
-      return '${(tokens / 1000).toStringAsFixed(1)}k';
-    }
-    return tokens.toString();
-  }
-
-  /// 回合耗时（turn.completed duration 毫秒）→「2 分 7 秒」
-  String _formatDurationMs(int ms) {
-    final s = ms <= 0 ? 0 : ms ~/ 1000;
-    if (s < 60) return '$s 秒';
-    return '${s ~/ 60} 分 ${s % 60} 秒';
-  }
-
   // ── Slash command autocomplete ────────────────────────────────────
 
   void _onInputChanged(String text) {
+    // 草稿防抖持久化（切会话内存保留 + 重启可恢复）
+    _draftPersistTimer?.cancel();
+    _draftPersistTimer = Timer(const Duration(milliseconds: 600), () {
+      _drafts[_draftKey] = text;
+      unawaited(_persistCurrentDraft());
+    });
     if (text.startsWith('/')) {
       final query = text.toLowerCase();
       final matches = _allSlashCommands
@@ -1646,6 +1758,24 @@ class _ChatPageState extends State<ChatPage> {
           padding: EdgeInsets.fromLTRB(8, 4, 8, 6 + bottomInset),
           child: Column(
             children: [
+              // 下载任务条：确认中/拉取中/预览待保存的任务在此显示
+              if (_downloads.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final task in _downloads)
+                          _FileDownloadChip(
+                            task: task,
+                            onChanged: _onDownloadChanged,
+                            onShowSheet: () => _showDownloadConfirmSheet(task),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               if (_attachments.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
@@ -1705,7 +1835,18 @@ class _ChatPageState extends State<ChatPage> {
             maxLines: 6,
             minLines: 1,
             keyboardType: TextInputType.multiline,
-            textInputAction: TextInputAction.newline,
+            // 回车发送偏好（设置页开关）：开 = 键盘发送键直接发送；
+            // 关 = 回车换行，点按钮发送
+            textInputAction: UiPrefs.enterToSend.value
+                ? TextInputAction.send
+                : TextInputAction.newline,
+            onSubmitted: UiPrefs.enterToSend.value
+                ? (_) {
+                    if (_inputController.text.trim().isNotEmpty) {
+                      _sendMessage();
+                    }
+                  }
+                : null,
             onChanged: _onInputChanged,
           ),
           const SizedBox(height: 8),
@@ -1753,9 +1894,8 @@ class _ChatPageState extends State<ChatPage> {
     final serverMode = _store.sessionMode;
     // 新任务态的暂存档位必须回显到按钮上：否则选完没有任何可见变化，
     // 会被当成「设置不了」（2026-09-17 用户反馈）
-    final pendingMode = _store.activeSessionId == null
-        ? _pendingPermissionMode
-        : null;
+    final pendingMode =
+        _store.activeSessionId == null ? _pendingPermissionMode : null;
     final effectiveMode = pendingMode ?? serverMode;
     final modeLabel = (modeNames[effectiveMode] ?? '权限模式') +
         (pendingMode != null ? '·待生效' : '');
@@ -1888,7 +2028,6 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// 「+」附加菜单：图片经 companion x/file/* 上传，路径作为消息引用发送。
-  /// 其他尚无底层实现的项目保持禁用，不提供伪入口。
   Future<void> _showAttachPopup() async {
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
@@ -1896,8 +2035,6 @@ class _ChatPageState extends State<ChatPage> {
       ('gallery', Icons.attach_file, '添加附件（图片）', null),
       ('camera', Icons.photo_camera_outlined, '拍照附件', null),
       ('commands', Icons.terminal, '使用 / 选择能力', null),
-      ('context', Icons.data_object, '使用 @ 添加上下文', '暂不支持'),
-      ('skill', Icons.bolt, r'使用 $ 选择技能', '暂不支持'),
     ];
     await _showComposerSheet<void>(
       builder: (ctx) => Padding(
@@ -2274,142 +2411,148 @@ class _ChatPageState extends State<ChatPage> {
                   (groups[m.groupLabel(m.providerId)] ??= []).add(m);
                 }
                 final orderedNames = [
-                  ...groups.keys.where((n) => groups[n]!.any((m) => m.planGroup)),
-                  ...groups.keys.where((n) => !groups[n]!.any((m) => m.planGroup)),
+                  ...groups.keys
+                      .where((n) => groups[n]!.any((m) => m.planGroup)),
+                  ...groups.keys
+                      .where((n) => !groups[n]!.any((m) => m.planGroup)),
                 ];
                 final defaultKey = catalog.defaultModel?.key;
                 final expandedGroups = <String>{
                   for (final name in orderedNames)
-                    if (groups[name]!.any((m) => m.planGroup || m.key == defaultKey)) name,
+                    if (groups[name]!
+                        .any((m) => m.planGroup || m.key == defaultKey))
+                      name,
                 };
                 if (expandedGroups.isEmpty && orderedNames.isNotEmpty) {
                   expandedGroups.add(orderedNames.first);
                 }
                 body = StatefulBuilder(
                   builder: (sheetCtx, setModalState) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          '选择模型',
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          '共 ${catalog.models.length} 个',
-                          style: TextStyle(
-                            color: colors.textMuted,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (catalog.degraded)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          '引擎目录暂不可用，仅显示导入快照',
-                          style: TextStyle(
-                            color: colors.warning,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                      ),
-                    for (final name in orderedNames) ...[
-                      InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: () => setModalState(() {
-                          if (!expandedGroups.remove(name)) expandedGroups.add(name);
-                        }),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
-                          child: Row(
-                            children: [
-                              Text(
-                                name,
-                                style: TextStyle(
-                                  color: colors.textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${groups[name]!.length}',
-                                style: TextStyle(
-                                  color: colors.textMuted,
-                                  fontSize: 11,
-                                ),
-                              ),
-                              const Spacer(),
-                              Icon(
-                                expandedGroups.contains(name)
-                                    ? Icons.keyboard_arrow_up
-                                    : Icons.keyboard_arrow_down,
-                                size: 18,
-                                color: colors.textMuted,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (expandedGroups.contains(name))
-                        for (final m in groups[name]!)
-                          InkWell(
-                            borderRadius: BorderRadius.circular(8),
-                            onTap: () async {
-                              Navigator.of(sheetCtx).pop();
-                              await _applyModelChoice(
-                                sessionId,
-                                SessionModelUse(
-                                  providerId: m.providerId,
-                                  modelId: m.modelId,
-                                ),
-                                retryContent: retryContent,
-                              );
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 9,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      m.displayLabel,
-                                      style: TextStyle(
-                                        color: colors.textPrimary,
-                                        fontSize: 13.5,
-                                      ),
-                                    ),
-                                  ),
-                                  if (m.vision)
-                                    _modelTag(colors, '视觉', colors.textMuted),
-                                  if (catalog.defaultModel != null &&
-                                      catalog.defaultModel!.key == m.key) ...[
-                                    _modelTag(colors, '默认', colors.accent),
-                                    const SizedBox(width: 6),
-                                    Icon(
-                                      Icons.check,
-                                      size: 16,
-                                      color: colors.accent,
-                                    ),
-                                  ] else if (m.source == 'imported')
-                                    _modelTag(colors, '快照', colors.warning),
-                                ],
-                              ),
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            '选择模型',
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
+                          const Spacer(),
+                          Text(
+                            '共 ${catalog.models.length} 个',
+                            style: TextStyle(
+                              color: colors.textMuted,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (catalog.degraded)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            '引擎目录暂不可用，仅显示导入快照',
+                            style: TextStyle(
+                              color: colors.warning,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      for (final name in orderedNames) ...[
+                        InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => setModalState(() {
+                            if (!expandedGroups.remove(name)) {
+                              expandedGroups.add(name);
+                            }
+                          }),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(0, 14, 0, 2),
+                            child: Row(
+                              children: [
+                                Text(
+                                  name,
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${groups[name]!.length}',
+                                  style: TextStyle(
+                                    color: colors.textMuted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Icon(
+                                  expandedGroups.contains(name)
+                                      ? Icons.keyboard_arrow_up
+                                      : Icons.keyboard_arrow_down,
+                                  size: 18,
+                                  color: colors.textMuted,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (expandedGroups.contains(name))
+                          for (final m in groups[name]!)
+                            InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: () async {
+                                Navigator.of(sheetCtx).pop();
+                                await _applyModelChoice(
+                                  sessionId,
+                                  SessionModelUse(
+                                    providerId: m.providerId,
+                                    modelId: m.modelId,
+                                  ),
+                                  retryContent: retryContent,
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 9,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        m.displayLabel,
+                                        style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                    ),
+                                    if (m.vision)
+                                      _modelTag(colors, '视觉', colors.textMuted),
+                                    if (catalog.defaultModel != null &&
+                                        catalog.defaultModel!.key == m.key) ...[
+                                      _modelTag(colors, '默认', colors.accent),
+                                      const SizedBox(width: 6),
+                                      Icon(
+                                        Icons.check,
+                                        size: 16,
+                                        color: colors.accent,
+                                      ),
+                                    ] else if (m.source == 'imported')
+                                      _modelTag(colors, '快照', colors.warning),
+                                  ],
+                                ),
+                              ),
+                            ),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
                 );
               }
               return body;
@@ -2598,7 +2741,11 @@ class _ChatPageState extends State<ChatPage> {
     final sessionId = _store.activeSessionId;
     _inputFocusNode.unfocus();
     final colors = AppColors.of(context);
-    const levels = [('低', 'low'), ('高', 'high'), ('最高', 'max')];
+    const levels = [
+      ('低', 'low', '响应更快，适合简单修改与快速问答'),
+      ('高', 'high', '平衡速度与推理深度，日常开发推荐'),
+      ('最高', 'max', '最深入的推理，复杂任务适用、耗时更长'),
+    ];
     final current = _store.thoughtLevel;
     final chosen = await _showComposerSheet<String>(
       builder: (ctx) => Padding(
@@ -2606,7 +2753,7 @@ class _ChatPageState extends State<ChatPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final (label, value) in levels)
+            for (final (label, value, subtitle) in levels)
               ListTile(
                 dense: true,
                 title: Text(
@@ -2618,6 +2765,10 @@ class _ChatPageState extends State<ChatPage> {
                         current == value ? FontWeight.w600 : FontWeight.normal,
                     fontSize: 14,
                   ),
+                ),
+                subtitle: Text(
+                  subtitle,
+                  style: TextStyle(color: colors.textMuted, fontSize: 11.5),
                 ),
                 trailing: current == value
                     ? Icon(Icons.check, size: 18, color: colors.accent)
@@ -3093,152 +3244,171 @@ class _SkeletonBoxState extends State<_SkeletonBox>
   }
 }
 
-// ── Helper for grouping consecutive tool messages ─────────────────────
-
-class _ToolGroup {
-  final List<ChatMessage> messages;
-  const _ToolGroup(this.messages);
-}
-
-/// 连续子智能体消息折叠组（悬浮窗"智能体"思路在聊天流的落点）
-class _SubagentGroup {
-  final List<ChatMessage> messages;
-  const _SubagentGroup(this.messages);
-
-  String get agent => messages.first.agent ?? '';
-  String get label {
-    final a = agent;
-    if (a.isEmpty) return '子智能体';
-    // 常见命名 mcp__x__y / general-purpose → 取可读末段
-    final parts = a.split('__');
-    return parts.isNotEmpty ? parts.last : a;
-  }
-}
-
-/// 子智能体消息组卡片：默认折叠为一行摘要，点击展开内部消息
-/// （内部沿用主列表的分组逻辑：连续工具消息再次折叠为工具组）
-class _SubagentGroupCard extends StatefulWidget {
-  final _SubagentGroup group;
-  final Widget Function(ChatMessage) buildItem;
-
-  const _SubagentGroupCard({required this.group, required this.buildItem});
-
-  @override
-  State<_SubagentGroupCard> createState() => _SubagentGroupCardState();
-}
-
-class _SubagentGroupCardState extends State<_SubagentGroupCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    final g = widget.group;
-    final textCount =
-        g.messages.where((m) => m.role == MessageRole.assistant).length;
-    final hasError =
-        g.messages.any((m) => m.toolCalls?.any((t) => t.isError) ?? false);
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-      decoration: BoxDecoration(
-        color: colors.bgTertiary,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: hasError
-              ? Colors.redAccent.withValues(alpha: 0.4)
-              : colors.border,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.smart_toy_outlined,
-                    size: 15,
-                    color: colors.accent,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      '${g.label} · $textCount 条消息',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 16,
-                    color: colors.textMuted,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final item in _groupMessagesNested(g.messages))
-                    item is _ToolGroup
-                        ? ToolCallGroup(tools: item.messages)
-                        : widget.buildItem(item as ChatMessage),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// 嵌套分组：组内复用连续工具折叠（组内全部同 agent，
-  /// 不会再产出 _SubagentGroup）
-  List<dynamic> _groupMessagesNested(List<ChatMessage> messages) =>
-      _groupPlainMessages(messages);
-}
-
-/// 纯连续工具折叠（供子智能体组内使用；不产生子智能体组）
-List<dynamic> _groupPlainMessages(List<ChatMessage> messages) {
-  final result = <dynamic>[];
-  List<ChatMessage>? currentToolGroup;
-  for (final msg in messages) {
-    if (msg.role == MessageRole.tool) {
-      currentToolGroup ??= [];
-      currentToolGroup.add(msg);
-    } else {
-      if (currentToolGroup != null) {
-        result.add(_ToolGroup(currentToolGroup));
-        currentToolGroup = null;
-      }
-      result.add(msg);
-    }
-  }
-  if (currentToolGroup != null) {
-    result.add(_ToolGroup(currentToolGroup));
-  }
-  return result;
-}
-
 // ── Slash command model ───────────────────────────────────────────────
 
 class _SlashCommand {
   final String command;
   final String description;
   const _SlashCommand(this.command, this.description);
+}
+
+/// 文件下载任务 chip：awaitingChoice 点击重开确认面板；pulling 显示进度
+/// 可点按取消；previewing 提供「保存 / 放弃」（预览失败时说明原因并保留
+/// 保存路径——预览不可用不代表文件不可用）。
+class _FileDownloadChip extends StatelessWidget {
+  const _FileDownloadChip({
+    required this.task,
+    required this.onChanged,
+    required this.onShowSheet,
+  });
+
+  final FileDownloadTask task;
+  final void Function(FileDownloadTask) onChanged;
+  final VoidCallback onShowSheet;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 260),
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: colors.bgTertiary,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.download_outlined, size: 13, color: colors.textMuted),
+              const SizedBox(width: 5),
+              Flexible(
+                child: InkWell(
+                  onTap: task.phase == FileDownloadPhase.awaitingChoice
+                      ? onShowSheet
+                      : null,
+                  child: Text(
+                    task.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: colors.textPrimary, fontSize: 12),
+                  ),
+                ),
+              ),
+              if (task.phase == FileDownloadPhase.pulling) ...[
+                const SizedBox(width: 6),
+                _ChipAction(
+                  label: '取消',
+                  onTap: () => FileDownloadService.cancel(
+                    task,
+                    onChanged: onChanged,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          switch (task.phase) {
+            FileDownloadPhase.awaitingChoice => Text(
+                '点击选择操作',
+                style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+              ),
+            FileDownloadPhase.pulling => Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 60,
+                    child: LinearProgressIndicator(
+                      value: task.progress,
+                      minHeight: 3,
+                      color: colors.accent,
+                      backgroundColor: colors.border,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${task.received == 0 ? '' : '${task.received ~/ 1024}KB / '}${task.size ~/ 1024}KB',
+                    style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+                  ),
+                ],
+              ),
+            FileDownloadPhase.previewing => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    task.notice ?? '预览中，可保存或放弃',
+                    style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      _ChipAction(
+                        label: '保存',
+                        emphasized: true,
+                        onTap: () => FileDownloadService.saveAfterPreview(
+                          task,
+                          onChanged: onChanged,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _ChipAction(
+                        label: '放弃',
+                        onTap: () => FileDownloadService.discard(
+                          task,
+                          onChanged: onChanged,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            _ => const SizedBox.shrink(),
+          },
+        ],
+      ),
+    );
+  }
+}
+
+class _ChipAction extends StatelessWidget {
+  const _ChipAction({
+    required this.label,
+    required this.onTap,
+    this.emphasized = false,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: emphasized ? colors.accent : colors.border,
+          ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: emphasized ? colors.accent : colors.textMuted,
+            fontSize: 11,
+            fontWeight: emphasized ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ),
+    );
+  }
 }

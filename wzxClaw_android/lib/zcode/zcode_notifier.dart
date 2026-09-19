@@ -148,6 +148,27 @@ class ZcodeNotifier {
     );
   }
 
+  /// 反向请求通知：任务挂起等待用户操作（权限确认 / 引擎提问）。
+  ///
+  /// 守卫与 [showTaskDone] 一致（总开关 + 前台 resumed 跳过）——用户正看着
+  /// 界面时权限条/问题条本身可见。反向请求帧不携带会话/桌面信息，
+  /// payload 为空：点击仅打开 App，提醒是主目标。
+  void showReverseRequest({required bool isAskUser, String? summary}) {
+    if (!_enabled || _lifecycleState == AppLifecycleState.resumed) return;
+    final title = isAskUser ? 'ZCode 任务在等你回答' : 'ZCode 任务在等你确认';
+    var body = isAskUser ? '引擎提出了一个问题' : '有一个工具调用等待批准';
+    final detail = summary?.trim() ?? '';
+    if (detail.isNotEmpty) {
+      body = detail.length <= 80 ? detail : '${detail.substring(0, 80)}…';
+    }
+    // 与完成通知（2001）分开 id，避免互相覆盖
+    showSystemNotification(
+      title: title,
+      body: body,
+      notificationId: isAskUser ? 2003 : 2002,
+    );
+  }
+
   /// 实际展示系统通知（[showTaskDone] 的落地动作）。
   ///
   /// 独立成可覆写方法便于测试：生产路径仅由本类内部调用（行为不变）；
@@ -158,6 +179,7 @@ class ZcodeNotifier {
     required String title,
     required String body,
     String? payload,
+    int notificationId = 2001,
   }) {
     final plugin = _plugin;
     if (plugin == null) return; // 未初始化（测试/非 Android）静默跳过
@@ -165,7 +187,7 @@ class ZcodeNotifier {
     // 尽力而为能力：展示失败只留观测，不允许未捕获异步异常冒泡
     plugin
         .show(
-      2001,
+      notificationId,
       title,
       body,
       const NotificationDetails(

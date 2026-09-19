@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
 import '../models/chat_message.dart';
+import 'streaming_shimmer.dart';
 
 /// ── 回合块（Turn Block）视图模型与渲染 ─────────────────────────────
 /// 设计冻结版见 .planning/PLAN-turn-block.md / docs/turn-block-mockup.html。
@@ -15,14 +16,20 @@ import '../models/chat_message.dart';
 String turnToolVerb(String toolName, {required bool done}) {
   switch (toolName) {
     case 'Bash':
+    case 'ShellExecute':
+    case 'shell':
       return '执行';
     case 'Read':
+    case 'FileRead':
     case 'file-read':
       return '读取';
     case 'Write':
+    case 'FileWrite':
     case 'file-write':
       return '写入';
     case 'Edit':
+    case 'FileEdit':
+    case 'ApplyPatch':
     case 'file-edit':
       return done ? '已编辑' : '编辑';
     case 'Glob':
@@ -34,6 +41,7 @@ String turnToolVerb(String toolName, {required bool done}) {
     case 'web-fetch':
       return '获取';
     case 'Agent':
+    case 'Task':
     case 'agent-tool':
       return '子智能体';
     default:
@@ -41,8 +49,8 @@ String turnToolVerb(String toolName, {required bool done}) {
   }
 }
 
-/// 过程部件种类
-enum TurnPartKind { thinking, tool, narration }
+/// 过程部件种类。全部来自权威 processParts 的直接投影。
+enum TurnPartKind { thinking, tool, text, agent }
 
 /// 工具行数据（聚合后的展示单元）
 class TurnToolRow {
@@ -58,6 +66,10 @@ class TurnToolRow {
     this.failed = false,
     this.recovered = false,
     this.details = const [],
+    this.defaultOpen = false,
+    this.subagentType,
+    this.lifecycle,
+    this.filePath,
   });
 
   /// 中文动词：编辑/查阅/执行/写入/读取/搜索
@@ -65,6 +77,10 @@ class TurnToolRow {
 
   /// 目标：文件末段，或聚合的「· 2 文件」「· 2 个命令」
   final String target;
+
+  /// Write 家族的目标文件完整路径（手机端「下载到手机」入口数据源；
+  /// 其他工具/聚合行为 null）
+  final String? filePath;
 
   /// 目录（弱化灰字，可空）
   final String? dir;
@@ -85,6 +101,15 @@ class TurnToolRow {
 
   /// 二级展开的详情行（diff/命令输出，纯文本行）
   final List<TurnDetailLine> details;
+
+  /// 完成且已有结果时默认展开一次；用户之后的开合操作仍被本地状态保留。
+  final bool defaultOpen;
+
+  /// Agent 的 subagent_type（Explore/general-purpose 等）；非 Agent 工具为 null。
+  final String? subagentType;
+
+  /// 实时生命周期的短状态，用于等待权限/参数流入等尚未形成结果的阶段。
+  final String? lifecycle;
 }
 
 class TurnDetailLine {
@@ -109,28 +134,72 @@ class TurnThinkData {
   final bool running;
 }
 
+/// 子智能体过程行。显式 Agent 调用和 info.agent 产出的子会话消息都会
+/// 映射成此行，但不会把后续子消息从父回合时间线中抽离。
+class TurnAgentData {
+  const TurnAgentData({
+    required this.agentType,
+    required this.target,
+    this.running = false,
+    this.failed = false,
+    this.details = const [],
+    this.defaultOpen = false,
+  });
+
+  final String agentType;
+  final String target;
+  final bool running;
+  final bool failed;
+  final List<TurnDetailLine> details;
+  final bool defaultOpen;
+}
+
 /// 过程部件
 class TurnPart {
-  const TurnPart.think(TurnThinkData data)
+  const TurnPart.think(TurnThinkData data, {this.key})
       : kind = TurnPartKind.thinking,
         think = data,
         tool = null,
-        narration = null;
-  const TurnPart.tool(TurnToolRow data)
+        agent = null,
+        text = null;
+  const TurnPart.tool(TurnToolRow data, {this.key})
       : kind = TurnPartKind.tool,
         think = null,
         tool = data,
-        narration = null;
-  const TurnPart.narration(String text)
-      : kind = TurnPartKind.narration,
+        agent = null,
+        text = null;
+  const TurnPart.text(String content, {this.key})
+      : kind = TurnPartKind.text,
         think = null,
         tool = null,
-        narration = text;
+        agent = null,
+        text = content;
+  const TurnPart.agent(TurnAgentData data, {this.key})
+      : kind = TurnPartKind.agent,
+        think = null,
+        tool = null,
+        agent = data,
+        text = null;
 
   final TurnPartKind kind;
+  final String? key;
   final TurnThinkData? think;
   final TurnToolRow? tool;
-  final String? narration; // 工具之间的中间叙述文本
+  final TurnAgentData? agent;
+  final String? text;
+}
+
+/// 首字延迟文案：`首字 1.8s`（<10s 一位小数）/ `首字 21s`（≥10s 整数秒）
+String formatTtft(int ms) {
+  if (ms < 10000) return '首字 ${(ms / 1000).toStringAsFixed(1)}s';
+  return '首字 ${(ms / 1000).round()}s';
+}
+
+/// tok/s 文案：估算加 ≈ 前缀明示（`≈31.6 tok/s`），权威值裸数值
+/// （`45.3 tok/s`；≥100 取整避免位数抖动）
+String formatTps(double tps, {required bool estimated}) {
+  final v = tps >= 100 ? tps.round().toString() : tps.toStringAsFixed(1);
+  return '${estimated ? '≈' : ''}$v tok/s';
 }
 
 /// 回合视图模型
@@ -141,25 +210,36 @@ class TurnVM {
     required this.busy,
     required this.countsLabel,
     this.totalDuration,
-    this.think,
+    this.firstTokenMs,
+    this.tokensPerSecond,
+    this.tpsIsEstimate = false,
+    this.busyElapsed,
   });
 
-  /// 过程部件（思考/工具/叙述，按真实顺序）
+  /// 过程部件（思考/正文/工具/子智能体，按引擎原序）
   final List<TurnPart> parts;
 
-  /// 正文 Markdown（最后一个工具之后的文本；无工具回合即全部文本）
+  /// 正文 Markdown（末尾连续可见文本；其余 text 保留在过程位置）
   final String answerMarkdown;
 
   final bool busy;
   final String countsLabel;
   final Duration? totalDuration;
 
-  /// 思考行数据（运行中实时 / 完成后保留的最近一次；null = 不显示思考行）
-  final TurnThinkData? think;
+  /// 首字延迟（毫秒；null = 无数据或首增量未到）
+  final int? firstTokenMs;
+
+  /// tok/s（流式中为估算需标 ≈；完成后为权威值）
+  final double? tokensPerSecond;
+
+  /// [tokensPerSecond] 是否估算（流式中字符速率换算，非权威 usage）
+  final bool tpsIsEstimate;
+
+  /// 运行中已耗时（busy 时头部显示「正在工作… Xs」；完成态用 totalDuration）
+  final Duration? busyElapsed;
 }
 
-/// 工具调用的扁平视图：直连栈（assistant.toolCalls）与 legacy
-/// （role==tool 消息）两种形态归一后的最小展示单元。
+/// 工具调用的内部视图：canonical tool part 归一后的最小展示单元。
 class _ToolView {
   const _ToolView({
     required this.name,
@@ -169,6 +249,8 @@ class _ToolView {
     this.output,
     this.callId = '',
     this.everError = false,
+    this.subagentType,
+    this.lifecycle,
   });
 
   final String name;
@@ -177,6 +259,8 @@ class _ToolView {
   final String? output;
   final String callId;
   final DateTime createdAt;
+  final String? subagentType;
+  final String? lifecycle;
 
   /// 同 callID 历史上是否失败过（先败后成 = 已重试恢复）
   final bool everError;
@@ -185,161 +269,314 @@ class _ToolView {
   bool get recovered => everError && status != ToolCallStatus.error;
 }
 
-/// 从一回合的扁平消息切片构建 TurnVM。
-/// [messages] = 该回合内按序的消息（直连栈：assistant 消息携带 toolCalls；
-/// legacy：role==tool 独立消息，仅旧缓存兼容）；不含用户消息。
-/// [busy] = 回合是否在途；[totalDuration] = 回合总时长（可得时传入）；
-/// [think] = 思考行数据（可得时传入；null = 该回合无思考信息）。
+/// 从 canonical 消息切片构建 TurnVM（唯一路径）。
+/// [messages] = 该回合内按序的 assistant 消息（含 info.agent 子智能体
+/// 消息，作为内联 Agent 行保留在原位）；不含用户消息。
 TurnVM buildTurnVM(
   List<ChatMessage> messages, {
   required bool busy,
   Duration? totalDuration,
-  TurnThinkData? think,
+  int? firstTokenMs,
+  double? tokensPerSecond,
+  bool tpsIsEstimate = false,
+  Duration? busyElapsed,
 }) {
   final parts = <TurnPart>[];
-  String answer = '';
   final counts = <String, int>{};
-  var lastVerb = '';
-  var currentMembers = <_ToolView>[];
-
-  // 最后一个非空助手文本 = 正文；其前的文本 = 中间叙述（避免同一段
-  // 文本既进叙述又进正文的重复展示）
-  var lastTextIndex = -1;
-  for (var i = 0; i < messages.length; i++) {
-    final m = messages[i];
-    if (m.role == MessageRole.assistant && m.content.trim().isNotEmpty) {
-      lastTextIndex = i;
+  final sequence = <_ProcessSource>[];
+  for (final message in messages) {
+    if (message.isSubagentMessage) {
+      sequence.add(_ProcessSource.agentMessage(message));
+      continue;
+    }
+    for (final part in message.processParts) {
+      sequence.add(_ProcessSource.part(part, message.createdAt));
     }
   }
 
-  void emitTool(_ToolView v) {
-    final done = v.status != ToolCallStatus.running;
-    final verb = turnToolVerb(v.name, done: done);
-    // 聚合：连续同类（读取/搜索/执行）合并为一行，展开逐成员显示
+  // 仅把末尾连续可见文本提升为回答区；其余 text 保留在过程位置，
+  // 这样 text → tool → text 的相对顺序在展开流程时不会被重排。
+  var terminalTextIndex = -1;
+  for (var i = sequence.length - 1; i >= 0; i--) {
+    final source = sequence[i];
+    if (source.kind == _ProcessSourceKind.marker) continue;
+    if (source.kind == _ProcessSourceKind.part &&
+        source.part?.kind == ChatProcessPartKind.text) {
+      terminalTextIndex = i;
+    }
+    break;
+  }
+  var answer = '';
+  var lastVerb = '';
+  var currentMembers = <_ToolView>[];
+
+  void breakAggregate() {
+    lastVerb = '';
+    currentMembers = <_ToolView>[];
+  }
+
+  void emitTool(_ToolView view) {
+    final verb = turnToolVerb(
+      view.name,
+      done: view.status != ToolCallStatus.running,
+    );
+    // 聚合：仅相邻同类（读取/搜索/执行）合并为一行，展开逐成员显示
     final aggregate = verb == '读取' || verb == '搜索' || verb == '执行';
     if (aggregate &&
         verb == lastVerb &&
         parts.isNotEmpty &&
         parts.last.kind == TurnPartKind.tool) {
-      currentMembers = List.of(currentMembers)..add(v);
-      final count = currentMembers.length;
+      currentMembers = List.of(currentMembers)..add(view);
+      final row = parts.last.tool!;
       parts[parts.length - 1] = TurnPart.tool(
         TurnToolRow(
           verb: verb,
-          target: '· $count${verb == '执行' ? ' 个命令' : ' 文件'}',
-          count: count,
-          running: v.status == ToolCallStatus.running,
-          failed: v.failed,
+          target: '· ${currentMembers.length}${verb == '执行' ? ' 个命令' : ' 文件'}',
+          count: currentMembers.length,
+          running: currentMembers
+              .any((member) => member.status == ToolCallStatus.running),
+          failed: currentMembers.any((member) => member.failed),
+          recovered: currentMembers.any((member) => member.recovered),
           details: [
-            for (final member in currentMembers) _memberLine(member),
+            for (final member in currentMembers) ..._memberDetails(member),
           ],
+          defaultOpen: currentMembers.any(
+            (member) =>
+                member.status != ToolCallStatus.running &&
+                member.output != null,
+          ),
         ),
+        key: row.target,
       );
       counts[verb] = (counts[verb] ?? 0) + 1;
       return;
     }
-    currentMembers = [v];
-    final delta = _editLineDelta(v.name, v.input);
+    currentMembers = [view];
+    final delta = _editLineDelta(view.name, view.input);
+    final written = view.status != ToolCallStatus.running && !view.failed
+        ? _writtenFilePath(view)
+        : null;
     parts.add(
       TurnPart.tool(
         TurnToolRow(
           verb: verb,
-          target: _toolTarget(v.name, v.input),
+          target: _toolTarget(view.name, view.input),
           add: delta?.$1,
           del: delta?.$2,
-          running: !done,
-          failed: v.failed,
-          recovered: v.recovered,
-          elapsed: done ? null : DateTime.now().difference(v.createdAt),
-          details: _toolDetails(v),
+          filePath: written,
+          running: view.status == ToolCallStatus.running,
+          failed: view.failed,
+          recovered: view.recovered,
+          elapsed: view.status == ToolCallStatus.running
+              ? DateTime.now().difference(view.createdAt)
+              : null,
+          details: _memberDetails(view),
+          defaultOpen:
+              view.status != ToolCallStatus.running && view.output != null,
+          subagentType: view.subagentType,
+          lifecycle: view.lifecycle,
         ),
+        key: view.callId.isEmpty ? null : view.callId,
       ),
     );
     counts[verb] = (counts[verb] ?? 0) + 1;
     lastVerb = verb;
   }
 
-  for (var i = 0; i < messages.length; i++) {
-    final m = messages[i];
+  _ToolView toolViewOf(ChatProcessPart part, DateTime createdAt) {    final tool = part.toolCall!;
+    return _ToolView(
+      name: tool.toolName,
+      status: tool.status,
+      input: tool.inputFull ?? tool.inputSummary,
+      output: tool.outputFull ?? tool.outputSummary,
+      callId: tool.toolCallId,
+      createdAt: createdAt,
+      everError: tool.isError,
+      subagentType: tool.subagentType,
+      lifecycle: tool.lifecycle,
+    );
+  }
 
-    // ── 工具展开：直连栈形态（assistant.toolCalls，协议权威）为主，
-    // legacy role==tool 独立消息兜底。同 callID 连续条目合并为一个视图
-    // （引擎重试：终态取最后，先败后成标「已重试恢复」）。
-    final views = <_ToolView>[];
-    final calls = m.toolCalls;
-    if (calls != null && calls.isNotEmpty) {
-      for (final tc in calls) {
-        views.add(
-          _ToolView(
-            name: tc.toolName,
-            status: tc.status,
-            input: tc.inputFull ?? tc.inputSummary,
-            output: tc.outputFull ?? tc.outputSummary,
-            callId: tc.toolCallId,
-            createdAt: m.createdAt,
-            everError: tc.status == ToolCallStatus.error,
-          ),
-        );
+  for (var i = 0; i < sequence.length; i++) {
+    final source = sequence[i];
+    if (source.kind == _ProcessSourceKind.agentMessage) {
+      final message = source.message!;
+      final detailLines = <TurnDetailLine>[];
+      for (final process in message.processParts) {
+        if (process.kind == ChatProcessPartKind.text ||
+            process.kind == ChatProcessPartKind.reasoning) {
+          final body = process.text?.trim();
+          if (body != null && body.isNotEmpty) {
+            detailLines.add(TurnDetailLine(_capBlock(body)));
+          }
+        } else if (process.kind == ChatProcessPartKind.tool &&
+            process.toolCall != null) {
+          detailLines.addAll(
+            _memberDetails(toolViewOf(process, message.createdAt)),
+          );
+        }
       }
-    } else if (m.role == MessageRole.tool) {
-      views.add(
-        _ToolView(
-          name: m.toolName ?? 'Tool',
-          status: m.toolStatus ?? ToolCallStatus.running,
-          input: m.toolInput ?? (m.content.isNotEmpty ? m.content : null),
-          output: m.toolOutput,
-          callId: m.toolCallId ?? '',
-          createdAt: m.createdAt,
-          everError: m.toolStatus == ToolCallStatus.error,
+      final summary = _singleLine(message.text, 80);
+      parts.add(
+        TurnPart.agent(
+          TurnAgentData(
+            agentType: _agentLabel(message.agent),
+            target: summary.isEmpty ? '子智能体' : summary,
+            running: message.isStreaming,
+            failed: message.processParts
+                .any((part) => part.toolCall?.isError ?? false),
+            details: detailLines,
+            defaultOpen: detailLines.isNotEmpty,
+          ),
+          key: message.agent,
         ),
       );
+      counts['子智能体'] = (counts['子智能体'] ?? 0) + 1;
+      breakAggregate();
+      continue;
     }
-    final merged = <_ToolView>[];
-    for (final v in views) {
-      if (merged.isNotEmpty && v.callId.isNotEmpty && merged.last.callId == v.callId) {
-        final p = merged.last;
-        merged[merged.length - 1] = _ToolView(
-          name: v.name,
-          status: v.status,
-          input: v.input ?? p.input,
-          output: v.output ?? p.output,
-          callId: v.callId,
-          createdAt: p.createdAt,
-          everError: p.everError || v.everError,
-        );
-      } else {
-        merged.add(v);
-      }
+    if (source.kind == _ProcessSourceKind.marker) {
+      breakAggregate();
+      continue;
     }
-    for (final v in merged) {
-      emitTool(v);
-    }
-
-    // ── 助手文本：最后一个 = 正文，其余 = 中间叙述（叙述会打断聚合）
-    if (m.role == MessageRole.assistant &&
-        i != lastTextIndex &&
-        m.content.trim().isNotEmpty) {
-      parts.add(TurnPart.narration(_plainExcerpt(m.content)));
-      lastVerb = '';
-      currentMembers = const [];
+    final process = source.part;
+    if (process == null) continue;
+    switch (process.kind) {
+      case ChatProcessPartKind.text:
+        final body = process.text ?? '';
+        if (body.trim().isEmpty) continue;
+        if (i == terminalTextIndex) {
+          answer = body;
+        } else {
+          parts.add(
+            TurnPart.text(_plainExcerpt(body), key: process.id),
+          );
+        }
+        breakAggregate();
+      case ChatProcessPartKind.reasoning:
+        final body = process.text ?? '';
+        if (body.isNotEmpty) {
+          parts.add(
+            TurnPart.think(
+              TurnThinkData(content: body, running: busy),
+              key: process.id,
+            ),
+          );
+        }
+        breakAggregate();
+      case ChatProcessPartKind.tool:
+        final tool = process.toolCall;
+        if (tool == null) {
+          breakAggregate();
+          continue;
+        }
+        // 显式 Agent/Task 工具 → 内联子智能体行；其余按普通工具行处理
+        if (tool.toolName == 'Agent' || tool.toolName == 'Task') {
+          final input = tool.inputFull ?? tool.inputSummary ?? '';
+          final view = toolViewOf(process, source.createdAt!);
+          parts.add(
+            TurnPart.agent(
+              TurnAgentData(
+                agentType: tool.subagentType ?? '子智能体',
+                target: _toolTarget(tool.toolName, input),
+                running: tool.status == ToolCallStatus.running,
+                failed: tool.isError,
+                details: _toolDetails(view),
+                defaultOpen:
+                    tool.outputFull != null || tool.outputSummary != null,
+              ),
+              key: process.id ?? tool.toolCallId,
+            ),
+          );
+          counts['子智能体'] = (counts['子智能体'] ?? 0) + 1;
+        } else {
+          emitTool(toolViewOf(process, source.createdAt!));
+        }
+      case ChatProcessPartKind.marker:
+        breakAggregate();
+        break;
     }
   }
 
-  // 正文兜底：无任何助手文本的回合（罕见）不显示正文
-  if (lastTextIndex >= 0) answer = messages[lastTextIndex].content;
-
-  final countsLabel = counts.entries
-      .map((e) => '${e.key} ${e.value}')
-      .join(' · ');
-
+  final countsLabel =
+      counts.entries.map((entry) => '${entry.key} ${entry.value}').join(' · ');
   return TurnVM(
     parts: parts,
     answerMarkdown: answer,
     busy: busy,
     countsLabel: countsLabel,
     totalDuration: totalDuration,
-    think: think,
+    firstTokenMs: firstTokenMs,
+    tokensPerSecond: tokensPerSecond,
+    tpsIsEstimate: tpsIsEstimate,
+    busyElapsed: busyElapsed,
   );
+}
+
+class _ProcessSource {
+  _ProcessSource.part(ChatProcessPart value, this.createdAt)
+      : part = value,
+        kind = value.kind == ChatProcessPartKind.marker
+            ? _ProcessSourceKind.marker
+            : _ProcessSourceKind.part,
+        message = null;
+  _ProcessSource.agentMessage(ChatMessage value)
+      : message = value,
+        kind = _ProcessSourceKind.agentMessage,
+        part = null,
+        createdAt = value.createdAt;
+
+  final _ProcessSourceKind kind;
+  final ChatProcessPart? part;
+  final ChatMessage? message;
+
+  /// 所属消息的创建时间（工具行运行计时用）
+  final DateTime? createdAt;
+}
+
+enum _ProcessSourceKind { part, marker, agentMessage }
+
+List<TurnDetailLine> _memberDetails(_ToolView view) {
+  final lines = <TurnDetailLine>[_memberLine(view)];
+  final input = view.input?.trim();
+  if (input != null && input.isNotEmpty) {
+    lines.add(
+      TurnDetailLine(
+        _prettyInput(view.name, input),
+        kind: DetailLineKind.cmd,
+      ),
+    );
+  }
+  final output = view.output?.trim();
+  if (output != null && output.isNotEmpty) {
+    lines.add(TurnDetailLine(output));
+  }
+  return lines;
+}
+
+String _agentLabel(String? agent) {
+  final value = agent?.trim() ?? '';
+  if (value.isEmpty) return '子智能体';
+  final pieces = value.split('__');
+  return pieces.isEmpty ? value : pieces.last;
+}
+
+/// Write 家族工具的目标文件完整路径（手机端「下载到手机」入口数据源）。
+/// 结构化解析不到时返回 null（宁可没有入口，不给错路径）。
+String? _writtenFilePath(_ToolView view) {
+  if (view.name != 'Write' && view.name != 'file-write') return null;
+  final raw = view.input?.trim() ?? '';
+  if (!raw.startsWith('{')) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) {
+      for (final key in ['file_path', 'filePath', 'path']) {
+        final v = decoded[key];
+        if (v is String && v.trim().isNotEmpty) return v.trim();
+      }
+    }
+  } catch (_) {}
+  return null;
 }
 
 /// 工具行目标：按工具类型从输入提取人类可读目标（命令/路径末段/模式/URL）。
@@ -364,14 +601,20 @@ String _toolTarget(String name, String? input) {
 
   switch (name) {
     case 'Bash':
+    case 'ShellExecute':
+    case 'shell':
       final cmd = pick(['command', 'cmd', 'script']);
       if (cmd != null) return _singleLine(cmd, 60);
       break;
     case 'Read':
+    case 'FileRead':
     case 'file-read':
     case 'Write':
+    case 'FileWrite':
     case 'file-write':
     case 'Edit':
+    case 'FileEdit':
+    case 'ApplyPatch':
     case 'file-edit':
       final path = pick(['file_path', 'filePath', 'path', 'notebook_path']);
       if (path != null) return _lastPathSegment(path);
@@ -414,7 +657,12 @@ String _singleLine(String s, int max) {
 /// Edit 行数增减：old/new 去公共前后缀行后，剩余旧行数 = 删除、
 /// 剩余新行数 = 新增（真实行级差异，非两侧全量）。
 (int, int)? _editLineDelta(String name, String? input) {
-  if (name != 'Edit' && name != 'file-edit') return null;
+  if (name != 'Edit' &&
+      name != 'FileEdit' &&
+      name != 'ApplyPatch' &&
+      name != 'file-edit') {
+    return null;
+  }
   final raw = input?.trim() ?? '';
   if (!raw.startsWith('{')) return null;
   Map<String, dynamic>? json;
@@ -465,8 +713,10 @@ List<TurnDetailLine> _toolDetails(_ToolView v) {
   final input = v.input?.trim();
   if (input != null && input.isNotEmpty) {
     lines.add(
-      TurnDetailLine(_capBlock(_prettyInput(v.name, input)),
-          kind: DetailLineKind.cmd,),
+      TurnDetailLine(
+        _capBlock(_prettyInput(v.name, input)),
+        kind: DetailLineKind.cmd,
+      ),
     );
   }
   final output = v.output?.trim();
@@ -531,6 +781,8 @@ class TurnBlockView extends StatefulWidget {
     required this.vm,
     this.defaultCollapsed,
     this.answerBuilder,
+    this.onDownloadFile,
+    this.onAnswerLongPress,
   });
 
   final TurnVM vm;
@@ -538,8 +790,17 @@ class TurnBlockView extends StatefulWidget {
   /// null = 自动（busy 展开 / 完成折叠）
   final bool? defaultCollapsed;
 
-  /// 正文 Markdown 渲染器（宿主传入富渲染；缺省纯文本）
-  final Widget Function(String markdown)? answerBuilder;
+  /// 正文 Markdown 渲染器（宿主传入富渲染；缺省纯文本）。
+  /// 第二参 isStreaming = 该回合进行中：宿主应降级为纯文本渲染，
+  /// 防半截 markdown 语法裸露与逐 chunk 全量重解析。
+  final Widget Function(String markdown, bool isStreaming)? answerBuilder;
+
+  /// Write 工具行「下载到手机」入口（宿主接线下载服务；null 不显示入口）
+  final void Function(String path)? onDownloadFile;
+
+  /// 回答区长按（宿主弹操作菜单：复制全文/引用为输入）；
+  /// 仅正文非空时生效，参数为回答 markdown 全文
+  final void Function(String answerMarkdown)? onAnswerLongPress;
 
   @override
   State<TurnBlockView> createState() => _TurnBlockViewState();
@@ -551,7 +812,8 @@ class _TurnBlockViewState extends State<TurnBlockView> {
   @override
   void initState() {
     super.initState();
-    _collapsed = widget.defaultCollapsed ?? !widget.vm.busy;
+    // 原生时间线保留最新回合的过程可见；历史块由宿主显式传 true。
+    _collapsed = widget.defaultCollapsed ?? false;
   }
 
   @override
@@ -565,8 +827,7 @@ class _TurnBlockViewState extends State<TurnBlockView> {
     final colors = AppColors.of(context);
     final vm = widget.vm;
     final showHeader = vm.parts.isNotEmpty || vm.busy;
-
-    return Column(
+    final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (showHeader)
@@ -574,36 +835,76 @@ class _TurnBlockViewState extends State<TurnBlockView> {
             onTap: () => setState(() => _collapsed = !_collapsed),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(2, 4, 2, 4),
-              child: Row(children: [
-                Icon(_collapsed ? Icons.chevron_right : Icons.expand_more,
-                    size: 15, color: colors.textMuted,),
-                const SizedBox(width: 5),
-                if (vm.busy)
-                  SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 1.8, color: colors.accent,),
-                  )
-                else
-                  Icon(Icons.check_circle_outline,
-                      size: 14, color: colors.success,),
-                const SizedBox(width: 7),
-                Text(
-                  vm.busy ? '正在工作…' : _durationText(vm.totalDuration),
-                  style: TextStyle(
+              child: Row(
+                children: [
+                  Icon(
+                    _collapsed ? Icons.chevron_right : Icons.expand_more,
+                    size: 15,
+                    color: colors.textMuted,
+                  ),
+                  const SizedBox(width: 5),
+                  if (vm.busy)
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.8,
+                        color: colors.accent,
+                      ),
+                    )
+                  else
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 14,
+                      color: colors.success,
+                    ),
+                  const SizedBox(width: 7),
+                  Text(
+                    vm.busy
+                        ? (vm.busyElapsed == null
+                            ? '正在工作…'
+                            : '正在工作… ${vm.busyElapsed!.inSeconds}s')
+                        : _durationText(vm.totalDuration),
+                    style: TextStyle(
                       color: colors.textSecondary,
                       fontSize: 12.5,
-                      fontWeight: FontWeight.w600,),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(vm.countsLabel,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  // 回合指标：首字延迟 + tok/s（流式中估算标 ≈，完成后权威）
+                  if (vm.firstTokenMs != null ||
+                      vm.tokensPerSecond != null) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      [
+                        if (vm.firstTokenMs != null)
+                          formatTtft(vm.firstTokenMs!),
+                        if (vm.tokensPerSecond != null)
+                          formatTps(
+                            vm.tokensPerSecond!,
+                            estimated: vm.tpsIsEstimate,
+                          ),
+                      ].join(' · '),
                       style: TextStyle(
-                          color: colors.textMuted, fontSize: 11.5,),
-                      overflow: TextOverflow.ellipsis,),
-                ),
-              ],),
+                        color: colors.textMuted,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      vm.countsLabel,
+                      style: TextStyle(
+                        color: colors.textMuted,
+                        fontSize: 11.5,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         // 过程（可折叠）
@@ -613,18 +914,26 @@ class _TurnBlockViewState extends State<TurnBlockView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (vm.think != null) _ThinkRow(data: vm.think!),
                 for (final part in vm.parts)
                   if (part.kind == TurnPartKind.thinking)
                     _ThinkRow(data: part.think!)
                   else if (part.kind == TurnPartKind.tool)
-                    _ToolRowView(data: part.tool!)
+                    _ToolRowView(
+                      data: part.tool!,
+                      onDownloadFile: widget.onDownloadFile,
+                    )
+                  else if (part.kind == TurnPartKind.agent)
+                    _AgentRowView(data: part.agent!)
                   else
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(part.narration ?? '',
-                          style: TextStyle(
-                              color: colors.textPrimary, fontSize: 13,),),
+                      child: Text(
+                        part.text ?? '',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
               ],
             ),
@@ -633,24 +942,26 @@ class _TurnBlockViewState extends State<TurnBlockView> {
         if (vm.answerMarkdown.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6, bottom: 2),
-            child: widget.answerBuilder != null
-                ? widget.answerBuilder!(vm.answerMarkdown)
-                : MarkdownBodyLite(markdown: vm.answerMarkdown),
-          ),
-        // 块级操作按钮（正文非空时）
-        if (vm.answerMarkdown.isNotEmpty)
-          Align(
-            alignment: Alignment.centerRight,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _BlockBtn(icon: Icons.copy_outlined, label: '复制',
-                  onTap: () {},),
-              _BlockBtn(icon: Icons.ios_share, label: '下载',
-                  onTap: () {},),
-              _BlockBtn(icon: Icons.open_in_full, label: '全文',
-                  onTap: () {},),
-            ],),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                widget.answerBuilder != null
+                    ? widget.answerBuilder!(vm.answerMarkdown, vm.busy)
+                    : MarkdownBodyLite(markdown: vm.answerMarkdown),
+                // 流式中的输出感知：回答区底部细流光条
+                if (vm.busy) const StreamingShimmer(),
+              ],
+            ),
           ),
       ],
+    );
+    // 回答区长按 → 宿主操作菜单（复制全文/引用为输入）
+    if (widget.onAnswerLongPress == null || vm.answerMarkdown.isEmpty) {
+      return body;
+    }
+    return GestureDetector(
+      onLongPress: () => widget.onAnswerLongPress!(vm.answerMarkdown),
+      child: body,
     );
   }
 
@@ -679,201 +990,405 @@ class _ThinkRowState extends State<_ThinkRow> {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final d = widget.data;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      InkWell(
-        onTap: () => setState(() => _open = !_open),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Row(children: [
-            if (d.running)
-              SizedBox(
-                width: 11,
-                height: 11,
-                child: CircularProgressIndicator(
-                    strokeWidth: 1.6, color: colors.textMuted,),
-              )
-            else
-              Icon(Icons.psychology_outlined, size: 13, color: colors.textMuted),
-            const SizedBox(width: 6),
-            Text('思考',
-                style: TextStyle(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                if (d.running)
+                  SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: colors.textMuted,
+                    ),
+                  )
+                else
+                  Icon(
+                    Icons.psychology_outlined,
+                    size: 13,
+                    color: colors.textMuted,
+                  ),
+                const SizedBox(width: 6),
+                Text(
+                  '思考',
+                  style: TextStyle(
                     color: colors.textMuted,
                     fontSize: 12.5,
-                    fontWeight: FontWeight.w600,),),
-            if (d.duration != null)
-              Text(' · 持续了 ${d.duration!.inSeconds} 秒',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12,),),
-            const Spacer(),
-            Icon(_open ? Icons.expand_less : Icons.expand_more,
-                size: 13, color: colors.textMuted,),
-          ],),
-        ),
-      ),
-      if (_open && d.content.isNotEmpty)
-        Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: colors.bgPrimary,
-            border: Border(left: BorderSide(color: colors.border, width: 2)),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (d.duration != null)
+                  Text(
+                    ' · 持续了 ${d.duration!.inSeconds} 秒',
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                const Spacer(),
+                Icon(
+                  _open ? Icons.expand_less : Icons.expand_more,
+                  size: 13,
+                  color: colors.textMuted,
+                ),
+              ],
+            ),
           ),
-          child: Text(d.content,
-              style: TextStyle(color: colors.textMuted, fontSize: 12,),),
         ),
-    ],);
+        if (_open && d.content.isNotEmpty)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: colors.bgPrimary,
+              border: Border(left: BorderSide(color: colors.border, width: 2)),
+            ),
+            child: Text(
+              d.content,
+              style: TextStyle(
+                color: colors.textMuted,
+                fontSize: 12,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 子智能体行：保留 agent 类型和父工具上下文，详情按原序展开。
+class _AgentRowView extends StatefulWidget {
+  const _AgentRowView({required this.data});
+  final TurnAgentData data;
+
+  @override
+  State<_AgentRowView> createState() => _AgentRowViewState();
+}
+
+class _AgentRowViewState extends State<_AgentRowView> {
+  late bool _open;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.data.defaultOpen;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final data = widget.data;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: data.details.isEmpty
+              ? null
+              : () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                if (data.running)
+                  SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: colors.accent,
+                    ),
+                  )
+                else
+                  Icon(
+                    Icons.smart_toy_outlined,
+                    size: 14,
+                    color: colors.accent,
+                  ),
+                const SizedBox(width: 6),
+                Text(
+                  '子智能体',
+                  style: TextStyle(
+                    color: colors.textMuted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${data.agentType} · ${data.target}',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: colors.textPrimary, fontSize: 13),
+                  ),
+                ),
+                if (data.failed)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: Icon(
+                      Icons.error_outline,
+                      size: 14,
+                      color: colors.error,
+                    ),
+                  ),
+                if (data.details.isNotEmpty)
+                  Icon(
+                    _open ? Icons.expand_less : Icons.expand_more,
+                    size: 13,
+                    color: colors.textMuted,
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (_open && data.details.isNotEmpty)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(left: 18, bottom: 8),
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints(maxHeight: 280),
+            decoration: BoxDecoration(
+              color: colors.bgPrimary,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in data.details)
+                    SelectableText(
+                      line.text,
+                      style: TextStyle(
+                        color: line.kind == DetailLineKind.cmd
+                            ? colors.accent
+                            : colors.textMuted,
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
 
 /// 工具行：动词 + 目录 + 文件/聚合 + 行数 + 失败标 + 计时；点开二级详情
 class _ToolRowView extends StatefulWidget {
-  const _ToolRowView({required this.data});
+  const _ToolRowView({required this.data, this.onDownloadFile});
   final TurnToolRow data;
+
+  /// Write 行「下载到手机」回调（TurnBlockView 透传；null 不显示入口）
+  final void Function(String path)? onDownloadFile;
 
   @override
   State<_ToolRowView> createState() => _ToolRowViewState();
 }
 
 class _ToolRowViewState extends State<_ToolRowView> {
-  bool _open = false;
+  late bool _open;
+  bool _userToggled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.data.defaultOpen;
+  }
+
+  @override
+  void didUpdateWidget(_ToolRowView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 运行中 → 出结果时自动展开一次；用户已手动开合过则不抢操作。
+    if (!_userToggled &&
+        widget.data.defaultOpen &&
+        !oldWidget.data.defaultOpen) {
+      _open = true;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final d = widget.data;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      InkWell(
-        onTap: d.details.isEmpty ? null : () => setState(() => _open = !_open),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(children: [
-            if (d.details.isNotEmpty)
-              Icon(_open ? Icons.expand_less : Icons.expand_more,
-                  size: 12, color: colors.textMuted,)
-            else
-              const SizedBox(width: 12),
-            const SizedBox(width: 4),
-            Text(d.verb,
-                style: TextStyle(color: colors.textMuted, fontSize: 12.5,),),
-            if (d.dir != null) ...[
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(d.dir!,
-                    style: TextStyle(
-                        color: colors.textMuted, fontSize: 11.5,),
-                    overflow: TextOverflow.ellipsis,),
-              ),
-              const SizedBox(width: 5),
-            ],
-            Flexible(
-              child: Text(d.target,
-                  style: TextStyle(color: colors.textPrimary, fontSize: 13,),
-                  overflow: TextOverflow.ellipsis,),
-            ),
-            if (d.add != null) ...[
-              const SizedBox(width: 6),
-              Text('+${d.add}',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: d.details.isEmpty
+              ? null
+              : () => setState(() {
+                    _userToggled = true;
+                    _open = !_open;
+                  }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                if (d.details.isNotEmpty)
+                  Icon(
+                    _open ? Icons.expand_less : Icons.expand_more,
+                    size: 12,
+                    color: colors.textMuted,
+                  )
+                else
+                  const SizedBox(width: 12),
+                const SizedBox(width: 4),
+                Text(
+                  d.verb,
                   style: TextStyle(
+                    color: colors.textMuted,
+                    fontSize: 12.5,
+                  ),
+                ),
+                if (d.dir != null) ...[
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      d.dir!,
+                      style: TextStyle(
+                        color: colors.textMuted,
+                        fontSize: 11.5,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Flexible(
+                  child: Text(
+                    d.target,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (d.add != null) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '+${d.add}',
+                    style: TextStyle(
                       color: colors.success,
                       fontSize: 12,
-                      fontFamily: 'monospace',),),
-            ],
-            if (d.del != null) ...[
-              const SizedBox(width: 4),
-              Text('-${d.del}',
-                  style: TextStyle(
-                      color: colors.error,
-                      fontSize: 12,
-                      fontFamily: 'monospace',),),
-            ],
-            if (d.failed) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  border: Border.all(color: colors.error),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text('⚠ 执行失败',
-                    style: TextStyle(color: colors.error, fontSize: 10.5,),),
-              ),
-            ],
-            if (d.recovered) ...[
-              const SizedBox(width: 4),
-              Text('已重试恢复',
-                  style: TextStyle(color: colors.textMuted, fontSize: 10.5,),),
-            ],
-            const Spacer(),
-            if (d.running && d.elapsed != null)
-              Text('${d.elapsed!.inSeconds}s',
-                  style: TextStyle(
-                      color: colors.textMuted,
-                      fontSize: 11,
-                      fontFamily: 'monospace',),)
-            else if (!d.running)
-              Icon(Icons.check, size: 13, color: colors.textMuted),
-          ],),
-        ),
-      ),
-      if (_open && d.details.isNotEmpty)
-        Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(left: 16, bottom: 8),
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: colors.bgPrimary,
-            border: Border.all(color: colors.border),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          // 大输出限高滚动，不撑爆回合块
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final line in d.details)
-                  SelectableText(
-                    line.text,
-                    style: TextStyle(
-                      color: switch (line.kind) {
-                        DetailLineKind.add => colors.success,
-                        DetailLineKind.del => colors.error,
-                        DetailLineKind.cmd => colors.accent,
-                        DetailLineKind.dim => colors.textMuted,
-                      },
-                      fontSize: 11.5,
                       fontFamily: 'monospace',
                     ),
                   ),
+                ],
+                if (d.del != null) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '-${d.del}',
+                    style: TextStyle(
+                      color: colors.error,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+                if (d.failed) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: colors.error),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '⚠ 执行失败',
+                      style: TextStyle(
+                        color: colors.error,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ),
+                ],
+                if (d.recovered) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '已重试恢复',
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                // Write 产物的下载入口：完成后可用，失败行不给
+                if (d.filePath != null &&
+                    widget.onDownloadFile != null &&
+                    !d.running &&
+                    !d.failed)
+                  InkWell(
+                    onTap: () => widget.onDownloadFile!(d.filePath!),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Icon(
+                        Icons.download_outlined,
+                        size: 14,
+                        color: colors.textMuted,
+                      ),
+                    ),
+                  ),
+                if (d.running && d.elapsed != null)
+                  Text(
+                    '${d.elapsed!.inSeconds}s',
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  )
+                else if (!d.running)
+                  Icon(Icons.check, size: 13, color: colors.textMuted),
               ],
             ),
           ),
         ),
-    ],);
-  }
-}
-
-/// 块级操作按钮
-class _BlockBtn extends StatelessWidget {
-  const _BlockBtn({required this.icon, required this.label, this.onTap});
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(children: [
-          Icon(icon, size: 13, color: colors.textMuted),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(color: colors.textMuted, fontSize: 12),),
-        ],),
-      ),
+        if (_open && d.details.isNotEmpty)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(left: 16, bottom: 8),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: colors.bgPrimary,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            // 大输出限高滚动，不撑爆回合块
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in d.details)
+                    SelectableText(
+                      line.text,
+                      style: TextStyle(
+                        color: switch (line.kind) {
+                          DetailLineKind.add => colors.success,
+                          DetailLineKind.del => colors.error,
+                          DetailLineKind.cmd => colors.accent,
+                          DetailLineKind.dim => colors.textMuted,
+                        },
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -887,7 +1402,9 @@ class MarkdownBodyLite extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    return Text(markdown,
-        style: TextStyle(color: colors.textPrimary, fontSize: 14, height: 1.5),);
+    return Text(
+      markdown,
+      style: TextStyle(color: colors.textPrimary, fontSize: 14, height: 1.5),
+    );
   }
 }

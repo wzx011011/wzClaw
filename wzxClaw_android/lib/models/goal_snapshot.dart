@@ -104,13 +104,35 @@ class GoalSnapshot {
   final List<GoalGroup> groups;
   final GoalStats? stats;
 
+  /// 目标对象（snapshot.projection.target）：objective 文本 + 计时等。
+  /// 未设目标为 null。
+  final GoalTarget? target;
+
   const GoalSnapshot({
     required this.todos,
     required this.groups,
     this.stats,
+    this.target,
   });
 
   bool get isEmpty => todos.isEmpty && groups.isEmpty;
+
+  /// 目标行文本：优先 target.objective；无 target 回退活跃组首个未完成项
+  String get objectiveText {
+    final o = target?.objective.trim() ?? '';
+    if (o.isNotEmpty) return o;
+    final active = activeGroup;
+    if (active != null && active.todos.isNotEmpty) {
+      final open = active.todos.where((t) => !t.isCompleted).toList();
+      return (open.isNotEmpty ? open.first : active.todos.first).content;
+    }
+    return '';
+  }
+
+  /// 目标计时秒：优先 target 自带，回退 goalStats
+  int get timeUsedSeconds => (target?.timeUsedSeconds ?? 0) > 0
+      ? target!.timeUsedSeconds
+      : (stats?.timeUsedSeconds ?? 0);
 
   /// 当前活跃目标组（有未完成项的最新组）；无则 null
   GoalGroup? get activeGroup {
@@ -123,18 +145,60 @@ class GoalSnapshot {
   /// 计划板块（source 非 session 的组）
   List<GoalGroup> get plans => groups.where((g) => g.isPlan).toList();
 
-  static GoalSnapshot fromEngineJson(Map<dynamic, dynamic> r) => GoalSnapshot(
-        todos: (r['todos'] as List? ?? [])
-            .whereType<Map>()
-            .map(GoalTodo.fromJson)
-            .toList(),
-        groups: (r['todoGroups'] as List? ?? [])
-            .whereType<Map>()
-            .map(GoalGroup.fromJson)
-            .toList(),
-        stats: r['goalStats'] is Map
-            ? GoalStats.fromJson(Map<dynamic, dynamic>.from(r['goalStats'] as Map))
-            : null,
+  static GoalSnapshot fromEngineJson(Map<dynamic, dynamic> r) {
+    // 当前引擎（2026-09-19 实测）：顶层 {response, snapshot, startedTurn}，
+    // todos/todoGroups/projection.target 都在 snapshot 下；
+    // 2026-09-15 旧引擎为顶层同名字段——按 snapshot 存在与否统一取值。
+    final snap = r['snapshot'] is Map ? (r['snapshot'] as Map) : r;
+    final projection = snap['projection'] is Map
+        ? (snap['projection'] as Map)
+        : const <dynamic, dynamic>{};
+    final rawTarget = projection['target'];
+    return GoalSnapshot(
+      todos: ((snap['todos'] ?? r['todos']) as List? ?? [])
+          .whereType<Map>()
+          .map(GoalTodo.fromJson)
+          .toList(),
+      groups: ((snap['todoGroups'] ?? r['todoGroups']) as List? ?? [])
+          .whereType<Map>()
+          .map(GoalGroup.fromJson)
+          .toList(),
+      stats: (snap['goalStats'] ?? r['goalStats']) is Map
+          ? GoalStats.fromJson(
+              Map<dynamic, dynamic>.from(
+                (snap['goalStats'] ?? r['goalStats']) as Map,
+              ),
+            )
+          : null,
+      target: rawTarget is Map ? GoalTarget.fromJson(rawTarget) : null,
+    );
+  }
+}
+
+/// 引擎目标对象（projection.target 实测字段，renderer schema 对齐）
+class GoalTarget {
+  final String targetId;
+  final String objective;
+  final String? summaryTitle;
+  final int timeUsedSeconds;
+
+  /// active | paused | verifying | budget_limited | complete | cancelled…
+  final String status;
+
+  const GoalTarget({
+    required this.targetId,
+    required this.objective,
+    required this.timeUsedSeconds,
+    this.summaryTitle,
+    this.status = 'active',
+  });
+
+  static GoalTarget fromJson(Map<dynamic, dynamic> m) => GoalTarget(
+        targetId: m['targetId']?.toString() ?? '',
+        objective: m['objective']?.toString() ?? '',
+        summaryTitle: m['summaryTitle']?.toString(),
+        timeUsedSeconds: (m['timeUsedSeconds'] as num?)?.toInt() ?? 0,
+        status: m['status']?.toString() ?? 'active',
       );
 }
 

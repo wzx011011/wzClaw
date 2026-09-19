@@ -108,6 +108,26 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
                 ],
               ),
             ),
+            // 非连接态的诊断快捷入口：断连场景下最常用的工具不再藏在设置里
+            if (state != WsConnectionState.connected)
+              GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/connection-diagnostics'),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.monitor_heart_outlined,
+                          size: 13, color: dotColor,),
+                      const SizedBox(width: 3),
+                      Text(
+                        '诊断',
+                        style: TextStyle(color: dotColor, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),

@@ -334,7 +334,7 @@ void main() {
       expect(await future2, {});
     });
 
-    test('错误帧抛 ZcodeRequestException（含 code/message）', () async {
+    test('错误帧抛 ZcodeRequestException（含 code/message/data.reason）', () async {
       final h = RelayHarness();
       final client = await h.connectMatched();
 
@@ -344,15 +344,23 @@ void main() {
         'type': 'data',
         'payload': {
           'id': 1,
-          'error': {'code': -32601, 'message': 'Method not found'},
+          'error': {
+            'code': -32103,
+            'message': 'X_NOT_FOUND',
+            // companion x/* 族约定：可读分类放 data.reason，
+            // 客户端必须透传进异常（不许对 message 做字符串嗅探）
+            'data': {'reason': 'X_NOT_FOUND'},
+          },
         },
       });
       await expectLater(
         future,
         throwsA(
           isA<ZcodeRequestException>()
-              .having((e) => e.code, 'code', -32601)
-              .having((e) => e.message, 'message', 'Method not found'),
+              .having((e) => e.code, 'code', -32103)
+              .having((e) => e.message, 'message', 'X_NOT_FOUND')
+              .having((e) => e.data?['reason'], 'data.reason', 'X_NOT_FOUND')
+              .having((e) => e.reason, 'reason getter', 'X_NOT_FOUND'),
         ),
       );
     });

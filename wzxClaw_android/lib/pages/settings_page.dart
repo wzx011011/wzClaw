@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
+import '../models/ui_prefs.dart';
 import 'qr_scanner_page.dart';
 import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
@@ -27,10 +30,59 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loading = true;
   bool _pushEnabled = true;
   bool _backgroundKeepAliveEnabled = false;
+  bool _checkingUpdate = false;
   String _appVersion = '';
 
   static const _pushEnabledKey = 'push_notifications_enabled';
   static const _backgroundKeepAliveEnabledKey = 'background_keepalive_enabled';
+
+  /// 检查更新：拉 NAS 发布目录只读列表（autoindex），解析最高版本号
+  /// 与本机比对。发现新版 → 提示去 NAS share/zcode 下载安装。
+  Future<void> _checkForUpdate() async {
+    setState(() => _checkingUpdate = true);
+    String message;
+    try {
+      final request = await HttpClient()
+          .getUrl(Uri.parse('https://zcode.5945.top/zcode-releases/'));
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        throw HttpException('服务不可用（${response.statusCode}）');
+      }
+      final body = await response.transform(utf8.decoder).join();
+      final versions = RegExp(r'wzxClaw-android-release-v(\d+)\.(\d+)\.(\d+)\.apk')
+          .allMatches(body)
+          .map((m) => m.groups([1, 2, 3]).map((g) => int.parse(g!)).toList())
+          .toList();
+      if (versions.isEmpty) throw StateError('发布目录为空');
+      versions.sort((a, b) {
+        for (var i = 0; i < 3; i++) {
+          if (a[i] != b[i]) return b[i] - a[i];
+        }
+        return 0;
+      });
+      final latest = versions.first.join('.');
+      final current = _appVersion;
+      if (current.isNotEmpty && latest == current) {
+        message = '已是最新版本（v$current）';
+      } else if (current.isNotEmpty) {
+        message = '发现新版本 v$latest（当前 v$current），'
+            '请到 NAS share/zcode 下载安装';
+      } else {
+        message = '最新版本 v$latest';
+      }
+    } catch (e) {
+      message = '检查更新失败：$e';
+    }
+    if (!mounted) return;
+    setState(() => _checkingUpdate = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -383,6 +435,33 @@ class _SettingsPageState extends State<SettingsPage> {
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: UiPrefs.enterToSend,
+                  builder: (context, enterToSend, _) => SwitchListTile(
+                    title: Text(
+                      '回车键发送消息',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '开启后键盘发送键直接发送；关闭则回车换行，点按钮发送',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                    value: enterToSend,
+                    activeTrackColor: colors.accent.withValues(alpha: 0.4),
+                    activeThumbColor: colors.accent,
+                    inactiveThumbColor: colors.textSecondary,
+                    inactiveTrackColor: colors.border,
+                    onChanged: (v) => UiPrefs.setEnterToSend(v),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4,),
+                  ),
+                ),
                 const SizedBox(height: 24),
 
                 // -- Connection diagnostics --
@@ -664,13 +743,25 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
 
-                // -- Version info --
+                // -- Version info + 更新检查（NAS 发布目录只读列表）--
                 Center(
-                  child: Text(
-                    _appVersion.isEmpty
-                        ? 'wzxClaw Android'
-                        : 'wzxClaw Android v$_appVersion',
-                    style: TextStyle(color: colors.textMuted, fontSize: 12),
+                  child: Column(
+                    children: [
+                      Text(
+                        _appVersion.isEmpty
+                            ? 'wzxClaw Android'
+                            : 'wzxClaw Android v$_appVersion',
+                        style: TextStyle(color: colors.textMuted, fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      TextButton(
+                        onPressed: _checkingUpdate ? null : _checkForUpdate,
+                        child: Text(
+                          _checkingUpdate ? '正在检查…' : '检查更新',
+                          style: TextStyle(color: colors.accent, fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

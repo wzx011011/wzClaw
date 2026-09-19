@@ -205,6 +205,12 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 每会话状态容器（含后台会话；按帧归属路由）
   final Map<String, ZcodeSessionState> _states = {};
 
+  /// 每会话最多一个在途权威刷新；tool.result / batch / recovery 连续到达时
+  /// 合并成串行拉取，防止旧响应在新结果之后回写状态。
+  final Map<String, Future<void>> _authoritativeRefreshes = {};
+  final Set<String> _queuedAuthoritativeRefreshes = {};
+  final Set<String> _refreshFinishRequested = {};
+
   /// 已知可用模型（state.updated 全量快照缓存；setModel 兜底用）
   final List<String> _availableModels = [];
 
@@ -267,6 +273,18 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 只有请求方才知道其内容——解析时按 toolCallId 暂存，应答后清除）
   final Map<String, List<Map>> _permissionOptions = {};
 
+  /// 反向请求本地看护：key → 超时 Timer。桌面端对反向请求有 120s 看护，
+  /// 超时后自动拒绝——手机端必须对齐（125s 余量），否则权限条还挂着、
+  /// 用户点「允许」实际已被拒（与 a1af416「点允许实际拒绝」同类事故）。
+  final Map<String, Timer> _reverseWatchdogs = {};
+
+  /// UI 轻量通告（SnackBar 级提示，如反向请求等待超时）
+  final StreamController<String> _uiNotices =
+      StreamController<String>.broadcast();
+
+  /// UI 层订阅：非阻断式提示（SnackBar）
+  Stream<String> get uiNotices => _uiNotices.stream;
+
   // ──────────────────────────────────────────────
   // 状态 getter（notifyListeners 驱动 UI）
   // ──────────────────────────────────────────────
@@ -302,9 +320,28 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   // ── 回合块数据（最近一次已完成回合）──────────────
-  String get lastThinkingContent => _activeState?.lastThinkingContent ?? '';
-  int? get lastThinkingMs => _activeState?.lastThinkingMs;
   int? get lastTurnMs => _activeState?.lastTurnMs;
+
+  // ── 回合指标（首字延迟 / tok/s；口径见 ZcodeSessionState 注释）──
+  /// 当前回合首字延迟（毫秒；首增量未到为 null）
+  int? get firstTokenLatencyMs => _activeState?.firstTokenLatencyMs;
+
+  /// 流式 tok/s 估算（字符速率 ÷ 自校准比率；无采样为 null。是估算，
+  /// UI 必须标 ≈）
+  double? get estimatedTokensPerSecond {
+    final cps = _activeState?.liveCharsPerSecond();
+    if (cps == null) return null;
+    return cps / ZcodeSessionState.charsPerTokenEstimate;
+  }
+
+  /// 流式已耗时（运行中实时；空闲为 null）
+  Duration? get streamElapsed => _activeState?.streamElapsed;
+
+  /// 最近一次已完成回合的首字延迟（毫秒；未知为 null）
+  int? get lastFirstTokenMs => _activeState?.lastFirstTokenMs;
+
+  /// 最近一次已完成回合的权威 tok/s（未知为 null）
+  double? get lastTurnTokensPerSecond => _activeState?.lastTurnTokensPerSecond;
 
   /// 当前视口会话是否正被桌面端应用运行（-32004；ChatPage 显示状态条用）
   bool get remoteActiveElsewhere =>
@@ -312,10 +349,9 @@ class ZcodeChatStore extends ChangeNotifier {
 
   bool get isWaitingForResponse => _activeState?.isWaitingForResponse ?? false;
 
-  /// 当前回合的 thinking 内容（流式 reasoning 拼接；回合结束清空）。
-  /// ChatMessage 模型没有 thinking 字段，与 services/chat_store 一致由
-  /// store 层管理渲染状态。
-  String get thinkingContent => _activeState?.thinkingContent ?? '';
+  /// 当前回合的实时思考内容（当前流式消息尾部 reasoning 行；canonical
+  /// parts 是思考的唯一存储，没有独立缓冲）。
+  String get liveThinkingText => _activeState?.liveThinkingText ?? '';
 
   /// 当前会话的权限模式（plan|build|edit|yolo|auto；null = 未知）
   String? get sessionMode => _activeState?.mode;
@@ -634,13 +670,7 @@ class ZcodeChatStore extends ChangeNotifier {
     if (!merged && resumeResult != null) {
       _mergeServerMessages(state, resumeResult);
       if (resumeResult['messagesTruncated'] == true && state.items.isNotEmpty) {
-        state.insertHeadNotice(
-          ChatMessage(
-            role: MessageRole.assistant,
-            content: '（历史较长，已截断，仅显示最近消息）',
-            createdAt: state.items.first.message.createdAt,
-          ),
-        );
+        state.insertHeadNotice('（历史较长，已截断，仅显示最近消息）');
       }
     }
     // 引擎契约（2026-09-17 探针实测）：回合未完成时 session/messages 返回
@@ -649,11 +679,7 @@ class ZcodeChatStore extends ChangeNotifier {
     if (state.items.isEmpty &&
         (state.isStreaming || state.isWaitingForResponse)) {
       state.insertHeadNotice(
-        ChatMessage(
-          role: MessageRole.assistant,
-          content: '（回合进行中：引擎在回合完成后才落库消息，稍后重新打开即可看到完整记录）',
-          createdAt: DateTime.now(),
-        ),
+        '（回合进行中：引擎在回合完成后才落库消息，稍后重新打开即可看到完整记录）',
       );
     }
 
@@ -977,7 +1003,7 @@ class ZcodeChatStore extends ChangeNotifier {
         final time = info['time'] is Map ? info['time'] as Map : const {};
         byAgent.putIfAbsent(agent, () => []).add({
           'role': msg.role.name,
-          'content': msg.content,
+          'content': msg.text,
           'created_at': (time['created'] as num?)?.toInt() ?? 0,
         });
       }
@@ -1043,6 +1069,7 @@ class ZcodeChatStore extends ChangeNotifier {
     required bool approved,
     bool remember = false,
   }) {
+    _clearReverseWatchdog(toolCallId);
     final pending = _pendingReverse.remove(toolCallId);
     if (pending == null) return; // 没有对应待处理请求（可能已应答/已断开）
     final options = _permissionOptions.remove(toolCallId);
@@ -1098,6 +1125,7 @@ class ZcodeChatStore extends ChangeNotifier {
     List<String> answers, {
     String? customText,
   }) {
+    _clearReverseWatchdog(questionId);
     final pending = _pendingReverse.remove(questionId);
     if (pending == null) return;
     if (_activeAskUser?.questionId == questionId) {
@@ -1142,6 +1170,8 @@ class ZcodeChatStore extends ChangeNotifier {
           if (!_permissionController.isClosed) {
             _permissionController.add(request);
           }
+          // 后台通知：任务挂起等人批准，不提醒会无声卡住
+          _notifier.showReverseRequest(isAskUser: false, summary: request.toolName);
           notifyListeners();
         },
       );
@@ -1166,6 +1196,8 @@ class ZcodeChatStore extends ChangeNotifier {
         onRegistered: () {
           _activeAskUser = question;
           if (!_askUserController.isClosed) _askUserController.add(question);
+          // 后台通知：任务挂起等人回答，不提醒会无声卡住
+          _notifier.showReverseRequest(isAskUser: true, summary: question.question);
           notifyListeners();
         },
       );
@@ -1192,8 +1224,46 @@ class ZcodeChatStore extends ChangeNotifier {
     final completer = Completer<dynamic>();
     _pendingReverse[key] =
         _PendingReverse(frameId: frameId, completer: completer);
+    _armReverseWatchdog(key);
     onRegistered();
     return completer.future;
+  }
+
+  /// 桌面端对反向请求的看护是 120s 自动拒绝；本地 125s 余量对齐——
+  /// 超时后清条 + 通告，绝不留一个「点了允许也无效」的僵尸权限条。
+  void _armReverseWatchdog(String key) {
+    _reverseWatchdogs[key]?.cancel();
+    _reverseWatchdogs[key] = Timer(const Duration(seconds: 125), () {
+      _reverseWatchdogs.remove(key);
+      final pending = _pendingReverse.remove(key);
+      if (pending != null && !pending.completer.isCompleted) {
+        pending.completer.completeError(
+          const ZcodeReverseRejectException('等待超时，桌面端已自动拒绝'),
+        );
+      }
+      _permissionOptions.remove(key);
+      var cleared = false;
+      if (_activePermission?.toolCallId == key) {
+        _activePermission = null;
+        cleared = true;
+        if (!_permissionController.isClosed) {
+          _permissionController.add(null);
+        }
+      }
+      if (_activeAskUser?.questionId == key) {
+        _activeAskUser = null;
+        cleared = true;
+        if (!_askUserController.isClosed) _askUserController.add(null);
+      }
+      if (cleared && !_uiNotices.isClosed) {
+        _uiNotices.add('等待超时：桌面端已自动拒绝该请求');
+      }
+      notifyListeners();
+    });
+  }
+
+  void _clearReverseWatchdog(String key) {
+    _reverseWatchdogs.remove(key)?.cancel();
   }
 
   /// 解析权限请求（实测形状，APP-SERVER.md「工具回合实测」）：
@@ -1290,6 +1360,10 @@ class ZcodeChatStore extends ChangeNotifier {
     final entries = List.of(_pendingReverse.entries);
     _pendingReverse.clear();
     _permissionOptions.clear();
+    for (final w in _reverseWatchdogs.values) {
+      w.cancel();
+    }
+    _reverseWatchdogs.clear();
     for (final e in entries) {
       if (!e.value.completer.isCompleted) {
         e.value.completer.completeError(
@@ -1369,6 +1443,16 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     if (sid != null && status != null) _updateSessionBadge(sid, status);
 
+    // activeToolCalls 是整体替换的实时快照，只补状态，不删除已经写入过程
+    // 时间线的历史工具项；tool.updated 仍是输入/输出的主来源。
+    final activeToolCalls = patch['activeToolCalls'];
+    if (activeToolCalls is List) {
+      state.reconcileActiveTools(
+        _mapActiveToolCalls(activeToolCalls),
+      );
+      _notifyIfActive(state);
+    }
+
     // 权限模式权威回填：patch.mode.current（setMode 响应快照口径
     // 有差异，不作为来源；见 setMode 注释）
     final modePatch = patch['mode'];
@@ -1380,21 +1464,26 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// v4/telemetry/event：usage.delta 记 token；turn.terminal 回合收尾
-  /// （telemetry 无 toolCallCount → 保守走权威刷新）；
-  /// stream.chunk 在推送不可用时确保降级轮询在跑
+  /// v4/telemetry/event：usage.delta 记 token；turn.terminal 回合收尾。
+  /// telemetry 与 session/event 会复用 eventId，必须先去重，避免同一工具
+  /// 生命周期把过程行写两次；它没有 session/event 的 seq，不能推进 lastSeq。
   void _handleTelemetry(Map params) {
     final sid = _nonEmpty(params['sessionId']);
     if (sid != null && _states[sid] == null) return; // 未知会话：忽略
     final state = sid == null ? _activeState : _states[sid];
     if (state == null) return;
+    final eventId = _nonEmpty(params['eventId']);
+    if (eventId != null && !state.rememberEvent(eventId)) return;
 
-    final kind = params['kind'];
+    final kind = _nonEmpty(params['kind']);
     if (kind == 'usage.delta') {
       state.lastInputTokens =
           _toIntOrNull(params['inputTokens']) ?? state.lastInputTokens;
       state.lastOutputTokens =
           _toIntOrNull(params['outputTokens']) ?? state.lastOutputTokens;
+    } else if (kind == 'tool.lifecycle') {
+      _applyToolLifecycleTelemetry(state, params);
+      _notifyIfActive(state);
     } else if (kind == 'turn.terminal') {
       _handleTurnEnd(
         state,
@@ -1412,6 +1501,526 @@ class ZcodeChatStore extends ChangeNotifier {
       debugPrint('[zcode-store] telemetry 未处理 kind=$kind '
           'session=${state.sessionId}');
     }
+  }
+
+  /// model.streaming 的过程投影。工具参数与正文是不同的协议通道：
+  /// tool_input_delta 只组装工具输入，绝不可当作 assistant 文本输出。
+  void _applyModelStreaming(
+    ZcodeSessionState state,
+    Map payload, {
+    String? turnId,
+  }) {
+    final kind = _nonEmpty(payload['kind']) ?? 'text_delta';
+    final assistantId = _firstNonEmpty(
+      payload,
+      ['assistantMessageId', 'assistant_message_id', 'messageId'],
+    );
+    if (assistantId != null) {
+      state.adoptStreamingProtoId(assistantId, turnId: turnId);
+    }
+    final delta = payload['delta'];
+    switch (kind) {
+      case 'text_delta':
+        if (delta is String && delta.isNotEmpty) {
+          state.appendTextDelta(
+            delta,
+            assistantMessageId: assistantId,
+            turnId: turnId,
+          );
+        }
+        return;
+      case 'reasoning_delta':
+        if (delta is String && delta.isNotEmpty) {
+          state.appendThinkingDelta(
+            delta,
+            assistantMessageId: assistantId,
+            turnId: turnId,
+          );
+        }
+        return;
+      case 'tool_input_start':
+        final toolCallId = _nonEmpty(payload['toolCallId']);
+        if (toolCallId == null) {
+          debugPrint('[zcode-store] tool_input_start 缺少 toolCallId '
+              'session=${state.sessionId}');
+          return;
+        }
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: state.streamingTool(toolCallId),
+            lifecycle: 'input_streaming',
+            input: '',
+            hasInput: true,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'tool_input_delta':
+        final toolCallId = _nonEmpty(payload['toolCallId']);
+        if (toolCallId == null || delta is! String) {
+          debugPrint('[zcode-store] tool_input_delta 形状不完整 '
+              'session=${state.sessionId}');
+          return;
+        }
+        final previous = state.streamingTool(toolCallId);
+        final input = '${previous?.inputFull ?? ''}$delta';
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'input_streaming',
+            input: input,
+            hasInput: true,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'tool_input_end':
+        final toolCallId = _nonEmpty(payload['toolCallId']);
+        if (toolCallId == null) {
+          debugPrint('[zcode-store] tool_input_end 缺少 toolCallId '
+              'session=${state.sessionId}');
+          return;
+        }
+        final previous = state.streamingTool(toolCallId);
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'input_ready',
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'tool_call':
+        final toolCallId = _nonEmpty(payload['toolCallId']);
+        if (toolCallId == null) {
+          debugPrint('[zcode-store] tool_call 缺少 toolCallId '
+              'session=${state.sessionId}');
+          return;
+        }
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: state.streamingTool(toolCallId),
+            lifecycle: 'input_ready',
+            input: payload['input'],
+            hasInput: payload.containsKey('input'),
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      // 边界事件可能因协议过滤根本不抵达手机；已知但无内容的边界不记成
+      // 未知协议，以免正常会话日志被噪声淹没。
+      case 'start':
+      case 'finish':
+      case 'text_start':
+      case 'text_end':
+      case 'reasoning_start':
+      case 'reasoning_end':
+        return;
+      case 'error':
+        debugPrint('[zcode-store] model.streaming error '
+            'session=${state.sessionId}');
+        return;
+      default:
+        debugPrint('[zcode-store] model.streaming 未处理 kind=$kind '
+            'session=${state.sessionId}');
+        return;
+    }
+  }
+
+  /// tool.updated 的生命周期更新。scheduled 是工具在过程流中的插入点；
+  /// 后续事件只修改该 callId 的同一过程项，保持并发调用的原始顺序。
+  void _applyToolUpdated(
+    ZcodeSessionState state,
+    Map payload, {
+    String? turnId,
+  }) {
+    final kind = _nonEmpty(payload['kind']);
+    if (kind == 'batch') {
+      final ids = payload['toolCallIds'];
+      if (ids is! List) {
+        debugPrint('[zcode-store] tool.updated batch 缺少 toolCallIds '
+            'session=${state.sessionId}');
+        return;
+      }
+      final successCount = _toIntOrNull(payload['successCount']) ?? 0;
+      final errorCount = _toIntOrNull(payload['errorCount']) ?? 0;
+      for (final rawId in ids) {
+        final id = _nonEmpty(rawId);
+        if (id == null) continue;
+        final previous = state.streamingTool(id);
+        if (previous == null) continue;
+        final allFailed = errorCount > 0 && successCount == 0;
+        state.upsertStreamingTool(
+          previous.copyWith(
+            lifecycle: 'batch',
+            status: allFailed && previous.status == ToolCallStatus.running
+                ? ToolCallStatus.error
+                : previous.status,
+            isError: allFailed || previous.isError,
+            outputSummary: allFailed && previous.outputSummary == null
+                ? '工具批次执行失败，正在同步权威结果'
+                : previous.outputSummary,
+            outputFull: allFailed && previous.outputFull == null
+                ? '工具批次执行失败，正在同步权威结果'
+                : previous.outputFull,
+          ),
+          turnId: turnId,
+        );
+      }
+      // batch 只是一个并行组边界，不等同整个回合完成。发起非收尾刷新可尽早
+      // 用权威工具 part 回填；若尚未提交，随后 recovery 会再排一次刷新。
+      unawaited(_refreshAuthoritative(state, finishTurn: false));
+      return;
+    }
+
+    final toolCallId = _nonEmpty(payload['toolCallId']);
+    if (toolCallId == null || kind == null) {
+      debugPrint('[zcode-store] tool.updated 形状不完整 kind=$kind '
+          'session=${state.sessionId}');
+      return;
+    }
+    final assistantId = _nonEmpty(payload['assistantMessageId']);
+    final previous = state.streamingTool(toolCallId);
+    switch (kind) {
+      case 'scheduled':
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'scheduled',
+            input: payload['input'],
+            hasInput: payload.containsKey('input'),
+            status: ToolCallStatus.running,
+            isError: false,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'started':
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'started',
+            status: ToolCallStatus.running,
+            isError: false,
+            startedAt: _parseEventTime(payload['startedAt']),
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'progress':
+        final tail = _firstNonEmpty(payload, ['stdoutTail', 'stderrTail']);
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'progress',
+            status: ToolCallStatus.running,
+            isError: false,
+            elapsedMs: _toIntOrNull(payload['elapsedMs']),
+            output: tail,
+            hasOutput: tail != null && previous?.outputFull == null,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        return;
+      case 'result':
+        final result =
+            payload['result'] is Map ? payload['result'] as Map : const {};
+        final success = result['success'] == true;
+        final output =
+            success ? result['content'] : _toolErrorText(result['error']);
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'result',
+            status: success ? ToolCallStatus.done : ToolCallStatus.error,
+            isError: !success,
+            output: output,
+            hasOutput: output != null,
+            elapsedMs: _toIntOrNull(payload['duration']) ??
+                _toIntOrNull(result['duration']) ??
+                _toIntOrNull(
+                  (result['perf'] is Map)
+                      ? (result['perf'] as Map)['totalMs']
+                      : null,
+                ),
+            outputTruncated: result['truncated'] == true,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        unawaited(_refreshAuthoritative(state, finishTurn: false));
+        return;
+      case 'error':
+        final error = _toolErrorText(payload['error']);
+        state.upsertStreamingTool(
+          _updatedTool(
+            toolCallId: toolCallId,
+            payload: payload,
+            previous: previous,
+            lifecycle: 'error',
+            status: ToolCallStatus.error,
+            isError: true,
+            output: error,
+            hasOutput: error != null,
+          ),
+          assistantMessageId: assistantId,
+          turnId: turnId,
+        );
+        unawaited(_refreshAuthoritative(state, finishTurn: false));
+        return;
+      case 'raw':
+        debugPrint('[zcode-store] tool.updated raw 已保留待权威回填 '
+            'tool=$toolCallId session=${state.sessionId}');
+        return;
+      default:
+        debugPrint('[zcode-store] tool.updated 未处理 kind=$kind '
+            'tool=$toolCallId session=${state.sessionId}');
+        return;
+    }
+  }
+
+  void _applyPermissionRequested(
+    ZcodeSessionState state,
+    Map payload, {
+    String? turnId,
+  }) {
+    final toolCallId = _nonEmpty(payload['toolCallId']);
+    if (toolCallId == null) {
+      debugPrint('[zcode-store] permission.requested 缺少 toolCallId '
+          'session=${state.sessionId}');
+      return;
+    }
+    state.upsertStreamingTool(
+      _updatedTool(
+        toolCallId: toolCallId,
+        payload: payload,
+        previous: state.streamingTool(toolCallId),
+        lifecycle: 'permission_requested',
+        status: ToolCallStatus.running,
+        isError: false,
+        input: payload['input'],
+        hasInput: payload.containsKey('input'),
+      ),
+      assistantMessageId: _nonEmpty(payload['assistantMessageId']),
+      turnId: turnId,
+    );
+  }
+
+  void _applyPermissionResolved(
+    ZcodeSessionState state,
+    Map payload, {
+    String? turnId,
+  }) {
+    final toolCallId = _nonEmpty(payload['toolCallId']);
+    if (toolCallId == null) {
+      debugPrint('[zcode-store] permission.resolved 缺少 toolCallId '
+          'session=${state.sessionId}');
+      return;
+    }
+    final denied = _nonEmpty(payload['decision']) == 'deny';
+    final reason = _nonEmpty(payload['reason']);
+    state.upsertStreamingTool(
+      _updatedTool(
+        toolCallId: toolCallId,
+        payload: payload,
+        previous: state.streamingTool(toolCallId),
+        lifecycle: denied ? 'permission_denied' : 'permission_granted',
+        status: denied ? ToolCallStatus.error : ToolCallStatus.running,
+        isError: denied,
+        output: denied ? reason : null,
+        hasOutput: denied && reason != null,
+      ),
+      assistantMessageId: _nonEmpty(payload['assistantMessageId']),
+      turnId: turnId,
+    );
+  }
+
+  void _applyToolLifecycleTelemetry(ZcodeSessionState state, Map payload) {
+    final toolCallId = _nonEmpty(payload['toolCallId']);
+    final phase = _nonEmpty(payload['phase']);
+    if (toolCallId == null || phase == null) {
+      debugPrint('[zcode-store] telemetry tool.lifecycle 形状不完整 '
+          'session=${state.sessionId}');
+      return;
+    }
+    final previous = state.streamingTool(toolCallId);
+    final completed = phase == 'completed';
+    state.upsertStreamingTool(
+      _updatedTool(
+        toolCallId: toolCallId,
+        payload: payload,
+        previous: previous,
+        lifecycle: 'telemetry_$phase',
+        status: completed ? ToolCallStatus.done : ToolCallStatus.running,
+        isError: false,
+        elapsedMs: _toIntOrNull(payload['durationMs']) ??
+            _toIntOrNull(payload['elapsedMs']),
+        startedAt: _parseEventTime(payload['startedAt']),
+      ),
+      assistantMessageId: _nonEmpty(payload['assistantMessageId']),
+      turnId: _nonEmpty(payload['turnId']),
+    );
+    if (completed) unawaited(_refreshAuthoritative(state, finishTurn: false));
+  }
+
+  List<ToolCallInfo> _mapActiveToolCalls(List raw) {
+    final calls = <ToolCallInfo>[];
+    for (final value in raw) {
+      if (value is! Map) continue;
+      final id = _nonEmpty(value['toolCallId']);
+      final name = _toolName(value);
+      if (id == null || name == null) {
+        debugPrint('[zcode-store] activeToolCalls 条目不完整，已跳过');
+        continue;
+      }
+      final rawStatus = _nonEmpty(value['status']);
+      final failed = rawStatus == 'failed' || rawStatus == 'denied';
+      calls.add(
+        _updatedTool(
+          toolCallId: id,
+          payload: value,
+          lifecycle: rawStatus == 'pending'
+              ? 'scheduled'
+              : rawStatus == 'denied'
+                  ? 'permission_denied'
+                  : rawStatus,
+          status: failed
+              ? ToolCallStatus.error
+              : rawStatus == 'completed'
+                  ? ToolCallStatus.done
+                  : ToolCallStatus.running,
+          isError: failed,
+          startedAt: _parseEventTime(value['startedAt']),
+        ),
+      );
+    }
+    return calls;
+  }
+
+  ToolCallInfo _updatedTool({
+    required String toolCallId,
+    required Map payload,
+    ToolCallInfo? previous,
+    String? lifecycle,
+    ToolCallStatus? status,
+    bool? isError,
+    dynamic input,
+    bool hasInput = false,
+    dynamic output,
+    bool hasOutput = false,
+    int? elapsedMs,
+    DateTime? startedAt,
+    bool? outputTruncated,
+  }) {
+    final inputMap = input is Map
+        ? input
+        : (payload['input'] is Map ? payload['input'] as Map : const {});
+    final metadata =
+        payload['metadata'] is Map ? payload['metadata'] as Map : const {};
+    String? meta(List<String> keys) =>
+        _firstNonEmpty(payload, keys) ??
+        _firstNonEmpty(inputMap, keys) ??
+        _firstNonEmpty(metadata, keys);
+    final name = _toolName(payload) ?? previous?.toolName ?? 'Tool';
+    final toolStatus = status ?? previous?.status ?? ToolCallStatus.running;
+    final toolError =
+        isError ?? previous?.isError ?? toolStatus == ToolCallStatus.error;
+    final canRunParallel = payload['canRunParallel'] is bool
+        ? payload['canRunParallel'] as bool
+        : previous?.canRunParallel ?? false;
+    final background = payload['background'] is bool
+        ? payload['background'] as bool
+        : previous?.background ?? false;
+    return ToolCallInfo(
+      toolCallId: toolCallId,
+      toolName: name,
+      inputSummary: hasInput ? _summaryOf(input) : previous?.inputSummary,
+      outputSummary: hasOutput ? _summaryOf(output) : previous?.outputSummary,
+      status: toolStatus,
+      isError: toolError,
+      inputFull: hasInput ? _fullOf(input) : previous?.inputFull,
+      outputFull: hasOutput ? _fullOf(output) : previous?.outputFull,
+      lifecycle: lifecycle ?? previous?.lifecycle,
+      elapsedMs: elapsedMs ?? previous?.elapsedMs,
+      startedAt: startedAt ?? previous?.startedAt,
+      parallelGroupIndex: _toIntOrNull(payload['parallelGroupIndex']) ??
+          previous?.parallelGroupIndex,
+      canRunParallel: canRunParallel,
+      subagentType:
+          meta(['subagentType', 'subagent_type', 'agentType', 'agent_type']) ??
+              previous?.subagentType,
+      childSessionId: meta(['childSessionId', 'child_session_id']) ??
+          previous?.childSessionId,
+      parentToolCallId: meta(['parentToolCallId', 'parent_tool_call_id']) ??
+          previous?.parentToolCallId,
+      source: meta(['source']) ?? previous?.source,
+      agentId: meta(['agentId', 'agent_id']) ?? previous?.agentId,
+      background: background,
+      description: meta(['description']) ?? previous?.description,
+      outputTruncated: outputTruncated ?? previous?.outputTruncated ?? false,
+    );
+  }
+
+  String? _toolName(Map payload) {
+    final direct = _firstNonEmpty(payload, ['toolName', 'tool_name', 'name']);
+    if (direct != null) return direct;
+    final tool = payload['tool'];
+    if (tool is String && tool.isNotEmpty) return tool;
+    if (tool is Map) return _firstNonEmpty(tool, ['name', 'toolName']);
+    return null;
+  }
+
+  String? _toolErrorText(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is String) return raw;
+    if (raw is Map) {
+      return _firstNonEmpty(raw, [
+            'message',
+            'detail',
+            'underlyingErrorMessage',
+            'underlyingErrorDetail',
+          ]) ??
+          _summaryOf(raw);
+    }
+    return _summaryOf(raw);
+  }
+
+  DateTime? _parseEventTime(dynamic raw) {
+    final ms = _toIntOrNull(raw);
+    if (ms != null && ms > 0) return DateTime.fromMillisecondsSinceEpoch(ms);
+    if (raw is String) return DateTime.tryParse(raw);
+    return null;
+  }
+
+  bool _isCommittedToolRecovery(Map payload) {
+    final kind = _nonEmpty(payload['kind']);
+    if (kind != 'tool_result' && kind != 'tool_error') return false;
+    final committed = payload['committedToolCallIds'];
+    return _nonEmpty(payload['resultPartId']) != null ||
+        (committed is List && committed.isNotEmpty);
   }
 
   /// 应用一条 session/event（推送帧 / 订阅快照 / events 补放共用）：
@@ -1434,43 +2043,58 @@ class ZcodeChatStore extends ChangeNotifier {
             _nonEmpty(payload['messageId']) ?? _nonEmpty(payload['message_id']);
         final input = payload['input'];
         if (messageId != null && input is String && input.isNotEmpty) {
-          state.ensureUserMessage(protoId: messageId, content: input);
+          state.ensureUserMessage(
+            protoId: messageId,
+            content: input,
+            turnId: turnId,
+          );
         }
         _armPushWatchdog(state); // 桌面端发起的回合同样受看门狗保护
         _notifyIfActive(state);
         return;
       case 'model.streaming':
         state.isStreaming = true; // 收到流式增量即视作运行（含兜底收尾后恢复）
-        final assistantId = _nonEmpty(payload['assistantMessageId']);
-        if (assistantId != null) state.adoptStreamingProtoId(assistantId);
-        final delta = payload['delta'];
-        if (delta is String && delta.isNotEmpty) {
-          final kind = payload['kind'];
-          if (kind == 'reasoning_delta') {
-            state.appendThinkingDelta(delta);
-          } else if (kind == null || kind == 'text_delta') {
-            state.appendTextDelta(delta);
-          } else {
-            // 未知增量种类：不留观测就会变成「内容少了但没人知道」
-            debugPrint('[zcode-store] model.streaming 未处理 kind=$kind '
-                'session=${state.sessionId}');
-          }
-          _notifyIfActive(state);
-        }
+        _applyModelStreaming(state, payload, turnId: turnId);
+        _notifyIfActive(state);
         return;
       case 'text_delta':
-        state.isStreaming = true; // 收到流式增量即视作运行
+        state.isStreaming = true;
         final delta = payload['delta'];
         if (delta is String && delta.isNotEmpty) {
-          state.appendTextDelta(delta);
+          state.appendTextDelta(delta, turnId: turnId);
           _notifyIfActive(state);
         }
         return;
       case 'reasoning_delta':
+        state.isStreaming = true;
         final delta = payload['delta'];
         if (delta is String && delta.isNotEmpty) {
-          state.appendThinkingDelta(delta);
+          state.appendThinkingDelta(delta, turnId: turnId);
           _notifyIfActive(state);
+        }
+        return;
+      case 'tool.updated':
+        state.isStreaming = true;
+        _applyToolUpdated(state, payload, turnId: turnId);
+        _notifyIfActive(state);
+        return;
+      case 'permission.requested':
+        state.isStreaming = true;
+        _applyPermissionRequested(state, payload, turnId: turnId);
+        _notifyIfActive(state);
+        return;
+      case 'permission.resolved':
+        _applyPermissionResolved(state, payload, turnId: turnId);
+        _notifyIfActive(state);
+        return;
+      case 'streamRecovery.updated':
+        // recovery 只证明某个工具结果已落入持久化历史；绝不拿其载荷覆盖
+        // 文本/工具内容，权威 session/messages 才可原子替换过程列表。
+        if (_isCommittedToolRecovery(payload)) {
+          unawaited(_refreshAuthoritative(state, finishTurn: false));
+        } else {
+          debugPrint('[zcode-store] streamRecovery 状态更新 '
+              'kind=${payload['kind']} session=${state.sessionId}');
         }
         return;
       case 'model.response':
@@ -1515,8 +2139,9 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// 回合收尾（turn.completed / turn.terminal / state.updated idle 共用）：
-  /// - 纯文本回合（toolCallCount == 0 且带权威全文）本地收尾，免权威刷新；
-  /// - 工具回合/未知回合走增量权威刷新（工具结果只有权威列表才有）；
+  /// - 本地 response 只用于避免结束瞬间文本闪空；
+  /// - 每个完成回合都拉取 session/messages，以正文/思考/工具的权威 part
+  ///   数组取代实时投影，确保跨重启的顺序一致；
   /// - turnId 幂等去重（session/event 与 telemetry 双通道都会到达）。
   void _handleTurnEnd(
     ZcodeSessionState state, {
@@ -1548,16 +2173,18 @@ class ZcodeChatStore extends ChangeNotifier {
     _stopFallbackPollingFor(state.sessionId);
     state.isStreaming = false;
     state.isWaitingForResponse = false;
-    final textTurn = toolCallCount == 0;
-    if (textTurn) {
-      state.finalizeStreaming(
-        authoritativeText: authoritativeText,
-        usage: usage,
-      );
-      unawaited(_persistSession(state));
+    state.finalizeStreaming(
+      authoritativeText: authoritativeText,
+      usage: usage,
+    );
+    // 纯正文回合保留低延迟本地收尾；一旦出现工具、思考或协议 marker，
+    // model.response 无法复原其交错顺序，必须改由权威 parts 回填。
+    final needsAuthority =
+        toolCallCount != 0 || state.hasNonTextStreamingProcess;
+    if (needsAuthority) {
+      unawaited(_refreshAuthoritative(state));
     } else {
-      state.finalizeStreaming();
-      unawaited(_refreshAuthoritative(state)); // 工具回合：权威刷新
+      unawaited(_persistSession(state));
     }
     // 任务完成本地通知（App 在后台也能感知；后台会话同样通知）
     _notifier.showTaskDone(
@@ -1770,34 +2397,23 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 合并 session/messages 响应：映射 → 时间序归一 → 增量合并 + 推进水位。
-  /// 入参条目一律视为已同步（synced），水位取**本批权威数据**中最新的
-  /// 协议 id（不取容器尾——尾部可能有未确认的流式占位，见下方注释）。
+  /// 合并 session/messages 响应：服务端 messages 数组本身就是权威顺序。
+  /// 每条 assistant 的完整 parts 数组会原子替换其同 id 的实时投影；绝不按
+  /// 文本或工具位置做模糊合并，避免 reasoning/tool 的交错顺序被重排。
   void _mergeServerMessages(ZcodeSessionState state, Map map) {
     final raw = map['messages'];
     if (raw is! List) return;
     final incoming = <ZcodeSessionItem>[];
     for (final m in raw) {
       if (m is! Map) continue;
-      final msg = _mapProtocolMessage(m);
-      if (msg == null) continue;
-      final info = m['info'];
-      incoming.add(
-        ZcodeSessionItem(
-          message: msg,
-          protoId: _nonEmpty(info is Map ? info['id'] : null),
-          synced: true, // 服务端权威数据
-        ),
-      );
+      final item = _mapProtocolItem(m);
+      if (item != null) incoming.add(item);
     }
     if (incoming.isEmpty) return;
     _normalizeChronological(incoming);
     state.mergeAuthoritative(incoming);
-    // 水位只由**本批权威数据**推进（服务端确认过的消息 id，展示序最后
-    // 一条即最新）。不能取合并后容器尾部：容器尾部可能还挂着未确认的
-    // 流式占位（已采纳 assistantMessageId 但权威页尚未返回它）——占位
-    // 推进水位会使后续 afterMessageId 增量永久跳过该消息的最终版本
-    //（数据丢失链，2026-09-15 审查 P0 #1）。
+    // 水位只由本批 session/messages 确认的数据推进；实时占位即使已有
+    // assistantMessageId 也绝不能参与，否则 afterMessageId 会跳过最终版本。
     for (final it in incoming.reversed) {
       final id = it.protoId;
       if (id != null) {
@@ -1807,47 +2423,82 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 时间序归一：实测（probe-sync3，APP-SERVER.md「分页契约实测」）确认
-  /// `session/messages` 无论带不带 `afterMessageId` 一律**升序（旧→新）**
-  /// 返回——升序页直接通过；页内 createdAt 多数呈降序时按逆序解释，
-  /// 该投票仅作协议漂移/异常数据的兜底，正常路径不会再触发。
+  /// 异常历史页兜底：正常 app-server 一律按升序返回。仅当时间比较明确表明
+  /// 页面整体倒序时翻转消息列表；单条消息内的 processParts 永远不参与排序。
   void _normalizeChronological(List<ZcodeSessionItem> list) {
     if (list.length < 2) return;
     var ascending = 0;
     var descending = 0;
     for (var i = 1; i < list.length; i++) {
-      final a = list[i - 1].message.createdAt;
-      final b = list[i].message.createdAt;
-      if (b.isAfter(a)) {
+      final before = list[i - 1].message.createdAt;
+      final after = list[i].message.createdAt;
+      if (after.isAfter(before)) {
         ascending++;
-      } else if (b.isBefore(a)) {
+      } else if (after.isBefore(before)) {
         descending++;
       }
     }
     if (descending > ascending) {
-      // 逆序页（异常兜底）：反转成就近在尾
-      final reversed = list.reversed.toList();
+      final reversed = list.reversed.toList(growable: false);
       list
         ..clear()
         ..addAll(reversed);
     }
   }
 
-  /// turn 结束/stop 后的增量权威刷新：只拉新增合并（替代全量重建）
-  Future<void> _refreshAuthoritative(ZcodeSessionState state) async {
-    final client = _client;
-    if (client == null || !client.paired) {
-      _finishTurnFlags(state);
-      return;
+  /// 请求一次会话权威刷新。相同会话的多个触发源合并为串行请求：当前拉取
+  /// 尚未结束时只记一笔补拉，避免旧响应在新结果之后覆盖过程项。
+  /// [finishTurn] 仅在 turn.completed/stop 等终端路径置位；工具结果提交时
+  /// 的 recovery 刷新必须保留正在进行的回合。
+  Future<void> _refreshAuthoritative(
+    ZcodeSessionState state, {
+    bool finishTurn = true,
+  }) {
+    final sessionId = state.sessionId;
+    if (finishTurn) _refreshFinishRequested.add(sessionId);
+    final existing = _authoritativeRefreshes[sessionId];
+    if (existing != null) {
+      _queuedAuthoritativeRefreshes.add(sessionId);
+      return existing;
     }
+
+    final completer = Completer<void>();
+    _authoritativeRefreshes[sessionId] = completer.future;
+    unawaited(_runAuthoritativeRefresh(state, completer));
+    return completer.future;
+  }
+
+  Future<void> _runAuthoritativeRefresh(
+    ZcodeSessionState state,
+    Completer<void> completer,
+  ) async {
+    final sessionId = state.sessionId;
     try {
-      await _pullIncremental(state);
-    } catch (_) {
-      // 权威刷新失败：保留现有流式内容，仅结束流式标记
+      while (true) {
+        _queuedAuthoritativeRefreshes.remove(sessionId);
+        final client = _client;
+        if (client != null && client.paired) {
+          try {
+            await _pullIncremental(state);
+          } catch (e) {
+            // 过程流仍保留在内存中；下一个 recovery/turn end 会再触发一次。
+            debugPrint('[zcode-store] 权威过程刷新失败 session=$sessionId: $e');
+          }
+        }
+        if (!_queuedAuthoritativeRefreshes.remove(sessionId)) break;
+      }
+    } finally {
+      _authoritativeRefreshes.remove(sessionId);
+      final finishTurn = _refreshFinishRequested.remove(sessionId);
+      if (finishTurn) {
+        _finishTurnFlags(state);
+        unawaited(_refreshListingsAfterTurn(state));
+      } else {
+        _notifyIfActive(state);
+      }
+      unawaited(_persistSession(state));
+      if (!completer.isCompleted) completer.complete();
     }
-    _finishTurnFlags(state);
-    unawaited(_persistSession(state));
-    unawaited(_refreshListingsAfterTurn(state));
   }
 
   /// 回合结束后延迟刷新会话列表：引擎在首条消息被接受后才自动生成标题
@@ -1878,7 +2529,7 @@ class ZcodeChatStore extends ChangeNotifier {
   Future<void> _persistSession(ZcodeSessionState state) async {
     try {
       final dirty = state.items
-          .where((e) => e.dirty && e.protoId != null)
+          .where((e) => e.dirty && e.protoId != null && e.synced)
           .toList(growable: false);
       if (dirty.isNotEmpty) {
         await _cache.upsertMessages(state.sessionId, dirty);
@@ -2138,6 +2789,32 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// goal 快捷动作（官方 action 枚举实测：show/set/replace/pause/resume/
+  /// clear）。状态面板 ▶/暂停按钮走 pause/resume；失败置 error 横幅。
+  Future<bool> goalAction(String action) async {
+    const allowed = ['pause', 'resume', 'clear'];
+    if (!allowed.contains(action)) {
+      _fail('未知目标动作：$action');
+      return false;
+    }
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      await client.request('session/goal', {
+        'sessionId': sessionId,
+        'action': action,
+      });
+      return true;
+    } catch (e) {
+      _fail('目标操作失败：$e');
+      return false;
+    }
+  }
+
   /// 子代理列表（session/subagents；实测响应 {revision, childSessionIds[]}）
   Future<List<String>> loadSubagents() async {
     final client = _client;
@@ -2334,125 +3011,174 @@ class ZcodeChatStore extends ChangeNotifier {
     );
   }
 
-  /// app-server 消息（info + parts）→ ChatMessage。
-  /// parts：text→content 拼接；tool{callId,state,tool{name}}→ToolCallInfo
-  /// （state：running→running / completed→done / 其他→error）。
-  /// reasoning 部分历史加载不展示（ChatMessage 无 thinking 字段，
-  /// 流式阶段的 thinking 走 store 的 thinkingContent）。
-  ChatMessage? _mapProtocolMessage(Map m) {
-    final info = m['info'];
+  /// 权威协议消息 → 会话条目。session/messages 的 parts 数组顺序是唯一的
+  /// 历史顺序来源；本方法不按 type 重新排序、不丢弃 step/未知 part。
+  ZcodeSessionItem? _mapProtocolItem(Map raw) {
+    final info = raw['info'];
     if (info is! Map) return null;
-    final parts = m['parts'];
-    if (parts is! List) return null;
-
-    final role =
-        info['role'] == 'user' ? MessageRole.user : MessageRole.assistant;
-
-    var content = '';
-    final toolCalls = <ToolCallInfo>[];
-    for (final p in parts) {
-      if (p is! Map) continue;
-      final type = p['type'];
-      if (type == 'text') {
-        final text = p['text'];
-        if (text is String) content += text;
-      } else if (type == 'tool') {
-        toolCalls.add(_mapToolPart(p));
-      }
+    final message = _mapProtocolMessage(raw);
+    if (message == null) return null;
+    final messageId = _protocolMessageId(info);
+    if (messageId == null) {
+      debugPrint('[zcode-store] session/messages 消息缺少 message id，保留但不缓存');
     }
-
-    // 空 assistant 中间态消息过滤（user 空消息保留）
-    if (role != MessageRole.user && content.isEmpty && toolCalls.isEmpty) {
-      return null;
-    }
-
-    // usage（info.tokens{input,output}，字段存在才映射）
-    TokenUsage? usage;
-    final tokens = info['tokens'];
-    if (tokens is Map) {
-      final input = _toIntOrNull(tokens['input']);
-      final output = _toIntOrNull(tokens['output']);
-      if (input != null && output != null) {
-        usage = TokenUsage(inputTokens: input, outputTokens: output);
-      }
-    }
-
-    return ChatMessage(
-      role: role,
-      content: content,
-      createdAt: _parseCreatedTime(info) ?? DateTime.now(),
-      toolCalls: toolCalls.isEmpty ? null : List.unmodifiable(toolCalls),
-      usage: usage,
-      model: _nonEmpty(info['modelID']),
+    return ZcodeSessionItem(
+      message: message,
+      protoId: messageId,
+      turnId: _firstNonEmpty(info, ['turnId', 'turn_id']),
+      synced: messageId != null,
     );
   }
 
-  /// tool part → ToolCallInfo（实测形状，APP-SERVER.md「工具回合实测」）：
-  ///
-  /// `{type:'tool', callID:'call_…', tool:'Bash'（字符串）,
-  ///   state:{status:'completed'|'error'|…, input:{…}, output:'…'|error:'…',
-  ///          title, metadata, time:{start,end}},
-  ///   id:'part_…', sessionID, messageID}`
-  ///
-  /// 注意 id 键是 `callID`（大写 D）；input/output 嵌在 state 里；
-  /// 失败时 state.error 携带原因（如权限拒绝的 "Permission request failed"
-  /// 或我们应答的 reason 原文）。旧猜测形态（callId/顶层 input/output/
-  /// state 为字符串）保留为兜底。
+  /// app-server 消息（info + parts）→ canonical ChatMessage。
+  /// parts 数组顺序是唯一权威顺序；text/reasoning/tool 直接映射，
+  /// step-start/step-finish 及未知类型保留 marker，绝不丢弃或重排。
+  ChatMessage? _mapProtocolMessage(Map m) {
+    final info = m['info'];
+    if (info is! Map) return null;
+    final rawParts = m['parts'];
+    if (rawParts is! List) return null;
+
+    final role =
+        info['role'] == 'user' ? MessageRole.user : MessageRole.assistant;
+    final processParts = <ChatProcessPart>[];
+    for (final rawPart in rawParts) {
+      if (rawPart is! Map) {
+        debugPrint('[zcode-store] session/messages 包含非对象 part，已保留消息其余部分');
+        continue;
+      }
+      final type = _nonEmpty(rawPart['type']) ?? 'unknown';
+      final partId = _firstNonEmpty(rawPart, ['partId', 'id']);
+      switch (type) {
+        case 'text':
+          final text = rawPart['text'];
+          if (text is String) {
+            processParts.add(ChatProcessPart.text(text, id: partId));
+          } else {
+            processParts.add(ChatProcessPart.marker(type, id: partId));
+            debugPrint('[zcode-store] text part 缺少字符串 text，已保留 marker');
+          }
+          break;
+        case 'reasoning':
+          final text = rawPart['text'];
+          if (text is String) {
+            processParts.add(ChatProcessPart.reasoning(text, id: partId));
+          } else {
+            processParts.add(ChatProcessPart.marker(type, id: partId));
+            debugPrint('[zcode-store] reasoning part 缺少字符串 text，已保留 marker');
+          }
+          break;
+        case 'tool':
+          processParts.add(
+            ChatProcessPart.tool(_mapToolPart(rawPart), id: partId),
+          );
+          break;
+        default:
+          // step-start/step-finish/file/subagent/retry 和未来类型不强行伪装成
+          // 文本；保留 marker，以便缓存、调试与后续原生语义扩展可见。
+          processParts.add(ChatProcessPart.marker(type, id: partId));
+      }
+    }
+
+    final tokens = info['tokens'];
+    final usage = tokens is Map
+        ? TokenUsage(
+            inputTokens:
+                _toIntOrNull(tokens['input'] ?? tokens['inputTokens']) ?? 0,
+            outputTokens:
+                _toIntOrNull(tokens['output'] ?? tokens['outputTokens']) ?? 0,
+          )
+        : null;
+    final time = info['time'];
+    final created = _parseCreatedTime(info);
+    final completed = time is Map ? _parseEventTime(time['completed']) : null;
+    final durationMs = created != null && completed != null
+        ? completed.difference(created).inMilliseconds
+        : null;
+    final modelInfo = info['model'];
+    final nestedModel = modelInfo is Map ? _joinModelRef(modelInfo) : null;
+
+    return ChatMessage(
+      role: role,
+      processParts: List.unmodifiable(processParts),
+      createdAt: created ?? DateTime.now(),
+      usage: usage,
+      model: _nonEmpty(info['modelID']) ?? nestedModel,
+      agent: _nonEmpty(info['agent']),
+      durationMs: durationMs,
+    );
+  }
+
+  String? _protocolMessageId(Map info) =>
+      _firstNonEmpty(info, ['id', 'messageId', 'message_id']);
+
+  String? _joinModelRef(Map model) {
+    final providerId = _firstNonEmpty(model, ['providerId', 'provider_id']);
+    final modelId = _firstNonEmpty(model, ['modelId', 'model_id']);
+    if (providerId == null || modelId == null) return null;
+    return '$providerId/$modelId';
+  }
+
+  /// tool part → ToolCallInfo。支持当前 public lower-camel 投影与历史
+  /// callID/sessionID/messageID 形态；输入/输出都来自 state，不猜顶层字段。
   ToolCallInfo _mapToolPart(Map p) {
     final tool = p['tool'];
-    final String name;
-    if (tool is String) {
-      name = tool;
-    } else if (tool is Map) {
-      name = tool['name']?.toString() ?? 'tool';
-    } else {
-      name = 'tool';
-    }
-
-    // 实测 state 为对象：{status, input, output|error, time, …}
+    final name = _toolName(p) ?? 'Tool';
     final stateObj = p['state'];
-    final String statusStr;
-    dynamic input;
-    dynamic output;
-    String? errorText;
-    if (stateObj is Map) {
-      statusStr = stateObj['status']?.toString() ?? '';
-      input = stateObj['input'];
-      output = stateObj['output'];
-      final err = stateObj['error'];
-      if (err != null) errorText = err is String ? err : _summaryOf(err);
-    } else {
-      // 旧猜测形态兜底：state 为 'running'/'completed' 字符串
-      statusStr = stateObj?.toString() ?? '';
-      input = p['input'] ?? (tool is Map ? tool['input'] : null);
-      output = p['output'] ?? p['result'];
-    }
-
-    final ToolCallStatus status;
-    switch (statusStr) {
-      case 'completed':
-        status = ToolCallStatus.done;
-        break;
-      case 'error':
-      case 'failed': // 显式失败档
-        status = ToolCallStatus.error;
-        break;
-      default:
-        // pending/running/未知状态一律视为进行中——未知 ≠ 失败（失败模式
-        // 方向：宁可多等不误报；真实失败会带 state.error 并落 error 档）
-        status = ToolCallStatus.running;
-    }
+    final state = stateObj is Map ? stateObj : const {};
+    final statusStr = _nonEmpty(state['status']) ?? _nonEmpty(stateObj) ?? '';
+    final input = stateObj is Map
+        ? state['input']
+        : p['input'] ?? (tool is Map ? tool['input'] : null);
+    final output =
+        stateObj is Map ? state['output'] : p['output'] ?? p['result'];
+    final errorText = stateObj is Map ? _toolErrorText(state['error']) : null;
+    final status = switch (statusStr) {
+      'completed' || 'success' => ToolCallStatus.done,
+      'error' || 'failed' || 'denied' || 'cancelled' => ToolCallStatus.error,
+      _ => ToolCallStatus.running,
+    };
+    final time = state['time'];
+    final startedAt = _parseEventTime(
+      state['startedAt'] ?? (time is Map ? time['start'] : null),
+    );
+    final completedAt = _parseEventTime(
+      state['completedAt'] ?? (time is Map ? time['end'] : null),
+    );
+    final elapsedMs = startedAt != null && completedAt != null
+        ? completedAt.difference(startedAt).inMilliseconds
+        : null;
+    final inputMap = input is Map ? input : const {};
+    final metadata =
+        state['metadata'] is Map ? state['metadata'] as Map : const {};
+    String? meta(List<String> keys) =>
+        _firstNonEmpty(p, keys) ??
+        _firstNonEmpty(inputMap, keys) ??
+        _firstNonEmpty(metadata, keys);
 
     return ToolCallInfo(
-      toolCallId: (p['callID'] ?? p['callId'])?.toString() ?? '',
+      toolCallId: _firstNonEmpty(p, ['callId', 'callID', 'toolCallId']) ?? '',
       toolName: name,
       inputSummary: _summaryOf(input),
-      // 失败时优先展示错误原因（实测权限拒绝会落在 state.error）
       outputSummary: errorText ?? _summaryOf(output),
       status: status,
       isError: status == ToolCallStatus.error,
       inputFull: _fullOf(input),
       outputFull: errorText ?? _fullOf(output),
+      lifecycle: statusStr.isEmpty ? null : statusStr,
+      elapsedMs: elapsedMs,
+      startedAt: startedAt,
+      parallelGroupIndex: _toIntOrNull(p['parallelGroupIndex']),
+      canRunParallel: p['canRunParallel'] == true,
+      subagentType:
+          meta(['subagentType', 'subagent_type', 'agentType', 'agent_type']),
+      childSessionId: meta(['childSessionId', 'child_session_id']),
+      parentToolCallId: meta(['parentToolCallId', 'parent_tool_call_id']),
+      source: meta(['source']),
+      agentId: meta(['agentId', 'agent_id']),
+      background: p['background'] == true,
+      description: meta(['description']),
+      outputTruncated: state['truncated'] == true || p['truncated'] == true,
     );
   }
 
@@ -2550,6 +3276,7 @@ class ZcodeChatStore extends ChangeNotifier {
     _client = null;
     _permissionController.close();
     _askUserController.close();
+    _uiNotices.close();
     super.dispose();
   }
 }

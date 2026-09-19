@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'config/app_colors.dart';
 import 'models/connection_state.dart';
 import 'pages/connection_diagnostics_page.dart';
-import 'pages/files_placeholder_page.dart';
 import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
@@ -16,6 +15,7 @@ import 'services/connection_manager.dart';
 import 'services/goal_store.dart';
 import 'zcode/zcode_chat_store.dart';
 import 'zcode/zcode_keepalive_controller.dart';
+import 'models/ui_prefs.dart';
 import 'zcode/zcode_notifier.dart';
 
 /// Global theme mode notifier — allows settings page to switch theme at runtime.
@@ -41,6 +41,7 @@ void main() async {
   GoalStore.instance;
   await ZcodeNotifier.instance.initialize();
   await ZcodeKeepAliveController.instance.initialize();
+  await UiPrefs.load();
   runApp(const WzxClawApp());
 }
 
@@ -178,7 +179,6 @@ class _WzxClawAppState extends State<WzxClawApp> with WidgetsBindingObserver {
                 '/connection-diagnostics': (context) =>
                     const ConnectionDiagnosticsPage(),
                 // app-server 未实测到文件树/读取接口；保留旧深链但不再触发会超时的旧协议。
-                '/files': (context) => const FilesPlaceholderPage(),
               },
             );
           },

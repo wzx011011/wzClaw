@@ -65,9 +65,10 @@ class FakeZcodeRelayClient implements ZcodeRelayClient {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// 通知器替身：记录 showTaskDone 调用
+/// 通知器替身：记录 showTaskDone / showReverseRequest 调用
 class FakeZcodeNotifier extends ZcodeNotifier {
   final List<Map<String, dynamic>> shown = [];
+  final List<Map<String, dynamic>> reverseRequests = [];
 
   @override
   void showTaskDone({
@@ -78,6 +79,11 @@ class FakeZcodeNotifier extends ZcodeNotifier {
     String? desktopName,
   }) {
     shown.add({'status': status, 'tokens': tokens, 'sessionId': sessionId});
+  }
+
+  @override
+  void showReverseRequest({required bool isAskUser, String? summary}) {
+    reverseRequests.add({'isAskUser': isAskUser, 'summary': summary});
   }
 }
 
@@ -232,7 +238,8 @@ class FakeZcodeSessionCache extends ZcodeSessionCache {
     upsertCalls++;
     final list = messages.putIfAbsent(sessionId, () => <ZcodeSessionItem>[]);
     for (final it in items) {
-      if (it.protoId == null) continue;
+      // 与真实缓存同契约：实时占位即使已有 assistantMessageId 也不落盘
+      if (it.protoId == null || !it.synced) continue;
       final i = list.indexWhere((e) => e.protoId == it.protoId);
       if (i >= 0) {
         list[i] = it;

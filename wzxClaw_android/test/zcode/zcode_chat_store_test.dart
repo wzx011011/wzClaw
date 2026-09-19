@@ -106,17 +106,30 @@ void main() {
 
       // 头部截断提示
       expect(store.messages.first.role, MessageRole.assistant);
-      expect(store.messages.first.content, contains('已截断'));
+      expect(store.messages.first.text, contains('已截断'));
 
       // user 消息
       expect(store.messages[1].role, MessageRole.user);
-      expect(store.messages[1].content, '你好');
+      expect(store.messages[1].text, '你好');
 
-      // assistant 消息：content 拼接 + toolCalls 状态映射（实测形状）
+      // assistant 消息：原序 processParts（text/reasoning/tool + 状态映射）
       final a = store.messages[2];
-      expect(a.content, '回答');
+      expect(a.text, '回答');
       expect(a.model, 'glm-5.3');
-      final calls = a.toolCalls!;
+      expect(
+        a.processParts.map((p) => p.kind),
+        [
+          ChatProcessPartKind.text,
+          ChatProcessPartKind.reasoning,
+          ChatProcessPartKind.tool,
+          ChatProcessPartKind.tool,
+          ChatProcessPartKind.tool,
+        ],
+      ); // reasoning 保留在原位，marker/工具不丢失
+      final calls = a.processParts
+          .where((p) => p.kind == ChatProcessPartKind.tool)
+          .map((p) => p.toolCall!)
+          .toList();
       expect(calls.length, 3);
       expect(calls[0].toolName, 'FileRead');
       expect(calls[0].toolCallId, 'tc-running'); // callID（大写 D）
@@ -169,7 +182,7 @@ void main() {
       final msgs = store.messages;
       expect(msgs.length, 2);
       expect(msgs[0].role, MessageRole.user);
-      expect(msgs[0].content, '你好，帮我看看');
+      expect(msgs[0].text, '你好，帮我看看');
       expect(msgs[1].role, MessageRole.assistant);
       expect(msgs[1].isStreaming, isTrue);
       expect(store.isStreaming, isTrue);
@@ -223,9 +236,9 @@ void main() {
       // sendMessage 成功后的首个 tick 立即应用
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
-      expect(store.messages.last.content, 'Hel');
+      expect(store.messages.last.text, 'Hel');
       expect(store.messages.last.isStreaming, isTrue);
-      expect(store.thinkingContent, '想想');
+      expect(store.liveThinkingText, '想想');
       expect(store.isWaitingForResponse, isFalse); // 首个增量已到达
 
       // 第二拍：重复的 e2 应被去重，新增 e3 追加
@@ -243,7 +256,7 @@ void main() {
           };
       await store.debugPollOnce();
       await Future<void>.delayed(Duration.zero);
-      expect(store.messages.last.content, 'Hello'); // 'Hel' 只计一次 + 'lo'
+      expect(store.messages.last.text, 'Hello'); // 'Hel' 只计一次 + 'lo'
 
       store.dispose();
     });
@@ -294,7 +307,7 @@ void main() {
       await store.sendMessage('go');
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
-      expect(store.messages.last.content, '部分回答');
+      expect(store.messages.last.text, '部分回答');
 
       // token 用量通知
       store.debugHandleNotify(
@@ -361,8 +374,10 @@ void main() {
 
       // 权威刷新重建消息
       expect(store.messages.length, 2);
-      expect(store.messages.last.content, '最终回答');
-      final tc = store.messages.last.toolCalls!.single;
+      expect(store.messages.last.text, '最终回答');
+      final tc = store.messages.last.processParts
+          .firstWhere((p) => p.kind == ChatProcessPartKind.tool)
+          .toolCall!;
       expect(tc.toolCallId, 'tc9');
       expect(tc.toolName, 'FileWrite');
       expect(tc.status, ToolCallStatus.done);
@@ -455,8 +470,8 @@ void main() {
           fake.requests.lastWhere((e) => e.key == 'session/messages').value;
       expect(refresh!['afterMessageId'], 'b1');
       expect(store.messages.length, 4); // 旧窗口 2 条 + 本回合 2 条
-      expect(store.messages.where((m) => m.content == 'go'), hasLength(1));
-      expect(store.messages.last.content, '被中止的回答');
+      expect(store.messages.where((m) => m.text == 'go'), hasLength(1));
+      expect(store.messages.last.text, '被中止的回答');
       expect(store.isStreaming, isFalse);
     });
   });
@@ -569,6 +584,8 @@ void main() {
     test('权限反向请求（实测形状）→ 流事件 + 应答回放 option response 原文', () async {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
 
       final events = <PermissionRequest?>[];
       final sub = store.permissionStream.listen(events.add);
@@ -638,6 +655,10 @@ void main() {
       });
       expect(events, hasLength(1));
       expect(events.first?.toolCallId, 'call_tc1');
+      // 后台通知：任务挂起等人批准，权限请求到达即提醒（摘要 = 工具名）
+      expect(notifier.reverseRequests, [
+        {'isAskUser': false, 'summary': 'Bash'},
+      ]);
 
       // 批准 + remember：回放 allow_project 选项的 response 原文
       // （含 permissionUpdates——只有请求方知道其内容）
@@ -1042,8 +1063,8 @@ void main() {
       final store = pairedStore(fake);
 
       await store.openSession('sess-v');
-      expect(store.messages.map((m) => m.content), isNot(contains('陈旧消息')));
-      expect(store.messages.single.content, '最新回答');
+      expect(store.messages.map((m) => m.text), isNot(contains('陈旧消息')));
+      expect(store.messages.single.text, '最新回答');
     });
 
     test('尾窗请求带 limit:40，替身按实测契约只回最新 N 条升序', () async {
@@ -1069,8 +1090,8 @@ void main() {
       expect(req.value!['limit'], 40);
       expect(req.value!['afterMessageId'], isNull);
       expect(store.messages, hasLength(40));
-      expect(store.messages.first.content, 'm10');
-      expect(store.messages.last.content, 'm49');
+      expect(store.messages.first.text, 'm10');
+      expect(store.messages.last.text, 'm49');
     });
 
     test('分页方向（实测升序）：升序页直通；降序页被投票兜底翻转', () async {
@@ -1109,7 +1130,7 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-asc');
       // 升序服务端页：直通展示（旧→新）
-      expect(store.messages.map((m) => m.content), ['最早', '中间', '最新']);
+      expect(store.messages.map((m) => m.text), ['最早', '中间', '最新']);
 
       // 降序服务端页（异常兜底）：翻转为旧→新
       fake.handlers['session/messages'] = (_) => {
@@ -1134,7 +1155,7 @@ void main() {
           };
       final store2 = pairedStore(fake);
       await store2.openSession('sess-desc');
-      expect(store2.messages.map((m) => m.content), ['旧', '新']);
+      expect(store2.messages.map((m) => m.text), ['旧', '新']);
     });
 
     test('推送渲染：model.streaming 增量直渲染；turn.completed 纯文本本地收尾免权威刷新', () async {
@@ -1180,7 +1201,7 @@ void main() {
         'kind': 'text_delta',
         'done': false,
       });
-      expect(store.messages.last.content, 'Hel');
+      expect(store.messages.last.text, 'Hel');
       expect(store.messages.last.isStreaming, isTrue);
 
       push('model.streaming', {
@@ -1189,11 +1210,11 @@ void main() {
         'kind': 'text_delta',
         'done': false,
       });
-      expect(store.messages.last.content, 'Hello');
+      expect(store.messages.last.text, 'Hello');
 
       // model.response 权威全文重对（防增量丢失）
       push('model.response', {'content': 'Hello'});
-      expect(store.messages.last.content, 'Hello');
+      expect(store.messages.last.text, 'Hello');
 
       final messagesReqsBefore =
           fake.requests.where((e) => e.key == 'session/messages').length;
@@ -1204,7 +1225,7 @@ void main() {
         'resultType': 'success',
         'usage': {'inputTokens': 40, 'outputTokens': 2},
       });
-      expect(store.messages.last.content, 'Hello');
+      expect(store.messages.last.text, 'Hello');
       expect(store.messages.last.isStreaming, isFalse);
       expect(store.messages.last.usage?.outputTokens, 2);
       expect(store.isStreaming, isFalse);
@@ -1292,12 +1313,15 @@ void main() {
       expect(refresh.value!['afterMessageId'], 'h1');
       expect(store.messages, hasLength(3)); // 历史 + 本回合 user + assistant
       final last = store.messages.last;
-      expect(last.content, '写完了');
-      expect(last.toolCalls!.single.toolName, 'FileWrite');
-      expect(last.toolCalls!.single.outputSummary, '写入 3 行');
+      expect(last.text, '写完了');
+      final tc = last.processParts
+          .firstWhere((p) => p.kind == ChatProcessPartKind.tool)
+          .toolCall!;
+      expect(tc.toolName, 'FileWrite');
+      expect(tc.outputSummary, '写入 3 行');
       expect(store.isStreaming, isFalse);
       // 流式占位被权威版本原位消解（不重复出现"正在写"）
-      expect(store.messages.where((m) => m.content == '正在写'), isEmpty);
+      expect(store.messages.where((m) => m.text == '正在写'), isEmpty);
     });
 
     test('水位安全（回归）：流式占位不得推进水位——回合中权威合并后仍能拉回最终版本', () async {
@@ -1382,9 +1406,11 @@ void main() {
       // msg-a1 的最终版本（含工具卡片）被完整拉回并原位消解占位
       expect(store.messages, hasLength(3));
       final last = store.messages.last;
-      expect(last.content, '写完了');
-      expect(last.toolCalls, isNotNull);
-      expect(last.toolCalls!.single.toolCallId, 'tc-w');
+      expect(last.text, '写完了');
+      final tc = last.processParts
+          .firstWhere((p) => p.kind == ChatProcessPartKind.tool)
+          .toolCall!;
+      expect(tc.toolCallId, 'tc-w');
       expect(store.isStreaming, isFalse);
     });
 
@@ -1395,7 +1421,7 @@ void main() {
           ZcodeSessionItem(
             message: ChatMessage(
               role: MessageRole.user,
-              content: 'q',
+              processParts: const [ChatProcessPart.text('q')],
               createdAt: DateTime.fromMillisecondsSinceEpoch(1),
             ),
             protoId: 'm1',
@@ -1415,7 +1441,7 @@ void main() {
           ZcodeSessionItem(
             message: ChatMessage(
               role: MessageRole.assistant,
-              content: 'partial+full',
+              processParts: const [ChatProcessPart.text('partial+full')],
               createdAt: DateTime.fromMillisecondsSinceEpoch(2),
             ),
             protoId: 'msg-a1',
@@ -1444,7 +1470,7 @@ void main() {
           'kind': 'text_delta',
         },
       );
-      expect(store.messages.last.content, '部分A');
+      expect(store.messages.last.text, '部分A');
 
       // A 流式中途切到 B
       await store.openSession('sess-B');
@@ -1474,15 +1500,15 @@ void main() {
           'kind': 'text_delta',
         },
       );
-      final bContents = store.messages.map((m) => m.content).toList();
+      final bContents = store.messages.map((m) => m.text).toList();
       expect(bContents, isNot(contains('部分A')));
       expect(bContents, isNot(contains('更多A')));
       expect(bContents.last, 'B 内容');
-      expect(store.thinkingContent, isEmpty); // A 的回合状态不泄漏
+      expect(store.liveThinkingText, isEmpty); // A 的回合状态不泄漏
 
       // 切回 A：内容完整（含后台到达的增量），回合仍在途
       await store.openSession('sess-A');
-      expect(store.messages.last.content, '部分A更多A');
+      expect(store.messages.last.text, '部分A更多A');
       expect(store.isStreaming, isTrue);
       // B 的后续增量不泄漏进 A
       pushEvent(
@@ -1498,7 +1524,7 @@ void main() {
         },
       );
       expect(
-        store.messages.map((m) => m.content),
+        store.messages.map((m) => m.text),
         isNot(contains('后续B')),
       );
     });
@@ -1565,7 +1591,7 @@ void main() {
           'kind': 'text_delta',
         },
       );
-      expect(store.messages.last.content, 'AB');
+      expect(store.messages.last.text, 'AB');
 
       // 断线期间 seq 3 发生在服务端；重连时补放混入已应用的 seq 2
       fake.handlers['session/events'] = (_) => {
@@ -1599,7 +1625,7 @@ void main() {
       final replay = fake.requests.lastWhere((e) => e.key == 'session/events');
       expect(replay.value!['afterSeq'], 2);
       // 重复的 seq 2 按 eventId 去重，只应用新的 seq 3
-      expect(store.messages.last.content, 'ABC');
+      expect(store.messages.last.text, 'ABC');
     });
 
     test('本地缓存：写入后重建 store 秒开（恢复消息与水位）', () async {
@@ -1641,7 +1667,7 @@ void main() {
       final store2 = ZcodeChatStore(cache: cache)
         ..attach(fake2, desktopId: 'device-sid-1', desktopName: '测试桌面');
       await store2.openSession('sess-c');
-      expect(store2.messages.map((m) => m.content), contains('历史回答'));
+      expect(store2.messages.map((m) => m.text), contains('历史回答'));
       expect(
         fake2.requests.any(
           (e) =>
@@ -1659,7 +1685,7 @@ void main() {
             protoId: 'h$i',
             message: ChatMessage(
               role: i % 2 == 0 ? MessageRole.user : MessageRole.assistant,
-              content: '历史 $i',
+              processParts: [ChatProcessPart.text('历史 $i')],
               createdAt: DateTime.fromMillisecondsSinceEpoch(i),
             ),
           ),
@@ -1674,8 +1700,8 @@ void main() {
       final added = await store.loadOlderMessages(limit: 40);
       expect(added, 40);
       expect(store.messages, hasLength(120));
-      expect(store.messages.first.content, '历史 0');
-      expect(store.messages.last.content, '历史 119');
+      expect(store.messages.first.text, '历史 0');
+      expect(store.messages.last.text, '历史 119');
     });
 
     test('多会话并发：A 后台回合收尾（通知/徽标刷新），B 视口零扰动', () async {
@@ -1726,7 +1752,7 @@ void main() {
 
       // 切回 A：本地收尾内容完整
       await store.openSession('sess-A');
-      expect(store.messages.last.content, '答案A');
+      expect(store.messages.last.text, '答案A');
       expect(store.messages.last.isStreaming, isFalse);
       expect(store.isStreaming, isFalse);
     });
@@ -1788,7 +1814,7 @@ void main() {
       );
       expect(store.error, isNull);
       expect(store.isStreaming, isTrue); // 重发被接受，回合在途
-      expect(store.messages.where((m) => m.content == 'hi'), hasLength(1));
+      expect(store.messages.where((m) => m.text == 'hi'), hasLength(1));
     });
 
     test('模型兜底：resume 播种可用模型 + 错误帧 -32031 走 setModel 重发', () async {
@@ -2008,10 +2034,10 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       // 全部回合消息存活（不互相顶替）
-      final contents = store.messages.map((m) => m.content).toList();
+      final contents = store.messages.map((m) => m.text).toList();
       expect(contents, contains('我先看看'));
       expect(contents, contains('写完了'));
-      expect(store.messages.last.content, '写完了');
+      expect(store.messages.last.text, '写完了');
       expect(store.messages, hasLength(5)); // 历史 + user + 3 条 assistant
     });
 
@@ -2090,7 +2116,7 @@ void main() {
       // 推送静默超过看门狗阈值 → 自动拉起降级轮询
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(fake.requests.any((e) => e.key == 'session/events'), isTrue);
-      expect(store.messages.last.content, '轮询增量');
+      expect(store.messages.last.text, '轮询增量');
 
       // 推送恢复：降级轮询停止（不再产生新的 session/events 请求）
       pushEvent(
@@ -2112,7 +2138,7 @@ void main() {
         fake.requests.where((e) => e.key == 'session/events').length,
         eventsCount,
       );
-      expect(store.messages.last.content, '轮询增量推送增量');
+      expect(store.messages.last.text, '轮询增量推送增量');
       store.dispose();
     });
   });
@@ -2201,6 +2227,288 @@ void main() {
 
       await store.clearLocalCache();
       expect(cache.clearAllCalls, 1);
+    });
+  });
+
+  group('回合指标（首字延迟 / tok/s）', () {
+    // 墙钟驱动（store 内部容器不注入时钟），只断言结构性语义：
+    // 逐帧可用性/收尾滚存，不断言具体毫秒值
+    test('流式期 getter 逐帧可用；turn.completed 后滚存权威值', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      await store.openSession('sess-m');
+
+      await store.sendMessage('hi');
+      expect(store.firstTokenLatencyMs, isNull); // 首增量未到
+      expect(store.estimatedTokensPerSecond, isNull);
+      expect(store.streamElapsed, isNotNull); // 已起表
+
+      var seq = 0;
+      void push(String type, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-m',
+          type: type,
+          seq: seq,
+          turnId: 'turn-1',
+          payload: payload,
+        );
+      }
+
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a1',
+        'delta': 'Hel',
+        'kind': 'text_delta',
+      });
+      expect(store.firstTokenLatencyMs, isNotNull);
+      // 同毫秒内读取窗口跨度为 0 → null 是合法值，推进真实时钟再断言
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(store.estimatedTokensPerSecond, isNotNull);
+
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a1',
+        'delta': 'lo',
+        'kind': 'text_delta',
+      });
+      push('turn.completed', {
+        'response': 'Hello',
+        'tokenCount': 42,
+        'toolCallCount': 0,
+        'resultType': 'success',
+        'usage': {'inputTokens': 40, 'outputTokens': 20},
+      });
+      expect(store.isStreaming, isFalse);
+      expect(store.lastFirstTokenMs, isNotNull);
+      expect(store.lastTurnTokensPerSecond, isNotNull);
+      expect(store.streamElapsed, isNull); // 回合已收尾，无在途计时
+    });
+  });
+
+  group('实时过程流（canonical lifecycle）', () {
+    Future<ZcodeChatStore> liveStore(
+      FakeZcodeRelayClient fake,
+      String sessionId,
+    ) async {
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession(sessionId);
+      await store.sendMessage('hi');
+      return store;
+    }
+
+    test('tool_input 组装输入 + tool.updated 原位推进到 result，不另起新行', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = await liveStore(fake, 'sess-live');
+      var seq = 0;
+      void push(String type, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-live',
+          type: type,
+          seq: seq,
+          turnId: 'turn-1',
+          payload: payload,
+        );
+      }
+
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a',
+        'delta': '想一想',
+        'kind': 'reasoning_delta',
+      });
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a',
+        'delta': '',
+        'kind': 'tool_input_start',
+        'toolCallId': 'call_1',
+        'toolName': 'Bash',
+      });
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a',
+        'delta': '{"command":"ls"}',
+        'kind': 'tool_input_delta',
+        'toolCallId': 'call_1',
+      });
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a',
+        'delta': '',
+        'kind': 'tool_input_end',
+        'toolCallId': 'call_1',
+      });
+      push('tool.updated', {
+        'kind': 'scheduled',
+        'toolCallId': 'call_1',
+        'toolName': 'Bash',
+        'assistantMessageId': 'msg-a',
+        'parallelGroupIndex': 0,
+        'canRunParallel': false,
+        'inputOmitted': true,
+      });
+      push('tool.updated', {
+        'kind': 'started',
+        'toolCallId': 'call_1',
+        'startedAt': 1700000000000,
+      });
+      push('tool.updated', {
+        'kind': 'result',
+        'toolCallId': 'call_1',
+        'result': {'success': true, 'content': '文件列表'},
+        'duration': 800,
+      });
+      push('tool.updated', {
+        'kind': 'batch',
+        'toolCallIds': ['call_1'],
+        'successCount': 1,
+        'errorCount': 0,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      final last = store.messages.last;
+      expect(last.isStreaming, isTrue); // 回合仍在途
+      // 原序：reasoning → tool；result 晚到不改变位置、不重复成行
+      expect(last.processParts.map((p) => p.kind), [
+        ChatProcessPartKind.reasoning,
+        ChatProcessPartKind.tool,
+      ]);
+      final tool = last.processParts[1].toolCall!;
+      expect(tool.toolName, 'Bash');
+      expect(tool.inputFull, '{"command":"ls"}'); // tool_input_delta 组装
+      expect(tool.outputFull, '文件列表'); // result.content
+      expect(tool.status, ToolCallStatus.done);
+      expect(tool.lifecycle, 'batch');
+      expect(tool.elapsedMs, 800);
+      store.dispose();
+    });
+
+    test('权限拒绝：permission.resolved deny → 工具行 error 并展示原因', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = await liveStore(fake, 'sess-deny');
+      var seq = 0;
+      void push(String type, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-deny',
+          type: type,
+          seq: seq,
+          turnId: 'turn-1',
+          payload: payload,
+        );
+      }
+
+      push('tool.updated', {
+        'kind': 'scheduled',
+        'toolCallId': 'call_x',
+        'toolName': 'Agent',
+        'assistantMessageId': 'msg-a',
+      });
+      push('permission.resolved', {
+        'toolCallId': 'call_x',
+        'toolName': 'Agent',
+        'decision': 'deny',
+        'reason': 'Auto mode is reserved but not implemented yet',
+      });
+
+      final last = store.messages.last;
+      final tool = last.processParts
+          .firstWhere((p) => p.kind == ChatProcessPartKind.tool)
+          .toolCall!;
+      expect(tool.status, ToolCallStatus.error);
+      expect(tool.isError, isTrue);
+      expect(tool.lifecycle, 'permission_denied');
+      expect(
+        tool.outputSummary,
+        'Auto mode is reserved but not implemented yet',
+      );
+      store.dispose();
+    });
+
+    test('streamRecovery.updated：触发权威刷新但绝不绝结在途回合', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = await liveStore(fake, 'sess-rec');
+      var seq = 0;
+      void push(String type, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-rec',
+          type: type,
+          seq: seq,
+          turnId: 'turn-1',
+          payload: payload,
+        );
+      }
+
+      push('model.streaming', {
+        'assistantMessageId': 'msg-a',
+        'delta': '',
+        'kind': 'tool_input_start',
+        'toolCallId': 'call_1',
+        'toolName': 'Read',
+      });
+      int msgReqs() =>
+          fake.requests.where((e) => e.key == 'session/messages').length;
+      final before = msgReqs();
+      push('streamRecovery.updated', {
+        'kind': 'tool_result',
+        'assistantMessageId': 'msg-a',
+        'toolCallId': 'call_1',
+        'toolName': 'Read',
+        'resultPartId': 'part_1',
+        'committedToolCallIds': ['call_1'],
+        'committedAt': '2026-09-18T00:00:00.000Z',
+      });
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      // 已提交 → 立即拉一次权威 parts
+      expect(msgReqs(), greaterThan(before));
+      // 非终端刷新：回合保持在途
+      expect(store.isStreaming, isTrue);
+      store.dispose();
+    });
+
+    test('eventId 去重：telemetry 与 session/event 同 id 不重复成行', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = await liveStore(fake, 'sess-dedup');
+      pushEvent(
+        store,
+        sessionId: 'sess-dedup',
+        type: 'tool.updated',
+        seq: 1,
+        turnId: 'turn-1',
+        payload: {
+          'kind': 'scheduled',
+          'toolCallId': 'call_1',
+          'toolName': 'Bash',
+          'assistantMessageId': 'msg-a',
+        },
+      );
+      // telemetry 复用同一 eventId（实测两通道共用）
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'v4/telemetry/event',
+          params: {
+            'sessionId': 'sess-dedup',
+            'eventId': 'ev-sess-dedup-1',
+            'kind': 'tool.lifecycle',
+            'phase': 'scheduled',
+            'toolCallId': 'call_1',
+            'toolName': 'Bash',
+          },
+        ),
+      );
+
+      final last = store.messages.last;
+      final toolParts = last.processParts
+          .where((p) => p.kind == ChatProcessPartKind.tool)
+          .toList();
+      expect(toolParts, hasLength(1)); // 去重：不写第二行
+      store.dispose();
     });
   });
 }

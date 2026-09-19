@@ -17,6 +17,7 @@ class SessionListTile extends StatelessWidget {
     this.pinned = false,
     this.busy = false,
     this.resultDot = false,
+    this.alias,
   });
 
   final ZcodeSessionMeta session;
@@ -25,6 +26,9 @@ class SessionListTile extends StatelessWidget {
   final bool pinned;
   final bool busy;
   final bool resultDot;
+
+  /// 本地备注名（SharedPreferences，非引擎能力）；非空时替代引擎标题显示
+  final String? alias;
 
   @override
   Widget build(BuildContext context) {
@@ -84,7 +88,7 @@ class SessionListTile extends StatelessWidget {
                       ],
                       Expanded(
                         child: Text(
-                          session.title,
+                          alias ?? session.title,
                           style: TextStyle(
                             fontSize: 14,
                             color:

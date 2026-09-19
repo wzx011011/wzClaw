@@ -28,8 +28,14 @@ class RecordingZcodeNotifier extends ZcodeNotifier {
     required String title,
     required String body,
     String? payload,
+    int notificationId = 2001,
   }) {
-    shown.add({'title': title, 'body': body, 'payload': payload});
+    shown.add({
+      'title': title,
+      'body': body,
+      'payload': payload,
+      'notificationId': notificationId,
+    });
   }
 }
 
@@ -93,5 +99,48 @@ void main() {
     expect(notifier.shown, isEmpty);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('push_notifications_enabled'), isFalse);
+  });
+
+  group('showReverseRequest（反向请求：权限确认 / 引擎提问）', () {
+    test('后台时权限请求弹通知：独立 id，摘要带工具名', () {
+      notifier.handleLifecycleState(AppLifecycleState.paused);
+      notifier.showReverseRequest(isAskUser: false, summary: 'Bash');
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.first['title'], 'ZCode 任务在等你确认');
+      expect(notifier.shown.first['body'], 'Bash');
+      expect(notifier.shown.first['notificationId'], 2002);
+    });
+
+    test('AskUser 请求弹「等你回答」通知，id 与权限通知分开', () {
+      notifier.handleLifecycleState(AppLifecycleState.paused);
+      notifier.showReverseRequest(isAskUser: true, summary: '选择部署目标');
+      expect(notifier.shown.first['title'], 'ZCode 任务在等你回答');
+      expect(notifier.shown.first['body'], '选择部署目标');
+      expect(notifier.shown.first['notificationId'], 2003);
+    });
+
+    test('前台（resumed）时跳过——权限条/问题条本身可见', () {
+      notifier.handleLifecycleState(AppLifecycleState.resumed);
+      notifier.showReverseRequest(isAskUser: false, summary: 'Bash');
+      expect(notifier.shown, isEmpty);
+    });
+
+    test('摘要为空时用兜底文案；超长截断到 80 字符', () {
+      notifier.handleLifecycleState(AppLifecycleState.paused);
+      notifier.showReverseRequest(isAskUser: false, summary: '  ');
+      expect(notifier.shown.first['body'], '有一个工具调用等待批准');
+
+      notifier.showReverseRequest(isAskUser: true, summary: '问' * 100);
+      final body = notifier.shown.last['body'] as String;
+      expect(body.length, 81); // 80 字符 + 省略号
+      expect(body.endsWith('…'), isTrue);
+    });
+
+    test('总开关关闭时同样不展示', () async {
+      notifier.handleLifecycleState(AppLifecycleState.paused);
+      await notifier.setEnabled(false);
+      notifier.showReverseRequest(isAskUser: false, summary: 'Bash');
+      expect(notifier.shown, isEmpty);
+    });
   });
 }
