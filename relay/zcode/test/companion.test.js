@@ -171,16 +171,23 @@ test('runtime resolver：宿主一律自托管（Electron 与 node CLI 同路）
   Object.defineProperty(process.versions, 'electron', { value: '41.10.7', configurable: true });
   try {
     // Electron 父进程：自托管（官方 ZCode.exe 作子进程会静默 exit 1，2026-09-17 事故）
-    const inElectron = resolveZcodeRuntime({ LOCALAPPDATA: root });
+    // 官方安装探测按设计仅认 win32 布局：显式钉 platform 复现 win32 分支，
+    // 让用例在任意宿主（含 CI ubuntu）上成立。
+    const inElectron = resolveZcodeRuntime({ LOCALAPPDATA: root }, { platform: 'win32' });
     assert.deepEqual(inElectron, { category: 'resolved', source: 'installed', command: process.execPath, args: [runtime] });
-    assert.deepEqual(defaultZcodeCommand({ LOCALAPPDATA: root }), { command: process.execPath, args: [runtime] });
+    assert.deepEqual(defaultZcodeCommand({ LOCALAPPDATA: root }, { platform: 'win32' }), { command: process.execPath, args: [runtime] });
+    // 平台门控契约：非 win32 宿主不认官方安装布局，落到 PATH 兜底
+    assert.deepEqual(
+      resolveZcodeRuntime({ LOCALAPPDATA: root }, { platform: 'linux' }),
+      { category: 'resolved', source: 'path', command: 'zcode', args: [] },
+    );
   } finally {
     if (original === undefined) delete process.versions.electron;
     else Object.defineProperty(process.versions, 'electron', { value: original, configurable: true });
   }
   try {
     // node CLI 父进程：同样自托管（node ≥24 含 node:sqlite 可承载 runtime）
-    const inNode = resolveZcodeRuntime({ LOCALAPPDATA: root });
+    const inNode = resolveZcodeRuntime({ LOCALAPPDATA: root }, { platform: 'win32' });
     assert.deepEqual(inNode, { category: 'resolved', source: 'installed', command: process.execPath, args: [runtime] });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -233,7 +240,7 @@ test('runtime resolver：官方安装永远优先于内嵌 runtime（顺序钉�
     const resolved = resolveZcodeRuntime({
       LOCALAPPDATA: root,
       WZXCLAW_BUNDLED_RUNTIME: bundled,
-    });
+    }, { platform: 'win32' });
     assert.equal(resolved.source, 'installed');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

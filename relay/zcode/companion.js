@@ -38,15 +38,17 @@ const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
 
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
 // 必须与 runtime 预检复用同一解析结果，否则预检与长期 bridge 的运行时宿主可能不一致。
-function defaultZcodeCommand(env = process.env) {
-  const resolved = resolveZcodeRuntime(env);
+function defaultZcodeCommand(env = process.env, opts = {}) {
+  const resolved = resolveZcodeRuntime(env, opts);
   if (resolved.category === 'resolved') return { command: resolved.command, args: resolved.args };
   return { command: 'zcode', args: [] };
 }
 
 // 运行时预检只产生脱敏的状态码，绝不向调用者返回命令行、token 或原始 stderr。
-function resolveZcodeRuntime(env = process.env) {
-  return resolveRuntime({ env });
+// opts 直通 lib 的注入参数（fsApi/platform 等）：官方安装探测按设计仅认
+// win32 布局，测试必须显式钉 platform 才能在任意宿主上复现 win32 分支。
+function resolveZcodeRuntime(env = process.env, opts = {}) {
+  return resolveRuntime({ env, ...opts });
 }
 
 function runtimeProcessEnv(resolved, env = process.env) {
