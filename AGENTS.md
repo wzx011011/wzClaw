@@ -71,6 +71,28 @@ node relay/zcode/companion.js --relay wss://zcode.5945.top/ws --cwd <工作目�
 # 生产用计划任务 wzxClawZcodeCompanion 拉起（勿在代理任务托管里长跑，会被回收）
 ```
 
+## 手工发布清单（CI 边界，2026-09-19 定）
+
+CI 环境已钉版与本地一致（**Node 24 / Flutter 3.41.6**，见
+`.github/workflows/`）——本地升级运行时必须同步改 workflows，否则 CI
+红灯不可信。`android-v*` tag 只产 candidate artifact（debug signing、
+CI 无 NAS 凭据），**发布后半程一律手工**，按序：
+
+1. **relay**：`cd relay/zcode && npm test` 全绿 → `scp relay/zcode/server.js
+   nas:/tmp/` → `docker cp` 进容器 `/app/server.js` → `docker restart
+   wzxclaw-zcode-relay` → 容器内 `grep` 新特性标记 + 日志确认 device 重连
+   （auth-ok）。容器无 bind mount，只能 docker cp + restart。
+2. **companion CLI**：跑的是工作区源码（计划任务当前 Disabled），改完
+   重启进程即生效，无需出包。
+3. **companion 桌面**：`cd companion_app && npm run dist` → Setup/Portable
+   双产物按命名 `wzxClawCompanion-{Setup,Portable}-<版本>.exe` scp 到
+   `/volume1/share/zcode/`（哈希比对）。
+4. **Android**：按「APK 发布纪律」（patch +1 → build → apksigner/zip 校验 →
+   scp → 哈希比对）。
+5. 发布后 NAS `/volume1/share/zcode/` **只保留最新版本**（2026-09-19
+   用户定：旧版本即删，含两种历史命名变体 `wzxClawCompanion-*` 与
+   `wzxClaw-Companion-*`）。
+
 ## 设计原则（2026-09-15 审查定稿）
 
 背景：换芯实现曾出现多处「能用但没做对」的临时方案被固化（详见
