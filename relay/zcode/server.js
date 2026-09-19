@@ -129,6 +129,28 @@ function createRelay(options = {}) {
       }
     }
   }
+  // probe 失联恢复的补投半边：失联期间入房待命（probe=null）的反向路由
+  // 由恢复者补投。宽限语义与认证补投一致：宽限期后仍在线才投——短连在线
+  // 探测抢答会以默认 -32000 杀掉等待中的权限。pong 处理器在检测到
+  // 「错过 ≥1.5 心跳周期后重新应答」时调用；测试经 _recoverProbe 直调
+  //（真实恢复窗口受心跳竞态限制，黑盒复现不稳定）。
+  function replayOrphansToRecoveredProbe(state) {
+    if (!state.authenticated || state.role !== 'probe' || !state.room) return;
+    if (state.room.reverseRoutes.size === 0) return;
+    const probeWs = state.ws;
+    const room = state.room;
+    setTimeout(() => {
+      if (probeWs.readyState !== WebSocket.OPEN) return;
+      if (room.probes.get(probeWs) !== state) return; // 已离席/被接管
+      for (const [id, route] of room.reverseRoutes) {
+        if (route.probe === null && route.payload) {
+          route.probe = state;
+          send(probeWs, { type: 'data', payload: route.payload });
+          logger('reverse-reassigned', `id=${id} reason=probe-recovered`);
+        }
+      }
+    }, config.probeReplayGraceMs).unref();
+  }
   function fail(state, code = 'BAD_MESSAGE') {
     if (state.failed) return;
     state.failed = true; state.nonce = null;
@@ -162,7 +184,14 @@ function createRelay(options = {}) {
     // 连接级诊断（排查手机端断线重连）：只记 IP 与时刻，不含任何标识值
     logger('ws-open', `ip=${state.ip}`);
     state.authTimer = setTimeout(() => fail(state, 'AUTH_TIMEOUT'), config.authTimeoutMs).unref();
-    ws.on('pong', () => { state.lastPongAt = Date.now(); });
+    ws.on('pong', () => {
+      // 失联恢复检测（审查 P2-6 relay 半）：此前错过 1.5 个心跳周期的
+      // probe 重新应答——失联期间入房待命（probe=null）的反向路由由它
+      // 补投（见 replayOrphansToRecoveredProbe 的宽限语义）。
+      const staleBefore = Date.now() - state.lastPongAt > staleAfterMs;
+      state.lastPongAt = Date.now();
+      if (staleBefore) replayOrphansToRecoveredProbe(state);
+    });
     ws.on('error', () => { ws.terminate(); });
     ws.on('close', (code) => {
       clearTimeout(state.closeTimer); detach(state); sockets.delete(ws);
@@ -438,6 +467,8 @@ function createRelay(options = {}) {
   return {
     // 测试钩子：只读访问内部 socket 状态表（模拟错过心跳的半开连接）
     get _sockets() { return sockets; },
+    // 测试钩子：直调「probe 失联恢复」补投路径（pong 处理器的恢复半边）
+    _recoverProbe(state) { replayOrphansToRecoveredProbe(state); },
     listen({ port = 18884, host = '127.0.0.1' } = {}) {
       if (closing || server.listening || !Number.isInteger(port) || port < 0 || port > 65535
         || typeof host !== 'string' || !host.length) return Promise.reject(new Error('Invalid listen state, port or host'));

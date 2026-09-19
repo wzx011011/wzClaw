@@ -192,6 +192,10 @@ state.updated          patch.status="idle"
 
 ## 其他已知信息（静态提取，未实测）
 
+> **2026-09-19 更新**：本节的方法全集猜测已被 0.16.9 全量实测取代，
+> 见文末「0.16.9 升级全量接口面探测」——client→server 55 个可达 +
+> 15 个 Method not found（反向/宿主侧），schema 均已钉死。
+
 - 方法全集（桌面与 CLI 同一份注册表）：`session/{create,resume,list,subagents,read,messages,
   events,subscribe,send,stop,cancelBackgroundTask,fork,compact,goal,close,setModel,
   setThoughtLevel,setMode}`、`workspace/*`、`mcp/list`、`plugins/*`、`automation/*`、
@@ -641,3 +645,180 @@ realpath 规范化）。realpath 失败 → `X_NOT_FOUND`；realpath 后仍在�
 **结论（附件实施方案）**：手机附件一律走「上传落盘工作区 + 消息文本引用
 路径」，引擎侧 Read→视觉管线自洽。类型无关：任意文件可传可引用；
 图片/PDF/文本可被深度理解（模型模态决定），二进制为存档档。
+
+## 0.16.9 升级全量接口面探测（2026-09-19，probe-surface-0169.js）
+
+> 背景：桌面 ZCode 更新后内置 runtime 升到 **0.16.9**（此前实测基线
+> 0.16.5，见「套餐动态模型」节）。本次对方法注册表做**静态全量提取 +
+> 全部 70 方法空参数探测 + 核心链路真调回归**，替代旧版「静态提取，
+> 未实测」的猜测记录。
+> 脚本：`probe-surface-0169.js`（全量 + 报告 `probe-surface-report.json`）、
+> `probe-storagestate.js`（storageState 对照实验）、`probe-0169-readonly.js`
+> （核心链路 + 只读方法真调，报告 `probe-0169-readonly-report.json`）。
+> 方法注册表提取方式：zcode.cjs 内 `va={...}` 常量对象（client→server 注册表）
+> 与 `{storageStartup:...}` 常量对象（server→client 反向方法表）。
+
+### 结论速查
+
+1. **runtime 0.16.9 与现有链路兼容**：隔离进程上
+   create → list → read → subscribe → usage → close 全部通过，
+   应答形状与 0.16.5 记录一致（`session/create` result 另含
+   `slashCommands/todos/todoGroups`，附加字段向后兼容）。
+   手机端 goal 面板所依赖的 `session/goal` action 契约
+   （show/set/replace/pause/resume/clear + objective）在 0.16.9 不变。
+2. **client→server 可达方法共 55 个**（下表），其中约 30 个为本轮首次
+   钉死 schema；**另 15 个注册表方法对客户端请求回 -32601 Method not
+   found**（反向请求/通知/宿主侧方法，见末节）。
+3. **新增反向请求**：`startup/storageState`（每次引擎启动 5 连发，
+   checkpoint/checkpoint/checkpoint/complete/read）、
+   `process/mcpTelemetry`、`interaction/requestOfficialMcpAuthHeaders`。
+   companion 现按「未知反向请求」转发手机 → 120s 长档超时 → -32022 代答。
+   **对照实验证明不代答不影响 create**（app-server 不等 storageState 应答）；
+   但会占手机端 pending 看护与日志（phone-response-late），见「待办」。
+
+### 核心链路回归实测（0.16.9）
+
+| 方法 | params | 结果 |
+| --- | --- | --- |
+| `session/create` | `{workspace,persistence:'deferred',titleGenerationEnabled:false,mcpServers:[]}` | ✅ result keys = messages,projection,protocol,runtime,session,settings,slashCommands,todos,todoGroups；`session.sessionId`、`settings.model.available`（20 条目录）与旧记录一致。注意：**完全不代答反向请求时 create 直接失败**（-32022 在 `session/requestRuntimePreferences` 15s 超时上）；companion 已代答该方法，故现状无碍。 |
+| `session/list` | `{}` | ✅ sessions 形状不变（50 个真实会话）。 |
+| `session/read` | `{sessionId}` | ✅ 与 create 同构全量快照。 |
+| `session/subscribe` | `{sessionId,deliveryKind:'web-remote-replayable'}` | ✅ `{eventSeq:0,events:[],sessionId}`。 |
+| `session/usage` | `{sessionId}` | ✅ token 细分形状不变。 |
+| `session/goal` | `{sessionId,action:'show'}` | ✅ `{response,snapshot}`；`action` 必填枚举 show/set/replace/pause/resume/clear，set 载荷字段 `objective`（手机端早已按此实现，无回归）。 |
+| `session/close` | `{sessionId,expectedPersistence:'deferred'}` | ✅ `{closed:true}`。 |
+
+### client→server 全量方法与 schema（70 方法注册表实测分类）
+
+**空参数即可调（0 必填）**：
+
+| 方法 | 实测结果 |
+| --- | --- |
+| `runtime/capabilities` | `{independentPlanState:true}`（新增） |
+| `process/childProcesses` | `{processes:[]}`（新增） |
+| `session/list` | `{sessions:[...]}` |
+
+**sessionId 型（必填 `sessionId:string`）**：`session/{resume,read,messages,events,subscribe,send,stop,compact,fork,usage,subagents,setThoughtLevel,setMode,setModel,close,debug,goal}`。
+其中 `subscribe` 另必填 `deliveryKind`（desktop-continuous\|web-remote-replayable）、
+`send` 另必填 `content:string`、`setMode` 另必填 `mode`（plan\|build\|edit\|yolo\|auto）、
+`setModel` 另必填 `model:object`、`goal` 另必填 `action`（show\|set\|replace\|pause\|resume\|clear）、
+`cancelBackgroundTask` 另必填 `taskId:string`、`close` 可选 `expectedPersistence`。
+`session/debug`（新增）→ `{sessionId,rounds,networkEntries,cache}`（只读）。
+
+**workspace 型（必填 `workspace:{workspaceKey,workspacePath}`）**：
+
+| 方法 | 追加必填 | 实测结果 |
+| --- | --- | --- |
+| `mcp/list` | — | `{statuses:{<serverKey>:{status,transport,toolCount,updatedAt,error?,failureKind?}}}` |
+| `plugins/list`（新增） | — | `{plugins:[{id,name,description,version,enabled,source,marketplace,author,skillCount,...}],diagnostics}` |
+| `plugins/overview`（新增） | — | `{marketplaces[],availablePlugins,installedPlugins,restorableBuiltins,diagnostics,capability}` |
+| `plugins/referenceCatalog`（新增） | — | `{authority:'workspace',plugins[]}` |
+| `plugins/referenceCatalogWithCategory`（新增） | — | 同上 + `category` |
+| `skills/referenceCatalog`（新增） | — | `{authority:'workspace',skills:[{id,name,description,...}]}` |
+| `workflows/list`（新增） | — | `{workflows[],invalid[],dir}`（dir 指向 `<workspace>/.zcode/workflows`） |
+| `workflows/get`（新增） | `name:string`（**不是 id**） | 变更型未真调 |
+| `workflows/runs`（新增） | `limit:number` | 变更型未真调 |
+| `workflows/delete`/`move`/`updateMeta`（新增） | `name:string` | 变更型，仅 schema |
+| `plugins/describe`（新增） | `pluginName:string` | 变更型，仅 schema |
+| `plugins/install`（新增） | `pluginName:string` | 变更型，仅 schema |
+| `plugins/configure`/`resetConfig`/`restoreBuiltin`/`setEnabled`（新增） | `pluginId:string` | 变更型，仅 schema |
+| `plugins/resolveSuggestedReference`（新增） | `stableId:string` | 变更型，仅 schema |
+| `plugins/uninstall`/`update`/`validate`（新增） | —（workspace 外字段未见必填） | 变更型，**绝不空参真调** |
+| `plugins/cancelOperation`（新增） | —（`operationId:string` 必填，workspace 非必填） | 变更型，仅 schema |
+| `provider/testModelConnectivity`（新增） | `selection:object` | 只读语义但发起真实连通性请求，未真调 |
+| `workspace/readPresentation`（新增） | — | 只读，`{workspace}` 真调 ✅ ok |
+| `workspace/generateText`（新增） | `selection:object`,`querySource:string` | 计费生成，未真调；配套 `workspace/cancelGenerateText`（`operationId`） |
+| `workspace/updateDynamicWorkflowPolicy`/`updateOffPeakToolPolicy`（新增） | `enabled:boolean` | 变更型，仅 schema |
+| `workspace/updateInteractionPreferences`/`updateModelIoPreferences`（新增） | `preferences:object` | 变更型，仅 schema |
+
+**provider 型**：`provider/updateAccountConfig`（新增）必填 `revision:string`,
+`basedOnZCodeBuiltinRevision:string`（变更型，仅 schema）。
+**usage 型**：`usage/stats`（新增）必填 `range`（all\|7d\|30d）→
+`{range,generatedAt,timeZone,source:'agent-db',summary{totalTokens,...,toolCallCount,toolErrorRate,modelErrorRate,avgTimeToFirstTokenMs,avgTurnDurationMs,...},heatmap,dailyModelUsage,models,tools}`（只读，真调 ✅）。
+
+### Method not found 的注册表方法（15 个）
+
+`automation/{checkTaskBinding,create,delete,list,update}`、
+`offPeak/{create,list}`、`interaction/{browserExecute,browserList,requestOfficialMcpAuthHeaders,requestPermission,requestProviderRuntimeHeaders,requestUserInput}`、
+`computer-use/operation-event`、`session/requestRuntimePreferences`。
+归因：反向请求（server→client，客户端调用自然 not found）或宿主侧
+（桌面 Electron 壳实现）方法；`offPeak/*` 与 `automation/*` 属桌面壳面。
+
+### server→client 反向方法全集（静态提取 + 实测出现）
+
+反向请求：`session/requestRuntimePreferences`（companion 代答）、
+`interaction/requestPermission`、`interaction/requestUserInput`、
+`interaction/requestOfficialMcpAuthHeaders`（新）、
+`interaction/requestProviderRuntimeHeaders`（新）、
+`interaction/browserExecute`、`interaction/browserList`、
+`startup/storageState`（新）、`startup/storagePath`（新，params `{path}`）、
+`startup/storagePrepared`（新，params `{}`）。
+通知：`session/event`、`computer-use/operation-event`、
+`interaction/providerRuntimeHeadersCancelled`（新）、
+`process/mcpTelemetry`（新，也见于 session/events 流）、
+`process/mcpResourceSamples`、`process/resourceSample`、
+`process/toolExecResource`、`plugins/operationProgress`。
+
+### startup/storageState 对照实验（probe-storagestate.js）
+
+| 组 | 代答行为 | create 结果 |
+| --- | --- | --- |
+| A 完全不代答 | storageState 5 次 + runtimePreferences 均不理 | ❌ result 空，-32022（runtimePreferences 15s 超时所致） |
+| B 只代答 runtimePreferences（= 当前 companion 行为） | storageState 5 次不理 | ✅ 2.2s 完整应答 |
+| C 两者都代答（答 `{}`） | — | ✅ 2.3s 完整应答，形状与 B 一致 |
+
+storageState params：`{schemaVersion:1,attemptId,sequence,databaseId,databaseKind:'session',phase,elapsedMs}`，
+语义为「会话数据库外置化」（宿主持久化/恢复引擎存储）。未应答时引擎
+自行降级（新建库），当前架构（companion 每次配对起桥、手机端自持 SQLite
+缓存）下答 `{}` 即正确语义。
+
+### 待办（观测项，未改代码）
+
+- companion 对 `startup/storageState`/`process/mcpTelemetry` 目前走
+  「转发手机 → 120s 长档超时 → -32022」：功能无损但每引擎启动产生
+  5+ 条手机端 pending 与迟到日志。后续可在 companion 仿照
+  RUNTIME_PREFERENCES_METHOD 本地代答（storageState 答 `{}`，
+  mcpTelemetry 答空对象），并配 companion.test 用例钉住。
+- `interaction/requestOfficialMcpAuthHeaders` 出现于插件 MCP 需要官方
+  认证头时；手机无法应答，走超时失败（符合「多等」失败模式），出现
+  频率取决于插件使用，暂观察。
+
+## 上下文容量与任务元数据协议源（2026-09-19，PLAN 对齐方案开放问题定论）
+
+### contextUsage（官方「上下文容量」浮层数据源，静态 schema 实测）
+
+数据在 **state.updated 快照**的可选字段 `contextUsage`（zcode.cjs @659318，
+`contextUsage:Znr.optional()`），零新协议——手机端现有订阅链路直接解析：
+
+```
+contextUsage: {
+  used: int, size: int,               // 已用 / 窗口（7.1万/100万）
+  cost?: { amount, currency },
+  cache?: {                           // 缓存统计
+    latestTokens, latestHitRate?, hitRateRequestCount?,
+    totalInputTokens?, totalCacheReadTokens?, totalCacheWriteTokens?,
+    hitRate                           // 平均缓存命中率（nullable）
+  },
+  breakdown?: [ { source, chars } ]   // 分类占比（按字符数）
+}
+// source 枚举：system_prompt | meta_user_context | skills | tool_prompt |
+//             system_tool_schemas | mcp_tool_schemas | messages
+```
+
+官方浮层映射：系统提示词=system_prompt、技能=skills、系统工具=system_tool_schemas、
+MCP 工具=mcp_tool_schemas、消息=messages、其他=meta_user_context+tool_prompt。
+实测注意：**空闲会话快照不带该字段**（optional，推测 prompt 构建时才计算）——
+0.16.9 上 resume+subscribe 后快照无 contextUsage，projection 只有
+contextUsed/contextWindow 数字。移动端实现：基础条用
+`projection.contextUsed/contextWindow`，`contextUsage` 出现时升级完整浮层。
+节点级统计另见 `usage/stats`（summary.cacheHitRate）与
+`session/usage`（inputBaselineBySource，目前只有 main_turn 粗粒度）。
+
+### 任务元数据（置顶/归档/未读）通道定性 → 不跟进
+
+`pinned/archived/status` 等任务元数据 schema 属 **v4 桌面控制器通道族**
+（`v4/connection/flow`、`v4/controller/subscribe|resync|unsubscribe`、
+`v4/conversation/subscribe|resync`，zcode.cjs @1104777/@813754）——即
+本文件开篇已否决的「v4/conversation/frame 随版本漂移」那条路，写通道
+不在 app-server 70 方法面内。结论：手机端的置顶/未读/整理做**本地元数据
+（SQLite）**，不与官方桌面互操作；「复制会话 ID」等只读功能不受影响。

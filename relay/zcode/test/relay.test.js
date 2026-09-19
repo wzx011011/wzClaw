@@ -1012,3 +1012,35 @@ test('认证即关闭的在线探测不得补投孤儿权限（否则探测默�
   assert.deepEqual((await p2.next('data')).payload,
     { id: 'server-9', method: 'interaction/requestPermission', params: {} });
 });
+
+// 失联恢复补投（审查 P2-6 relay 半）：probe 短暂失联（错过心跳）期间
+// 入房待命（probe=null）的反向路由，在其 pong 恢复且宽限期后仍在线时
+// 补投——路由单点跟随恢复者，防双允许。
+test('probe 失联恢复后补投待命的反向请求', async (t) => {
+  const f = await fixture(t, { probeReplayGraceMs: 20 });
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+
+  // 人为制造 p1 失联（错过心跳窗口），随后 device 发请求：无健康 probe →
+  // 路由待命（probe=null）
+  // _sockets 的键是服务端 ws 实例（与客户端 ws 不同对象）：按角色定位
+  const state = [...f.relay._sockets.values()].find(
+    (st) => st.role === 'probe' && st.authenticated);
+  assert.ok(state, '测试钩子必须能访问 probe 状态');
+  state.lastPongAt -= 10 * 60 * 1000;
+  d.send({ type: 'data', payload: { id: 'server-recover', method: 'interaction/requestPermission', params: {} } });
+  await delay(30);
+  assert.equal(p1.messages.filter((m) => m.type === 'data').length, 0,
+    '失联 probe 不得被选为持有者');
+
+  // p1 失联恢复（真实路径经 pong 的 staleBefore 检测；心跳终止窗口的竞态
+  // 由 _recoverProbe 直调覆盖同一段恢复逻辑）：宽限期后仍在线 → 补投
+  f.relay._recoverProbe(state);
+  assert.deepEqual((await p1.next('data')).payload,
+    { id: 'server-recover', method: 'interaction/requestPermission', params: {} });
+
+  // 单点路由：恢复者的应答正常回到 device
+  p1.send({ type: 'data', payload: { id: 'server-recover', result: { decision: 'allow' } } });
+  assert.deepEqual((await d.next('data')).payload,
+    { id: 'server-recover', result: { decision: 'allow' } });
+});
