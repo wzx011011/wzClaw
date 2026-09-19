@@ -71,6 +71,34 @@ function resolveZcodeRuntime(env = process.env, opts = {}) {
   return resolveRuntime({ env, ...opts });
 }
 
+// 引擎自举套餐配置发现（2026-09-20 EXIT_1 事故修复）：ZCode 桌面端会把
+// ZCODE_BUILTIN_PROVIDER_CONFIG_FILE 注入其子进程——companion 从桌面启动时
+// 靠继承就能启动引擎；但从 Explorer/计划任务等干净环境启动时没有该变量，
+// 引擎在默认路径找不到 zcode-builtin.json 直接退 1（GUI 预检 EXIT_1 根因）。
+// 此处在 env 无该变量时自动发现桌面端生成的最新 endpoint 配置并注入。
+function discoverBuiltinProviderConfig(env = process.env) {
+  if (env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE) return null; // 已有：交给继承值
+  try {
+    const root = path.join(os.homedir(), '.zcode', 'v2', 'runtime', 'provider',
+      'windows-x86_64');
+    let best = null; let bestMtime = -1;
+    for (const versionDir of fs.readdirSync(root)) {
+      const versionPath = path.join(root, versionDir);
+      try { if (!fs.statSync(versionPath).isDirectory()) continue; } catch { continue; }
+      for (const endpointDir of fs.readdirSync(versionPath)) {
+        if (!endpointDir.startsWith('endpoint-')) continue;
+        const candidate = path.join(versionPath, endpointDir, 'zcode-builtin.json');
+        try {
+          if (!fs.statSync(candidate).isFile()) continue;
+          const mtime = fs.statSync(candidate).mtimeMs;
+          if (mtime > bestMtime) { bestMtime = mtime; best = candidate; }
+        } catch { /* 单个候选不可读：跳过 */ }
+      }
+    }
+    return best;
+  } catch { return null; }
+}
+
 function runtimeProcessEnv(resolved, env = process.env) {
   // Electron host（包括独立安装的 ZCode.exe）执行 cjs runtime 时必须切 Node 模式；
   // 直接 PATH CLI 与其他可执行文件参数均不携带该变量。
@@ -85,9 +113,12 @@ function runtimeProcessEnv(resolved, env = process.env) {
     if (/^(CHROME_|ELECTRON_)/i.test(key)) continue;
     sanitized[key] = value;
   }
+  // 套餐配置发现（见 discoverBuiltinProviderConfig）：继承缺失时注入最新配置
+  const discoveredBuiltin = discoverBuiltinProviderConfig(env);
   return {
     ...sanitized,
     ...(runsCjsRuntime && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    ...(discoveredBuiltin ? { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: discoveredBuiltin } : {}),
   };
 }
 
@@ -219,7 +250,13 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
         doctorWarning: doctor.ok ? null : doctor.code,
         // 预检成功后把同一解析结果绑定给长期 bridge，避免两次解析跨更新/环境变化。
         runtimeDescriptor: publicRuntimeDescriptor(resolved) }
-    : { category: probe.code === 'TIMEOUT' ? 'app-server-timeout' : 'app-server-failed', source: resolved.source, version: versionText, detailCode: probe.code, doctorWarning: doctor.ok ? null : doctor.code };
+    : { category: probe.code === 'TIMEOUT' ? 'app-server-timeout' : 'app-server-failed',
+        source: resolved.source, version: versionText, detailCode: probe.code,
+        doctorWarning: doctor.ok ? null : doctor.code,
+        // 归因观测透传（2026-09-20）：此前 stderrTail/diag 在此被丢弃，
+        // GUI 日志只剩裸 EXIT_1，无法区分「秒退零输出」与「跑后自退」
+        ...(probe.stderrTail ? { stderrTail: probe.stderrTail } : {}),
+        ...(probe.diag ? { diag: probe.diag } : {}) };
 }
 
 // 读取桌面端已登录的 coding-plan token（只返回，不打印）。

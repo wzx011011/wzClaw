@@ -236,6 +236,7 @@ function initRuntimeGate() {
         if (status.detailCode) fields.push(`detail=${status.detailCode}`);
         if (status.doctorWarning) fields.push(`doctor=${status.doctorWarning}`);
         if (status.stderrTail) fields.push(`stderr=${status.stderrTail}`);
+        if (status.diag) fields.push(status.diag);
         if (status.attempts > 1) fields.push(`attempts=${status.attempts}`);
         pushLog('runtime-status', fields.join(' '));
       }
@@ -256,7 +257,35 @@ function ensureRuntimeThenStart() {
   // 引擎何时可用，不决定设备是否在线。
   return startCompanion()
     .then(() => runtimeGate.check({ relayUrl: cfg.relayUrl, cwd: cfg.cwd }))
-    .then(() => publicRuntimeStatus());
+    .then(() => {
+      armRuntimeReprobe();
+      return publicRuntimeStatus();
+    });
+}
+
+// 未就绪周期性重探（2026-09-20 事故修复）：安装新包后的首次启动，预检会
+// 因新 exe 被 Defender 扫描/安装器锁未释放而 EXIT_1，且 gate 只在配置
+// 变化时重探——「稍后自动可用」成空头支票，设备永远 paired-no-model。
+// 未就绪期间每 60s 重探一次；ready 后停表（配置变化由现有 check 流程覆盖）。
+let runtimeReprobeTimer = null;
+function armRuntimeReprobe() {
+  if (runtimeReprobeTimer) return;
+  if (runtimeStatus && runtimeStatus.category === 'ready') return;
+  runtimeReprobeTimer = setInterval(() => {
+    if (runtimeReprobeTimer && runtimeStatus && runtimeStatus.category === 'ready') {
+      clearInterval(runtimeReprobeTimer);
+      runtimeReprobeTimer = null;
+      return;
+    }
+    if (!companion || !cfg || !cfg.relayUrl) return;
+    pushLog('runtime-reprobe', '');
+    void runtimeGate.check({ relayUrl: cfg.relayUrl, cwd: cfg.cwd }).then(() => {
+      if (runtimeStatus && runtimeStatus.category === 'ready' && runtimeReprobeTimer) {
+        clearInterval(runtimeReprobeTimer);
+        runtimeReprobeTimer = null;
+      }
+    });
+  }, 60_000);
 }
 
 function startCompanion() {

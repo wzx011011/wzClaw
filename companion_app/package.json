@@ -1,7 +1,7 @@
 {
   "name": "wzxclaw-companion-app",
   "productName": "wzxClaw Companion",
-  "version": "1.1.0-test.12",
+  "version": "1.1.0-test.16",
   "description": "wzxClaw Windows 大脑节点：内嵌 companion，自动连接 NAS relay，扫码配对",
   "main": "main.js",
   "author": "wzx",
