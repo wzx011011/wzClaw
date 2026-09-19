@@ -13,6 +13,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -42,7 +43,7 @@ class ZcodeKeepAliveController {
   @visibleForTesting
   final List<String> debugForegroundCalls = <String>[];
 
-  bool get _isAndroid => debugAndroidOverride || Platform.isAndroid;
+  bool get _isAndroid => debugAndroidOverride || (!kIsWeb && Platform.isAndroid);
 
   bool get _linked => linkedProvider?.call() ?? false;
 
