@@ -17,6 +17,11 @@ const ERR_TIMEOUT = -32022;
 const ERR_X_BAD_PARAMS = -32100;
 const ERR_X_GIT_TIMEOUT = -32101;
 const ERR_X_GIT_FAILED = -32102;
+// 下载目标不存在/工作区外/会话失效——「找不到」与「参数畸形」分开报，
+// 手机端据此分别提示「暂不支持下载工作区外的文件」与「参数错误」。
+const ERR_X_NOT_FOUND = -32103;
+// x/* 未归类失败的兜底（此前误用 -32102「git 失败」，语义错位）。
+const ERR_X_FAILED = -32104;
 
 // 超时档位判定（方向：默认长档）。
 // 失败模式分析（2026-09-15 设计审查）：若默认短档，app-server 新增的任何
@@ -53,5 +58,6 @@ function classifyFrame(frame) {
 }
 
 module.exports = { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
-  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED,
+  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, ERR_X_NOT_FOUND,
+  ERR_X_FAILED,
   isFastMethod, isPermissionLikeMethod, classifyFrame };

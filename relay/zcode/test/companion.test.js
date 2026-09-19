@@ -1143,6 +1143,8 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
     () => { client.close(); },
     () => relay.close(),
     () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(listingDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(bare, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
     () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
   ]);
   companion.start();
@@ -1193,6 +1195,88 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
   ask(17, 'x/fs/exists', { paths: [dir, path.join(dir, 'nope-dir')] });
   const ex = await client.next((m) => m.type === 'data' && m.payload.id === 17);
   assert.deepEqual(ex.payload.result.exists, [true, false]);
+
+  // x/fs/dirs：根模式 → 至少一个盘符/根 + home 非空
+  ask(19, 'x/fs/dirs', {});
+  const roots = await client.next((m) => m.type === 'data' && m.payload.id === 19);
+  assert.ok(roots.payload.result.home.length > 0, 'home 必须返回');
+  assert.ok(Array.isArray(roots.payload.result.dirs) && roots.payload.result.dirs.length >= 1,
+    '根模式必须返回盘符/根');
+  assert.equal(roots.payload.result.parent, null);
+
+  // 子目录列举：只返回目录、按名排序、parent 指向上级
+  // （用无 .git 的独立目录做基准，避免 git init 产物参与断言）
+  const listingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-x-dirs-'));
+  fs.mkdirSync(path.join(listingDir, 'b-dir'));
+  fs.mkdirSync(path.join(listingDir, 'a-dir'));
+  fs.writeFileSync(path.join(listingDir, 'file.txt'), 'x');
+  ask(20, 'x/fs/dirs', { path: listingDir });
+  const listing = await client.next((m) => m.type === 'data' && m.payload.id === 20);
+  assert.deepEqual(listing.payload.result.dirs.map((d) => d.name), ['a-dir', 'b-dir']);
+  assert.equal(listing.payload.result.parent, path.dirname(listingDir));
+  assert.ok(listing.payload.result.dirs.every((d) => path.isAbsolute(d.path)));
+
+  // 相对路径 / 不存在路径 → -32100 X_BAD_PARAMS（引擎不校验存在性，本扩展必须兜住）
+  ask(21, 'x/fs/dirs', { path: 'relative/path' });
+  const rel = await client.next((m) => m.type === 'data' && m.payload.id === 21);
+  assert.equal(rel.payload.error.code, -32100);
+  assert.equal(rel.payload.error.data.reason, 'X_BAD_PARAMS');
+  ask(22, 'x/fs/dirs', { path: path.join(dir, 'no-such-dir') });
+  const miss = await client.next((m) => m.type === 'data' && m.payload.id === 22);
+  assert.equal(miss.payload.error.code, -32100);
+
+  // x/git/diffstat：staged + unstaged 行级汇总。
+  // git 语义钉死：untracked 文件不进 numstat（须先 add）；含 NUL 字节
+  // 才被判二进制（numstat 两列 "-" → 0 行但计文件）。
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\nb\n'); // 修改：+1 -0（unstaged）
+  fs.writeFileSync(path.join(dir, 'bin.dat'), Buffer.from([0x00, 0x01, 0x00])); // 真二进制
+  fs.writeFileSync(path.join(dir, 'c.txt'), '1\n2\n3\n'); // 新增：+3（staged）
+  const { execFileSync: run } = require('node:child_process');
+  run('git', ['-C', dir, 'add', 'bin.dat', 'c.txt']);
+  ask(23, 'x/git/diffstat', { path: dir });
+  const ds = await client.next((m) => m.type === 'data' && m.payload.id === 23);
+  assert.equal(ds.payload.result.added, 4); // a.txt +1，c.txt +3，二进制 +0
+  assert.equal(ds.payload.result.removed, 0);
+  assert.equal(ds.payload.result.files, 3);
+
+  // x/git/pushinfo：无 remote → hasRemote false；有 bare origin 后可推送
+  ask(24, 'x/git/pushinfo', { path: dir });
+  const pi0 = await client.next((m) => m.type === 'data' && m.payload.id === 24);
+  assert.equal(pi0.payload.result.hasRemote, false);
+  assert.equal(pi0.payload.result.branch, 'feat/new-branch');
+
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-x-bare-'));
+  run('git', ['init', '--bare', '-q', bare]);
+  run('git', ['-C', dir, 'remote', 'add', 'origin', bare]);
+  ask(25, 'x/git/pushinfo', { path: dir });
+  const pi1 = await client.next((m) => m.type === 'data' && m.payload.id === 25);
+  assert.equal(pi1.payload.result.hasRemote, true);
+  assert.equal(pi1.payload.result.upstream, ''); // 未推过 → 无 upstream
+
+  // x/git/commit：包含未暂存更改，返回 hash 且工作区转干净
+  ask(26, 'x/git/commit', {
+    path: dir, message: 'panel: test commit', includeUnstaged: true,
+  });
+  const cm = await client.next((m) => m.type === 'data' && m.payload.id === 26);
+  assert.equal(cm.payload.result.ok, true);
+  assert.match(cm.payload.result.hash, /^[0-9a-f]{7,40}$/);
+  ask(27, 'x/git/status', { path: dir });
+  const st3 = await client.next((m) => m.type === 'data' && m.payload.id === 27);
+  assert.equal(st3.payload.result.dirty, 0);
+
+  // 空消息提交 → 显性拒绝
+  ask(28, 'x/git/commit', { path: dir, message: '  ' });
+  const cmBad = await client.next((m) => m.type === 'data' && m.payload.id === 28);
+  assert.equal(cmBad.payload.error.code, -32104);
+
+  // x/git/push：-u 建立 upstream；随后 ahead 归零
+  ask(29, 'x/git/push', { path: dir, setUpstream: true });
+  const ph = await client.next((m) => m.type === 'data' && m.payload.id === 29);
+  assert.equal(ph.payload.result.ok, true);
+  ask(30, 'x/git/pushinfo', { path: dir });
+  const pi2 = await client.next((m) => m.type === 'data' && m.payload.id === 30);
+  assert.equal(pi2.payload.result.upstream, `origin/feat/new-branch`);
+  assert.equal(pi2.payload.result.ahead, 0);
 
   // 未知 x/ 方法 → 明确错误（不留静默）
   ask(18, 'x/unknown', {});
@@ -1604,9 +1688,28 @@ test('x/file/*：分块上传落盘工作区 + 路径引用返回 + 异常路径
   client.send({ type: 'data', payload: { id: 7, method: 'x/file/chunk',
     params: { uploadId: b6.payload.result.uploadId, data: Buffer.alloc(8).toString('base64') } } });
   const c7 = await client.next((m) => m.type === 'data' && m.payload.id === 7);
-  // 错误码经桥包装为 -32100（safeError code 在 message 中透传）
-assert.ok(c7.payload.error.code === 'X_BAD_PARAMS' || c7.payload.error.code === -32100,
-  `超声明尺寸被拒（实际 code=${c7.payload.error.code}）`);
+  assert.equal(c7.payload.error.code, -32100, '超声明尺寸被拒为 X_BAD_PARAMS');
+
+  // 3.5) abort：清理会话与 .part，幂等 ok；之后 chunk → -32103
+  client.send({ type: 'data', payload: { id: 71, method: 'x/file/begin',
+    params: { name: 'aborted.bin', size: 100 } } });
+  const b71 = await client.next((m) => m.type === 'data' && m.payload.id === 71);
+  client.send({ type: 'data', payload: { id: 72, method: 'x/file/chunk',
+    params: { uploadId: b71.payload.result.uploadId, data: Buffer.alloc(40).toString('base64') } } });
+  await client.next((m) => m.type === 'data' && m.payload.id === 72);
+  client.send({ type: 'data', payload: { id: 73, method: 'x/file/abort',
+    params: { uploadId: b71.payload.result.uploadId } } });
+  const a73 = await client.next((m) => m.type === 'data' && m.payload.id === 73);
+  assert.equal(a73.payload.result.ok, true);
+  client.send({ type: 'data', payload: { id: 74, method: 'x/file/abort',
+    params: { uploadId: 'no-such-upload' } } });
+  const a74 = await client.next((m) => m.type === 'data' && m.payload.id === 74);
+  assert.equal(a74.payload.result.ok, true, 'abort 幂等');
+  client.send({ type: 'data', payload: { id: 75, method: 'x/file/chunk',
+    params: { uploadId: b71.payload.result.uploadId, data: Buffer.alloc(10).toString('base64') } } });
+  const c75 = await client.next((m) => m.type === 'data' && m.payload.id === 75);
+  assert.equal(c75.payload.error.code, -32103, 'abort 后上传会话即焚');
+  assert.equal(c75.payload.error.data.reason, 'X_NO_UPLOAD');
 
   // 4) 不完整 commit 拒绝且不留 .part
   client.send({ type: 'data', payload: { id: 8, method: 'x/file/begin',
@@ -1618,12 +1721,147 @@ assert.ok(c7.payload.error.code === 'X_BAD_PARAMS' || c7.payload.error.code === 
   client.send({ type: 'data', payload: { id: 10, method: 'x/file/commit',
     params: { uploadId: b8.payload.result.uploadId } } });
   const cm10 = await client.next((m) => m.type === 'data' && m.payload.id === 10);
-  assert.ok(cm10.payload.error.code === 'X_BAD_PARAMS' || cm10.payload.error.code === -32100,
-  `不完整 commit 被拒（实际 code=${cm10.payload.error.code}）`);
-  // 被拒的两个上传（f6 超尺寸 / f10 不完整）不留 .part；
+  assert.equal(cm10.payload.error.code, -32100, '不完整 commit 被拒为 X_BAD_PARAMS');
+  // 被拒的上传（超尺寸/不完整/abort）不留 .part；
   // f5 穿越名的在途空 .part 属合法状态（未 commit，30 分钟过期清理兜底）
   const attDir = path.join(dir, '.wzxclaw-attachments');
   const leftovers = fs.readdirSync(attDir).filter((f) =>
-    f.endsWith('.part') && (f.includes('oversize') || f.includes('half')));
-  assert.equal(leftovers.length, 0, '被拒上传不留 .part');
+    f.endsWith('.part') &&
+    (f.includes('oversize') || f.includes('half') || f.includes('aborted')));
+  assert.equal(leftovers.length, 0, '被拒/中止上传不留 .part');
+});
+
+// ── x/file/download/* 文件下载（工作区文件 → 手机，上传族的镜像）──
+// 契约见 APP-SERVER.md「文件下载（x/file/download*）」：begin→chunk*→eof
+// 三段式；只允许工作区内文件（resolve 后不得逃出 cwd）；eof/abort 后会话
+// 即焚；offset 越界拒绝；空文件单块 eof。
+test('x/file/download/*：分块下载字节一致 + 工作区边界 + 会话清理', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-dl-'));
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => { relay.close(); },
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => client.messages.some((m) => m.type === 'data' && m.payload.method === 'fake/env'));
+
+  // 1) 正常下载：>256KB 触发多块，逐字节还原；末块 eof；eof 后会话即焚
+  const payload = Buffer.concat([
+    Buffer.from('下载测试 content 你好\n'.repeat(20000), 'utf8'),
+    Buffer.alloc(64 * 1024, 0x5a),
+  ]);
+  const target = path.join(dir, '报告 v1.txt');
+  fs.writeFileSync(target, payload);
+  client.send({ type: 'data', payload: { id: 1, method: 'x/file/download/begin',
+    params: { path: target } } });
+  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
+  assert.equal(b1.payload.result.size, payload.length, 'begin 返回真实大小');
+  assert.equal(b1.payload.result.name, '报告_v1.txt', '名字取末段并白名单化');
+
+  const chunks = [];
+  let offset = 0;
+  let reqId = 2;
+  for (;;) {
+    client.send({ type: 'data', payload: { id: reqId, method: 'x/file/download/chunk',
+      params: { downloadId: b1.payload.result.downloadId, offset } } });
+    const c = await client.next((m) => m.type === 'data' && m.payload.id === reqId);
+    assert.equal(c.payload.error, undefined, `chunk(offset=${offset}) 不报错`);
+    const received = Buffer.from(c.payload.result.data, 'base64');
+    assert.equal(c.payload.result.received, offset + received.length, 'received 前进真实字节数');
+    chunks.push(received);
+    offset = c.payload.result.received;
+    if (c.payload.result.eof) break;
+    reqId += 1;
+    assert.ok(reqId < 100, '分块数在预期内（不无限循环）');
+  }
+  assert.ok(Buffer.concat(chunks).equals(payload), '下载内容逐字节一致');
+  assert.ok(offset >= payload.length, 'eof 时已收满');
+
+  // eof 后会话已删：同一 downloadId 再 chunk → -32103
+  // （换新 id：next() 会匹配缓冲的历史应答，复用 eof 那条 id 会拿旧帧）
+  reqId += 1;
+  client.send({ type: 'data', payload: { id: reqId, method: 'x/file/download/chunk',
+    params: { downloadId: b1.payload.result.downloadId, offset: 0 } } });
+  const stale = await client.next((m) => m.type === 'data' && m.payload.id === reqId);
+  assert.equal(stale.payload.error.code, -32103, 'eof 后会话即焚');
+
+  // 2) 空文件：begin size=0，chunk(offset=0) 直接 eof
+  fs.writeFileSync(path.join(dir, 'empty.log'), '');
+  client.send({ type: 'data', payload: { id: 50, method: 'x/file/download/begin',
+    params: { path: path.join(dir, 'empty.log') } } });
+  const b50 = await client.next((m) => m.type === 'data' && m.payload.id === 50);
+  assert.equal(b50.payload.result.size, 0);
+  client.send({ type: 'data', payload: { id: 51, method: 'x/file/download/chunk',
+    params: { downloadId: b50.payload.result.downloadId, offset: 0 } } });
+  const c51 = await client.next((m) => m.type === 'data' && m.payload.id === 51);
+  assert.equal(c51.payload.result.eof, true, '空文件单块 eof');
+
+  // 3) 工作区外 / .. 穿越 / 目录 / 不存在 → 一律 -32103；
+  //    工作区外报 X_OUT_OF_WORKSPACE（手机端给「仅限工作区内」指引），
+  //    其余报 X_NOT_FOUND，码相同不透露存在性细节之外的信息
+  const outside = path.join(os.tmpdir(), `companion-dl-outside-${Date.now()}.txt`);
+  fs.writeFileSync(outside, 'secret');
+  fs.mkdirSync(path.join(dir, 'subdir'), { recursive: true });
+  const outsideCases = [
+    ['工作区外绝对路径', outside, 'X_OUT_OF_WORKSPACE'],
+    ['.. 穿越到上级', path.join(dir, '..', 'escape.txt'), 'X_OUT_OF_WORKSPACE'],
+    // cwd 本身 relative='' 也按工作区外拒绝（不可下载根目录）
+    ['工作区根目录', dir, 'X_OUT_OF_WORKSPACE'],
+    // 工作区内子目录：过边界校验、被 isFile 拒绝
+    ['工作区内目录', path.join(dir, 'subdir'), 'X_NOT_FOUND'],
+    ['不存在', path.join(dir, 'no-such-file.txt'), 'X_NOT_FOUND'],
+  ];
+  let caseId = 60;
+  for (const [label, p, expectedReason] of outsideCases) {
+    client.send({ type: 'data', payload: { id: caseId, method: 'x/file/download/begin',
+      params: { path: p } } });
+    const r = await client.next((m) => m.type === 'data' && m.payload.id === caseId);
+    assert.equal(r.payload.error.code, -32103, `${label} 被拒为 X_NOT_FOUND 码`);
+    assert.equal(r.payload.error.data.reason, expectedReason, `${label} reason 区分`);
+    caseId += 1;
+  }
+  fs.rmSync(outside, { force: true, maxRetries: 10, retryDelay: 100 });
+
+  // 4) offset 越界 → -32100
+  client.send({ type: 'data', payload: { id: 80, method: 'x/file/download/begin',
+    params: { path: target } } });
+  const b80 = await client.next((m) => m.type === 'data' && m.payload.id === 80);
+  client.send({ type: 'data', payload: { id: 81, method: 'x/file/download/chunk',
+    params: { downloadId: b80.payload.result.downloadId, offset: payload.length + 1 } } });
+  const c81 = await client.next((m) => m.type === 'data' && m.payload.id === 81);
+  assert.equal(c81.payload.error.code, -32100, 'offset 越界拒绝');
+  // 会话仍活着（参数错不销毁会话），正常块继续可用
+  client.send({ type: 'data', payload: { id: 82, method: 'x/file/download/chunk',
+    params: { downloadId: b80.payload.result.downloadId, offset: 0 } } });
+  const c82 = await client.next((m) => m.type === 'data' && m.payload.id === 82);
+  assert.equal(c82.payload.error, undefined, '参数错不销毁会话');
+
+  // 5) abort：幂等 ok；之后 chunk → -32103
+  client.send({ type: 'data', payload: { id: 83, method: 'x/file/download/abort',
+    params: { downloadId: b80.payload.result.downloadId } } });
+  const a83 = await client.next((m) => m.type === 'data' && m.payload.id === 83);
+  assert.equal(a83.payload.result.ok, true);
+  client.send({ type: 'data', payload: { id: 84, method: 'x/file/download/abort',
+    params: { downloadId: 'no-such-id' } } });
+  const a84 = await client.next((m) => m.type === 'data' && m.payload.id === 84);
+  assert.equal(a84.payload.result.ok, true, 'abort 幂等');
+  client.send({ type: 'data', payload: { id: 85, method: 'x/file/download/chunk',
+    params: { downloadId: b80.payload.result.downloadId, offset: 0 } } });
+  const c85 = await client.next((m) => m.type === 'data' && m.payload.id === 85);
+  assert.equal(c85.payload.error.code, -32103, 'abort 后会话即焚');
 });

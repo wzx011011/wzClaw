@@ -18,7 +18,8 @@ const { WebSocket } = require('ws');
 const { MAX_PAYLOAD } = require('./lib/constants');
 const { deriveProof, deriveRegisterProof } = require('./lib/proof');
 const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
-  ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod } = require('./lib/protocol');
+  ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, ERR_X_NOT_FOUND, ERR_X_FAILED,
+  isFastMethod } = require('./lib/protocol');
 const { resolveCompanionStatePaths } = require('./lib/state-path');
 const { resolveZcodeRuntime: resolveRuntime, publicRuntimeDescriptor } = require('./lib/runtime-resolver');
 const { PLAN_PROVIDER_ID, PLAN_CACHE_TTL_MS, fetchPlanModelIds, buildPlanOverlay,
@@ -451,6 +452,18 @@ function createCompanion(options = {}) {
     }
   }, 5 * 60 * 1000).unref();
 
+  // 手机文件下载会话表（x/file/download/*）：downloadId → {absPath,size,
+  // createdAt}。begin 时路径校验一次，chunk 只认 id，避免每块重复校验；
+  // 30 分钟过期清理——中断的下载不留悬挂会话。
+  const DOWNLOAD_CHUNK_BYTES = 256 * 1024; // base64 后 ~349KB，低于 relay 1MB 帧限
+  const fileDownloads = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, dl] of fileDownloads) {
+      if (now - dl.createdAt > 30 * 60 * 1000) fileDownloads.delete(id);
+    }
+  }, 5 * 60 * 1000).unref();
+
   function log(event, detail) { logger(event, detail); }
 
   function ensureMid() {
@@ -836,25 +849,36 @@ function createCompanion(options = {}) {
     return resolved;
   }
 
-  function spawnGit(args, cwdPath) {
+  function spawnGit(args, cwdPath, opts = {}) {
     return new Promise((resolve, reject) => {
       // --no-optional-locks：只读查询不与 IDE/其它 git 进程争索引锁
       const child = spawn('git', ['--no-optional-locks', '-C', cwdPath, ...args],
         { windowsHide: true });
       let stdout = ''; let stderr = '';
       // 看护：挂住的 hook（post-checkout 卡网等）不能让 x/* 请求永不超时
-      // （反向请求两档看护只覆盖 app-server 通道，不覆盖 x/*）
+      // （反向请求两档看护只覆盖 app-server 通道，不覆盖 x/*）。
+      // push 走网络/凭据，默认 10s 不够，允许放宽（交互式凭据提示会
+      // 挂到超时——无终端 TTY 时 git 会直接失败，属可接受边界）。
+      const timeoutMs = opts.timeoutMs ?? 10000;
       const timer = setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
-        reject(Object.assign(new Error('git timed out (10s)'), { code: 'X_GIT_TIMEOUT' }));
-      }, 10000).unref();
+        reject(Object.assign(new Error(`git timed out (${timeoutMs / 1000}s)`), { code: 'X_GIT_TIMEOUT' }));
+      }, timeoutMs).unref();
       child.stdout.on('data', (c) => { stdout += c; });
       child.stderr.on('data', (c) => { stderr += c; });
       child.on('error', (err) => { clearTimeout(timer); reject(err); });
       child.on('exit', (code) => {
         clearTimeout(timer);
         if (code === 0) resolve(stdout);
-        else reject(Object.assign(new Error(stderr.trim().split('\n')[0] || `git exit ${code}`), { code: 'X_GIT_FAILED' }));
+        else {
+          // commit/push 的失败说明常在 stdout（如 nothing to commit），
+          // stderr 为空时回落 stdout 首行，避免只剩 "git exit 1"
+          const firstLine = (stderr.trim() || stdout.trim()).split('\n')[0];
+          reject(Object.assign(
+            new Error(firstLine || `git exit ${code}`),
+            { code: opts.code ?? 'X_GIT_FAILED', details: (stderr + stdout).trim() },
+          ));
+        }
       });
     });
   }
@@ -904,6 +928,105 @@ function createCompanion(options = {}) {
           reply({ id: frame.id, result: { ok: true, branch } });
           return;
         }
+        case 'x/git/pushinfo': {
+          // 提交/推送对话框数据：分支、upstream、领先/落后
+          const dir = validateDir(frame.params && frame.params.path);
+          const branch = (await spawnGit(['rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim();
+          if (!branch || branch === 'HEAD') {
+            throw Object.assign(new Error('当前处于 detached HEAD，无法推送'), { code: 'X_FAILED' });
+          }
+          const remotes = (await spawnGit(['remote'], dir)).split('\n').filter((s) => s.trim());
+          const hasRemote = remotes.includes('origin');
+          let upstream = '';
+          let ahead = 0;
+          let behind = 0;
+          if (hasRemote) {
+            const up = await spawnGit(
+              ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], dir,
+            ).catch(() => '');
+            upstream = up.trim();
+            if (upstream) {
+              const cc = await spawnGit(
+                ['rev-list', '--left-right', '--count', `${upstream}...${branch}`], dir,
+              ).catch(() => '');
+              const parts = cc.trim().split(/\s+/);
+              behind = Number.parseInt(parts[0], 10) || 0;
+              ahead = Number.parseInt(parts[1], 10) || 0;
+            }
+          }
+          reply({ id: frame.id, result: { branch, hasRemote, upstream, ahead, behind } });
+          return;
+        }
+        case 'x/git/commit': {
+          // 提交：默认只提交已暂存；includeUnstaged=true 时先 add -A。
+          // 身份预检给出可读错误，而非 git 原始失败。
+          const p = frame.params || {};
+          const dir = validateDir(p.path);
+          const message = typeof p.message === 'string' ? p.message.trim() : '';
+          if (!message || message.includes('\0')) {
+            throw Object.assign(new Error('请先输入提交消息'), { code: 'X_FAILED' });
+          }
+          const email = await spawnGit(['config', 'user.email'], dir).catch(() => '');
+          const name = await spawnGit(['config', 'user.name'], dir).catch(() => '');
+          if (!email.trim() || !name.trim()) {
+            throw Object.assign(
+              new Error('当前没有可用的 Git 提交身份，请先配置 user.name 和 user.email'),
+              { code: 'X_FAILED' },
+            );
+          }
+          if (p.includeUnstaged === true) await spawnGit(['add', '-A'], dir);
+          const out = await spawnGit(['commit', '-m', message], dir);
+          const hash = (out.match(/[0-9a-f]{7,40}/i) || [])[0] || '';
+          reply({ id: frame.id, result: { ok: true, hash } });
+          return;
+        }
+        case 'x/git/push': {
+          // 推送：无 upstream 时必须 setUpstream=true（-u origin <branch>）。
+          // 网络往返 10s 不够，放宽到 60s。
+          const p = frame.params || {};
+          const dir = validateDir(p.path);
+          const branch = (await spawnGit(['rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim();
+          if (!branch || branch === 'HEAD') {
+            throw Object.assign(new Error('当前处于 detached HEAD，无法推送'), { code: 'X_FAILED' });
+          }
+          const args = ['push'];
+          if (p.setUpstream === true) args.push('-u', 'origin', branch);
+          await spawnGit(args, dir, { timeoutMs: 60000 });
+          reply({ id: frame.id, result: { ok: true, branch } });
+          return;
+        }
+        case 'x/git/diffstat': {
+          // 状态面板「更改 +N -M」：staged + unstaged 的行级增删汇总
+          //（官方对齐：git diff [--cached] --numstat 后求和）。
+          // numstat 行 = "added\tremoved\tpath"；二进制文件两列为 "-"，
+          // parseInt 得 NaN 按 0 行计但仍计入 files。
+          const dir = validateDir(frame.params && frame.params.path);
+          const parseNumstat = (out) => {
+            let added = 0; let removed = 0; let files = 0;
+            for (const line of out.split('\n')) {
+              if (!line.trim()) continue;
+              const cols = line.split('\t');
+              const a = Number.parseInt(cols[0], 10);
+              const r = Number.parseInt(cols[1], 10);
+              if (!Number.isNaN(a)) added += a;
+              if (!Number.isNaN(r)) removed += r;
+              files++;
+            }
+            return { added, removed, files };
+          };
+          const [staged, unstaged] = await Promise.all([
+            spawnGit(['diff', '--cached', '--numstat', '--find-renames'], dir),
+            spawnGit(['diff', '--numstat', '--find-renames'], dir),
+          ]);
+          const s = parseNumstat(staged);
+          const u = parseNumstat(unstaged);
+          reply({ id: frame.id, result: {
+            added: s.added + u.added,
+            removed: s.removed + u.removed,
+            files: s.files + u.files,
+          } });
+          return;
+        }
         case 'x/fs/exists': {
           const paths = frame.params && frame.params.paths;
           if (!Array.isArray(paths) || paths.length > 50) throw safeError('X_BAD_PARAMS');
@@ -911,6 +1034,53 @@ function createCompanion(options = {}) {
             exists: paths.map((p) => {
               try { return fs.statSync(path.resolve(String(p))).isDirectory(); } catch { return false; }
             }),
+          } });
+          return;
+        }
+        case 'x/fs/dirs': {
+          // 手机端目录选择器（新建会话自选工作区）：列出目录的直接子目录。
+          // path 缺省 = 根模式（枚举盘符 + 主目录入口）。只返回目录名，
+          // 不读内容；symlink/junction 跳过（防环）；系统垃圾目录过滤。
+          // 实测前提：session/create 接受任意未注册路径（probe-wscreate.js），
+          // 但引擎不校验存在性——本方法只列真实存在的目录，从源头兜住。
+          const raw = String((frame.params && frame.params.path) || '').trim();
+          const home = os.homedir();
+          if (!raw) {
+            const dirs = [];
+            if (process.platform === 'win32') {
+              for (let i = 65; i <= 90; i++) {
+                const drive = `${String.fromCharCode(i)}:\\`;
+                try { if (fs.existsSync(drive)) dirs.push({ name: drive, path: drive }); } catch { }
+              }
+            } else {
+              dirs.push({ name: '/', path: '/' });
+            }
+            reply({ id: frame.id, result: { path: '', parent: null, home, dirs } });
+            return;
+          }
+          if (!path.isAbsolute(raw)) throw safeError('X_BAD_PARAMS');
+          const resolved = path.resolve(raw);
+          let st;
+          try { st = fs.statSync(resolved); } catch { throw safeError('X_BAD_PARAMS'); }
+          if (!st.isDirectory()) throw safeError('X_BAD_PARAMS');
+          let entries;
+          try {
+            entries = fs.readdirSync(resolved, { withFileTypes: true });
+          } catch (e) {
+            // 权限/IO 失败显性上浮，不静默返回空列表
+            throw Object.assign(new Error(String(e.message || e).slice(0, 200)), { code: 'X_FAILED' });
+          }
+          const JUNK = new Set(['$RECYCLE.BIN', 'System Volume Information', 'Config.Msi']);
+          const dirs = entries
+            .filter((d) => d.isDirectory() && !d.isSymbolicLink() && !JUNK.has(d.name))
+            .map((d) => ({ name: d.name, path: path.join(resolved, d.name) }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true }));
+          const parent = path.dirname(resolved);
+          reply({ id: frame.id, result: {
+            path: resolved,
+            parent: parent === resolved ? null : parent, // 盘符根没有上级
+            home,
+            dirs,
           } });
           return;
         }
@@ -1082,16 +1252,98 @@ function createCompanion(options = {}) {
           } });
           return;
         }
+        case 'x/file/abort': {
+          // 手机端上传失败/取消的对称清理（此前手机端一直在调、companion
+          // 却没有这个 case，落入未实现分支）。幂等：会话不存在也回 ok。
+          const p = frame.params || {};
+          const up = fileUploads.get(String(p.uploadId || ''));
+          fileUploads.delete(String(p.uploadId || ''));
+          if (up) {
+            try { fs.unlinkSync(up.tmpPath); } catch { /* best effort */ }
+          }
+          reply({ id: frame.id, result: { ok: true } });
+          return;
+        }
+        case 'x/file/download/begin': {
+          // 手机端文件下载（begin→chunk*→eof|abort，上传族的镜像）。
+          // 安全边界：只允许工作区内文件（含 .wzxclaw-attachments）——
+          // resolve 后相对路径不得逃出 cwd，防配对链路被用来拖走整盘文件；
+          // 工作区外/不存在/非普通文件一律 X_NOT_FOUND，不区分透露细节。
+          const p = frame.params || {};
+          if (typeof p.path !== 'string' || p.path.trim().length === 0
+            || p.path.length > 500) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const abs = path.resolve(p.path.trim());
+          const rel = path.relative(cwd, abs);
+          if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+            // 与「文件不存在」分开报 reason（同一 -32103 码）：手机端给
+            // 「仅限工作区内」与「文件不存在请重试」两种不同指引
+            throw safeError('X_OUT_OF_WORKSPACE');
+          }
+          let st;
+          try { st = fs.statSync(abs); } catch { throw safeError('X_NOT_FOUND'); }
+          if (!st.isFile()) throw safeError('X_NOT_FOUND');
+          if (st.size > 200 * 1024 * 1024) throw safeError('X_BAD_PARAMS');
+          const downloadId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+          // 手机本地文件名：末段 + 字符白名单（同 x/file/begin 落盘名规则）
+          const safeName = path.basename(abs).replace(/[^\w.\-\u4e00-\u9fa5]/g, '_') || 'file';
+          fileDownloads.set(downloadId, { absPath: abs, size: st.size, createdAt: Date.now() });
+          reply({ id: frame.id, result: { downloadId, name: safeName, size: st.size } });
+          return;
+        }
+        case 'x/file/download/chunk': {
+          const p = frame.params || {};
+          const dl = fileDownloads.get(String(p.downloadId || ''));
+          if (!dl) throw safeError('X_NOT_FOUND');
+          // offset ∈ [0, size)；size===0 的空文件允许 offset 0（直接 eof）
+          if (!Number.isInteger(p.offset) || p.offset < 0
+            || (dl.size > 0 && p.offset >= dl.size)) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const want = Math.min(DOWNLOAD_CHUNK_BYTES, dl.size - p.offset);
+          const buf = Buffer.alloc(want);
+          let bytesRead = 0;
+          const fd = fs.openSync(dl.absPath, 'r');
+          try {
+            // 按块开读不持句柄：文件若在会话期间被改小，bytesRead < want
+            // 如实反映，eof 判定跟着 received 走，不回填零字节。
+            bytesRead = fs.readSync(fd, buf, 0, want, p.offset);
+          } finally {
+            fs.closeSync(fd);
+          }
+          const received = p.offset + bytesRead;
+          const eof = received >= dl.size;
+          if (eof) fileDownloads.delete(String(p.downloadId));
+          reply({ id: frame.id, result: {
+            data: buf.subarray(0, bytesRead).toString('base64'),
+            received,
+            eof,
+          } });
+          return;
+        }
+        case 'x/file/download/abort': {
+          // 幂等清理：会话不存在也回 ok（手机端取消/失败路径无需区分）
+          const p = frame.params || {};
+          fileDownloads.delete(String(p.downloadId || ''));
+          reply({ id: frame.id, result: { ok: true } });
+          return;
+        }
         default:
           reply({ id: frame.id, error: { code: ERR_UNHANDLED, message: `companion 未实现该扩展方法: ${frame.method}` } });
       }
     } catch (err) {
+      // x/* 错误码显式枚举（与 lib/protocol.js 的常量一一对应）；
+      // 未知 reason 兜底 ERR_X_FAILED，绝不借用 git/超时的语义
       const reason = err.code || '';
       const code = reason === 'X_BAD_PARAMS' ? ERR_X_BAD_PARAMS
+        : reason === 'X_NOT_FOUND' || reason === 'X_OUT_OF_WORKSPACE' || reason === 'X_NO_UPLOAD'
+          ? ERR_X_NOT_FOUND
         : reason === 'X_GIT_TIMEOUT' ? ERR_X_GIT_TIMEOUT
+        : reason === 'X_GIT_FAILED' ? ERR_X_GIT_FAILED
         : reason === 'X_MODEL_TIMEOUT' ? ERR_TIMEOUT
-        : ERR_X_GIT_FAILED;
-      reply({ id: frame.id, error: { code, message: String(err.message || err), data: { reason: reason || 'X_GIT_FAILED' } } });
+        : ERR_X_FAILED;
+      reply({ id: frame.id, error: { code, message: String(err.message || err), data: { reason: reason || 'X_FAILED' } } });
     }
   }
 

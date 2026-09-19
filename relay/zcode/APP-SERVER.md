@@ -555,14 +555,64 @@ app-server 实现；无头容器部署需让引擎 cwd 指向一个含 `app-serv
 | `x/git/status` | `{path}` | `{branch, dirty}` | `git --no-optional-locks status --porcelain=v1 -b`；detached HEAD 时 branch 为 `""` |
 | `x/git/branches` | `{path}` | `{branches:[{name,current}]}` | `for-each-ref refs/heads`，current 标记 `*` |
 | `x/git/checkout` | `{path, branch, create?}` | `{ok:true, branch}` | create=true 时 `-b` 新建；分支名白名单 `[A-Za-z0-9][A-Za-z0-9._/-]{0,119}` 且禁 `..`、结尾 `.lock`（防选项注入，禁止前导 `-`）；**不得加 `--` 分隔符**（checkout 语义中 `--` 后一律按 pathspec 处理） |
+| `x/git/diffstat` | `{path}` | `{added, removed, files}` | 状态面板「更改 +N -M」：`git diff [--cached] --numstat --find-renames` 两趟求和（staged+unstaged）。git 语义：**untracked 不计入**（不在 diff 里，文件数看 x/git/status 的 dirty）；含 NUL 字节判二进制（0 行计 files）；非 git 仓 → `-32102` |
+| `x/git/pushinfo` | `{path}` | `{branch, hasRemote, upstream, ahead, behind}` | 推送对话框数据：`rev-parse --abbrev-ref HEAD` + `remote` + `@{u}` + `rev-list --left-right --count upstream...branch`（left=behind/right=ahead）；无 upstream 时 upstream=''、ahead/behind=0；detached HEAD → `-32104` |
+| `x/git/commit` | `{path, message, includeUnstaged?}` | `{ok, hash}` | 默认只提交已暂存；`includeUnstaged:true` 先 `add -A`。空消息 → `-32104`（"请先输入提交消息"）；缺 user.name/user.email → `-32104` 带可读提示（身份预检）；git 失败（如 nothing to commit）→ `-32102`/`-32104`，message=stderr‖stdout 首行 |
+| `x/git/push` | `{path, setUpstream?}` | `{ok, branch}` | `git push`；`setUpstream:true` 时 `-u origin <branch>`（首次推送建 upstream）。超时放宽 60s（网络/凭据）；无 TTY 时交互式凭据提示直接失败不挂死 |
 | `x/fs/exists` | `{paths:[≤50]}` | `{exists:[bool]}` | 目录存在性（工作区列表过滤已删除路径用） |
+| `x/fs/dirs` | `{path?}` | `{path, parent, home, dirs:[{name,path}]}` | 目录选择器（新建会话自选工作区）。`path` 缺省 = 根模式：枚举盘符（Windows `A:`–`Z:` 存在性探测）/`/` + `home`；否则返回该目录直接子目录（只含目录、跳过 symlink/junction 防环、过滤 `$RECYCLE.BIN`/`System Volume Information`/`Config.Msi`，按名 zh 排序），`parent` 为上级（盘符根为 null）。错误：非绝对路径/不存在/非目录 → `-32100 X_BAD_PARAMS`；读取失败（权限等）→ `-32104 X_FAILED` 带首行原因。配套实测（probe-wscreate.js，2026-09-18）：`session/create` 接受**任意未注册** `{workspaceKey, workspacePath}`（key 可自造、原样回显进 session/list），但引擎**不校验路径存在性**也不自动建目录——本扩展只列真实存在目录，从源头兜住 |
 
-错误帧的 `error.code` 一律为数字（Android 客户端按数值解析）：`-32100`
-（`data.reason=X_BAD_PARAMS`，参数/路径非法）、`-32101`
-（`data.reason=X_GIT_TIMEOUT`，git 10 秒超时）、`-32102`
-（`data.reason=X_GIT_FAILED`，git 非零退出或启动失败，message 为 stderr 首行）；未知
-x/ 方法为 `-32000`（ERR_UNHANDLED）。已知限制：companion 进程的 PATH 需含 git
+## session/create 的 workspace 语义（2026-09-18，probe-wscreate.js 实测）
+
+- `workspaceKey` 是**自由标签**：从未注册的自造 key（如 `probe-arbitrary-key`）
+  直接通过，原样回显进响应与 `session/list`，无需预先登记。
+- `workspacePath` 接受任意绝对路径（实测 mkdtemp 临时目录成功）。
+- **不存在**的路径同样返回 ok（引擎不 stat、不自动建目录）——坏路径要到
+  运行时物化阶段才会失败。手机端因此不从 UI 允许手输路径，只从
+  `x/fs/dirs` 列举的真实目录中选择。
+- `workspace/list` / `workspace/info` / `workspace/create` 复测仍全 `-32601`。
+
+
+错误帧的 `error.code` 一律为数字（Android 客户端按数值解析），`data.reason`
+显式枚举：`-32100`（`X_BAD_PARAMS`，参数/路径非法）、`-32101`
+（`X_GIT_TIMEOUT`，git 10 秒超时）、`-32102`（`X_GIT_FAILED`，git 非零退出或
+启动失败，message 为 stderr 首行）、`-32103`（`X_NOT_FOUND` /
+`X_OUT_OF_WORKSPACE` / `X_NO_UPLOAD`，目标不存在或会话失效）、`-32104`
+（`X_FAILED`，未归类失败兜底——不借用其他语义）；未知 x/ 方法为 `-32000`
+（ERR_UNHANDLED）。已知限制：companion 进程的 PATH 需含 git
 （计划任务环境实测可用；若无 git 报数值失败码，显性失败不静默）。
+
+
+## 文件下载（x/file/download*，2026-09-18，companion.test.js 钉住）
+
+背景：AI 在节点生成的文件要以链接形式出现在手机对话中，点击可下载到手机。
+app-server 无任何文件读取方法（`fs/*`、`file/*` 等实测 `-32601`，见上节），
+故沿用 x/* 本地扩展，在 companion 落地上行下载族（上传族 `x/file/begin|
+chunk|commit` 的镜像）。relay 零改动：数字 id request 经 `data` 信封自动路由。
+
+| 方法 | params | 返回 | 说明 |
+|---|---|---|---|
+| `x/file/download/begin` | `{path}` | `{downloadId, name, size}` | `name` 取末段并按 `[^\w.\-一-龥]` 白名单化；`size` 为 statSync 真实大小 |
+| `x/file/download/chunk` | `{downloadId, offset}` | `{data(base64), received, eof}` | 读 `[offset, offset+256KB)`；`eof=true` 时会话即焚；`received=offset+实读字节` |
+| `x/file/download/abort` | `{downloadId}` | `{ok:true}` | 幂等清理（会话不存在也回 ok） |
+| `x/file/abort` | `{uploadId}` | `{ok:true}` | 上传族对称清理：删会话与 `.part` 临时文件；幂等 |
+
+**安全边界（2026-09-18 定）**：只允许工作区内文件——`path.resolve` 后
+`path.relative(cwd, resolved)` 不得为空/以 `..` 开头/绝对路径（含
+`.wzxclaw-attachments` 天然在内）；单文件上限 200MB（同上传）。拒绝码统一
+`-32103`，但 `data.reason` 区分两种情形供手机端给不同指引：工作区外
+（含 `..` 逃逸）报 `X_OUT_OF_WORKSPACE`；目录、不存在、eof/abort 后的
+失效会话报 `X_NOT_FOUND`。`..` 形式的路径经 resolve 落在工作区内时
+不构成逃逸，按普通路径处理（如 `dir/sub/../a.txt` ≡ `dir/a.txt`）。
+
+**会话模型**：begin 时路径校验一次并存 `fileDownloads` 表（downloadId →
+{absPath,size,createdAt}），chunk 只认 id 不重复校验；eof/abort 后即焚，
+30 分钟过期清理兜底（同上传表）。offset 越界属参数错（`-32100`），
+**不销毁会话**；会话期间文件被改小时 `received` 按实读字节前进，手机端
+以 `eof && received===size` 做完整性断言。
+
+**限速约束**：chunk 256KB（base64 后 ~349KB，低于 relay 1MB 帧限），手机端
+串行逐块 await，远低于 relay data 帧配额（2000 条 / 16MiB 每 10s）。
 
 
 ## 附件入口实测（2026-09-17，probe-attach.js / probe-attach2.js）
