@@ -48,7 +48,8 @@ NAS relay
 cd relay/zcode && npm test   # = node --test --test-force-exit "test/*.test.js"
 
 # 协议 schema 探针（只读，跑真实链路；改协议后先跑探针再动手）
-node relay/zcode/probe-methods.js   # 9 个高级接口 schema
+node relay/zcode/probe-surface-0169.js  # 全量接口面：核心链路回归 + 70 方法 schema（2026-09-19）
+node relay/zcode/probe-methods.js   # 9 个高级接口 schema（经 relay）
 node relay/zcode/probe-models.js    # 模型目录快照结构
 
 # 手机端
