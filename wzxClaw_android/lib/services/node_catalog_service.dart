@@ -57,8 +57,48 @@ class NodeModelEntry {
   /// 弹层分组名：provider 显示名优先，回退 providerId
   String groupLabel(String fallback) => providerLabel.isNotEmpty ? providerLabel : fallback;
 
-  /// 行显示名：模型 label 优先，回退 modelId
-  String get displayLabel => label.isNotEmpty ? label : modelId;
+  /// 行显示名：模型 label 优先；label 缺省或与 modelId 同文（引擎对第三方
+  /// 模型常直接填 id，如 deepseek-v4-pro）时套用品牌美化，对齐官方
+  /// 「GLM-5.3-Flash / DeepSeek-V4-Pro」的短名形态
+  String get displayLabel {
+    if (label.isNotEmpty && label.toLowerCase() != modelId.toLowerCase()) {
+      return label; // 引擎给了与 id 不同的友好名：原样保留
+    }
+    return prettifyModelId(modelId);
+  }
+
+  /// modelId → 品牌化显示名。词表收录已知家族词；未收录词首字母大写兜底，
+  /// 不丢字符——新模型上架无需改代码即可获得合理显示
+  static String prettifyModelId(String modelId) {
+    const known = {
+      'glm': 'GLM',
+      'gpt': 'GPT',
+      'deepseek': 'DeepSeek',
+      'opus': 'Opus',
+      'sonnet': 'Sonnet',
+      'haiku': 'Haiku',
+      'mini': 'Mini',
+      'flash': 'Flash',
+      'flashx': 'FlashX',
+      'pro': 'Pro',
+      'chat': 'Chat',
+      'reasoner': 'Reasoner',
+      'air': 'Air',
+      'lite': 'Lite',
+      'max': 'Max',
+    };
+    return modelId
+        .split(RegExp(r'[-_]')) // 点号属于尺寸段（5.3 / 1m），不拆
+        .map((token) {
+          if (token.isEmpty) return token;
+          final lower = token.toLowerCase();
+          if (known[lower] != null) return known[lower]!;
+          if (RegExp(r'^v\d+$').hasMatch(lower)) return 'V${lower.substring(1)}';
+          if (RegExp(r'^\d').hasMatch(token)) return token; // 5.3 / 1m 等尺寸段
+          return token[0].toUpperCase() + token.substring(1);
+        })
+        .join('-');
+  }
 }
 
 class NodeModelCatalog {
