@@ -1041,6 +1041,15 @@ test('app-server 重启复用原生 id：旧 wireId 迟到应答被丢弃，新 
   assert.equal(answered.length, 1, '只有新请求的应答到达引擎');
   assert.ok(logs.some((line) => line.startsWith(`phone-response-late ${wire1}`)),
     '旧 wireId 迟到应答的丢弃必须有观测');
+
+  // 引擎换代通知（审查 P1-1）：起桥与每次 respawn 都必须推送 x/engine/generation，
+  // 手机端凭它作废全部会话的物化/订阅——「relay 连着」≠「会话还在同一引擎」。
+  const gens = client.messages.filter(
+    (m) => m.type === 'data' && m.payload.method === 'x/engine/generation');
+  assert.ok(gens.length >= 2, '起桥与 respawn 都必须有换代通知');
+  const genValues = gens.map((m) => m.payload.params.generation);
+  assert.ok(genValues[0] < genValues[genValues.length - 1],
+    `换代通知的 generation 必须递增: ${genValues}`);
 });
 
 // relay 断开（重部署/闪断）时对未应答反向请求的立即代答（-32022）必须真实
@@ -1260,6 +1269,50 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
   assert.equal(ds.payload.result.added, 4); // a.txt +1，c.txt +3，二进制 +0
   assert.equal(ds.payload.result.removed, 0);
   assert.equal(ds.payload.result.files, 3);
+
+  // x/git/changedfiles + filediff + restore（审查 sheet，阶段 3c）：
+  // 文件列表带每文件增删 → 单文件 unified patch → restore 撤销闭环。
+  // 造 unstaged 修改：改 a.txt、新增 d.txt（untracked 不进 diff，先 add 再改）
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\nb\nNEW\n');
+  fs.writeFileSync(path.join(dir, 'd.txt'), 'tracked-seed\n');
+  run('git', ['-C', dir, 'add', 'd.txt']);
+  run('git', ['-C', dir, 'commit', '-qm', 'seed d']);
+  fs.writeFileSync(path.join(dir, 'd.txt'), 'tracked-seed\nCHANGED\n');
+
+  ask(231, 'x/git/changedfiles', { path: dir, staged: false });
+  const cf = await client.next((m) => m.type === 'data' && m.payload.id === 231);
+  const cfPaths = cf.payload.result.files.map((f) => f.path).sort();
+  assert.deepEqual(cfPaths, ['a.txt', 'd.txt'], 'unstaged 明细必须含两文件');
+  const dEntry = cf.payload.result.files.find((f) => f.path === 'd.txt');
+  assert.equal(dEntry.added, 1);
+  assert.equal(dEntry.removed, 0);
+
+  ask(232, 'x/git/filediff', { path: dir, file: 'd.txt', staged: false });
+  const fd = await client.next((m) => m.type === 'data' && m.payload.id === 232);
+  assert.equal(fd.payload.result.file, 'd.txt');
+  assert.ok(fd.payload.result.patch.includes('+CHANGED'), 'patch 必须含新增行');
+  assert.ok(fd.payload.result.patch.includes('--- a/d.txt'), 'unified patch 头');
+  assert.equal(fd.payload.result.truncated, false);
+
+  // restore 撤销工作区修改 → 内容回滚、列表清空
+  ask(233, 'x/git/restore', { path: dir, file: 'd.txt', staged: false });
+  const rs = await client.next((m) => m.type === 'data' && m.payload.id === 233);
+  assert.equal(rs.payload.result.ok, true);
+  // Windows git autocrlf 回滚内容可能带 CR：按行语义断言
+  const restored = fs.readFileSync(path.join(dir, 'd.txt'), 'utf8');
+  assert.ok(
+    restored.replace(/\r/g, '').endsWith('tracked-seed\n'),
+    'restore 后内容必须回滚',
+  );
+  ask(234, 'x/git/changedfiles', { path: dir, staged: false });
+  const cf2 = await client.next((m) => m.type === 'data' && m.payload.id === 234);
+  assert.deepEqual(cf2.payload.result.files.map((f) => f.path), ['a.txt'],
+    'd.txt 已撤销，只剩 a.txt');
+
+  // restore 缺 file → X_BAD_PARAMS
+  ask(235, 'x/git/restore', { path: dir });
+  const rsBad = await client.next((m) => m.type === 'data' && m.payload.id === 235);
+  assert.equal(rsBad.payload.error.code, -32100);
 
   // x/git/pushinfo：无 remote → hasRemote false；有 bare origin 后可推送
   ask(24, 'x/git/pushinfo', { path: dir });
@@ -2063,4 +2116,270 @@ test('工作区根为 junction 时合法文件可下载，链接根之外的逃�
     { path: u7.payload.result.filePath, workspacePath: aliasWs });
   const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 8);
   assert.equal(b8.payload.error, undefined, '上传产物在工作区内可下载');
+});
+
+// 离席权限补投（审查 P2-6）：手机离席期间引擎产生的反向请求必须由
+// companion 保存载荷，手机回席后补投——而不是无声丢到 120s 看护超时。
+// 只补投「从未送达」的条目：已送达的重复投递会被手机端按同 key 拒旧，
+// 等于向引擎代答拒绝。
+test('手机离席期间的反向请求在回席后补投', async (t) => {
+  const relay = createRelay({});
+  const address = await relay.listen({ port: 0 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-redeliver-'));
+  const logs = [];
+  let pairingUrl = '';
+  // 引擎：立即发 p1；2.5s 后（手机已离席窗口）发 p2
+  const onDemandServer = [
+    "'use strict';",
+    "const send = (id) => process.stdout.write(JSON.stringify({ id, method: 'interaction/requestPermission', params: {} }) + '\\n');",
+    "send('server-1');",
+    "setTimeout(() => send('server-2'), 2500);",
+    'process.stdin.on("data", () => {});',
+  ].join('\n');
+  const companion = createCompanion({
+    relayUrl: `ws://127.0.0.1:${address.port}/ws`,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+    requestTimeoutMs: 8000,
+    permissionRequestTimeoutMs: 20000,
+  });
+  const client = phone(`ws://127.0.0.1:${address.port}/ws`);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  const sid = parsed.searchParams.get('sid');
+  const hash = parsed.searchParams.get('hash');
+  await client.pair(sid, hash);
+  const p1 = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestPermission');
+  client.send({ type: 'data', payload: { id: p1.payload.id, result: { approved: true } } });
+
+  // 手机离席
+  client.close();
+  await delay(300);
+
+  // 离席窗口内引擎发出 p2（companion 持有载荷，不投递）
+  await delay(2600);
+
+  // 手机回席：同一凭据重连接管，必须收到补投的 p2
+  const client2 = phone(`ws://127.0.0.1:${address.port}/ws`);
+  cleanup(t, [() => { client2.close(); }]);
+  await client2.pair(sid, hash);
+  const p2 = await client2.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestPermission',
+    10000);
+  assert.notEqual(p2.payload.id, 'server-2', '手机侧必须看到代次化 wireId');
+  client2.send({ type: 'data', payload: { id: p2.payload.id, result: { approved: false } } });
+  assert.ok(true, '补投闭环');
+});
+
+// 重启预算恢复只能来自稳定运行证据（审查 P2-7）：本代存活满
+// bridgeStableAliveMs 后死亡视为偶发，预算清零；此后快速连崩才可能 dead。
+test('稳定运行后死亡清空重启预算；随后连崩正常熔断', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-stable-'));
+  const logs = [];
+  let pairingUrl = '';
+  const NL = String.fromCharCode(10);
+  const sigFile = path.join(dir, 'crash-sig');
+  process.env.CRASH_SIG = sigFile; // 经 companion 的 process.env 透传进引擎
+  const onDemandServer = [
+    "'use strict';",
+    'const fs = require("fs");',
+    'const sig = process.env.CRASH_SIG;',
+    'if (fs.existsSync(sig)) process.exit(1);',
+    'setTimeout(() => { fs.writeFileSync(sig, "x"); process.exit(0); }, 300);',
+  ].join(NL);
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    bridgeMaxRestarts: 1,
+    bridgeRestartDelayMs: 40,
+    bridgeStableAliveMs: 200,
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => { delete process.env.CRASH_SIG; },
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  // gen1：存活 300ms（≥200 阈值）后退出——必须清预算并重生
+  await waitFor(() => logs.some((l) => l.startsWith('appserver-stable-run')), 4000);
+  await waitFor(() => logs.filter((l) => l.startsWith('appserver-respawned')).length >= 2, 4000);
+  // gen2：见到信号文件立即退出（快速崩）→ 预算 1/1 → dead
+  await waitFor(() => logs.some((l) => l.startsWith('appserver-dead')), 4000);
+  const stableCount = logs.filter((l) => l.startsWith('appserver-stable-run')).length;
+  assert.equal(stableCount, 1, '只有 gen1 记稳定运行');
+});
+
+// spawn 现读认证（审查 P2-7）：respawn 后的子进程必须使用重写后的
+// v2Config token，而不是构造期快照。
+test('respawn 后引擎环境使用最新认证（现读而非构造期快照）', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-envread-'));
+  const logs = [];
+  let pairingUrl = '';
+  const NL = String.fromCharCode(10);
+  const probeFile = path.join(dir, 'token-probe.txt');
+  process.env.TOKEN_PROBE = probeFile;
+  const onDemandServer = [
+    "'use strict';",
+    'const fs = require("fs");',
+    'fs.writeFileSync(process.env.TOKEN_PROBE, process.env.ANTHROPIC_API_KEY || "none");',
+    'let buf = "";',
+    'process.stdin.on("data", (d) => { buf += d.toString(); if (buf.includes("fake/exit")) process.exit(0); });',
+  ].join(NL);
+  const v2Config = writeV2Config(dir, 'token-generation-1');
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: v2Config,
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => { delete process.env.TOKEN_PROBE; },
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => {
+    try { return fs.readFileSync(probeFile, 'utf8') === 'token-generation-1'; } catch { return false; }
+  }, 4000);
+
+  // 重写认证后触发 respawn：新进程必须拿到 token-generation-2
+  fs.writeFileSync(v2Config, JSON.stringify({
+    provider: { 'builtin:bigmodel-coding-plan': { options: { apiKey: 'token-generation-2' } } },
+  }));
+  client.send({ type: 'data', payload: { method: 'fake/exit' } });
+  await waitFor(() => {
+    try { return fs.readFileSync(probeFile, 'utf8') === 'token-generation-2'; } catch { return false; }
+  }, 6000);
+});
+
+// 本地代答白名单（审查后 0.16.9 兼容项）：storageState/mcpTelemetry/
+// runtimePreferences 由 companion 直接应答——引擎收到 result，手机零感知
+// （不产生 pending 看护与迟到日志）。
+test('新反向请求由 companion 本地代答，不到达手机', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-localans-'));
+  const logs = [];
+  let pairingUrl = '';
+  const answersFile = path.join(dir, 'answers.jsonl');
+  const NL = String.fromCharCode(10);
+  const onDemandServer = [
+    "'use strict';",
+    'const fs = require("fs");',
+    `const answers = [];`,
+    `const q = (id, method) => process.stdout.write(JSON.stringify({ id, method, params: {} }) + String.fromCharCode(10));`,
+    `q('s-1', 'startup/storageState');`,
+    `q('s-2', 'process/mcpTelemetry');`,
+    `q('s-3', 'session/requestRuntimePreferences');`,
+    'let buf = "";',
+    'process.stdin.on("data", (d) => {',
+    '  buf += d.toString();',
+    '  let i;',
+    '  while ((i = buf.indexOf(String.fromCharCode(10))) !== -1) {',
+    '    const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);',
+    '    if (!line) continue;',
+    '    let f; try { f = JSON.parse(line); } catch { continue; }',
+    '    if (f.id != null && (f.result !== undefined || f.error !== undefined)) answers.push({ id: f.id, hasResult: f.result !== undefined });',
+    '    fs.writeFileSync(process.env.ANSWERS_FILE, answers.map((a) => a.id + ":" + (a.hasResult ? "result" : "error")).join(","));',
+    '  }',
+    '});',
+  ].join(NL);
+  process.env.ANSWERS_FILE = answersFile;
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: ['-e', onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => { delete process.env.ANSWERS_FILE; },
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  await waitFor(() => {
+    try { return fs.readFileSync(answersFile, 'utf8'); } catch { return false; }
+  }, 6000);
+  const answered = fs.readFileSync(answersFile, 'utf8');
+  assert.equal(answered, 's-1:result,s-2:result,s-3:result',
+    '三个白名单方法都必须由 companion 本地代答成功');
+  const leaked = client.messages.filter(
+    (m) => m.type === 'data' && m.payload.method
+      && ['startup/storageState', 'process/mcpTelemetry'].includes(m.payload.method));
+  assert.equal(leaked.length, 0, '白名单反向请求不得转发到手机');
+});
+
+// 版本锁（审查 P2-8）：未知基线的 runtime 显式 unsupported-version——
+// 「能启动」不等于「协议兼容」，升级必须先跑全量探针复核再更新基线。
+test('runtime 版本不在支持基线内：预检拒绝而非放行', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wzxclaw-version-lock-'));
+  const config = path.join(dir, 'v2-config.json');
+  fs.writeFileSync(config, JSON.stringify({
+    provider: { 'builtin:bigmodel-coding-plan': { options: { apiKey: 'test-token' } } },
+  }));
+  const futureRuntime = path.join(dir, 'future-zcode.cjs');
+  fs.writeFileSync(futureRuntime, [
+    "'use strict';",
+    "if (process.argv.includes('--version')) { process.stdout.write('zcode 99.99.99' + String.fromCharCode(10)); process.exit(0); }",
+    "process.stdout.write('unexpected invocation' + String.fromCharCode(10)); process.exit(0);",
+  ].join(String.fromCharCode(10)));
+  const result = await probeZcodeRuntime({
+    cwd: dir,
+    v2ConfigPath: config,
+    env: { ...process.env, ZCODE_BIN: futureRuntime },
+  });
+  assert.equal(result.category, 'unsupported-version');
+  assert.equal(result.version, '99.99.99');
+  assert.equal(result.detailCode, 'BASELINE_MISMATCH');
+  assert.equal(result.runtimeDescriptor, undefined, '拒绝时不得交付 runtime descriptor');
+  await delay(120);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

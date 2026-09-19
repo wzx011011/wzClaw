@@ -30,6 +30,35 @@ class ConnectionManager {
   static final ConnectionManager _instance = ConnectionManager._();
   static ConnectionManager get instance => _instance;
 
+  /// 连接代次：每次新建或断开 client 递增。多步操作（附件分块/下载分块/
+  /// git 两步查询）开始时固定请求入口、以代次校验存活——切换节点后旧操作
+  /// 绝不允许动态借用新连接（架构审查 P1-2）。
+  int _generation = 0;
+  int get connectionGeneration => _generation;
+
+  /// 多步操作专用：返回绑定当前连接的请求入口；未连接/未配对返回 null
+  /// （调用方回退原路径自然报错）。绑定后整个操作周期走同一 client，
+  /// 代次漂移（切节点/重连）即抛 StateError 终止操作。
+  Future<dynamic> Function(String method, [Map<String, dynamic>? params])?
+      boundRequester() {
+    final client = _client;
+    final generation = _generation;
+    if (client == null ||
+        _stateNow != WsConnectionState.connected ||
+        !client.paired) {
+      return null;
+    }
+    Future<dynamic> bound(String method, [Map<String, dynamic>? params]) async {
+      if (_generation != generation) {
+        throw StateError('节点已切换，多步操作终止');
+      }
+      if (!client.paired) throw StateError('节点连接已断开，操作终止');
+      return client.request(method, params);
+    }
+
+    return bound;
+  }
+
   /// 仅测试使用：构造独立实例（生产走 [instance] 单例）
   @visibleForTesting
   static ConnectionManager createForTest() => ConnectionManager._();
@@ -38,6 +67,16 @@ class ConnectionManager {
   ///（null = 生产直连）。测试借此计数建连、扮演 relay 服务端。
   @visibleForTesting
   static WebSocketChannel Function(Uri url)? debugSocketFactory;
+
+  /// 仅测试使用：注入 client 替身并递增代次（boundRequester 契约测试用；
+  /// 与真实路径一致：每次 attach 都代表一次新连接 = 新代次）
+  @visibleForTesting
+  void debugAttachClient(ZcodeRelayClient client) {
+    _client?.close();
+    _generation++;
+    _client = client;
+    _stateNow = WsConnectionState.connected;
+  }
 
   // ---- 对外流（签名与 f25b231 一致）----
 
@@ -134,6 +173,7 @@ class ConnectionManager {
     // 同一份推送流重复投进消息流（正文交错重复渲染），又占着 relay 的
     // probe 槽（重连风暴下 3 槽打满触发 CAPACITY 拒绝）
     _client?.close();
+    _generation++; // 新连接 = 新代次（在途多步操作的绑定入口随即失效）
     _setState(WsConnectionState.connecting);
     final client = ZcodeRelayClient(
       pairing: pairing,
@@ -354,6 +394,7 @@ class ConnectionManager {
   void disconnect() {
     _client?.close();
     _client = null;
+    _generation++; // 断开 = 新代次（在途多步操作的绑定入口随即失效）
     ZcodeChatStore.instance.detach();
     _selectedDesktopId = null;
     _selectedDesktopIdController.add(null);

@@ -203,6 +203,10 @@ class ZcodeChatStore extends ChangeNotifier {
   bool _sessionsLoading = false;
   bool _sessionsAutoLoaded = false;
 
+  /// 节点引擎代次（companion x/engine/generation 推送；null=尚未收到）。
+  /// 换代即作废全部会话物化/订阅（架构审查 P1-1）。
+  int? _engineGeneration;
+
   // ---- 视口与每会话容器 ----
 
   /// 视口纪元：切换/关闭递增；在途异步操作携带发起时纪元，不匹配即丢弃
@@ -384,6 +388,14 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 当前视口会话是否正被桌面端应用运行（-32004；ChatPage 显示状态条用）
   bool get remoteActiveElsewhere =>
       _activeState?.remoteActiveElsewhere ?? false;
+
+  /// 当前会话的上下文容量快照（0.16.9 state.updated contextUsage）。
+  /// 空闲快照不带该字段 → null，UI 回退 session/usage 视图。
+  ZcodeContextUsage? get activeContextUsage => _activeState?.contextUsage;
+
+  /// 当前会话的后台任务投影（官方「后台任务」徽章数据源）
+  List<Map<String, dynamic>> get activeBackgroundJobs =>
+      _activeState?.backgroundJobs ?? const [];
 
   bool get isWaitingForResponse => _activeState?.isWaitingForResponse ?? false;
 
@@ -706,7 +718,33 @@ class ZcodeChatStore extends ChangeNotifier {
 
     // 2. resume 激活（materialize）——忽略 messages 数组
     Map? resumeResult;
-    if (!state.materialized) {
+    var needResume = !state.materialized;
+    if (!needResume) {
+      // 物化标记可能是旧引擎的遗留（换代通知丢失/进程外 close 等兜底）：
+      // 轻量 read 探测存活，失败则降级重走 resume，不得跳过激活直接拉事件
+      // （架构审查 P1-1「重开跳过 resume」入口）。
+      try {
+        final probe = await client.request('session/read', {
+          'sessionId': sessionId,
+        });
+        if (state.epoch != epoch) return; // 旧纪元：丢弃
+        if (probe is Map) _applyReadMeta(state, probe);
+      } catch (e) {
+        if (!_viewportValid(sessionId, epoch)) return;
+        if (e is ZcodeRequestException && e.code == -32004) {
+          state.remoteActiveElsewhere = true;
+          state.isStreaming = false;
+          state.isWaitingForResponse = false;
+          _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
+              '桌面端回合结束后点"刷新"查看结果';
+          notifyListeners();
+          return;
+        }
+        state.materialized = false;
+        needResume = true;
+      }
+    }
+    if (needResume) {
       try {
         final result =
             await client.request('session/resume', {'sessionId': sessionId});
@@ -786,7 +824,45 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     _upsertOpenedListing(state);
     unawaited(_persistSession(state));
+    // 截断缓存联网补齐（审查 P2-10）：截断的旧消息在水位之前，尾窗拉取
+    // 永不重取；打开会话在线时按窗口回拉权威内容替换
+    if (_viewportValid(sessionId, epoch)) {
+      unawaited(_backfillTruncatedMessages(state, epoch));
+    }
     if (_viewportValid(sessionId, epoch)) notifyListeners();
+  }
+
+  /// 截断缓存补齐：以第一条截断项的前一项为锚做窗口回拉，同 protoId
+  /// 原位替换（权威 parts 原子取代），成功后清截断标记。失败保留标记，
+  /// 下次打开会话重试——尽力而为，不阻塞视口。
+  Future<void> _backfillTruncatedMessages(
+    ZcodeSessionState state,
+    int epoch,
+  ) async {
+    final client = _client;
+    if (client == null || !client.paired) return;
+    final first = state.items.indexWhere((e) => e.truncated && e.protoId != null);
+    if (first < 0) return;
+    final anchor = first > 0 ? state.items[first - 1].protoId : null;
+    final count =
+        state.items.where((e) => e.truncated && e.protoId != null).length;
+    try {
+      final result = await client.request('session/messages', {
+        'sessionId': state.sessionId,
+        if (anchor != null) 'afterMessageId': anchor,
+        'limit': count + 8,
+      });
+      final messages = result is Map ? result['messages'] as List? : null;
+      if (messages == null || messages.isEmpty) return;
+      _mergeServerMessages(state, {'messages': messages});
+      for (final e in state.items) {
+        if (e.truncated) e.truncated = false; // 权威替换后恢复完整
+      }
+      unawaited(_persistSession(state));
+      if (_isActive(state) && state.epoch == epoch) notifyListeners();
+    } catch (_) {
+      // 补齐失败保留截断标记（下次打开重试）；不影响已展示内容
+    }
   }
 
   /// resume 失败但有缓存内容时：确认会话是否已从服务端列表消失
@@ -873,15 +949,18 @@ class ZcodeChatStore extends ChangeNotifier {
           .where((e) => e.protoId != null)
           .map((e) => e.protoId!)
           .toSet();
-      var added = 0;
-      // 缓存按时间序返回：把视口尚未包含的更早消息插入头部
+      // 缓存按时间序返回：收集视口尚未包含的更早消息（从尾往头收集得到
+      // 新→旧，反转成时间序），头部插入收口到 state.prependHistory——
+      // 流式下标平移在那里统一处理（审查 P1-4）
+      final older = <ZcodeSessionItem>[];
       for (var i = cached.length - 1; i >= 0; i--) {
         final it = cached[i];
         final pid = it.protoId;
         if (pid == null || known.contains(pid)) continue;
-        state.items.insert(0, it);
-        added++;
+        known.add(pid);
+        older.add(it);
       }
+      final added = state.prependHistory(older.reversed.toList());
       if (added > 0) notifyListeners();
       return added;
     } catch (_) {
@@ -960,12 +1039,17 @@ class ZcodeChatStore extends ChangeNotifier {
     state.finalizeStreaming(); // 终结上一回合的占位（若有）
     state.resetTurnState();
     state.beginLocalTurn(); // 新回合代次：旧回合迟到的权威收尾不得越界
+    final turnGen = state.turnGeneration; // 本次发送的回合身份（审查 P1-3）
     state.appendLocalUserMessage(text);
     state.ensureStreamingPlaceholder();
     state.isStreaming = true;
     state.isWaitingForResponse = true;
     _error = null;
     notifyListeners();
+
+    // 回合越界守卫：发送在途期间用户可能已开始新回合（T2），迟到的拒绝/
+    // 异常回填不得收尾 T2（审查 P1-3「旧发送请求的错误回填新回合」）
+    bool staleTurn() => state.turnGeneration != turnGen;
 
     try {
       final result = await client.request(
@@ -976,8 +1060,9 @@ class ZcodeChatStore extends ChangeNotifier {
         // 业务拒绝（字符串 result，非 error 帧）。仅"模型不可用"类拒绝
         // （APP-SERVER.md 实测记录的唯一形态）走 setModel 自动兜底；
         // 其他字符串拒绝按原文提示，不擅自改桌面端会话配置
+        if (staleTurn()) return; // T2 已接管状态：丢弃本次迟到的拒绝
         if (result.contains('模型')) {
-          await _handleSendRejection(state, text, result);
+          await _handleSendRejection(state, text, result, turnGen: turnGen);
         } else {
           state.isStreaming = false;
           state.isWaitingForResponse = false;
@@ -993,7 +1078,15 @@ class ZcodeChatStore extends ChangeNotifier {
       // setModel 兜底
       if (e is ZcodeRequestException &&
           (e.code == -32031 || e.message.contains('模型'))) {
-        await _handleSendRejection(state, text, e.message);
+        if (staleTurn()) return;
+        await _handleSendRejection(state, text, e.message, turnGen: turnGen);
+        return;
+      }
+      if (staleTurn()) return; // 迟到异常：不得收尾新回合
+      if (e is! ZcodeRequestException) {
+        // 结果未知（超时/断开/网络错误——服务端可能已接受并继续执行）：
+        // 先核对权威状态再表达，不得直接宣布失败或鼓励重发（审查 P1-3）
+        await _resolveUnknownSendOutcome(state, e);
         return;
       }
       state.isWaitingForResponse = false;
@@ -1017,6 +1110,73 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// 发送结果未知（超时/断开/网络错误——不是服务端拒绝）：先读权威状态
+  /// 再表达，不得直接宣布失败或鼓励重发（审查 P1-3「结果未知 ≠ 失败」）。
+  /// - 服务端 running：回合已被接受并继续执行 → 保持流式占位；
+  /// - 服务端 idle：以权威刷新收敛（已完成的回合正常落位；若从未送达，
+  ///   乐观消息被权威真相替换——单一真相原则）；
+  /// - 查询也失败：保留占位并明示「结果未知」，等重连确认流程收尾。
+  Future<void> _resolveUnknownSendOutcome(
+    ZcodeSessionState state,
+    Object cause,
+  ) async {
+    final client = _client;
+    if (client == null || !client.paired) {
+      state.isWaitingForResponse = false;
+      if (_isActive(state)) {
+        _error = '网络中断：发送结果未知。回合若已开始将继续在节点上运行，'
+            '重连后自动确认状态';
+        notifyListeners();
+      }
+      return;
+    }
+    try {
+      final read = await client.request('session/read', {
+        'sessionId': state.sessionId,
+      });
+      final proj = read is Map ? read['projection'] : null;
+      final status = proj is Map ? proj['status']?.toString() : null;
+      if (status == 'running') {
+        // 已接受：占位保持，恢复推送/轮询管线
+        state.isWaitingForResponse = false;
+        state.remoteActiveElsewhere = false;
+        await _ensureSubscribed(state);
+        if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
+          _startFallbackPollingFor(state.sessionId);
+        } else if (state.isStreaming) {
+          _armPushWatchdog(state);
+        }
+        if (_isActive(state)) {
+          state.insertHeadNotice('（网络中断期间发送的回合仍在运行）');
+          _error = null;
+          notifyListeners();
+        }
+        return;
+      }
+      if (status == 'idle') {
+        // 回合已结束（或从未送达）：权威刷新收敛到服务端真相
+        state.isWaitingForResponse = false;
+        state.isStreaming = false;
+        state.finalizeStreaming();
+        await _refreshAuthoritative(state);
+        _notifyIfActive(state);
+        return;
+      }
+      // 未知状态（含 read 形状异常）：保守保留占位 + 明示未知
+      state.isWaitingForResponse = false;
+      if (_isActive(state)) {
+        _error = '发送结果未知（状态：$status），请稍后刷新确认';
+        notifyListeners();
+      }
+    } catch (_) {
+      state.isWaitingForResponse = false;
+      if (_isActive(state)) {
+        _error = '网络中断：发送结果未知，回合状态待重连后确认';
+        notifyListeners();
+      }
+    }
+  }
+
   /// session/send「模型不可用」拒绝（字符串 result 或错误帧 -32031）：
   /// 用缓存的可用模型走共享自愈尾段（zcode_model_heal.dart：setModel →
   /// close → resume 重新物化 → 重发；probe-modelheal4 真链路验证时序，
@@ -1024,8 +1184,11 @@ class ZcodeChatStore extends ChangeNotifier {
   Future<void> _handleSendRejection(
     ZcodeSessionState state,
     String text,
-    String reason,
-  ) async {
+    String reason, {
+    int? turnGen,
+  }) async {
+    // 迟到的拒绝回填不得收尾新回合（审查 P1-3）
+    if (turnGen != null && state.turnGeneration != turnGen) return;
     final client = _client;
     var attempted = false;
     var healError = '发送失败：$reason';
@@ -1043,7 +1206,8 @@ class ZcodeChatStore extends ChangeNotifier {
           reason: reason,
         );
         if (error == null) {
-          // 已恢复：继续走流式
+          // 已恢复：继续走流式（期间可能已换代：换代即丢弃，T2 已接管）
+          if (state.turnGeneration != turnGen) return;
           _error = null;
           await _ensureSubscribed(state);
           if (state.isStreaming && !state.pushAvailable && _isActive(state)) {
@@ -1057,6 +1221,7 @@ class ZcodeChatStore extends ChangeNotifier {
         healError = error;
       }
     }
+    if (turnGen != null && state.turnGeneration != turnGen) return;
     state.isStreaming = false;
     state.isWaitingForResponse = false;
     state.finalizeStreaming();
@@ -1131,6 +1296,15 @@ class ZcodeChatStore extends ChangeNotifier {
     } catch (e) {
       _fail('关闭会话失败: $e');
       return;
+    }
+    // close 成功 = 该会话在本引擎已释放（引擎无 delete，记录仍在列表）：
+    // 必须作废物化/订阅，否则重开会话会跳过 resume，向已关闭会话拉事件
+    // （架构审查 P1-1 的 session/close 入口）。
+    final closed = _states[sessionId];
+    if (closed != null) {
+      closed.materialized = false;
+      closed.subscribed = false;
+      closed.lastSeq = 0;
     }
     if (_activeSessionId == sessionId) closeSessionView();
     await refreshSessions();
@@ -1511,7 +1685,44 @@ class ZcodeChatStore extends ChangeNotifier {
       case 'v4/telemetry/event':
         _handleTelemetry(params);
         return;
+      case 'x/engine/generation':
+        _handleEngineGeneration(params);
+        return;
     }
+  }
+
+  /// 引擎代次（companion 在 app-server 首次 spawn 与每次 respawn 时推送）。
+  /// 换代必须显式作废全部会话的物化/订阅/事件水位——「relay 连着」不代表
+  /// 「会话还在同一引擎运行」（架构审查 P1-1）：新进程既无旧激活也无旧订阅，
+  /// 保留 materialized/subscribed 会让重开/看门狗继续向死状态操作。
+  void _handleEngineGeneration(Map params) {
+    final raw = params['generation'];
+    final generation = raw is int ? raw : int.tryParse('$raw');
+    if (generation == null) return;
+    final previous = _engineGeneration;
+    _engineGeneration = generation;
+    if (previous == null || previous == generation) return; // 首见 / 未换代
+    var invalidated = 0;
+    for (final state in _states.values) {
+      final hadLive = state.materialized ||
+          state.subscribed ||
+          state.isStreaming ||
+          state.isWaitingForResponse;
+      if (!hadLive) continue;
+      invalidated++;
+      state.materialized = false;
+      state.subscribed = false;
+      state.lastSeq = 0; // 旧引擎的 eventSeq 空间作废，重新物化后从头补放
+      if (state.isStreaming || state.isWaitingForResponse) {
+        state.isStreaming = false;
+        state.isWaitingForResponse = false;
+        state.insertHeadNotice('（引擎已重启：上一回合状态未知，重新打开会话以恢复）');
+      }
+      _stopFallbackPollingFor(state.sessionId);
+    }
+    debugPrint('[zcode-store] 引擎换代 $previous→$generation：'
+        '作废 $invalidated 个会话的物化/订阅');
+    notifyListeners();
   }
 
   /// state.updated 补丁：status running/idle、模型可用列表缓存；
@@ -1523,9 +1734,23 @@ class ZcodeChatStore extends ChangeNotifier {
     // 路由到对应容器，后台会话的补丁不串视口（#12）
     final modelPatch = patch['model'];
     _cacheModelCatalog(modelPatch);
+
     final sid = _nonEmpty(params['sessionId']);
     final state = sid == null ? _activeState : _states[sid];
     if (state != null) _applyCurrentModelRef(state, modelPatch);
+    // 上下文容量快照（0.16.9 state.updated contextUsage；兼容 patch 层与
+    // 快照顶层两种取值路径，schema 见 APP-SERVER.md OQ1 定论）
+    final contextUsageRaw = patch['contextUsage'] ?? params['contextUsage'];
+    final contextUsage = ZcodeContextUsage.fromEngineJson(contextUsageRaw);
+    if (contextUsage != null && state != null) state.contextUsage = contextUsage;
+    // 后台任务投影（0.16.9）：整体替换，元素形状见 state 字段注释
+    final bgJobs = patch['backgroundJobs'];
+    if (bgJobs is List && state != null) {
+      state.backgroundJobs = bgJobs
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: false);
+    }
     final status = _nonEmpty(patch['status']);
 
     if (state == null) {
@@ -2280,6 +2505,21 @@ class ZcodeChatStore extends ChangeNotifier {
         }
         return;
       }
+      // 有回合在途：核对回合身份（审查 P1-3 终端事件入口）。仅在能确定
+      // 当前在途回合是「另一个」turnId 时判陈旧（本地新回合已发起但
+      // turn.started 未到的窗口里 lastSeenTurnId 为 null，无法证明身份，
+      // 保持原收尾路径；该窗口由 turn.started 随后到达自愈）——旧回合的
+      // 迟到终态只补权威数据，绝不解除当前回合的流式状态。
+      // finishTurn:false：补拉发生在当前回合在途时，若默认按发起时代次
+      // 收尾，恰好等于当前代次会把 T2 错误判空闲。
+      final currentTurnId = state.lastSeenTurnId;
+      if (currentTurnId != null && currentTurnId != turnId) {
+        if ((authoritativeText != null && authoritativeText.isNotEmpty) ||
+            usage != null) {
+          unawaited(_refreshAuthoritative(state, finishTurn: false));
+        }
+        return;
+      }
     }
     _stopFallbackPollingFor(state.sessionId);
     state.isStreaming = false;
@@ -2884,6 +3124,23 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// 调用轨迹（session/debug；引擎进程内快照——仅当前进程执行的模型请求
+  /// 可见，引擎重启后历史轨迹不可回放）。返回 rounds 元素列表。
+  Future<List<Map<String, dynamic>>> debugRounds(String sessionId) async {
+    final client = _client;
+    if (client == null || !client.paired) {
+      throw Exception('未连接 ZCode');
+    }
+    final result =
+        await client.request('session/debug', {'sessionId': sessionId});
+    final rounds = result is Map ? result['rounds'] : null;
+    if (rounds is! List) return const [];
+    return [
+      for (final r in rounds)
+        if (r is Map) Map<String, dynamic>.from(r),
+    ];
+  }
+
   /// 分叉当前会话（session/fork；要求会话已有 workspace 检查点，
   /// 否则 -32603 INVALID_STATE_TRANSITION）。成功后刷新列表并打开副本。
   Future<bool> forkSession() async {
@@ -3177,13 +3434,60 @@ class ZcodeChatStore extends ChangeNotifier {
         'sessionId': sessionId,
         'limit': 100,
       });
+      state.pollFailureCount = 0;
       if (result is Map && result['events'] is List) {
         for (final ev in result['events'] as List) {
           if (ev is Map) _applySessionEvent(state, ev);
         }
       }
-    } catch (_) {
-      // 轮询失败静默，下一轮重试
+    } catch (e) {
+      if (e is ZcodeRequestException && e.code == -32004) {
+        // 会话已被其他运行时占用（运行时单归属，非故障）：停止轮询且不得
+        // 重新物化抢占用，置占用标记交 UI 呈现（审查 P1-1 恢复方向）
+        state.remoteActiveElsewhere = true;
+        _stopFallbackPolling();
+        if (_isActive(state)) notifyListeners();
+        return;
+      }
+      // 轮询失败：连续达到阈值说明会话在当前引擎已不健康（重启/被 close），
+      // 作废物化并自动重建，而不是无限静默重试（审查 P1-1）
+      state.pollFailureCount++;
+      if (state.pollFailureCount >= 3) {
+        state.pollFailureCount = 0;
+        _stopFallbackPolling();
+        unawaited(_rematerializeAfterPollFailure(state));
+      }
+    }
+  }
+
+  /// 降级轮询连续失败后的自动重新物化：resume → 订阅 → 权威刷新。
+  /// -32004（被其他运行时占用）按单归属语义呈现，不抢。
+  Future<void> _rematerializeAfterPollFailure(ZcodeSessionState state) async {
+    final client = _client;
+    if (client == null || !client.paired) return;
+    state.materialized = false;
+    state.subscribed = false;
+    state.pushAvailable = true;
+    state.lastSeq = 0;
+    try {
+      await client.request('session/resume', {'sessionId': state.sessionId});
+      state.remoteActiveElsewhere = false;
+      state.materialized = true;
+      await _ensureSubscribed(state);
+      unawaited(_refreshAuthoritative(state));
+      if (_isActive(state)) {
+        state.insertHeadNotice('（与引擎的会话连接已重新建立）');
+        notifyListeners();
+      }
+    } catch (e) {
+      if (e is ZcodeRequestException && e.code == -32004) {
+        state.remoteActiveElsewhere = true;
+        state.isStreaming = false;
+        state.isWaitingForResponse = false;
+        if (_isActive(state)) notifyListeners();
+        return;
+      }
+      // 仍失败：保持未物化，下次进入会话/刷新时走完整恢复流程
     }
   }
 

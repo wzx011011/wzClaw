@@ -33,8 +33,28 @@ const safeError = (code) => Object.assign(new Error(code), { code });
 // 正常恢复路径，同时阻止无换行坏流吃尽常驻进程内存。
 const MAX_NDJSON_BUFFER = 32 * 1024 * 1024;
 
+// 已验证 runtime 协议基线（架构审查 P2-8 版本锁）：预检只接受这些前缀的
+// 版本。0.16.9 全量接口面实测（probe-surface-0169）钉在 0.16 线上；官方
+// 升级后必须先跑全量探针复核契约，再把新前缀加进来——预检对未知版本
+// 显式 unsupported-version，不做「能启动就算兼容」的假设。
+const SUPPORTED_RUNTIME_PREFIXES = ['0.16.'];
+
 const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
 const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
+
+// companion 本地代答的反向请求白名单（0.16.9 新增面，probe-surface-0169 /
+// probe-storagestate 实测）：
+// - session/requestRuntimePreferences：运行时偏好，固定关闭搜索增强；
+// - startup/storageState：会话数据库外置化握手，答 {} = 宿主不持存储态，
+//   引擎自行新建库（对照实验：答与不答 create 均完整，引擎不等应答）；
+// - process/mcpTelemetry：MCP 遥测通知应答，载荷无处消费。
+// 不代答的后果：转发手机 → 120s 长档超时 → -32022，且每次引擎启动
+// storageState 5 连发会在手机端积累 pending 看护与 phone-response-late 日志。
+const LOCALLY_ANSWERED_REVERSE = {
+  [RUNTIME_PREFERENCES_METHOD]: RUNTIME_PREFERENCES_RESULT,
+  'startup/storageState': {},
+  'process/mcpTelemetry': {},
+};
 
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
 // 必须与 runtime 预检复用同一解析结果，否则预检与长期 bridge 的运行时宿主可能不一致。
@@ -167,6 +187,11 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
   if (!version.ok) return { category: version.code === 'ENOENT' ? 'not-installed' : 'version-failed', source: resolved.source, version: null, detailCode: version.code };
   const versionText = (version.versionText || version.stdout).match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
   if (!versionText) return { category: 'version-failed', source: resolved.source, version: null, detailCode: 'BAD_VERSION' };
+  // 版本锁（架构审查 P2-8）：健康探针只能证明可启动，不能证明协议兼容——
+  // 未知前缀显式拒绝，要求先跑探针复核并更新基线
+  if (!SUPPORTED_RUNTIME_PREFIXES.some((prefix) => versionText.startsWith(prefix))) {
+    return { category: 'unsupported-version', source: resolved.source, version: versionText, detailCode: 'BASELINE_MISMATCH' };
+  }
   const doctor = await runRuntimeCommand(resolved, ['doctor'], { timeoutMs: 10000, env });
   if (!doctor.ok) {
     return { category: 'doctor-failed', source: resolved.source, version: versionText,
@@ -220,13 +245,20 @@ function derivePairingUrl(relayUrl, sid, hash) {
 // app-server stdio 桥：按行分帧，崩溃自动重启（上限 + 退避）。
 class AppServerBridge {
   constructor({ command, args, cwd, env, logger, onDead, maxRestarts = 5, restartDelayMs = 1000,
-    restartWindowMs = 5 * 60 * 1000 }) {
-    this.command = command; this.args = args; this.cwd = cwd; this.env = env;
+    restartWindowMs = 5 * 60 * 1000, stableAliveMs = 60 * 1000 }) {
+    this.command = command; this.args = args; this.cwd = cwd;
+    // env 支持工厂函数（审查 P2-7）：每次 spawn 现读认证与套餐 overlay，
+    // respawn 不再复用构造期快照（「认证存储更新后重启仍用旧值」缺陷）
+    this.envProvider = typeof env === 'function' ? env : () => env;
     this.logger = logger || (() => {});
     this.maxRestarts = maxRestarts; this.restartDelayMs = restartDelayMs;
     // 预算按时间滑窗计（默认 5 分钟 5 次）：固定计数 + 每帧重置预算会被
     // 「崩溃循环 + 持续手机流量」打成约 1 次/秒的无限快拉。
     this.restartWindowMs = restartWindowMs; this.restartTimes = [];
+    // 稳定运行证据阈值（审查 P2-7）：本代存活满阈值后死亡视为偶发而非
+    // 崩溃循环，预算清零重新起算——替代旧「每帧写入成功即清预算」（那会
+    // 被「崩溃循环 + 持续手机流量」打成约 1 次/秒的无限快拉）
+    this.stableAliveMs = stableAliveMs; this.spawnedAt = 0;
     this.child = null; this.buffer = '';
     // onDead 必须从选项取：此前构造器忽略它导致预算耗尽回调永不触发，
     // 宿主永远看不到 app-server-dead 状态（回归锚：companion.test 连崩用例）
@@ -242,11 +274,20 @@ class AppServerBridge {
     // stdio 黑洞——进程活着但不吐任何帧（2026-09-17 实测 session/list 35s
     // 超时、gate 预检静默 EXIT_1）；detached 给子进程独立进程组后消失。
     // node CLI 父进程下该标志无副作用。宿主 GUI 关闭时 stop() 会显式杀子进程。
+    const env = this.envProvider();
+    if (!env) {
+      // 认证环境暂不可读（桌面正在重写 config 等）：定延迟重试，不计入
+      // 崩溃预算——这不是引擎故障，烧预算会让可恢复的认证空窗变 dead
+      this.logger('appserver-env-missing', '');
+      setTimeout(() => { if (!this.stopped && this.child === null) this.spawnChild(); },
+        this.restartDelayMs).unref();
+      return;
+    }
     const child = spawn(this.command, [...this.args, 'app-server', '--cwd', this.cwd], {
-      cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: this.env,
+      cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env,
       detached: true, windowsHide: true,
     });
-    this.child = child; this.buffer = '';
+    this.child = child; this.buffer = ''; this.spawnedAt = Date.now();
     // setEncoding 让 Node 在流层面按 UTF-8 边界解码：多字节中文跨 chunk 时
     // 不会各译各的产生 U+FFFD（坏行被静默丢弃或乱码透传到手机）。
     child.stdout.setEncoding('utf8');
@@ -270,6 +311,13 @@ class AppServerBridge {
     });
     child.on('exit', (code, signal) => {
       if (this.child === child) this.child = null;
+      // 稳定运行证据：存活满阈值后死亡是偶发（引擎升级/机器休眠等），
+      // 清空崩溃预算重新起算
+      const aliveMs = this.spawnedAt > 0 ? Date.now() - this.spawnedAt : 0;
+      if (aliveMs >= this.stableAliveMs) {
+        this.restartTimes = [];
+        this.logger('appserver-stable-run', `aliveMs=${aliveMs}`);
+      }
       this.scheduleRestart(code, signal);
     });
     // 新进程的 server-N 反向请求 id 从头计数：通知宿主作废旧 pending 看护，
@@ -320,7 +368,6 @@ class AppServerBridge {
     this.child.stdin.write(line);
     return true;
   }
-  resetRestartBudget() { this.restartTimes = []; }
   stop() {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
@@ -366,6 +413,7 @@ function createCompanion(options = {}) {
     bridgeCooldownMs = 30000,
     // 桥重启预算参数（透传 AppServerBridge，可注入供测试）
     bridgeMaxRestarts = 5, bridgeRestartDelayMs = 1000, bridgeRestartWindowMs = 5 * 60 * 1000,
+    bridgeStableAliveMs = 60 * 1000,
     // 套餐模型拉取函数（lib/plan-overlay.fetchPlanModelIds）。默认关闭：
     // 仅 GUI 壳与 CLI 入口显式传入启用；测试不传即零网络依赖。
     planModelFetch = null,
@@ -553,29 +601,32 @@ function createCompanion(options = {}) {
       log('bridge-waiting-runtime', '');
       return;
     }
-    let token;
-    try { token = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
-    catch (error) {
-      // 不置位 bridgeStarted：token 读取失败可能是瞬时的（桌面正在重写 config /
-      // 用户尚未登录），下一次手机帧自然重试，而非永久禁用直到进程重启。
-      log('model-auth-missing', error.code);
-      return;
-    }
+    // 桥环境工厂（审查 P2-7）：每次 spawn 现读认证与套餐 overlay——respawn
+    // 复用构造期快照会让「认证存储更新后重启仍用旧值」。读失败复用上一份
+    // 好环境（瞬时写窗/未登录不空转）；从未成功返回 null（保持原「不置位
+    // bridgeStarted，下次手机帧重试」语义）。
+    let lastGoodBridgeEnv = null;
+    const buildBridgeEnv = () => {
+      try {
+        const freshToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json'));
+        let planEnv = null;
+        if (planModelIds && planModelIds.length) {
+          try {
+            const baseRaw = fs.readFileSync(defaultPersonalConfigPath(), 'utf8');
+            planEnv = { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: writePlanOverlay({ overlay: buildPlanOverlay({ baseRaw, modelIds: planModelIds, token: freshToken }), stateDir: statePaths.stateDir }) };
+          } catch (error) {
+            log('plan-overlay-failed', error.code || '');
+          }
+        }
+        lastGoodBridgeEnv = runtimeProcessEnv(resolved, { ...process.env, ANTHROPIC_API_KEY: freshToken, ...planEnv });
+      } catch (error) {
+        log('model-auth-missing', error.code);
+      }
+      return lastGoodBridgeEnv;
+    };
+    if (!buildBridgeEnv()) return;
     bridgeStarted = true;
     bridgeDead = false;
-    // 套餐 overlay：清单就绪时基于桌面个人配置生成副本并注入 env（0600，
-    // 含套餐 key）。未就绪/失败时 null → 退回现状目录，不阻塞起桥。
-    let planEnv = null;
-    if (planModelIds && planModelIds.length) {
-      try {
-        let baseRaw = null;
-        try { baseRaw = fs.readFileSync(defaultPersonalConfigPath(), 'utf8'); } catch { /* 空骨架起步 */ }
-        const overlay = buildPlanOverlay({ baseRaw, modelIds: planModelIds, token });
-        planEnv = { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: writePlanOverlay({ overlay, stateDir: statePaths.stateDir }) };
-      } catch (error) {
-        log('plan-overlay-failed', error.code || '');
-      }
-    }
     bridge = new AppServerBridge({
       command: resolved.command, args: resolved.args, cwd,
       // 统一经 runtimeProcessEnv：Electron 壳内注入 ELECTRON_RUN_AS_NODE（否则
@@ -583,10 +634,10 @@ function createCompanion(options = {}) {
       // CHROME_/ELECTRON_ 内部变量（crashpad 管道串扰）。ZCODE_* 必须保留——
       // 桌面端为子进程设置的 ZCODE_BUILTIN_PROVIDER_CONFIG_FILE 等是必需配置，
       // 剥掉会让 runtime 因「无法定位 Built-in Provider Config」直接退 1
-      // （2026-09-17 实测矩阵）。
-      env: runtimeProcessEnv(resolved, { ...process.env, ANTHROPIC_API_KEY: token, ...planEnv }),
+      // （2026-09-17 实测矩阵）。env 传工厂：respawn 现读（见上）。
+      env: buildBridgeEnv,
       maxRestarts: bridgeMaxRestarts, restartDelayMs: bridgeRestartDelayMs,
-      restartWindowMs: bridgeRestartWindowMs,
+      restartWindowMs: bridgeRestartWindowMs, stableAliveMs: bridgeStableAliveMs,
       logger: (event, detail) => log(event, detail),
       onDead: () => {
         // 重启预算耗尽：记冷却起点，冷却内手机帧不重试；冷却后下一帧整体重试。
@@ -605,10 +656,15 @@ function createCompanion(options = {}) {
       // 本地扩展请求同样作废（等价语义：旧进程的应答不会再有）
       for (const entry of localPending.values()) { clearTimeout(entry.timer); entry.resolve(null); }
       localPending.clear();
+      // 引擎换代必须让手机端知道：relay 链路未断，但新进程已丢失旧进程内的
+      // 激活/订阅状态——手机端收到后作废全部会话的物化/订阅/事件水位。
+      // 未配对时静默丢弃（sendToPhone 门禁）：手机下次配对自然全新物化。
+      sendToPhone({ method: 'x/engine/generation', params: { generation: bridgeGeneration } });
     };
     bridge.start();
     bridgeGeneration++; // 新桥实例 = 新代次（子进程 id 空间全新）
     log('bridge-started', `generation=${bridgeGeneration}`);
+    sendToPhone({ method: 'x/engine/generation', params: { generation: bridgeGeneration } });
     onStateChange(currentState()); // 桥真实就绪才报 paired（评审 #18）
   }
 
@@ -651,8 +707,8 @@ function createCompanion(options = {}) {
     // 本地扩展请求的应答（x/model/* 等经桥请求）：不透传给手机
     if (frame.id != null && !frame.method && feedLocalResponse(frame)) return;
     if (frame.method && frame.id != null) {
-      if (frame.method === RUNTIME_PREFERENCES_METHOD) {
-        bridge.write({ id: frame.id, result: RUNTIME_PREFERENCES_RESULT });
+      if (Object.prototype.hasOwnProperty.call(LOCALLY_ANSWERED_REVERSE, frame.method)) {
+        bridge.write({ id: frame.id, result: LOCALLY_ANSWERED_REVERSE[frame.method] });
         return;
       }
       const nativeId = frame.id;
@@ -664,11 +720,31 @@ function createCompanion(options = {}) {
           bridge.write({ id: entry.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
         }
       }, timeoutMs).unref();
-      pending.set(wireId, { timer, nativeId, gen: bridgeGeneration });
-      sendToPhone({ ...frame, id: wireId });
+      // 未决反向请求保存完整载荷与送达状态（审查 P2-6）：手机离席时
+      // sendToPhone 被门禁丢弃，但条目留在 pending——手机回席统一补投，
+      // 不再让「离席期间产生的权限」无声丢失到 120s 看护超时。
+      const entry = { timer, nativeId, gen: bridgeGeneration, delivered: false, frame: { ...frame, id: wireId } };
+      pending.set(wireId, entry);
+      deliverReverse(entry);
       return;
     }
     sendToPhone(frame);
+  }
+
+  // 反向请求送达：手机在席才真正出站；离席时保留未送达标记，回席补投。
+  // 只补投「从未送达」的条目——已送达的重复投递会让手机端旧挂起 completer
+  // 被拒绝（=向引擎代答拒绝），绝不允许。
+  function deliverReverse(entry) {
+    if (!matchedUp) return;
+    entry.delivered = true;
+    sendToPhone(entry.frame);
+  }
+
+  // 手机回席：补投全部未送达的未决反向请求（wireId 顺序即产生顺序）
+  function flushUndeliveredReverse() {
+    for (const entry of pending.values()) {
+      if (!entry.delivered) deliverReverse(entry);
+    }
   }
 
   // 手机 → app-server。
@@ -719,9 +795,10 @@ function createCompanion(options = {}) {
       }
       return;
     }
-    if (bridge.write(frame)) {
-      bridge.resetRestartBudget();
-    } else if (frame.method && frame.id != null && matchedUp) {
+    // 不再按「写入成功」清重启预算（审查 P2-7）：那会被崩溃循环期间的
+    // 正常手机流量持续重置，预算永远烧不完；预算恢复只能来自
+    // stableAliveMs 的稳定运行证据。
+    if (!bridge.write(frame) && frame.method && frame.id != null && matchedUp) {
       // 静默丢弃=缺陷（铁律 4）：引擎重启窗口/帧超限的写入失败必须有应答，
       // 手机端才能立即报错，而不是干等自身超时。
       log('bridge-write-dropped', String(frame.id));
@@ -1078,6 +1155,67 @@ function createCompanion(options = {}) {
             removed: s.removed + u.removed,
             files: s.files + u.files,
           } });
+          return;
+        }
+        case 'x/git/filediff': {
+          // 审查 sheet 按文件 diff（对齐官方审查标签）：staged/unstaged 二选一。
+          // path 必填且为单文件；--find-renames 保持与 diffstat 同口径。
+          // 返回 unified patch 原文（截断到 128KB 防单文件巨型生成物撑爆 1MiB 帧）。
+          const params = frame.params || {};
+          const dir = validateDir(params.path);
+          const file = params.file;
+          if (typeof file !== 'string' || !file.trim() || file.includes('\n')) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const staged = params.staged === true;
+          const args = ['diff', ...(staged ? ['--cached'] : []), '--find-renames', '--', file.trim()];
+          const out = await spawnGit(args, dir);
+          const MAX_DIFF = 128 * 1024;
+          const truncated = Buffer.byteLength(out, 'utf8') > MAX_DIFF;
+          reply({ id: frame.id, result: {
+            file: file.trim(),
+            staged,
+            patch: truncated ? Buffer.from(out, 'utf8').subarray(0, MAX_DIFF).toString('utf8') : out,
+            truncated,
+          } });
+          return;
+        }
+        case 'x/git/changedfiles': {
+          // 审查 sheet 文件列表：staged/unstaged 的 numstat 明细（含每文件增删）。
+          const params = frame.params || {};
+          const dir = validateDir(params.path);
+          const staged = params.staged === true;
+          const out = await spawnGit(
+            ['diff', ...(staged ? ['--cached'] : []), '--numstat', '--find-renames'], dir);
+          const files = [];
+          for (const line of out.split('\n')) {
+            if (!line.trim()) continue;
+            const cols = line.split('	');
+            if (cols.length < 3) continue;
+            const a = Number.parseInt(cols[0], 10);
+            const r = Number.parseInt(cols[1], 10);
+            files.push({
+              path: cols.slice(2).join('	'),
+              added: Number.isNaN(a) ? null : a, // 二进制文件为 null
+              removed: Number.isNaN(r) ? null : r,
+            });
+          }
+          reply({ id: frame.id, result: { files, staged } });
+          return;
+        }
+        case 'x/git/restore': {
+          // 撤销更改（危险操作，手机端 UI 双确认后才调用）：
+          // staged=true → git restore --staged --worktree -- <file>（整体撤销）；
+          // 否则只撤工作区。单文件；路径白名单无 shell。
+          const params = frame.params || {};
+          const dir = validateDir(params.path);
+          const file = params.file;
+          if (typeof file !== 'string' || !file.trim() || file.includes('\n')) {
+            throw safeError('X_BAD_PARAMS');
+          }
+          const args = ['restore', ...(params.staged === true ? ['--staged', '--worktree'] : ['--worktree']), '--', file.trim()];
+          await spawnGit(args, dir);
+          reply({ id: frame.id, result: { ok: true, file: file.trim(), staged: params.staged === true } });
           return;
         }
         case 'x/fs/exists': {
@@ -1528,7 +1666,7 @@ function createCompanion(options = {}) {
         authStage = 'authenticated';
         reattaching = false; // 接管握手完成：后续错误帧不再按"接管被拒"烧凭据
         matchedUp = msg.pair_status === 'matched';
-        if (msg.pair_status === 'matched') { startBridge(); onStateChange(currentState()); }
+        if (msg.pair_status === 'matched') { startBridge(); flushUndeliveredReverse(); onStateChange(currentState()); }
         else onStateChange('waiting-pairing');
         return;
       }
@@ -1536,7 +1674,7 @@ function createCompanion(options = {}) {
         if (authStage !== 'authenticated') return;
         if (!['matched', 'waiting'].includes(msg.pair_status)) { conn.close(); return; }
         matchedUp = msg.pair_status === 'matched';
-        if (msg.pair_status === 'matched') { startBridge(); onStateChange(currentState()); }
+        if (msg.pair_status === 'matched') { startBridge(); flushUndeliveredReverse(); onStateChange(currentState()); }
         else onStateChange('waiting-pairing');
         return;
       }

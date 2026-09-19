@@ -34,6 +34,7 @@ class ZcodeSessionItem {
     this.protoId,
     this.turnId,
     this.synced = false,
+    this.truncated = false,
     this.dirty = true,
   });
 
@@ -51,6 +52,58 @@ class ZcodeSessionItem {
 
   /// 是否有待写入本地缓存的变更（增量持久化，避免每次全量重写）
   bool dirty;
+
+  /// 本地缓存副本发生截断（内容不完整；身份仍 synced）。持久化标记，
+  /// 联网后按窗口回拉权威内容替换（审查 P2-10）。
+  bool truncated;
+}
+
+/// 上下文容量快照（state.updated 的 contextUsage 可选字段，0.16.9 实测
+/// schema 见 APP-SERVER.md「上下文容量与任务元数据协议源」节）。
+/// 官方「上下文容量」浮层同源数据：进度条（used/size）+ 分类占比 +
+/// 平均缓存命中率。空闲会话快照不带该字段（prompt 构建时才计算）。
+class ZcodeContextUsage {
+  const ZcodeContextUsage({
+    required this.used,
+    required this.size,
+    this.cacheHitRate,
+    required this.breakdown,
+  });
+
+  final int used;
+  final int size;
+
+  /// 平均缓存命中率（0..1；nullable = 引擎未提供）
+  final double? cacheHitRate;
+
+  /// 分类字符占比（source 为引擎枚举原值，中文标签由 UI 词典映射：
+  /// system_prompt=系统提示词、skills=技能、system_tool_schemas=系统工具、
+  /// mcp_tool_schemas=MCP 工具、messages=消息、meta_user_context/tool_prompt=其他）
+  final List<({String source, int chars})> breakdown;
+
+  static ZcodeContextUsage? fromEngineJson(Object? raw) {
+    if (raw is! Map) return null;
+    final used = raw['used'];
+    final size = raw['size'];
+    if (used is! num || size is! num || size <= 0) return null;
+    final cache = raw['cache'];
+    final hitRate = cache is Map ? cache['hitRate'] : null;
+    final breakdown = <({String source, int chars})>[];
+    final rawBreakdown = raw['breakdown'];
+    if (rawBreakdown is List) {
+      for (final e in rawBreakdown) {
+        if (e is Map && e['source'] is String && e['chars'] is num) {
+          breakdown.add((source: e['source'] as String, chars: (e['chars'] as num).toInt()));
+        }
+      }
+    }
+    return ZcodeContextUsage(
+      used: used.toInt(),
+      size: size.toInt(),
+      cacheHitRate: hitRate is num ? hitRate.toDouble() : null,
+      breakdown: breakdown,
+    );
+  }
 }
 
 /// 每会话状态容器：消息、去重集合、游标与回合状态。
@@ -92,6 +145,18 @@ class ZcodeSessionState {
 
   /// 推送通道是否可用（session/subscribe 失败 → 降级轮询）
   bool pushAvailable = true;
+
+  /// 降级轮询连续失败计数（成功清零；达阈值触发重新物化，审查 P1-1）
+  int pollFailureCount = 0;
+
+  /// 上下文容量快照（state.updated contextUsage；空闲快照不带 → null）
+  ZcodeContextUsage? contextUsage;
+
+  /// 后台任务投影（state.updated backgroundJobs；元素形状：taskId/kind
+  /// [bash|subagent|workflow]/status[running|completed|failed|timed_out|
+  /// cancelled|spawn_error|lost]/command?/description?/cancellable?，
+  /// 0.16.9 静态 schema 实测）。整体替换语义。
+  List<Map<String, dynamic>> backgroundJobs = [];
 
   /// 最近一次 openSession 的纪元（旧纪元的在途结果丢弃）
   int epoch = 0;
@@ -218,9 +283,12 @@ class ZcodeSessionState {
   }
 
   /// 本地发送开启新回合（turnId 未知的乐观路径；服务端 turn.started
-  /// 随后到达会再计一次——代次只用于「是否前进」比较，多计无害）
+  /// 随后到达会再计一次——代次只用于「是否前进」比较，多计无害）。
+  /// 清空 lastSeenTurnId：本地新回合尚未取得服务端 turnId，此窗口内
+  /// 旧回合的迟到 turn.completed 不得凭「有回合在途」终结它（审查 P1-3）
   void beginLocalTurn() {
     turnGeneration++;
+    lastSeenTurnId = null;
   }
 
   // ──────────────────────────────────────────────
@@ -563,14 +631,42 @@ class ZcodeSessionState {
     _rateSamples.clear();
   }
 
+  /// 头部插入历史消息（上滑翻页唯一入口）：时间线结构变更收口在此——
+  /// 流式占位下标必须同步平移，否则后续 model.response 按旧下标重对会把
+  /// 当前回答写进旧的历史行（审查 P1-4）。传入列表必须为时间序且已按
+  /// protoId 去重；返回插入条数。
+  int prependHistory(List<ZcodeSessionItem> older) {
+    if (older.isEmpty) return 0;
+    items.insertAll(0, older);
+    if (streamingIndex >= 0) streamingIndex += older.length;
+    return older.length;
+  }
+
   /// 用 model.response 的全文重对当前流式文本（防 text_delta 丢失）。
   /// 此数据仍是临时投影；最终顺序与工具状态以 session/messages 替换。
+  /// 下标可能因头部插入/权威替换而漂移（审查 P1-4）：指向的必须是未确认
+  /// 的 assistant 占位，不符时按 streamingProtoId 稳定身份重定位，定位
+  /// 不到就放弃本次重对——宁可少一段临时文本，不可写进别人的行。
   void reconcileStreamingText(String text, {String? assistantMessageId}) {
     if (assistantMessageId != null) {
       adoptStreamingProtoId(assistantMessageId);
     }
     if (streamingIndex < 0 || streamingIndex >= items.length) return;
-    final it = items[streamingIndex];
+    var idx = streamingIndex;
+    final pointed = items[idx];
+    if (pointed.message.role != MessageRole.assistant || pointed.synced) {
+      final pid = streamingProtoId;
+      if (pid == null) return;
+      idx = items.indexWhere(
+        (e) =>
+            !e.synced &&
+            e.message.role == MessageRole.assistant &&
+            e.protoId == pid,
+      );
+      if (idx < 0) return;
+      streamingIndex = idx;
+    }
+    final it = items[idx];
     final parts = List<ChatProcessPart>.of(it.message.processParts);
     var lastText = -1;
     for (var i = parts.length - 1; i >= 0; i--) {

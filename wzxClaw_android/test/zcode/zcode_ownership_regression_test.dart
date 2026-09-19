@@ -23,6 +23,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wzxclaw_android/config/app_colors.dart';
+import 'package:wzxclaw_android/models/chat_message.dart';
+import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 import 'package:wzxclaw_android/widgets/ask_user_bar.dart';
 import 'package:wzxclaw_android/widgets/permission_bar.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
@@ -609,6 +611,582 @@ void main() {
       expect(store.currentModelRef, isNull, reason: 'B 在后台，A 视口不变');
       await store.openSession('session-b');
       expect(store.currentModelRef, 'p/model-bg');
+    });
+  });
+
+  group('P1-1 引擎代次与物化失效（2026-09-19 三轮审查）', () {
+    test('引擎换代通知：作废物化/订阅并清理流式状态，重开重新 resume', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-live').status = 'running';
+      final store = pairedStore(fake);
+      await store.openSession('session-live');
+      expect(store.isStreaming, isTrue);
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+
+      // companion：spawn 推 gen=1（首见，仅记录），respawn 推 gen=2（换代）
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'x/engine/generation',
+          params: {'generation': 1},
+        ),
+      );
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'x/engine/generation',
+          params: {'generation': 2},
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(store.isStreaming, isFalse, reason: '换代必须清理旧引擎流式状态');
+      await store.openSession('session-live');
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        greaterThan(resumesBefore),
+        reason: '换代后重开必须重新 resume（不得沿用旧物化标记）',
+      );
+    });
+
+    test('换代通知首见不误作废：重开不重复 resume', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-a').status = 'idle';
+      final store = pairedStore(fake);
+      await store.openSession('session-a');
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'x/engine/generation',
+          params: {'generation': 1},
+        ),
+      );
+      await store.openSession('session-a');
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        resumesBefore,
+        reason: '首见代次只记录；物化仍有效时重开走 read 探测，不重复 resume',
+      );
+    });
+
+    test('物化标记遗留兜底：read 探测失败自动补 resume（通知丢失场景）', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-a').status = 'idle';
+      final store = pairedStore(fake);
+      await store.openSession('session-a');
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+
+      // 模拟引擎已换而通知丢失：read 探测失败 → 必须补 resume 而不是
+      // 带着死物化标记继续拉事件
+      fake.handlers['session/read'] = (_) =>
+          throw const ZcodeRequestException(-32002, 'session not active');
+      await store.openSession('session-a');
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        greaterThan(resumesBefore),
+        reason: 'read 探测失败必须降级重走 resume',
+      );
+    });
+
+    test('close 成功后作废物化：重开会话重新 resume', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-a').status = 'idle';
+      final store = pairedStore(fake);
+      await store.openSession('session-a');
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+
+      await store.closeSession('session-a');
+      await store.openSession('session-a');
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        greaterThan(resumesBefore),
+        reason: 'close 已释放会话，重开必须重新 resume（不得跳过激活）',
+      );
+    });
+
+    test('降级轮询被占用（-32004）：停止轮询且不重新物化，置占用标记', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-live').status = 'running';
+      fake.handlers['session/subscribe'] = (_) =>
+          throw const ZcodeRequestException(-32602, 'subscribe unavailable');
+      final store = pairedStore(fake);
+      await store.openSession('session-live');
+      // 订阅失败 → 降级轮询已启动
+      expect(
+        fake.requests.any((r) => r.key == 'session/events'),
+        isTrue,
+        reason: '订阅失败必须降级轮询',
+      );
+
+      // 轮询遇 -32004：停止且不得 resume 抢占用
+      fake.handlers['session/events'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'active elsewhere');
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+      await Future<void>.delayed(const Duration(milliseconds: 2600));
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        resumesBefore,
+        reason: '-32004 是运行时单归属，不得重新物化抢占用',
+      );
+      expect(store.remoteActiveElsewhere, isTrue);
+    });
+
+    test('降级轮询连续失败：达阈值自动重新物化（resume→订阅→权威刷新）', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-live').status = 'running';
+      fake.handlers['session/subscribe'] = (_) =>
+          throw const ZcodeRequestException(-32602, 'subscribe unavailable');
+      final store = pairedStore(fake);
+      await store.openSession('session-live');
+      final resumesBefore =
+          fake.requests.where((r) => r.key == 'session/resume').length;
+
+      // 普通故障连续 3 次（间隔 1.2s）→ 触发重新物化
+      fake.handlers['session/events'] = (_) =>
+          throw const ZcodeRequestException(-32000, 'engine gone');
+      await Future<void>.delayed(const Duration(milliseconds: 4200));
+      expect(
+        fake.requests.where((r) => r.key == 'session/resume').length,
+        greaterThan(resumesBefore),
+        reason: '轮询连续失败不得无限静默重试，必须自动重新物化',
+      );
+    });
+  });
+
+  group('P1-3 发送三态与回合身份（2026-09-19 三轮审查）', () {
+    test('发送超时（结果未知）+ 服务端 running：保持流式并提示，不宣布失败', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-unk').status = 'running';
+      fake.handlers['session/send'] = (_, [__]) =>
+          throw TimeoutException('请求超时', const Duration(seconds: 30));
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-unk');
+      await store.sendMessage('继续的任务');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(
+        fake.requests.any((r) => r.key == 'session/read'),
+        isTrue,
+        reason: '超时不是拒绝：必须先读权威状态',
+      );
+      expect(store.isStreaming, isTrue, reason: '服务端 running = 回合已被接受');
+      expect(store.error, isNull, reason: '不得向用户表达失败');
+    });
+
+    test('发送超时（结果未知）+ 服务端 idle：权威刷新收敛收尾', () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-unk').status = 'idle';
+      fake.handlers['session/send'] = (_, [__]) =>
+          throw TimeoutException('请求超时', const Duration(seconds: 30));
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-unk');
+      await store.sendMessage('已结束的任务');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(store.isStreaming, isFalse, reason: '服务端 idle = 以权威真相收尾');
+      expect(store.error, isNull, reason: '结果未知不等于失败');
+    });
+
+    test('发送被明确拒绝（错误帧）：才走失败路径', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      fake.handlers['session/send'] = (_, [__]) =>
+          throw const ZcodeRequestException(-32000, '服务端明确拒绝');
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-reject');
+      await store.sendMessage('会被拒绝');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(store.isStreaming, isFalse, reason: '明确拒绝必须收尾');
+      expect(store.error, isNotNull);
+    });
+
+    test('T1 迟到的 turn.completed 在 T2 在途时只补数据，不终结 T2', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-late');
+      await store.sendMessage('T1');
+      pushEvent(store,
+        sessionId: 'session-late', type: 'turn.started', seq: 1,
+        turnId: 'turn-t1',
+        payload: {'messageId': 'user-t1', 'input': 'T1'},);
+      await store.sendMessage('T2');
+      pushEvent(store,
+        sessionId: 'session-late', type: 'turn.started', seq: 2,
+        turnId: 'turn-t2',
+        payload: {'messageId': 'user-t2', 'input': 'T2'},);
+      expect(store.isStreaming, isTrue);
+
+      // T1 的完成迟到（T2 在途）：只允许补权威数据
+      pushEvent(store,
+        sessionId: 'session-late', type: 'turn.completed', seq: 3,
+        turnId: 'turn-t1',
+        payload: {'response': 'T1 done', 'toolCallCount': 0, 'resultType': 'success'},);
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(store.isStreaming, isTrue, reason: '迟到的 T1 终态不得终结 T2');
+
+      // T2 自己的完成：正常收尾（正向路径不受护栏影响）
+      pushEvent(store,
+        sessionId: 'session-late', type: 'turn.completed', seq: 4,
+        turnId: 'turn-t2',
+        payload: {'response': 'T2 done', 'toolCallCount': 0, 'resultType': 'success'},);
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(store.isStreaming, isFalse);
+      expect(notifier.shown, hasLength(1), reason: 'T1 迟到终态不得重复通知');
+    });
+  });
+
+  group('P1-4 时间线收口与流式稳定身份（2026-09-19 三轮审查）', () {
+    test('流式中加载历史：model.response 重对不污染旧消息', () async {
+      final cache = FakeZcodeSessionCache();
+      cache.messages['sess-shift'] = [
+        for (var i = 0; i < 100; i++)
+          ZcodeSessionItem(
+            protoId: 'h$i',
+            message: ChatMessage(
+              role: MessageRole.user,
+              processParts: [ChatProcessPart.text('历史 $i')],
+              createdAt: DateTime.fromMillisecondsSinceEpoch(i),
+            ),
+          ),
+      ];
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
+      addTearDown(store.dispose);
+      await store.openSession('sess-shift');
+      expect(store.messages, hasLength(80)); // 缓存尾窗
+
+      await store.sendMessage('正在回答');
+      expect(store.isStreaming, isTrue);
+
+      // 流式中上滑加载 20 条历史：占位下标必须平移
+      final added = await store.loadOlderMessages(limit: 40);
+      expect(added, 20);
+      // 80 尾窗 + 20 历史 + 发送乐观追加的 user/占位 2 条
+      expect(store.messages, hasLength(102));
+
+      // 权威全文重对：必须落在流式占位上，而不是平移前的旧下标行
+      pushEvent(store,
+        sessionId: 'sess-shift', type: 'model.response', seq: 1,
+        payload: {'content': '全文回答'},);
+      await Future<void>.delayed(Duration.zero);
+
+      final polluted = store.messages
+          .where((m) => (m.text).contains('全文回答'))
+          .length;
+      expect(polluted, 1, reason: '全文只允许出现在流式占位行');
+      expect(store.messages.first.text, '历史 0', reason: '头部历史不得被改写');
+      expect(store.messages.last.text, contains('全文回答'));
+    });
+  });
+
+  group('P2-10 截断缓存联网补齐（2026-09-19 三轮审查）', () {
+    test('openSession 检测截断项：按锚点回拉权威内容原位替换', () async {
+      final cache = FakeZcodeSessionCache();
+      cache.messages['sess-trunc'] = [
+        ZcodeSessionItem(
+          protoId: 'm-1',
+          synced: true,
+          dirty: false,
+          truncated: true, // 本地副本被截断（身份仍确认）
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            processParts: const [ChatProcessPart.text('截断的短文…（缓存已截断）')],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ),
+        ZcodeSessionItem(
+          protoId: 'm-2',
+          synced: true,
+          dirty: false,
+          message: ChatMessage(
+            role: MessageRole.user,
+            processParts: const [ChatProcessPart.text('后继消息')],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(2000),
+          ),
+        ),
+      ];
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      // 尾窗/补齐共用 session/messages：以 limit 签名区分（补齐 = count+8）
+      final backfillAnchors = <Object?>[];
+      fake.handlers['session/messages'] = (params) {
+        if (params?['limit'] == 9) {
+          backfillAnchors.add(params?['afterMessageId']);
+          return {
+            'messages': [
+              fakeMsg(
+                'assistant',
+                [
+                  {'type': 'text', 'text': '完整正文（联网补齐后的权威内容）'},
+                ],
+                id: 'm-1',
+                created: 1000,
+              ),
+            ],
+          };
+        }
+        return {'messages': []};
+      };
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
+      addTearDown(store.dispose);
+      await store.openSession('sess-trunc');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(backfillAnchors, hasLength(1), reason: '恰好一次补齐回拉');
+      expect(
+        backfillAnchors.single,
+        isNull,
+        reason: '第一条截断项位于时间线头部：无前项锚点，必须从头回拉',
+      );
+      expect(
+        store.messages.first.text,
+        contains('完整正文'),
+        reason: '截断副本必须被权威内容原位替换',
+      );
+    });
+  });
+
+  group('阶段2 上下文容量快照解析（0.16.9 contextUsage，OQ1 定论）', () {
+    test('state.updated contextUsage：解析为容量快照字段', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('ctx-a');
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'ctx-a',
+            'patch': {
+              'status': 'idle',
+              'contextUsage': {
+                'used': 71000,
+                'size': 1000000,
+                'cache': {'hitRate': 0.943},
+                'breakdown': [
+                  {'source': 'system_tool_schemas', 'chars': 614},
+                  {'source': 'messages', 'chars': 301},
+                  {'source': 'skills', 'chars': 22},
+                ],
+              },
+            },
+          },
+        ),
+      );
+
+      final cu = store.activeContextUsage;
+      expect(cu, isNotNull, reason: '快照带 contextUsage 时必须解析');
+      expect(cu!.used, 71000);
+      expect(cu.size, 1000000);
+      expect(cu.cacheHitRate, closeTo(0.943, 1e-9));
+      expect(cu.breakdown, hasLength(3));
+      expect(cu.breakdown.first.source, 'system_tool_schemas');
+      expect(cu.breakdown.first.chars, 614);
+    });
+
+    test('空闲快照（无 contextUsage）：字段保留不误清', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('ctx-b');
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'ctx-b',
+            'patch': {
+              'status': 'idle',
+              'contextUsage': {
+                'used': 100,
+                'size': 1000,
+                'breakdown': [],
+              },
+            },
+          },
+        ),
+      );
+      expect(store.activeContextUsage, isNotNull);
+
+      // 后续空闲快照不带该字段（optional）：不得误清已有快照
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'ctx-b',
+            'patch': {'status': 'running'},
+          },
+        ),
+      );
+      expect(store.activeContextUsage, isNotNull, reason: '缺字段不覆盖');
+    });
+  });
+
+  group('阶段2 后台任务徽章（0.16.9 backgroundJobs 投影）', () {
+    test('state.updated backgroundJobs：整体替换投影并按状态过滤运行中', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('bg-a');
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'bg-a',
+            'patch': {
+              'backgroundJobs': [
+                {
+                  'taskId': 'task-1',
+                  'kind': 'bash',
+                  'status': 'running',
+                  'command': 'npm run build',
+                  'cancellable': true,
+                },
+                {
+                  'taskId': 'task-2',
+                  'kind': 'subagent',
+                  'status': 'completed',
+                },
+              ],
+            },
+          },
+        ),
+      );
+
+      expect(store.activeBackgroundJobs, hasLength(2));
+      expect(store.activeBackgroundJobs.first['taskId'], 'task-1');
+      final running = store.activeBackgroundJobs
+          .where((j) => j['status'] == 'running')
+          .toList();
+      expect(running, hasLength(1), reason: '徽章计数只取运行中任务');
+      expect(running.single['kind'], 'bash');
+    });
+
+    test('后续快照 backgroundJobs 缺失：整体替换语义保留旧值直至新投影', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('bg-b');
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'bg-b',
+            'patch': {
+              'backgroundJobs': [
+                {'taskId': 't', 'kind': 'workflow', 'status': 'running'},
+              ],
+            },
+          },
+        ),
+      );
+      expect(store.activeBackgroundJobs, hasLength(1));
+
+      // 无 backgroundJobs 键的补丁：不覆盖（整体替换只在字段出现时发生）
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'bg-b',
+            'patch': {'status': 'running'},
+          },
+        ),
+      );
+      expect(store.activeBackgroundJobs, hasLength(1));
+    });
+  });
+
+  group('阶段3b 调用轨迹（session/debug 进程内快照）', () {
+    test('debugRounds：解析 rounds 元素（0.16.9 实测形状）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('trace-a');
+      fake.handlers['session/debug'] = (params) {
+        expect(params?['sessionId'], 'trace-a');
+        return {
+          'sessionId': 'trace-a',
+          'rounds': [
+            {
+              'eventKey': 'ek-1',
+              'requestId': 'req-1',
+              'requestIndex': 1,
+              'recordedAt': 1789816245297,
+              'usage': {
+                'inputTokens': 17504,
+                'outputTokens': 15,
+                'totalTokens': 17519,
+                'reasoningTokens': 8,
+                'cachedInputTokens': 0,
+              },
+              'hitRate': 0,
+              'generationDurationMs': 110,
+              'tokensPerSecond': 136.36,
+            },
+          ],
+          'networkEntries': [],
+          'cache': null,
+        };
+      };
+      final rounds = await store.debugRounds('trace-a');
+      expect(rounds, hasLength(1));
+      expect(rounds.single['requestIndex'], 1);
+      expect(
+        ((rounds.single['usage'] as Map)['inputTokens'] as num).toInt(),
+        17504,
+      );
+    });
+
+    test('debugRounds：无轨迹会话返回空列表（不抛错）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('trace-b');
+      fake.handlers['session/debug'] = (params) =>
+          {'sessionId': 'trace-b', 'rounds': [], 'networkEntries': [], 'cache': null};
+      expect(await store.debugRounds('trace-b'), isEmpty);
     });
   });
 }
