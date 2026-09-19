@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
-import '../services/chat_store.dart';
+import '../zcode/zcode_reverse_models.dart';
+import '../zcode/zcode_chat_store.dart';
 
 /// A bar that appears when the desktop agent asks the user a question.
 class AskUserBar extends StatefulWidget {
@@ -22,8 +23,23 @@ class _AskUserBarState extends State<AskUserBar> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant AskUserBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 换题即清态（2026-09-19 评审 P2）：队列轮转会在同一组件位置直接换
+    // question（配合调用方的 ValueKey 双保险），上一题的已选项/补充文本
+    // 绝不带入下一题——否则会把 A 的答案提交给 B
+    if (oldWidget.question.questionId != widget.question.questionId) {
+      setState(() {
+        _selected.clear();
+        _showOther = false;
+        _otherController.clear();
+      });
+    }
+  }
+
   void _submitSelection() {
-    ChatStore.instance.respondToAskUser(
+    ZcodeChatStore.instance.respondToAskUser(
       widget.question.questionId,
       _selected.toList(),
     );
@@ -32,7 +48,7 @@ class _AskUserBarState extends State<AskUserBar> {
   void _submitOther() {
     final text = _otherController.text.trim();
     if (text.isEmpty) return;
-    ChatStore.instance.respondToAskUser(
+    ZcodeChatStore.instance.respondToAskUser(
       widget.question.questionId,
       [],
       customText: text,
@@ -40,13 +56,17 @@ class _AskUserBarState extends State<AskUserBar> {
   }
 
   void _onSingleSelect(String label) {
-    ChatStore.instance.respondToAskUser(widget.question.questionId, [label]);
+    ZcodeChatStore.instance.respondToAskUser(widget.question.questionId, [label]);
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final q = widget.question;
+    // 来源标注（2026-09-19 评审 P1）：与权限条同规则——请求不属于当前
+    // 视口会话时，用户必须先看到它来自哪个会话再作答
+    final sourceLabel =
+        ZcodeChatStore.instance.reverseSourceLabel(q.sessionId);
     final hasOptions = q.options.isNotEmpty;
 
     return Container(
@@ -88,6 +108,13 @@ class _AskUserBarState extends State<AskUserBar> {
             q.question,
             style: TextStyle(color: colors.textPrimary, fontSize: 13, height: 1.4),
           ),
+          if (sourceLabel != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              sourceLabel,
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+            ),
+          ],
           if (hasOptions) ...[
             const SizedBox(height: 10),
             ...q.options.map((opt) {

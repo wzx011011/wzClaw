@@ -1,7 +1,7 @@
 name: wzxclaw_android
 description: wzxClaw Android client - remote control for wzxClaw IDE via WebSocket
 publish_to: "none"
-version: 1.2.4
+version: 1.2.40+40
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -10,17 +10,18 @@ dependencies:
   flutter:
     sdk: flutter
   web_socket_channel: ^3.0.0
+  crypto: ^3.0.0
   shared_preferences: ^2.2.0
-  flutter_secure_storage: ^9.2.2
   sqflite: ^2.3.0
   speech_to_text: ^7.3.0
-  permission_handler: ^12.0.1
   mobile_scanner: ^5.2.0
+  image_picker: ^1.1.2
+  path_provider: ^2.1.0
   flutter_markdown: ^0.7.6
   flutter_highlight: ^0.7.0
+  package_info_plus: ^8.3.0
   highlight: ^0.7.0
   markdown: ^7.3.0
-  google_fonts: ^6.1.0
   flutter_inappwebview: ^6.0.0
   flutter_local_notifications: ^18.0.0
 
@@ -32,6 +33,7 @@ dev_dependencies:
   shelf: ^1.4.0
   shelf_web_socket: ^2.0.0
 
+  stream_channel: any
 flutter:
   uses-material-design: true
 

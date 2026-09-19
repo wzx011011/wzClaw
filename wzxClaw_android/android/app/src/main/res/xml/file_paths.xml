@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 只暴露下载临时文件目录（path_provider getTemporaryDirectory
+     = context.getCacheDir()，cache-path 映射）。预览经 content:// 授予外部
+     查看器只读权限，不暴露应用其他私有目录。 -->
+<paths>
+    <cache-path
+        name="wzxclaw-dl"
+        path="wzxclaw-dl/" />
+</paths>

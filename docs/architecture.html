@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wzxClaw v3「大脑网络」架构总览</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a2129;
+    --panel2: #212a35;
+    --border: #2e3a47;
+    --text: #d8e1ea;
+    --muted: #8a99a8;
+    --accent: #4fc3f7;
+    --accent2: #81c784;
+    --warn: #ffb74d;
+    --tag-bg: #2c3a4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    line-height: 1.7; font-size: 15px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h1 .v { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 16px; }
+  h2 { font-size: 20px; margin: 48px 0 16px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 10px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent2); }
+  p { margin: 8px 0; }
+  code { background: var(--tag-bg); padding: 1px 6px; border-radius: 4px; font-size: 13px; font-family: Consolas, "Courier New", monospace; color: #b3e5fc; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .muted { color: var(--muted); }
+  .path { font-size: 13px; color: var(--muted); font-family: Consolas, monospace; }
+
+  /* 架构图 */
+  .diagram { display: flex; flex-direction: column; gap: 0; align-items: center; margin: 24px 0; }
+  .node { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; text-align: center; min-width: 340px; max-width: 640px; }
+  .node .title { font-weight: 600; font-size: 16px; }
+  .node .desc { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .node.brain { border-color: var(--accent2); }
+  .node.relay { border-color: var(--accent); }
+  .arrow { display: flex; flex-direction: column; align-items: center; color: var(--muted); font-size: 12px; padding: 4px 0; }
+  .arrow::before { content: "│"; font-size: 20px; line-height: 1; color: var(--border); }
+  .arrow .lbl { color: var(--accent); }
+  .arrow.down::after { content: "▼"; color: var(--border); font-size: 12px; }
+  .arrow.up::after { content: ""; }
+
+  /* 组件卡片 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 16px; }
+  @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+  .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .card .name { font-weight: 600; font-size: 15px; color: var(--accent2); }
+  .card .stack { font-size: 12px; color: var(--muted); }
+  .card ul { font-size: 14px; }
+
+  .tag { display: inline-block; background: var(--tag-bg); color: var(--accent); border-radius: 4px; padding: 0 8px; font-size: 12px; margin-right: 6px; }
+  .tag.warn { color: var(--warn); }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); color: var(--accent); font-weight: 600; }
+
+  ol.flow { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.flow li { counter-increment: step; position: relative; padding-left: 42px; margin: 10px 0; }
+  ol.flow li::before {
+    content: counter(step); position: absolute; left: 0; top: 2px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--tag-bg); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; font-weight: 600;
+  }
+
+  footer { margin-top: 64px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>wzxClaw v3 <span class="v">「大脑网络」</span>架构总览</h1>
+  <div class="subtitle">个人 AI 远程控制系统。引擎标准化为 <b>ZCode app-server</b>（官方无头运行时），手机 / 桌面都只是它的前端；节点间经自托管 NAS relay 会合，<b>数据不过第三方云</b>。</div>
+</header>
+
+<!-- ==================== 系统总览 ==================== -->
+<h2>系统总览</h2>
+
+<div class="diagram">
+  <div class="node">
+    <div class="title">📱 手机 App（Flutter，纯遥控器）</div>
+    <div class="desc">probe 角色 · 扫码配对 · 会话 UI / 权限卡片 · SQLite 缓存 · <span class="path">wzxClaw_android/</span></div>
+  </div>
+  <div class="arrow down"><span class="lbl">WSS &nbsp;wss://zcode.5945.top/ws</span></div>
+  <div class="node relay">
+    <div class="title">🔀 NAS relay（哑管道）</div>
+    <div class="desc">sid/hash 房间模型 · HMAC 挑战认证 · 半开接管 · 容器 <code>wzxclaw-zcode-relay</code> · <span class="path">relay/zcode/server.js</span></div>
+  </div>
+  <div class="arrow down"><span class="lbl">配对后转发 <code>{type:'data', payload}</code> 载荷</span></div>
+  <div class="node brain">
+    <div class="title">🧠 大脑节点 = companion ＋ zcode app-server 子进程</div>
+    <div class="desc">Windows 常驻（CLI / Electron 双形态）· stdio NDJSON 桥接 · 工具执行发生在节点所在机器（运行时本地性）</div>
+  </div>
+</div>
+<p class="muted">模型调用：智谱编码计划（<code>builtin:bigmodel-coding-plan</code>），凭据在 <code>~/.zcode/</code>，仅以子进程环境变量注入，计费随 key/端点走。</p>
+
+<!-- ==================== 组件 ==================== -->
+<h2>组件职责</h2>
+<div class="cards">
+
+  <div class="card">
+    <div class="head"><span class="name">NAS relay</span><span class="stack">Node.js · ws · <span class="path">relay/zcode/server.js</span></span></div>
+    <ul>
+      <li><b>sid/hash 房间模型</b>：房间 id 由 <code>HMAC-SHA256(pass_hash, "zcode-relay-sid:" + device_mid)</code> 确定性派生——companion 重启 / 重连不换码，手机配对一次长期有效。</li>
+      <li><b>配对协议</b>：<code>device_register_init → auth_init → auth_challenge → auth_response(HMAC proof) → auth_ack / pair_status_ack</code>；配对后 relay 只做盲转发。</li>
+      <li><b>角色配额</b>：每房间 1 个 device（companion）+ 最多 3 个 probe（手机）；多手机对 companion 透明。</li>
+      <li><b>半开接管</b>：持有 proof 的一方可驱逐按 last-pong 判定为陈旧的旧连接；未认证者不可驱逐。</li>
+      <li><b>注册密钥</b>：<code>REGISTRATION_SECRET</code> + <code>timingSafeEqual</code> 防公网注册 DoS。</li>
+      <li><b>限额</b>：帧 ≤1 MiB；maxSockets 32 / maxRooms 16 / maxProbes 3；控制帧 120/10s；流式数据独立配额；房间 TTL 60s；ping 30s。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="name">Companion（CLI 常驻节点）</span><span class="stack">Node.js · <span class="path">relay/zcode/companion.js</span></span></div>
+    <ul>
+      <li>Windows 常驻进程，注册为 device 角色；桥接 relay data 载荷 ↔ 本地 <code>zcode app-server</code> stdio NDJSON（缓冲上限 32 MiB）。</li>
+      <li>自动应答 <code>session/requestRuntimePreferences</code>；其余反向请求（权限等）转发到手机。</li>
+      <li><b>反向请求超时档位</b>：权限 / 确认类 120s、白名单外 15s；超时自动拒绝（<code>-32022</code>）——失败方向偏向「多等 / 多确认」。</li>
+      <li><b>凭据纪律</b>：模型 token 从 <code>~/.zcode/v2/config.json</code> 读取、仅注入子进程 env，不落盘 / 不进日志 / 不过 relay。</li>
+      <li>自启动走 Windows 计划任务 <code>wzxClawZcodeCompanion</code>（勿挂在代理任务托管里，会被回收）。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="name">Companion App（桌面版）</span><span class="stack">Electron 41 · electron-builder · <span class="path">companion_app/</span></span></div>
+    <ul>
+      <li>完整形态：状态灯、配对二维码、设置（relay 地址 / cwd / 自启）、日志；宠物形态：透明置顶、颜色随状态（绿=已配对 / 黄=等待 / 灰=离线 / 红=桥错误）。托盘常驻。</li>
+      <li><b>内嵌而非包装</b>：<code>cclient/</code> 是 companion / server 源码的verbatim 副本，由主进程直接驱动，无需系统 Node。</li>
+      <li>与 CLI companion 共享 <code>~/.wzxclaw/zcode-companion/</code> 凭据（同配对免重扫）；单实例锁。</li>
+      <li>首跑 ZCode 健康门（只读检测 + 短命 <code>session/list</code> 探针）后才连线。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="name">手机 App（wzxClaw）</span><span class="stack">Flutter 3 · Provider · sqflite · <span class="path">wzxClaw_android/</span></span></div>
+    <ul>
+      <li><span class="tag">目标栈</span><b><code>lib/zcode/</code></b>：ZcodeChatStore（每会话状态容器 / epoch 失效 / 增量权威刷新 <code>afterMessageId</code>）、ZcodeDesktopRegistry（多桌面注册表，一桌面一配对一 Store）、relay 客户端（指数退避重连 + 抖动）、权限 / AskUser 组件、SQLite 快开缓存、模型自愈。</li>
+      <li><span class="tag warn">翻译壳</span><b><code>lib/services/</code></b>：WsEvents 形状旧协议栈，<code>zcode_protocol_translate.dart</code> 把引擎帧翻译成旧形状供现有 UI 使用；退役条件 = 聊天页换接线到直连栈。</li>
+      <li>页面：home / landing / settings / 扫码 / 文件浏览 / 目标面板；部件：permission_bar、ask_user_bar、connection_status_bar、tool_card 等。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3>遗留与退役</h3>
+<ul>
+  <li><code>wzxClaw_desktop/</code>：旧 Electron IDE，<span class="tag warn">M3 待迁移</span>（引擎换绑 app-server 尚未开始）。</li>
+  <li>旧 token-room relay（<code>wss://5945.top/relay/</code>）、brain-adapter 支线、<code>packages/</code>、<code>mobile/</code> 等已于 2026-09-15/17 删除，恢复从 git 历史。</li>
+</ul>
+
+<!-- ==================== 协议与数据流 ==================== -->
+<h2>协议与数据流</h2>
+
+<h3>ZCode Protocol v1 要点（唯一事实源：<code>relay/zcode/APP-SERVER.md</code>）</h3>
+<ul>
+  <li>stdio NDJSON，类 JSON-RPC 但<b>无 <code>jsonrpc</code> 字段</b>；服务端反向请求用字符串 id（如 <code>"server-1"</code>）；无 initialize 握手。</li>
+  <li>核心方法：<code>session/{create,resume,list,send,stop,messages,events,subscribe,setModel,setMode,…}</code>；<code>session/send</code> 参数名是 <code>content</code>；<code>session/subscribe</code> 需 <code>deliveryKind</code>（<code>web-remote-replayable</code> = 可回放事件流）。</li>
+  <li>错误码：<code>-32004</code> 会话非活跃（<b>运行时单归属</b>——桌面运行中的会话对 companion 不可读 / 不可订阅，这是设计不是 bug）；<code>-32022</code> 客户端反向请求超时。</li>
+  <li>分页契约：<code>{limit}</code> = 最新 N 条升序；<code>{afterMessageId, limit}</code> = 后缀最新 N 条；收敛信号 = 条数 &lt; limit。</li>
+  <li>协议为非官方逆向：改协议代码前先跑探针（<code>probe-methods.js</code> / <code>probe-models.js</code>，~30 个探针钉 schema），锁定已验证 CLI 版本。</li>
+</ul>
+
+<h3>端到端数据流（生产 v2 配对流）</h3>
+<ol class="flow">
+  <li>手机扫码 / 粘贴配对 URL（<code>sid</code> + <code>hash</code>）→ 以 probe 角色连 WSS，按房间做 HMAC 挑战认证。</li>
+  <li>companion（device 角色、确定性 sid）已在房间 → <code>pair_status: matched</code>。</li>
+  <li>手机在 relay <code>{type:'data', payload}</code> 信封内发 ZCode Protocol v1 帧；relay 盲转发。</li>
+  <li>companion 把帧灌进本地 app-server stdio；应答 / 事件流回传；反向请求（如权限）转发到手机弹权限卡片；<b>工具执行发生在节点所在机器</b>。</li>
+  <li>模型调用经桌面侧凭据（编码计划 key）直连模型端点。</li>
+</ol>
+
+<!-- ==================== 测试与纪律 ==================== -->
+<h2>测试与设计纪律</h2>
+
+<table>
+  <tr><th>套件</th><th>规模 / 命令</th><th>要点</th></tr>
+  <tr><td>relay / companion</td><td><b>79 项</b> · <code>cd relay/zcode && npm test</code></td><td><code>node --test --test-force-exit</code>（子进程 / 长连接会挂住进程，必须 force-exit）</td></tr>
+  <tr><td>手机端</td><td><b>402 项</b>（2026-09-17 实测）· <code>flutter test</code></td><td><code>flutter analyze</code> 是 CI 门禁，<code>--no-fatal-infos</code> 下 info 也算失败，必须 0 issues</td></tr>
+  <tr><td>companion_app</td><td>4 套 · runtime-gate / zcode-integration / zcode-importer / package-contents</td><td>测试与实现同目录</td></tr>
+</table>
+
+<h3>设计原则（2026-09-15 审查定稿，摘要）</h3>
+<ol>
+  <li><b>协议字段以实测为准</b>：形状来自 APP-SERVER.md 实测记录，不许直觉猜字段；新接口先跑探针。</li>
+  <li><b>一步到位，不留「先用假的」</b>：硬编码占位、乐观回显不回填、吞错误——宁可显式报「暂不支持」。</li>
+  <li><b>失败模式偏向多等 / 多确认</b>，而非静默拒绝 / 丢失。</li>
+  <li><b>静默丢弃 = 缺陷</b>：不可识别帧必须有观测手段。</li>
+  <li><b>语义映射写明词典</b>：枚举不对齐时显式定义映射表。</li>
+  <li><b>安全约定自我一致</b>：密钥不进参数 / 日志 / 输出，全链路遵守；凭据文件 0600。</li>
+  <li><b>回归测试钉住契约</b>：修 bug 先加能复现的测试再修。</li>
+</ol>
+
+<!-- ==================== 部署运维 ==================== -->
+<h2>部署与运维</h2>
+<ul>
+  <li><b>NAS（群晖 DS923+）</b>：relay 跑 Docker 容器 <code>wzxclaw-zcode-relay</code>（<code>relay/zcode/Dockerfile</code>，<code>deploy-nas-zcode.sh</code> 幂等部署，绑定 127.0.0.1:18884）；公网入口 <code>wss://zcode.5945.top/ws</code> 经 nginx 子域名反代（Upgrade 头、剥 Origin、<code>/health</code>）。</li>
+  <li><b>Windows 节点</b>：计划任务 <code>wzxClawZcodeCompanion</code>（VBS 隐藏窗口）或 Electron Companion App（NSIS / 便携版，<code>npm run dist</code>）。</li>
+  <li><b>APK 发布纪律</b>：产物放 NAS <code>/volume1/share/zcode/wzxClaw-android-release-vX.Y.Z.apk</code>；每包 patch +1 且 versionCode 单调递增；被取消过的构建必须 <code>flutter clean</code> 重建，上架前 <code>apksigner verify</code> + zip 完整性检查 + 哈希比对。</li>
+  <li><b>配对凭据纪律</b>：sid / hash / token / QR 是持有者凭据，不进日志 / git / 聊天输出。</li>
+</ul>
+
+<footer>
+  生成日期 2026-09-17 · 事实来源：<code>AGENTS.md</code>、<code>relay/zcode/APP-SERVER.md</code>、<code>.planning/PLAN-brain-network-v3.md</code> 及源码实测 · 现状 vs 目标对比见 <code>docs/arch-now-vs-target.html</code>
+</footer>
+
+</div>
+</body>
+</html>

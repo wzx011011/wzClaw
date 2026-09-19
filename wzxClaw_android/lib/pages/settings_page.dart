@@ -1,14 +1,21 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
+import '../models/ui_prefs.dart';
+import 'qr_scanner_page.dart';
 import '../main.dart' show themeNotifier, accentNotifier;
 import '../models/connection_state.dart';
 import '../services/connection_manager.dart';
-import '../services/push_wake_service.dart';
-import '../services/secure_settings.dart';
-import '../services/session_sync_service.dart';
+import '../services/pairing_url.dart' show normalizeQrScanToServerUrl;
+import '../zcode/zcode_chat_store.dart';
+import '../zcode/zcode_keepalive_controller.dart';
+import '../zcode/zcode_notifier.dart';
 
 /// Settings page for configuring WebSocket connection parameters.
 class SettingsPage extends StatefulWidget {
@@ -20,15 +27,62 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final _serverUrlController = TextEditingController();
-  final _tokenController = TextEditingController();
-  bool _obscureToken = true;
   bool _loading = true;
   bool _pushEnabled = true;
   bool _backgroundKeepAliveEnabled = false;
+  bool _checkingUpdate = false;
+  String _appVersion = '';
 
-  static const _serverUrlKey = 'server_url';
   static const _pushEnabledKey = 'push_notifications_enabled';
   static const _backgroundKeepAliveEnabledKey = 'background_keepalive_enabled';
+
+  /// 检查更新：拉 NAS 发布目录只读列表（autoindex），解析最高版本号
+  /// 与本机比对。发现新版 → 提示去 NAS share/zcode 下载安装。
+  Future<void> _checkForUpdate() async {
+    setState(() => _checkingUpdate = true);
+    String message;
+    try {
+      final request = await HttpClient()
+          .getUrl(Uri.parse('https://zcode.5945.top/zcode-releases/'));
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        throw HttpException('服务不可用（${response.statusCode}）');
+      }
+      final body = await response.transform(utf8.decoder).join();
+      final versions = RegExp(r'wzxClaw-android-release-v(\d+)\.(\d+)\.(\d+)\.apk')
+          .allMatches(body)
+          .map((m) => m.groups([1, 2, 3]).map((g) => int.parse(g!)).toList())
+          .toList();
+      if (versions.isEmpty) throw StateError('发布目录为空');
+      versions.sort((a, b) {
+        for (var i = 0; i < 3; i++) {
+          if (a[i] != b[i]) return b[i] - a[i];
+        }
+        return 0;
+      });
+      final latest = versions.first.join('.');
+      final current = _appVersion;
+      if (current.isNotEmpty && latest == current) {
+        message = '已是最新版本（v$current）';
+      } else if (current.isNotEmpty) {
+        message = '发现新版本 v$latest（当前 v$current），'
+            '请到 NAS share/zcode 下载安装';
+      } else {
+        message = '最新版本 v$latest';
+      }
+    } catch (e) {
+      message = '检查更新失败：$e';
+    }
+    if (!mounted) return;
+    setState(() => _checkingUpdate = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -39,72 +93,41 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _serverUrlController.dispose();
-    _tokenController.dispose();
     super.dispose();
   }
 
   Future<void> _loadSavedValues() async {
     final prefs = await SharedPreferences.getInstance();
-    _serverUrlController.text = prefs.getString(_serverUrlKey) ?? '';
+    final package = await PackageInfo.fromPlatform();
     _pushEnabled = prefs.getBool(_pushEnabledKey) ?? true;
     _backgroundKeepAliveEnabled =
-      prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
-    setState(() => _loading = false);
+        prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
+    if (!mounted) return;
+    setState(() {
+      _appVersion = '${package.version}+${package.buildNumber}';
+      _loading = false;
+    });
   }
 
-  Future<void> _saveValues() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_serverUrlKey, _serverUrlController.text.trim());
-    if (_tokenController.text.trim().isNotEmpty) {
-      await SecureSettings.setAuthToken(_tokenController.text.trim());
-    }
-  }
-
-  void _connect() {
-    _connectSafely();
-  }
+  void _connect() => unawaited(_connectSafely());
 
   Future<void> _connectSafely() async {
-    final serverUrl = _serverUrlController.text.trim();
-    if (serverUrl.isEmpty) return;
-
-    final uri = _parseAndValidateServerUrl(serverUrl);
-    if (uri == null) return;
-
-    final token = _tokenController.text.trim().isNotEmpty
-        ? _tokenController.text.trim()
-        : await SecureSettings.getAuthToken();
-
-    await _saveValues();
-
-    final params = Map<String, String>.from(uri.queryParameters);
-    params['role'] = 'mobile';
-    if (token.isNotEmpty) {
-      params['token'] = token;
-    }
-    final fullUrl = uri.replace(queryParameters: params).toString();
-    ConnectionManager.instance.connect(fullUrl);
-
-    // 返回首页（LandingPage），清除导航栈
-    if (mounted) {
+    final pairingUrl = _parsePairingUrl(_serverUrlController.text);
+    if (pairingUrl == null) return;
+    final connected = await ConnectionManager.instance.connect(pairingUrl);
+    if (mounted && connected) {
       Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
     }
   }
 
-  Uri? _parseAndValidateServerUrl(String raw) {
-    final uri = Uri.tryParse(raw);
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      _showConnectionError('服务器地址格式不正确');
+  String? _parsePairingUrl(String raw) {
+    final normalized = normalizeQrScanToServerUrl(raw.trim());
+    if (normalized == null) {
+      _showConnectionError('请输入桌面端生成的配对链接');
       return null;
     }
-    if (uri.scheme == 'wss') return uri;
-    if (uri.scheme == 'ws' && _isLocalHost(uri.host)) return uri;
-    _showConnectionError('请使用 wss:// 连接；本机调试可使用 ws://localhost');
-    return null;
+    return normalized;
   }
-
-  bool _isLocalHost(String host) =>
-      host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
   void _showConnectionError(String message) {
     if (!mounted) return;
@@ -119,12 +142,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _togglePushNotifications(bool value) async {
     setState(() => _pushEnabled = value);
-    await PushWakeService.instance.setEnabled(value);
+    await ZcodeNotifier.instance.setEnabled(value);
   }
 
   Future<void> _toggleBackgroundKeepAlive(bool value) async {
     setState(() => _backgroundKeepAliveEnabled = value);
-    await ConnectionManager.instance.setBackgroundKeepAliveEnabled(value);
+    await ZcodeKeepAliveController.instance.setEnabled(value);
   }
 
   Future<void> _confirmAndClearCache() async {
@@ -133,8 +156,10 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.bgPrimary,
-        title: Text('清空本地缓存？',
-            style: TextStyle(color: colors.textPrimary),),
+        title: Text(
+          '清空本地缓存？',
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           '将清除手机端所有已缓存的会话与消息。'
           '若当前已连接桌面，会立即重新同步；否则下次连接时再同步。',
@@ -143,13 +168,17 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('取消',
-                style: TextStyle(color: colors.textSecondary),),
+            child: Text(
+              '取消',
+              style: TextStyle(color: colors.textSecondary),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('清空',
-                style: TextStyle(color: colors.accent),),
+            child: Text(
+              '清空',
+              style: TextStyle(color: colors.accent),
+            ),
           ),
         ],
       ),
@@ -159,7 +188,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
 
     try {
-      await SessionSyncService.instance.clearLocalCache();
+      await ZcodeChatStore.instance.clearLocalCache();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('本地缓存已清空')),
@@ -175,11 +204,13 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _scanQrCode() async {
     final result = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (context) => const _QrScannerPage()),
+      MaterialPageRoute(builder: (context) => const QrScannerPage()),
     );
     if (result != null && result.isNotEmpty && mounted) {
-      final isWebSocket = result.startsWith('wss://') || result.startsWith('ws://');
-      final isHttp = result.startsWith('https://') || result.startsWith('http://');
+      final isWebSocket =
+          result.startsWith('wss://') || result.startsWith('ws://');
+      final isHttp =
+          result.startsWith('https://') || result.startsWith('http://');
       if (!isWebSocket && !isHttp) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -189,36 +220,11 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         return;
       }
-      try {
-        final uri = Uri.parse(result);
-        // Extract token from QR code URL query params
-        final token = uri.queryParameters['token'] ?? '';
-        // Convert http/https → ws/wss for WebSocket; strip token from URL
-        // (token goes in the separate token field, _connect() re-adds it)
-        final wsScheme = uri.scheme == 'https'
-            ? 'wss'
-            : uri.scheme == 'http'
-                ? 'ws'
-                : uri.scheme;
-        final serverUrl = uri
-            .replace(scheme: wsScheme, queryParameters: {})
-            .toString();
-        final validated = _parseAndValidateServerUrl(serverUrl);
-        if (validated == null) return;
-        _serverUrlController.text = serverUrl;
-        _tokenController.text = token;
-        setState(() {});
-        _saveValues();
-        _connect();
-        // _connect() already navigates to LandingPage
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('二维码内容无法解析'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      final pairingUrl = _parsePairingUrl(result);
+      if (pairingUrl == null) return;
+      _serverUrlController.text = pairingUrl;
+      setState(() {});
+      await _connectSafely();
     }
   }
 
@@ -238,9 +244,9 @@ class _SettingsPageState extends State<SettingsPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // -- Server URL field with scan button --
+                // -- Pairing link field with scan button --
                 Text(
-                  '服务器地址',
+                  '配对链接',
                   style: TextStyle(color: colors.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
@@ -251,7 +257,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         controller: _serverUrlController,
                         style: TextStyle(color: colors.textPrimary),
                         decoration: InputDecoration(
-                          hintText: 'wss://5945.top/relay/',
+                          hintText: 'https://…/pair?sid=…&hash=…',
                           hintStyle: TextStyle(color: colors.textMuted),
                           filled: true,
                           fillColor: colors.bgSecondary,
@@ -268,50 +274,15 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      icon: Icon(Icons.qr_code_scanner,
-                          color: colors.accent, size: 28,),
+                      icon: Icon(
+                        Icons.qr_code_scanner,
+                        color: colors.accent,
+                        size: 28,
+                      ),
                       onPressed: _scanQrCode,
                       tooltip: '扫描二维码',
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
-
-                // -- Token field --
-                Text(
-                  'Token',
-                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _tokenController,
-                  obscureText: _obscureToken,
-                  style: TextStyle(color: colors.textPrimary),
-                  decoration: InputDecoration(
-                    hintText: '输入连接令牌',
-                    hintStyle: TextStyle(color: colors.textMuted),
-                    filled: true,
-                    fillColor: colors.bgSecondary,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
-                    ),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscureToken
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color: colors.textSecondary,
-                      ),
-                      onPressed: () {
-                        setState(() => _obscureToken = !_obscureToken);
-                      },
-                    ),
-                  ),
                 ),
                 const SizedBox(height: 24),
 
@@ -380,8 +351,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                   Text(
                                     '当前状态: ',
                                     style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontSize: 14,),
+                                      color: colors.textSecondary,
+                                      fontSize: 14,
+                                    ),
                                   ),
                                   Text(
                                     state.label,
@@ -416,13 +388,19 @@ class _SettingsPageState extends State<SettingsPage> {
 
                 // -- Push notification toggle --
                 SwitchListTile(
-                  title: Text('推送通知',
-                      style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),),
+                  title: Text(
+                    '推送通知',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                    ),
+                  ),
                   subtitle: Text(
-                  'AI 工作区完成时发送通知，并在点开后快速重连',
-                  style: TextStyle(
-                    color: colors.textSecondary, fontSize: 13,),
+                    'AI 工作区完成时发送通知，并在点开后快速重连',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   value: _pushEnabled,
                   activeTrackColor: colors.accent.withValues(alpha: 0.4),
@@ -434,13 +412,19 @@ class _SettingsPageState extends State<SettingsPage> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 ),
                 SwitchListTile(
-                  title: Text('后台保持连接',
-                      style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),),
+                  title: Text(
+                    '后台保持连接',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                    ),
+                  ),
                   subtitle: Text(
                     '切到后台后启用常驻通知与前台服务，尽量保持 Relay 在线',
                     style: TextStyle(
-                        color: colors.textSecondary, fontSize: 13,),
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   value: _backgroundKeepAliveEnabled,
                   activeTrackColor: colors.accent.withValues(alpha: 0.4),
@@ -450,6 +434,72 @@ class _SettingsPageState extends State<SettingsPage> {
                   onChanged: _toggleBackgroundKeepAlive,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: UiPrefs.enterToSend,
+                  builder: (context, enterToSend, _) => SwitchListTile(
+                    title: Text(
+                      '回车键发送消息',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '开启后键盘发送键直接发送；关闭则回车换行，点按钮发送',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                    value: enterToSend,
+                    activeTrackColor: colors.accent.withValues(alpha: 0.4),
+                    activeThumbColor: colors.accent,
+                    inactiveThumbColor: colors.textSecondary,
+                    inactiveTrackColor: colors.border,
+                    onChanged: (v) => UiPrefs.setEnterToSend(v),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4,),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // -- Connection diagnostics --
+                Text(
+                  '连接诊断',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.bgSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.network_check,
+                      color: colors.accent,
+                    ),
+                    title: Text(
+                      '查看连接日志与路径体检',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '连接尝试/失败原因一览；可测 IPv4/IPv6 可达性并复制报告上报',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/connection-diagnostics'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 24),
 
@@ -465,17 +515,23 @@ class _SettingsPageState extends State<SettingsPage> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: ListTile(
-                    leading: Icon(Icons.cleaning_services_outlined,
-                        color: colors.accent,),
+                    leading: Icon(
+                      Icons.cleaning_services_outlined,
+                      color: colors.accent,
+                    ),
                     title: Text(
                       '清空本地缓存',
                       style: TextStyle(
-                          color: colors.textPrimary, fontSize: 14,),
+                        color: colors.textPrimary,
+                        fontSize: 14,
+                      ),
                     ),
                     subtitle: Text(
                       '清除手机端缓存的消息和会话元数据；下次打开会从桌面端重新同步',
                       style: TextStyle(
-                          color: colors.textSecondary, fontSize: 12,),
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
                     ),
                     onTap: _confirmAndClearCache,
                     shape: RoundedRectangleBorder(
@@ -502,9 +558,24 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       child: Row(
                         children: [
-                          _themeButton('跟随系统', ThemeMode.system, currentMode, colors),
-                          _themeButton('浅色', ThemeMode.light, currentMode, colors),
-                          _themeButton('深色', ThemeMode.dark, currentMode, colors),
+                          _themeButton(
+                            '跟随系统',
+                            ThemeMode.system,
+                            currentMode,
+                            colors,
+                          ),
+                          _themeButton(
+                            '浅色',
+                            ThemeMode.light,
+                            currentMode,
+                            colors,
+                          ),
+                          _themeButton(
+                            '深色',
+                            ThemeMode.dark,
+                            currentMode,
+                            colors,
+                          ),
                         ],
                       ),
                     );
@@ -524,9 +595,21 @@ class _SettingsPageState extends State<SettingsPage> {
                   builder: (context, currentAccent, _) {
                     return Row(
                       children: [
-                        _accentButton('紫色', 'purple', const Color(0xFF7C3AED), currentAccent, colors),
+                        _accentButton(
+                          '紫色',
+                          'purple',
+                          const Color(0xFF7C3AED),
+                          currentAccent,
+                          colors,
+                        ),
                         const SizedBox(width: 8),
-                        _accentButton('绿色', 'green', const Color(0xFF10B981), currentAccent, colors),
+                        _accentButton(
+                          '绿色',
+                          'green',
+                          const Color(0xFF10B981),
+                          currentAccent,
+                          colors,
+                        ),
                       ],
                     );
                   },
@@ -539,14 +622,20 @@ class _SettingsPageState extends State<SettingsPage> {
                   stream: ConnectionManager.instance.stateStream,
                   initialData: ConnectionManager.instance.state,
                   builder: (context, connSnap) {
-                    final connState = connSnap.data ?? WsConnectionState.disconnected;
+                    final connState =
+                        connSnap.data ?? WsConnectionState.disconnected;
                     return StreamBuilder<String?>(
                       stream: ConnectionManager.instance.desktopIdentityStream,
                       initialData: ConnectionManager.instance.desktopIdentity,
                       builder: (context, identitySnap) {
                         final identity = identitySnap.data;
                         final desktops = ConnectionManager.instance.desktops;
-                        final desktop = desktops.isNotEmpty ? desktops.first : null;
+                        // 多配对下优先展示当前在线桌面
+                        final desktop = desktops.isNotEmpty
+                            ? (desktops.any((d) => d.online)
+                                ? desktops.firstWhere((d) => d.online)
+                                : desktops.first)
+                            : null;
                         return Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -556,13 +645,17 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('桌面端',
-                                  style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,),),
+                              Text(
+                                '桌面端',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                               const SizedBox(height: 8),
-                              if (connState == WsConnectionState.connected && identity != null)
+                              if (connState == WsConnectionState.connected &&
+                                  identity != null)
                                 Row(
                                   children: [
                                     Container(
@@ -578,7 +671,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                       desktop?.platform != null
                                           ? '$identity · ${desktop!.platform}'
                                           : identity,
-                                      style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 14,
+                                      ),
                                     ),
                                   ],
                                 )
@@ -612,17 +708,25 @@ class _SettingsPageState extends State<SettingsPage> {
                                   ),
                                 ),
                               // Show workspace name as subtitle when available
-                              StreamBuilder<WorkspaceInfo?>(
-                                stream: SessionSyncService.instance.workspaceInfoStream,
-                                initialData: SessionSyncService.instance.workspaceInfo,
-                                builder: (context, wsSnap) {
-                                  final wsInfo = wsSnap.data;
-                                  if (wsInfo != null && connState == WsConnectionState.connected) {
+                              Builder(
+                                builder: (context) {
+                                  final wsPath = ZcodeChatStore
+                                      .instance.selectedWorkspacePath;
+                                  if (wsPath != null &&
+                                      wsPath.isNotEmpty &&
+                                      connState ==
+                                          WsConnectionState.connected) {
                                     return Padding(
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
-                                        wsInfo.workspaceName,
-                                        style: TextStyle(color: colors.textMuted, fontSize: 12),
+                                        wsPath
+                                            .replaceAll('\\', '/')
+                                            .split('/')
+                                            .last,
+                                        style: TextStyle(
+                                          color: colors.textMuted,
+                                          fontSize: 12,
+                                        ),
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     );
@@ -639,11 +743,25 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
 
-                // -- Version info --
+                // -- Version info + 更新检查（NAS 发布目录只读列表）--
                 Center(
-                  child: Text(
-                    'wzxClaw Android v2.0',
-                    style: TextStyle(color: colors.textMuted, fontSize: 12),
+                  child: Column(
+                    children: [
+                      Text(
+                        _appVersion.isEmpty
+                            ? 'wzxClaw Android'
+                            : 'wzxClaw Android v$_appVersion',
+                        style: TextStyle(color: colors.textMuted, fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      TextButton(
+                        onPressed: _checkingUpdate ? null : _checkForUpdate,
+                        child: Text(
+                          _checkingUpdate ? '正在检查…' : '检查更新',
+                          style: TextStyle(color: colors.accent, fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -651,21 +769,36 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _themeButton(String label, ThemeMode mode, ThemeMode current, AppColors colors) {
+  Widget _themeButton(
+    String label,
+    ThemeMode mode,
+    ThemeMode current,
+    AppColors colors,
+  ) {
     final selected = mode == current;
     return Expanded(
       child: GestureDetector(
         onTap: () async {
           themeNotifier.value = mode;
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('theme_mode', mode == ThemeMode.light ? 'light' : mode == ThemeMode.dark ? 'dark' : 'system');
+          await prefs.setString(
+            'theme_mode',
+            mode == ThemeMode.light
+                ? 'light'
+                : mode == ThemeMode.dark
+                    ? 'dark'
+                    : 'system',
+          );
         },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? colors.accent.withValues(alpha: 0.15) : Colors.transparent,
+            color: selected
+                ? colors.accent.withValues(alpha: 0.15)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: selected ? Border.all(color: colors.accent, width: 1.5) : null,
+            border:
+                selected ? Border.all(color: colors.accent, width: 1.5) : null,
           ),
           child: Text(
             label,
@@ -681,7 +814,13 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _accentButton(String label, String accent, Color color, String current, AppColors colors) {
+  Widget _accentButton(
+    String label,
+    String accent,
+    Color color,
+    String current,
+    AppColors colors,
+  ) {
     final selected = accent == current;
     return Expanded(
       child: GestureDetector(
@@ -693,7 +832,8 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? color.withValues(alpha: 0.15) : Colors.transparent,
+            color:
+                selected ? color.withValues(alpha: 0.15) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: selected ? Border.all(color: color, width: 1.5) : null,
           ),
@@ -733,153 +873,4 @@ class _SettingsPageState extends State<SettingsPage> {
         return Colors.red;
     }
   }
-}
-
-/// Full-screen QR scanner page with scan frame overlay and torch toggle.
-class _QrScannerPage extends StatefulWidget {
-  const _QrScannerPage();
-
-  @override
-  State<_QrScannerPage> createState() => _QrScannerPageState();
-}
-
-class _QrScannerPageState extends State<_QrScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
-  bool _torchOn = false;
-  bool _scanned = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    final size = MediaQuery.of(context).size;
-    final scanSize = size.width * 0.7;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('扫描二维码'),
-        backgroundColor: colors.bgSecondary,
-        foregroundColor: colors.textPrimary,
-        actions: [
-          IconButton(
-            icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off,
-                color: colors.textSecondary,),
-            onPressed: () {
-              setState(() => _torchOn = !_torchOn);
-              _controller.toggleTorch();
-            },
-            tooltip: '手电筒',
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_scanned) return;
-              if (capture.barcodes.isEmpty) return;
-              final barcode = capture.barcodes.first;
-              if (barcode.rawValue != null) {
-                _scanned = true;
-                _controller.stop();
-                Navigator.pop(context, barcode.rawValue);
-              }
-            },
-          ),
-          // Dimmed overlay with transparent scan window
-          ColorFiltered(
-            colorFilter: ColorFilter.mode(
-                Colors.black.withValues(alpha: 0.5), BlendMode.srcOut,),
-            child: Stack(
-              children: [
-                Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black,
-                    backgroundBlendMode: BlendMode.dstOut,
-                  ),
-                ),
-                Center(
-                  child: Container(
-                    width: scanSize,
-                    height: scanSize,
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Scan frame corners
-          Center(
-            child: SizedBox(
-              width: scanSize,
-              height: scanSize,
-              child: CustomPaint(
-                  painter: _ScanFramePainter(color: colors.accent),),
-            ),
-          ),
-          // Hint text
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: size.height * 0.2,
-            child: Text(
-              '将二维码放入框内自动扫描',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: colors.textSecondary, fontSize: 14),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Paints four corner brackets for the scan frame.
-class _ScanFramePainter extends CustomPainter {
-  final Color color;
-  const _ScanFramePainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const cornerLen = 24.0;
-    const strokeWidth = 3.0;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    // Top-left
-    canvas.drawLine(const Offset(0, cornerLen), Offset.zero, paint);
-    canvas.drawLine(Offset.zero, const Offset(cornerLen, 0), paint);
-    // Top-right
-    canvas.drawLine(
-        Offset(size.width - cornerLen, 0), Offset(size.width, 0), paint,);
-    canvas.drawLine(
-        Offset(size.width, 0), Offset(size.width, cornerLen), paint,);
-    // Bottom-left
-    canvas.drawLine(
-        Offset(0, size.height), Offset(0, size.height - cornerLen), paint,);
-    canvas.drawLine(
-        Offset(0, size.height), Offset(cornerLen, size.height), paint,);
-    // Bottom-right
-    canvas.drawLine(Offset(size.width, size.height - cornerLen),
-        Offset(size.width, size.height), paint,);
-    canvas.drawLine(Offset(size.width - cornerLen, size.height),
-        Offset(size.width, size.height), paint,);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ScanFramePainter oldDelegate) =>
-      color != oldDelegate.color;
 }

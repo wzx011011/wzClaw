@@ -1,4 +1,5 @@
 .wzxclaw/
+.zcode/
 .claude/
 .planning/
 REVIEW.md
@@ -14,7 +15,7 @@ build/
 *.tsbuildinfo
 
 # Junk files from template literal / path expansion bugs
-${*
+[$][{]*
 .playwright-results/
 
 .env
@@ -58,3 +59,11 @@ relay/*.log
 
 # Review / planning documents (private)
 *-REVIEW*.md
+
+# 配对凭据产物：QR 内含 sid+hash（持有者凭据，不进 git）
+pair-qr*.png
+pair-url*.txt
+
+# flutter test 运行产物（内含 QR 截图等，同理不进 git）
+/test-results/
+companion_app/runtime-bundle/

@@ -1,0 +1,91 @@
+{
+  "create": {
+    "ok": true
+  },
+  "read_active": {
+    "bytes": 1990,
+    "keys": [
+      "messages",
+      "projection",
+      "protocol",
+      "runtime",
+      "session",
+      "settings",
+      "slashCommands",
+      "todos",
+      "todoGroups"
+    ]
+  },
+  "subscribe_replayable": {
+    "result": {
+      "eventSeq": 0,
+      "events": [],
+      "sessionId": "sess_da445698-4803-4c50-b127-cab0c6de0ec3"
+    }
+  },
+  "send": {
+    "result": {
+      "accepted": true,
+      "sessionId": "sess_da445698-4803-4c50-b127-cab0c6de0ec3",
+      "stateRevision": 1
+    }
+  },
+  "pushedSummary": {
+    "session/requestRuntimePreferences": 2,
+    "state.updated": 2,
+    "session/event": 9,
+    "computer-use/operation-event": 2,
+    "v4/telemetry/event": 8,
+    "process/mcpTelemetry": 2
+  },
+  "telemetryKinds": {
+    "turn.started": 1,
+    "model.request.status": 4,
+    "stream.chunk": 1,
+    "usage.delta": 1,
+    "turn.terminal": 1
+  },
+  "textDeltaSample": [],
+  "sessionEventFrames": [
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"4e95f777-2a10-4ea2-a483-2b782627dc3f\",\"payload\":{\"previousTitle\":\"\",\"source\":\"first_input\",\"title\":\"协议探测：请只回复 ok\"},\"seq\":1,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"timestamp\":1789312664031,\"traceId\":\"74c49b75-cf9d-44cc-b4db-7db67b262e14\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"type\":\"session.titleUpdated\"}}",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"deb98ac5-2578-4a50-8998-59b0068ba5d6\",\"payload\":{\"turnNumber\":0,\"input\":\"协议探测：请只回复 ok\",\"messageId\":\"msg_mtzyk7s7_2aa8338c-67d4-4839-9cd6-1968d3ffdab1\",\"foregroundExecutionId\":\"runtime_command_1\",\"queryId\":\"query_6cf1d31c-b6ed-4106-b61a-cc3cdf231717\"},\"seq\":2,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"timestamp\":1789312664167,\"traceId\":\"74c49b75-cf9d-44cc-b4db-7db67b262e14\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"type\":\"turn.started\"}}",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"fc7ab871-7be7-47fd-b9a2-803fb29fd687\",\"payload\":{\"messageCount\":6,\"model\":\"builtin:bigmodel-coding-plan/glm-5.3\",\"modelRef\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\"},\"toolCount\":24,\"iteration\":0},\"seq\":3,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"timestamp\":1789312666528,\"traceId\":\"74c49b75-cf9d-44cc-b4db-7db67b262e14\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"type\":\"session.updated\"}}",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"52d542aa-bd69-4cf0-b95c-dab3b47dad57\",\"payload\":{\"baseURL\":\"https://open.bigmodel.cn/api/anthropic\",\"maxAttempts\":11,\"model\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"role\":\"main\",\"source\":\"config\"},\"modelRequestSessionType\":\"main\",\"requestId\":\"9b0cf72e-806d-433b-81f5-37955b509c18\",\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"spanId\":\"f42a9bf3-4888-48\",\"parentSpanId\":\"7552d97d-efd2-4a\",\"querySource\":\"main_turn\",\"queryId\":\"query_6cf1d31c-b6ed-4106-b61a-cc3cdf231717\",\"traceId",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"34c49bac-ac6b-46b3-8760-38fc695c1879\",\"payload\":{\"modelRef\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"role\":\"lite\",\"source\":\"config\"},\"messageID\":\"msg_mtzyk7s7_2aa8338c-67d4-4839-9cd6-1968d3ffdab1\",\"previousTitle\":\"协议探测：请只回复 ok\",\"source\":\"generated\",\"title\":\"协议探测回复请求\"},\"seq\":5,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"timestamp\":1789312666791,\"traceId\":\"74c49b75-cf9d-44cc-b4db-7db67b262e14\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"type\":\"session.titleUpdated",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"6006503e-548d-4c65-8fe8-fd6fe16f6851\",\"payload\":{\"assistantMessageId\":\"msg_mtzyk9le_94e1df5d-8770-4922-9a1a-870f85b03d32\",\"delta\":\"ok\",\"done\":false,\"kind\":\"text_delta\"},\"seq\":6,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"timestamp\":1789312668185,\"traceId\":\"74c49b75-cf9d-44cc-b4db-7db67b262e14\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"type\":\"model.streaming\"}}",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"96fee0c4-2ed4-4d0b-a7bd-ff4acb6225b1\",\"payload\":{\"baseURL\":\"https://open.bigmodel.cn/api/anthropic\",\"maxAttempts\":11,\"model\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"role\":\"main\",\"source\":\"config\"},\"modelRequestSessionType\":\"main\",\"requestId\":\"9b0cf72e-806d-433b-81f5-37955b509c18\",\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"spanId\":\"f42a9bf3-4888-48\",\"parentSpanId\":\"7552d97d-efd2-4a\",\"querySource\":\"main_turn\",\"queryId\":\"query_6cf1d31c-b6ed-4106-b61a-cc3cdf231717\",\"traceId",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"5e41bc10-1d4b-4977-a8da-ee46b5d74380\",\"payload\":{\"content\":\"ok\",\"contextWindow\":1000000,\"querySource\":\"main_turn\",\"stopReason\":\"stop\",\"usage\":{\"inputTokens\":16676,\"outputTokens\":3,\"totalTokens\":16679,\"cacheReadTokens\":192,\"cacheWriteTokens\":0},\"cacheHit\":{\"inputTokens\":16676,\"cacheReadTokens\":192,\"cacheWriteTokens\":0,\"latestHitRate\":0.011513552410650036,\"hitRate\":0.011513552410650036,\"hitRateRequestCount\":1,\"totalInputTokens\":16676,\"totalCacheReadTokens\":192,\"totalCacheWriteTokens\":0},\"contextUsageBreakdown\":",
+    "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"862f0e19-ffb4-4b41-ae46-fc772d5f65e3\",\"payload\":{\"response\":\"ok\",\"tokenCount\":16679,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":1,\"inputTokens\":16676,\"outputTokens\":3,\"totalTokens\":16679,\"cacheReadTokens\":192,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":0,\"historyRoundCount\":1,\"duration\":5604,\"resultType\":\"success\",\"cacheStats\":{\"totalMessages\":7,\"cachedMessages\":6,\"lastCacheHit\":true,\"cacheReadTokens\":192}},\"seq\":9,\"sessionId\":\"sess_da445698-4803-4"
+  ],
+  "sessionEventKinds": [
+    "session.titleUpdated",
+    "turn.started",
+    "session.updated",
+    "session.updated",
+    "session.titleUpdated",
+    "text_delta",
+    "session.updated",
+    "session.updated",
+    "turn.completed"
+  ],
+  "streamChunkRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"6006503e-548d-4c65-8fe8-fd6fe16f6851\",\"eventSeq\":12,\"occurredAt\":1789312668185,\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"turnId\":\"turn_eea227eb-0105-427c-a614-f23cf6065304\",\"kind\":\"stream.chunk\",\"channel\":\"text\",\"chunkLength\":2,\"firstChunk\":true,\"assistantMessageId\":\"msg_mtzyk9le_94e1df5d-8770-4922-9a1a-870f85b03d32\"}}",
+  "stateUpdatedSamples": [
+    "{\"method\":\"state.updated\",\"params\":{\"patch\":{\"status\":\"running\"},\"reason\":\"prompt_started\",\"revision\":1,\"scope\":\"session\",\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"type\":\"state.updated\",\"workspace\":{\"workspacePath\":\"E:\\\\ai\\\\wzxClaw\",\"workspaceKey\":\"E:_ai_wzxClaw\"}}}",
+    "{\"method\":\"state.updated\",\"params\":{\"patch\":{\"mode\":{\"current\":\"yolo\"},\"model\":{\"available\":[{\"contextWindow\":1000000,\"label\":\"glm-5.3\",\"providerLabel\":\"BigModel\",\"ref\":{\"modelId\":\"glm-5.3\",\"providerId\":\"builtin:bigmodel-coding-plan\"}}],\"current\":{\"modelId\":\"glm-5.3\",\"providerId\":\"builtin:bigmodel-coding-plan\"},\"lastUsed\":{\"modelId\":\"glm-5.3\",\"providerId\":\"builtin:bigmodel-coding-plan\"}},\"permissi"
+  ],
+  "eventTopKeys": [
+    "deliveryKind",
+    "eventId",
+    "payload",
+    "seq",
+    "sessionId",
+    "timestamp",
+    "traceId",
+    "turnId",
+    "type"
+  ],
+  "eventRaw": "{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"96fee0c4-2ed4-4d0b-a7bd-ff4acb6225b1\",\"payload\":{\"baseURL\":\"https://open.bigmodel.cn/api/anthropic\",\"maxAttempts\":11,\"model\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"role\":\"main\",\"source\":\"config\"},\"modelRequestSessionType\":\"main\",\"requestId\":\"9b0cf72e-806d-433b-81f5-37955b509c18\",\"sessionId\":\"sess_da445698-4803-4c50-b127-cab0c6de0ec3\",\"spanId\":\"f42a9bf3-4888-48\",\"parentSpanId\":\"7552d97d-efd2-4a\",\"querySource\":\"main_turn",
+  "eventsRespKeys": [
+    "events"
+  ]
+}

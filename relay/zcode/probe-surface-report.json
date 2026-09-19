@@ -1,0 +1,365 @@
+{
+ "version": null,
+ "coreChain": {
+  "sessionCreate": "ok",
+  "sessionId": false,
+  "modelCatalogSize": 0,
+  "list": "ok sessions=50",
+  "read": "err -32602",
+  "close": "err -32602"
+ },
+ "surface": {
+  "automation/checkTaskBinding": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: automation/checkTaskBinding\""
+  },
+  "automation/create": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: automation/create\""
+  },
+  "automation/delete": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: automation/delete\""
+  },
+  "automation/list": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: automation/list\""
+  },
+  "automation/update": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: automation/update\""
+  },
+  "computer-use/operation-event": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: computer-use/operation-event\""
+  },
+  "interaction/browserExecute": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/browserExecute\""
+  },
+  "interaction/browserList": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/browserList\""
+  },
+  "interaction/requestOfficialMcpAuthHeaders": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/requestOfficialMcpAuthHeaders\""
+  },
+  "interaction/requestPermission": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/requestPermission\""
+  },
+  "interaction/requestProviderRuntimeHeaders": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/requestProviderRuntimeHeaders\""
+  },
+  "interaction/requestUserInput": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: interaction/requestUserInput\""
+  },
+  "mcp/list": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "offPeak/create": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: offPeak/create\""
+  },
+  "offPeak/list": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: offPeak/list\""
+  },
+  "plugins/cancelOperation": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"operationId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/configure": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received"
+  },
+  "plugins/describe": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginName\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, receiv"
+  },
+  "plugins/install": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginName\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, receiv"
+  },
+  "plugins/list": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/overview": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/referenceCatalog": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/referenceCatalogWithCategory": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/resetConfig": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received"
+  },
+  "plugins/resolveSuggestedReference": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"stableId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received"
+  },
+  "plugins/restoreBuiltin": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received"
+  },
+  "plugins/setEnabled": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"pluginId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received"
+  },
+  "plugins/uninstall": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/update": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "plugins/validate": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "process/childProcesses": {
+   "status": "ok-empty",
+   "result": "{\"processes\":[]}"
+  },
+  "provider/testModelConnectivity": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"selection\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, receive"
+  },
+  "provider/updateAccountConfig": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"revision\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"basedOnZCodeBuiltinRevision\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expecte"
+  },
+  "runtime/capabilities": {
+   "status": "ok-empty",
+   "result": "{\"independentPlanState\":true}"
+  },
+  "session/cancelBackgroundTask": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"taskId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received u"
+  },
+  "session/close": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/compact": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/create": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/debug": {
+   "status": "empty-params-error",
+   "code": -32603,
+   "schema": "{\"name\":\"ZodError\",\"stack\":\"ZodError: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\\n    at querySessionDebug (C:\\\\Users\\\\67376\\\\AppData\\\\Local\\\\Programs\\\\ZCode\\\\resources\\\\glm\\\\zcode.cjs:15233:6760)\\n    at kxt.dispatchRequest (C:\\\\Users\\\\67376\\\\A"
+  },
+  "session/events": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/fork": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/goal": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"code\\\": \\\"invalid_value\\\",\\n    \\\"values\\\": [\\n      \\\"show\\\",\\n      \\\"set\\\",\\n      \\\"replace\\\",\\n      \\\"pause\\\",\\n      \\\"resume\\\",\\n      \\\"clear\\\"\\n    ],\\n"
+  },
+  "session/list": {
+   "status": "ok-empty",
+   "result": "{\"sessions\":[{\"createdAt\":1789800829125,\"mode\":\"build\",\"traceId\":\"0acd2b39-2626-4b5b-ada8-ae1649f01dfa\",\"sessionId\":\"sess_d7e0a3ed-604b-4c95-aa68-872824d1e81b\",\"sessionKind\":\"interactive\",\"status\":\"idle\",\"title\":\"在全面review一下我们的架构设计\",\"titleSource\":\"first_input\",\"updatedAt\":1789802669255,\"workspace\":{\"workspaceKey\":\"E:\\\\ai\\\\wzxClaw\",\"workspacePath\":\"E:\\\\ai\\\\wzxClaw\"}},{\"createdAt\":1789802186550,\"mode\":\"build\",\"traceId\":\"71e9997e-ba6d-4dda-859e-e18bef81f177\",\"sessionId\":\"sess_3fb28215-63db-4e7b-928a-b1730e73e6f0\",\"sessionKind\":\"interactive\",\"status\":\"idle\",\"title\":\"[$skill-creator](C:\\\\\\\\Users\\\\\\\\67376\\\\\\\\.zcode\\\\\\\\cli\\\\\\\\plugins\\\\\\\\...\",\"titleSource\":\"first_input\",\"updatedAt\":1789802667730,\"workspace\":{\"workspaceKey\":\"E:\\\\ai\\\\wzxClaw\",\"workspacePath\":\"E:\\\\ai\\\\wzxClaw\"}},{\"createdAt\":17896571"
+  },
+  "session/messages": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/read": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/requestRuntimePreferences": {
+   "status": "empty-params-error",
+   "code": -32601,
+   "schema": "\"Method not found: session/requestRuntimePreferences\""
+  },
+  "session/resume": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/send": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"content\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received "
+  },
+  "session/setMode": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"code\\\": \\\"invalid_value\\\",\\n    \\\"values\\\": [\\n      \\\"plan\\\",\\n      \\\"build\\\",\\n      \\\"edit\\\",\\n      \\\"yolo\\\",\\n      \\\"auto\\\"\\n    ],\\n    \\\"path\\\": [\\n     "
+  },
+  "session/setModel": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"model\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received un"
+  },
+  "session/setThoughtLevel": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/stop": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/subagents": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "session/subscribe": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"code\\\": \\\"invalid_value\\\",\\n    \\\"values\\\": [\\n      \\\"desktop-continuous\\\",\\n      \\\"web-remote-replayable\\\"\\n    ],\\n    \\\"path\\\": [\\n      \\\"deliveryKind\\\"\\n  "
+  },
+  "session/usage": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"sessionId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "skills/referenceCatalog": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "usage/stats": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"code\\\": \\\"invalid_value\\\",\\n    \\\"values\\\": [\\n      \\\"all\\\",\\n      \\\"7d\\\",\\n      \\\"30d\\\"\\n    ],\\n    \\\"path\\\": [\\n      \\\"range\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid option: expected one of \\\\\\\"all\\\\\\\"|\\\\\\\"7d\\\\\\\"|\\\\\\\"30d\\\\\\\"\\\"\\n  }\\n]\"}"
+  },
+  "workflows/delete": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received und"
+  },
+  "workflows/get": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received und"
+  },
+  "workflows/list": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "workflows/move": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received und"
+  },
+  "workflows/runs": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"number\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"limit\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected number, received un"
+  },
+  "workflows/updateMeta": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received und"
+  },
+  "workspace/cancelGenerateText": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"operationId\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "workspace/generateText": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"selection\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, receive"
+  },
+  "workspace/readPresentation": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}"
+  },
+  "workspace/updateDynamicWorkflowPolicy": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"boolean\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"enabled\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected boolean, receive"
+  },
+  "workspace/updateInteractionPreferences": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"preferences\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, recei"
+  },
+  "workspace/updateModelIoPreferences": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"preferences\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, recei"
+  },
+  "workspace/updateOffPeakToolPolicy": {
+   "status": "zod",
+   "code": -32602,
+   "schema": "{\"name\":\"ZodError\",\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"workspace\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"boolean\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"enabled\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected boolean, receive"
+  }
+ },
+ "reverseRequests": [
+  "startup/storageState",
+  "session/requestRuntimePreferences"
+ ],
+ "configDrift": "none"
+}

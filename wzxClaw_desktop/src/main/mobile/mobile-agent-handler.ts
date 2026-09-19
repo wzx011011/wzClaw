@@ -10,6 +10,7 @@ import { DEFAULT_MODELS } from '../../shared/constants'
 import { isActiveSessionTaskStatus } from '../agent/session-task-state-manager'
 import type { AgentConfig } from '../agent/types'
 import type { MobileRelayContext, MobileRelayMessage } from './mobile-relay-context'
+import { brainEngineEnabled, getBrainBridge } from './mobile-app-server-bridge'
 
 // Dedup set max size for command:send
 const PROCESSED_IDS_MAX = 1000
@@ -23,6 +24,12 @@ export async function handleAgentMessage(
   ctx: MobileRelayContext
 ): Promise<boolean> {
   const { broadcastToMobile } = ctx
+
+  // -- M3 大脑模式：手机遥控路径由 app-server 引擎供数（env 开关，默认关） --
+  if (brainEngineEnabled()) {
+    const bridge = getBrainBridge(ctx)
+    if (bridge && (await bridge.handleMessage(msg.event, msg.data))) return true
+  }
 
   // -- Agent command: send --
   if (msg.event === 'command:send' && msg.data?.content) {
