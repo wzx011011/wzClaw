@@ -18,6 +18,7 @@ import '../services/goal_store.dart';
 import '../models/ui_prefs.dart';
 import '../zcode/zcode_chat_store.dart';
 import 'git_action_sheets.dart';
+import 'review_sheet.dart';
 
 /// 组装好的板块数据（纯渲染入参，widget 测试直接构造）
 class StatusPanelData {
@@ -147,6 +148,17 @@ class StatusPanelCard extends StatelessWidget {
                     tooltip: '打开任务面板',
                     onPressed: onOpenGoalPanel,
                   ),
+                  // 调用轨迹（对齐官方侧栏轨迹标签；session/debug 进程内快照）
+                  IconButton(
+                    icon: Icon(
+                      Icons.route_outlined,
+                      size: 14,
+                      color: colors.textMuted,
+                    ),
+                    tooltip: '调用轨迹',
+                    onPressed: () =>
+                        Navigator.of(context).pushNamed('/trace-panel'),
+                  ),
                 ],
               ),
             ),
@@ -158,7 +170,7 @@ class StatusPanelCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (data.git != null) ...[
-                      _gitChangesRow(colors, data.git!),
+                      _gitChangesRow(context, colors, data.git!),
                       _gitBranchRow(colors, data.git!),
                       _gitCommitPushRow(context, colors),
                     ] else
@@ -198,12 +210,20 @@ class StatusPanelCard extends StatelessWidget {
   Widget _divider(AppColors colors) =>
       Divider(height: 1, indent: 12, endIndent: 12, color: colors.border);
 
-  // ── 更改 +N -M ──────────────────────────────────────────────────
-  Widget _gitChangesRow(AppColors colors, GitRepoStatus git) {
+  // ── 更改 +N -M（tap → 审查 sheet，阶段 3c）───────────────────────
+  Widget _gitChangesRow(
+    BuildContext context,
+    AppColors colors,
+    GitRepoStatus git,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-      child: Row(
-        children: [
+      child: InkWell(
+        onTap: git.hasChanges && (workspacePath ?? '').isNotEmpty
+            ? () => _openReviewSheet(context)
+            : null,
+        child: Row(
+          children: [
           Icon(
             Icons.difference_outlined,
             size: 15,
@@ -236,8 +256,15 @@ class StatusPanelCard extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
+  }
+
+  /// 审查 sheet（阶段 3c）：restored=true（发生过撤销）时经宿主刷新 git 状态
+  Future<void> _openReviewSheet(BuildContext sheetContext) async {
+    final restored = await showReviewSheet(sheetContext, workspacePath!);
+    if (restored) onGitActionDone();
   }
 
   // ── 分支（tap → 分支抽屉）────────────────────────────────────────
@@ -802,6 +829,11 @@ class _FloatingStatusPanelState extends State<FloatingStatusPanel> {
   @override
   void didUpdateWidget(FloatingStatusPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 工作区变更必须重拉（审查 P1-2）：不清旧数据会显示 A 的分支/差异、
+    // 却对 B 的工作区执行动作
+    if (oldWidget.workspacePath != widget.workspacePath) {
+      _refresh();
+    }
     final strategy = UiPrefs.statusPanelStrategy.value;
     if (_lastStrategy != strategy) {
       // 策略切换：重置手动标记并按新策略重解析形态
@@ -831,6 +863,9 @@ class _FloatingStatusPanelState extends State<FloatingStatusPanel> {
       unavailable = true;
     }
     if (!mounted) return;
+    // 在途期间工作区已切换：旧工作区的查询结果不回填（审查 P1-2）；
+    // didUpdateWidget 已为新区触发下一次 _refresh
+    if (widget.workspacePath != ws) return;
     setState(() {
       _git = git;
       _gitUnavailable = unavailable;

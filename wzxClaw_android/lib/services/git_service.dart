@@ -79,14 +79,28 @@ class GitService {
   /// UI 据此降级为只显示「分支」按钮
   final ValueNotifier<String?> currentBranch = ValueNotifier<String?>(null);
 
-  /// 拉取工作区当前分支并更新 [currentBranch]
+  /// 拉取工作区当前分支并更新 [currentBranch]。
+  /// 代际校验（审查 P1-2）：请求在途期间若连接已换代（切节点/重连），
+  /// 旧节点的结果不得覆盖 currentBranch。
   Future<void> refreshBranch(String? workspacePath) async {
     if (workspacePath == null || workspacePath.isEmpty) {
       currentBranch.value = null;
       return;
     }
+    final bound = debugRequester != null
+        ? null
+        : ConnectionManager.instance.boundRequester();
+    final generation =
+        debugRequester != null ? 0 : ConnectionManager.instance.connectionGeneration;
     try {
-      final r = await _call('x/git/status', {'path': workspacePath});
+      final req = bound;
+      final r = await (req != null
+          ? req('x/git/status', {'path': workspacePath})
+          : _call('x/git/status', {'path': workspacePath}));
+      if (debugRequester == null &&
+          ConnectionManager.instance.connectionGeneration != generation) {
+        return; // 在途期间已换代：旧节点结果不覆盖
+      }
       final branch = (r is Map) ? (r['branch']?.toString() ?? '') : '';
       currentBranch.value = branch.isEmpty ? null : branch;
     } catch (_) {
@@ -134,10 +148,17 @@ class GitService {
 
   /// 仓库摘要（状态面板「Git 工具」板块数据源）。非 git 仓库 / git 不可用 /
   /// 离线一律抛错，由调用方决定隐藏板块——不做假数据。
+  /// status 与 diffstat 两步绑定同一连接（审查 P1-2）：不得 A 节点 status
+  /// 配 B 节点 diffstat。
   Future<GitRepoStatus> repoStatus(String workspacePath) async {
-    final st = await _call('x/git/status', {'path': workspacePath});
+    final bound = debugRequester != null
+        ? null
+        : ConnectionManager.instance.boundRequester();
+    Future<dynamic> req(String method, [Map<String, dynamic>? params]) =>
+        bound != null ? bound(method, params) : _call(method, params);
+    final st = await req('x/git/status', {'path': workspacePath});
     if (st is! Map) throw StateError('git status 响应异常');
-    final ds = await _call('x/git/diffstat', {'path': workspacePath});
+    final ds = await req('x/git/diffstat', {'path': workspacePath});
     return GitRepoStatus(
       branch: st['branch']?.toString() ?? '',
       dirty: (st['dirty'] as num?)?.toInt() ?? 0,
@@ -181,4 +202,92 @@ class GitService {
       if (setUpstream) 'setUpstream': true,
     });
   }
+
+  /// 审查 sheet 文件列表（x/git/changedfiles，阶段 3c）：staged/unstaged
+  /// 的 numstat 明细，二进制文件 added/removed 为 null。
+  Future<List<GitChangedFile>> changedFiles(
+    String workspacePath, {
+    bool staged = false,
+  }) async {
+    final r = await _call('x/git/changedfiles', {
+      'path': workspacePath,
+      if (staged) 'staged': true,
+    });
+    if (r is! Map) throw StateError('changedfiles 响应异常');
+    final list = <GitChangedFile>[];
+    for (final e in (r['files'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(e as Map);
+      list.add(
+        GitChangedFile(
+          path: m['path']?.toString() ?? '',
+          added: (m['added'] as num?)?.toInt(),
+          removed: (m['removed'] as num?)?.toInt(),
+        ),
+      );
+    }
+    return list;
+  }
+
+  /// 按文件 unified diff（x/git/filediff）。truncated=true 时 UI 须提示截断。
+  Future<GitFileDiff> fileDiff(
+    String workspacePath,
+    String file, {
+    bool staged = false,
+  }) async {
+    final r = await _call('x/git/filediff', {
+      'path': workspacePath,
+      'file': file,
+      if (staged) 'staged': true,
+    });
+    if (r is! Map) throw StateError('filediff 响应异常');
+    return GitFileDiff(
+      file: r['file']?.toString() ?? file,
+      patch: r['patch']?.toString() ?? '',
+      truncated: r['truncated'] == true,
+    );
+  }
+
+  /// 撤销更改（x/git/restore，危险操作——UI 必须双确认后才调用）。
+  /// [staged]=true 时连同暂存区一起撤销（等价官方「撤销」）。
+  Future<void> restore(
+    String workspacePath,
+    String file, {
+    bool staged = false,
+  }) async {
+    await _call('x/git/restore', {
+      'path': workspacePath,
+      'file': file,
+      if (staged) 'staged': true,
+    });
+  }
+}
+
+/// 审查文件条目（x/git/changedfiles）
+class GitChangedFile {
+  final String path;
+
+  /// 行级增删；null = 二进制文件（numstat 两列 "-"）
+  final int? added;
+  final int? removed;
+
+  const GitChangedFile({
+    required this.path,
+    required this.added,
+    required this.removed,
+  });
+
+  bool get isBinary => added == null || removed == null;
+}
+
+/// 按文件 diff 结果（x/git/filediff）
+class GitFileDiff {
+  final String file;
+  final String patch;
+  final bool truncated;
+
+  const GitFileDiff({
+    required this.file,
+    required this.patch,
+    required this.truncated,
+  });
 }

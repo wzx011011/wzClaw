@@ -11,6 +11,7 @@ import 'pages/goal_panel_page.dart';
 import 'pages/home_page.dart';
 import 'pages/landing_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/trace_page.dart';
 import 'services/connection_manager.dart';
 import 'services/goal_store.dart';
 import 'zcode/zcode_chat_store.dart';
@@ -175,6 +176,7 @@ class _WzxClawAppState extends State<WzxClawApp> with WidgetsBindingObserver {
                 '/': (context) => const LandingPage(),
                 '/chat': (context) => const ChatPage(),
                 '/goal-panel': (context) => const GoalPanelPage(),
+                '/trace-panel': (context) => const TracePage(),
                 '/settings': (context) => const SettingsPage(),
                 '/connection-diagnostics': (context) =>
                     const ConnectionDiagnosticsPage(),
