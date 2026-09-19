@@ -85,11 +85,13 @@ class _ChatPageState extends State<ChatPage> {
   String? _pendingPermissionMode;
 
   /// 待发送附件：上传成功后路径会作为消息文本引用交给 agent 的 Read 工具。
-  final List<AttachmentUpload> _attachments = [];
-
-  /// 活动下载任务（确认中/拉取中/预览待保存）。终态即移除并按结果提示，
-  /// 状态不持久化（消息行会被权威合并原位替换，挂消息本体必被覆盖）。
-  final List<FileDownloadTask> _downloads = [];
+  /// 附件/下载按节点归属（2026-09-19 评审 P1）：同页切换桌面时按节点换手
+  /// ——A 的 nodePath/downloadId 只在 A 有效，绝不带进 B 的发送/拉取；
+  /// 切回 A 恢复原列表。键与 _sendQueues 一致（'' = 未连接）。
+  final Map<String, List<AttachmentUpload>> _attachmentsByNode = {};
+  final Map<String, List<FileDownloadTask>> _downloadsByNode = {};
+  List<AttachmentUpload> _attachments = [];
+  List<FileDownloadTask> _downloads = [];
 
   /// 输入草稿（按会话上下文：activeSessionId ?? '__new__'）。切会话/
   /// 新任务各留各的；当前草稿持久化（composer_draft_*），重启可恢复。
@@ -110,6 +112,12 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => _attachments.removeWhere(attachments.contains));
   }
 
+  /// 附件/下载的归属工作区（评审 #19）：有活动会话 = 会话自己的工作区；
+  /// 新任务态 = 所选工作区（会话即将建在这里）。单一来源 = store。
+  String? get _attachmentWorkspacePath => _store.activeSessionId != null
+      ? (_store.activeSessionWorkspacePath ?? _store.selectedWorkspacePath)
+      : _store.selectedWorkspacePath;
+
   Future<void> _pickAndUploadAttachment({required bool camera}) async {
     final upload = await AttachmentService.pickAndUpload(
       source: camera ? ImageSource.camera : ImageSource.gallery,
@@ -119,6 +127,7 @@ class _ChatPageState extends State<ChatPage> {
       onChanged: (_) {
         if (mounted) setState(() {});
       },
+      workspacePath: _attachmentWorkspacePath,
     );
     if (upload != null && !_attachments.contains(upload) && mounted) {
       setState(() => _attachments.add(upload));
@@ -251,7 +260,10 @@ class _ChatPageState extends State<ChatPage> {
       _showDownloadConfirmSheet(existing.first);
       return;
     }
-    final task = await FileDownloadService.begin(nodePath);
+    final task = await FileDownloadService.begin(
+      nodePath,
+      workspacePath: _attachmentWorkspacePath,
+    );
     if (!mounted) return;
     if (task.phase == FileDownloadPhase.failed) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -403,8 +415,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   // 消息排队（对齐官方 ZCode）：流式期间发送改为入队，turn 结束后依次发出。
-  // 「立即」= 不等 turn 结束马上发。队列仅存内存（会话内排队，切会话即清）。
-  final List<_QueuedSend> _sendQueue = [];
+  // 「立即」= 不等 turn 结束马上发。队列仅存内存，按「节点|会话」上下文
+  // 归位（评审 #8）：切走保留、切回恢复，绝不跨节点误发，也不再切会话即清。
+  final Map<String, List<_QueuedSend>> _sendQueues = {};
+  List<_QueuedSend> _sendQueue = [];
+  String? _lastRenderedDesktopId;
   Timer? _queueFlushTimer;
 
   // Slash command autocomplete
@@ -501,11 +516,24 @@ class _ChatPageState extends State<ChatPage> {
   void _syncFromStore({bool initial = false}) {
     if (!mounted) return;
     final sid = _store.activeSessionId;
-    if (sid != _lastRenderedSessionId) {
+    final desktopId = ConnectionManager.instance.selectedDesktopId;
+    if (sid != _lastRenderedSessionId ||
+        desktopId != _lastRenderedDesktopId) {
       // 草稿按会话上下文换手：存旧、载新（切会话不再丢输入）
       if (!initial) _drafts[_draftKey] = _inputController.text;
       _draftKey = sid ?? '__new__';
       _lastRenderedSessionId = sid;
+      _lastRenderedDesktopId = desktopId;
+      // 排队消息按「节点|会话」上下文归位（评审 #8）：切走保留、切回恢复；
+      // 换节点时旧节点的队列自然不可见，也绝不发往新节点
+      _sendQueue = _sendQueues.putIfAbsent(
+        '${desktopId ?? ''}|$_draftKey',
+        () => [],
+      );
+      // 附件/下载按节点换手（2026-09-19 评审 P1）：与队列同规则——
+      // A 的待发附件/待确认下载绝不出现在 B 的发送/拉取里
+      _attachments = _attachmentsByNode.putIfAbsent(desktopId ?? '', () => []);
+      _downloads = _downloadsByNode.putIfAbsent(desktopId ?? '', () => []);
       if (!initial) {
         _showScrollFab = false;
         _slashSuggestions = [];
@@ -515,8 +543,6 @@ class _ChatPageState extends State<ChatPage> {
         _inputController.selection = TextSelection.collapsed(
           offset: _inputController.text.length,
         );
-        // 排队消息属于原会话上下文，切会话即清（不留到别的会话发出）
-        _sendQueue.clear();
       } else {
         // 冷启动恢复：持久化草稿仅当会话上下文匹配时载入
         unawaited(_restorePersistedDraft(_draftKey));
@@ -532,6 +558,14 @@ class _ChatPageState extends State<ChatPage> {
       _isStreaming = _store.isStreaming;
       _isWaiting = _store.isWaitingForResponse;
       _isSessionLoading = _store.sessionOpening;
+      // 顶栏工作区名与「当前聊天的事实」同源（P1-2）：活动会话显示会话
+      // 自己的工作区；新任务态才显示所选工作区。二者不得互相冒充——
+      // 否则顶栏/状态面板与实际执行目标不一致
+      _workspaceName = _workspaceDisplayName(
+        _store.activeSessionId != null
+            ? _store.activeSessionWorkspacePath
+            : _store.selectedWorkspacePath,
+      );
     });
     // 回合运行中起 1Hz 心跳（tok/s 衰减/已耗时不随增量暂停而冻结）
     final busy = _isStreaming || _isWaiting;
@@ -548,8 +582,12 @@ class _ChatPageState extends State<ChatPage> {
         _displayMessages.isNotEmpty) {
       _scrollToBottom();
     }
-    // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）
-    if (!_isStreaming && !_isWaiting) _scheduleQueueFlush();
+    // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）；
+    // 会话恢复在途不冲（sessionRestoring）：权威运行状态未确认，
+    // 恢复窗口内按默认空闲误发队首（2026-09-19 评审 P2）
+    if (!_isStreaming && !_isWaiting && !_store.sessionRestoring) {
+      _scheduleQueueFlush();
+    }
 
     // 发送失败等业务错误：store.error 上浮为 SnackBar（模型卡路径已退役，
     // 自愈失败也走这里）
@@ -679,6 +717,9 @@ class _ChatPageState extends State<ChatPage> {
     _queueFlushTimer?.cancel();
     _queueFlushTimer = Timer(const Duration(milliseconds: 500), () {
       if (!mounted || _isStreaming || _isWaiting) return;
+      // 会话恢复（resume/权威状态确认）在途：此刻的「空闲」不可信，
+      // 等恢复结束的 notify 重新调度（2026-09-19 评审 P2）
+      if (_store.sessionRestoring) return;
       if (_sendQueue.isEmpty) return;
       final item = _sendQueue.removeAt(0);
       setState(() {});
@@ -1074,9 +1115,17 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ),
               if (_store.activePermission != null)
-                PermissionBar(request: _store.activePermission!),
+                PermissionBar(
+                  key: ValueKey(_store.activePermission!.toolCallId),
+                  request: _store.activePermission!,
+                ),
               if (_store.activeAskUser != null)
-                AskUserBar(question: _store.activeAskUser!),
+                AskUserBar(
+                  // 请求身份 key：队列轮转同位换题时强制重建，
+                  // 上一题的已选/补充文本绝不带入下一题（2026-09-19 评审 P2）
+                  key: ValueKey(_store.activeAskUser!.questionId),
+                  question: _store.activeAskUser!,
+                ),
               _buildSlashSuggestions(),
               _buildInputBar(),
             ],
@@ -1089,7 +1138,8 @@ class _ChatPageState extends State<ChatPage> {
                 showGitBranchSheet(context, workspacePath: wsPath);
               },
               sessionBusy: _isStreaming || _isWaiting,
-              workspacePath: _store.selectedWorkspacePath,
+              // Git 工具作用于当前聊天会话的工作区（不是新任务选择的工作区）
+              workspacePath: _store.activeSessionWorkspacePath,
             ),
         ],
       ),
@@ -1574,6 +1624,8 @@ class _ChatPageState extends State<ChatPage> {
       _drafts[_draftKey] = text;
       unawaited(_persistCurrentDraft());
     });
+    // 生成中「加入队列」按钮随输入显隐（评审 #9）
+    if (_isStreaming || _isWaiting) setState(() {});
     if (text.startsWith('/')) {
       final query = text.toLowerCase();
       final matches = _allSlashCommands
@@ -1735,6 +1787,7 @@ class _ChatPageState extends State<ChatPage> {
   final GlobalKey _usageBtnKey = GlobalKey();
   final GlobalKey _modelBtnKey = GlobalKey();
   final GlobalKey _effortBtnKey = GlobalKey();
+  final GlobalKey _queueBtnKey = GlobalKey();
 
   Widget _buildInputBar() {
     return StreamBuilder<WsConnectionState>(
@@ -1962,6 +2015,17 @@ class _ChatPageState extends State<ChatPage> {
           onTap: isConnected ? _showEffortPopup : null,
         ),
         const SizedBox(width: 8),
+        // 生成中有输入：显式「加入队列」入口（评审 #9）。默认「回车换行」
+        // 时无键盘发送键，唯一按钮是停止——提示语承诺排队却无处提交，
+        // 误点原发送位置反而会停止任务。键盘偏好只决定回车行为。
+        if (busy && _inputController.text.trim().isNotEmpty)
+          iconBtn(
+            key: _queueBtnKey,
+            tip: '加入队列',
+            icon: Icons.low_priority,
+            onTap: isConnected ? _sendMessage : null,
+            color: colors.accent,
+          ),
         // 发送/停止：浅色圆角方块（V3：空闲 ↑ 箭头、生成中实心方块）
         SizedBox(
           width: 30,

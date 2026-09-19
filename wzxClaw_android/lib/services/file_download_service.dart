@@ -122,13 +122,22 @@ class FileDownloadService {
   }
 
   /// begin：校验并登记下载（工作区外/不存在在此步报错）。
+  /// [workspacePath] 为消息所属会话的工作区（评审 #19）：下载边界跟随
+  /// 会话工作区而非 companion 启动目录；null/空 = 兼容缺省（节点回退 cwd）。
   /// 成功返回完整任务；失败返回 phase=failed 任务（无 downloadId，UI 只
   /// 用 error 文案提示，不进确认面板）。不抛异常。
-  static Future<FileDownloadTask> begin(String nodePath) async {
+  static Future<FileDownloadTask> begin(
+    String nodePath, {
+    String? workspacePath,
+  }) async {
     // 顺手清理历史残留（>24h 的临时文件；预览后未归位的兜底）
     unawaited(_sweepStaleTemp());
     try {
-      final b = await _request('x/file/download/begin', {'path': nodePath});
+      final b = await _request('x/file/download/begin', {
+        'path': nodePath,
+        if (workspacePath != null && workspacePath.isNotEmpty)
+          'workspacePath': workspacePath,
+      });
       if (b is! Map) throw StateError('begin 应答形状非法');
       final id = b['downloadId'];
       if (id is! String || id.isEmpty) {
@@ -175,6 +184,9 @@ class FileDownloadService {
       ping();
       return;
     }
+    // 只允许从待确认态进入拉取：已在拉取/预览中的重复触发一律忽略
+    // （确认面板可重复弹出，双击不得叠加拉取）
+    if (task.phase != FileDownloadPhase.awaitingChoice) return;
     task.phase = FileDownloadPhase.pulling;
     ping();
     try {
@@ -224,15 +236,23 @@ class FileDownloadService {
       }
       if (forPreview) {
         await _openViewer(task);
-        task.phase = FileDownloadPhase.previewing;
-      } else {
+        // 预览调起期间用户可能已取消：复核后才转 previewing，
+        // 绝不把 cancelled 覆盖成 previewing
+        if (task.phase == FileDownloadPhase.pulling) {
+          task.phase = FileDownloadPhase.previewing;
+        }
+      } else if (task.phase == FileDownloadPhase.pulling) {
+        // 收满与保存之间同样有取消窗口：仍处 pulling 才保存
         await _save(task);
       }
     } catch (e) {
       await _cleanupTemp(task);
       await _abort(task);
-      task.phase = FileDownloadPhase.failed;
-      task.error = _friendly(e);
+      // 用户已取消（终态 cancelled）：归 cancel 所有，不覆盖成 failed
+      if (task.phase == FileDownloadPhase.pulling) {
+        task.phase = FileDownloadPhase.failed;
+        task.error = _friendly(e);
+      }
     }
     ping();
   }
@@ -264,16 +284,19 @@ class FileDownloadService {
     onChanged?.call(task);
   }
 
-  /// 拉取中取消
+  /// 拉取中取消：先同步置终态（评审 #13）——在途 chunk 返回时的写入前
+  /// 检查立即生效，最后一个 chunk 不会再落盘/触发保存；随后异步清理
+  /// 临时文件并通知节点焚会话。此前先 await 清理再置状态，清理窗口内
+  /// 返回的末块会把已取消的任务继续拉完甚至保存。
   static Future<void> cancel(
     FileDownloadTask task, {
     void Function(FileDownloadTask)? onChanged,
   }) async {
     if (task.phase != FileDownloadPhase.pulling) return;
-    await _cleanupTemp(task);
-    await _abort(task);
     task.phase = FileDownloadPhase.cancelled;
     onChanged?.call(task);
+    await _cleanupTemp(task);
+    await _abort(task);
   }
 
   static Future<void> _openViewer(FileDownloadTask task) async {

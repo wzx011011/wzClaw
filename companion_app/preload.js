@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   petMenu: (x, y) => ipcRenderer.invoke('pet-menu', x, y),
   pickCwd: () => ipcRenderer.invoke('pick-cwd'),
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
+  restartConnection: () => ipcRenderer.invoke('restart-connection'),
   getFirstRunStatus: () => ipcRenderer.invoke('get-first-run-status'),
   detectZCode: () => ipcRenderer.invoke('detect-zcode'),
   previewZcodeImport: () => ipcRenderer.invoke('zcode-import:preview'),

@@ -47,11 +47,14 @@ class AttachmentService {
         : ConnectionManager.instance.zcodeRequest(method, params);
   }
 
-  /// 选图（相册/拍照）并上传；用户取消返回 null
+  /// 选图（相册/拍照）并上传；用户取消返回 null。
+  /// [workspacePath] = 消息所属会话的工作区（评审 #19）：附件落盘跟随
+  /// 会话工作区而非 companion 启动目录。
   static Future<AttachmentUpload?> pickAndUpload({
     required ImageSource source,
     void Function(AttachmentUpload)? onCreated,
     void Function(AttachmentUpload)? onChanged,
+    String? workspacePath,
   }) async {
     final XFile? picked;
     try {
@@ -72,7 +75,12 @@ class AttachmentService {
     final uploadRecord =
         AttachmentUpload(name: picked.name, size: bytes.length);
     onCreated?.call(uploadRecord);
-    return upload(uploadRecord, bytes, onChanged: onChanged);
+    return upload(
+      uploadRecord,
+      bytes,
+      onChanged: onChanged,
+      workspacePath: workspacePath,
+    );
   }
 
   /// 分块上传字节流到节点工作区（begin → chunk* → commit）
@@ -80,14 +88,17 @@ class AttachmentService {
     AttachmentUpload up,
     Uint8List bytes, {
     void Function(AttachmentUpload)? onChanged,
+    String? workspacePath,
   }) async {
     void ping() => onChanged?.call(up);
     String? uploadId;
     try {
-      final b = await _request(
-        'x/file/begin',
-        {'name': up.name, 'size': bytes.length},
-      );
+      final b = await _request('x/file/begin', {
+        'name': up.name,
+        'size': bytes.length,
+        if (workspacePath != null && workspacePath.isNotEmpty)
+          'workspacePath': workspacePath,
+      });
       uploadId =
           b is Map && b['uploadId'] is String ? b['uploadId'] as String : null;
       if (uploadId == null || uploadId.isEmpty) {

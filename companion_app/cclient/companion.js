@@ -392,7 +392,15 @@ function createCompanion(options = {}) {
   let creds = null;
   let reattaching = false;
   let matchedUp = false; // 房间当前是否手机+设备齐全（决定 app-server 出站是否放行）
-  const pending = new Map(); // 反向请求超时看护（按 method 分档，见 handleAppServerFrame）
+  // 反向请求 wireId 代次化（2026-09-19 评审修复）：app-server 子进程重启后
+  // server-N id 从头复用，直接透传原生 id 会让旧进程请求的迟到应答命中
+  // 新进程同 id 的新请求（=一次未经确认的批准）。每次引擎（重）启递增
+  // 代次，对外发全局唯一 wireId，应答按映射还原回原生 id。
+  let bridgeGeneration = 0;
+  let nextReverseWireId = 0;
+  // wireId → { timer, nativeId, gen }：反向请求超时看护 + 应答还原映射
+  // （按 method 分档，见 handleAppServerFrame）
+  const pending = new Map();
 
   // ---- 套餐模型注入（2026-09-18 实测配方，见 lib/plan-overlay.js）----
   // 启动即后台拉取套餐模型清单（1h 缓存）；就绪后起桥 spawn 引擎时经
@@ -452,15 +460,23 @@ function createCompanion(options = {}) {
     }
   }, 5 * 60 * 1000).unref();
 
-  // 手机文件下载会话表（x/file/download/*）：downloadId → {absPath,size,
-  // createdAt}。begin 时路径校验一次，chunk 只认 id，避免每块重复校验；
-  // 30 分钟过期清理——中断的下载不留悬挂会话。
+  // 手机文件下载会话表（x/file/download/*）：downloadId → {fd,absPath,size,
+  // createdAt}。begin 时以 realpath 校验包含关系并打开固定句柄（评审 #20：
+  // 字面路径校验可被 symlink/junction 绕过；固定 fd 还保证传输期间目标被
+  // 替换不影响本次一致性）；chunk 只认 id 从 fd 读；eof/abort/过期/stop
+  // 统一关句柄——中断的下载不留悬挂会话与句柄。
   const DOWNLOAD_CHUNK_BYTES = 256 * 1024; // base64 后 ~349KB，低于 relay 1MB 帧限
   const fileDownloads = new Map();
+  function closeDownload(downloadId) {
+    const dl = fileDownloads.get(downloadId);
+    if (!dl) return;
+    fileDownloads.delete(downloadId);
+    if (dl.fd != null) { try { fs.closeSync(dl.fd); } catch { /* best effort */ } }
+  }
   setInterval(() => {
     const now = Date.now();
     for (const [id, dl] of fileDownloads) {
-      if (now - dl.createdAt > 30 * 60 * 1000) fileDownloads.delete(id);
+      if (now - dl.createdAt > 30 * 60 * 1000) closeDownload(id);
     }
   }, 5 * 60 * 1000).unref();
 
@@ -578,17 +594,20 @@ function createCompanion(options = {}) {
     });
     bridge.onFrame = handleAppServerFrame;
     // 新 app-server 进程的 server-N id 从头计数：作废旧 pending（只清定时器，
-    // 不代答——旧进程已不在，写了也无人认领）。
+    // 不代答——旧进程已不在，写了也无人认领），并递增反向请求代次——
+    // 旧代次 wireId 的迟到应答由此永远无法命中新进程的请求。
     bridge.onRespawn = () => {
-      for (const timer of pending.values()) clearTimeout(timer);
+      bridgeGeneration++;
+      for (const entry of pending.values()) clearTimeout(entry.timer);
       pending.clear();
       // 本地扩展请求同样作废（等价语义：旧进程的应答不会再有）
       for (const entry of localPending.values()) { clearTimeout(entry.timer); entry.resolve(null); }
       localPending.clear();
     };
     bridge.start();
-    log('bridge-started', '');
-    onStateChange('app-server-started');
+    bridgeGeneration++; // 新桥实例 = 新代次（子进程 id 空间全新）
+    log('bridge-started', `generation=${bridgeGeneration}`);
+    onStateChange(currentState()); // 桥真实就绪才报 paired（评审 #18）
   }
 
   function sendToPhone(frame) {
@@ -625,6 +644,7 @@ function createCompanion(options = {}) {
   // app-server → 手机。运行时偏好反向请求由 companion 代答；其余反向请求
   // 转发给手机端应答并做超时看护（默认长档，见 lib/protocol.js 失败模式
   // 分析）：仅白名单快速方法走短档；超时代答 -32022 拒绝。
+  // 对外 id 一律改写为代次化 wireId（见 pending 声明处注释），应答时还原。
   function handleAppServerFrame(frame) {
     // 本地扩展请求的应答（x/model/* 等经桥请求）：不透传给手机
     if (frame.id != null && !frame.method && feedLocalResponse(frame)) return;
@@ -633,15 +653,18 @@ function createCompanion(options = {}) {
         bridge.write({ id: frame.id, result: RUNTIME_PREFERENCES_RESULT });
         return;
       }
+      const nativeId = frame.id;
+      const wireId = `srv-${++nextReverseWireId}@g${bridgeGeneration}`;
       const timeoutMs = isFastMethod(frame.method) ? requestTimeoutMs : permissionRequestTimeoutMs;
-      const stale = pending.get(frame.id);
-      if (stale) clearTimeout(stale); // 同 id 覆盖前先清旧定时器，防旧定时器误杀复用 id 的新请求
       const timer = setTimeout(() => {
-        if (pending.delete(frame.id) && bridge) {
-          bridge.write({ id: frame.id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
+        const entry = pending.get(wireId);
+        if (entry && pending.delete(wireId) && bridge) {
+          bridge.write({ id: entry.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
         }
       }, timeoutMs).unref();
-      pending.set(frame.id, timer);
+      pending.set(wireId, { timer, nativeId, gen: bridgeGeneration });
+      sendToPhone({ ...frame, id: wireId });
+      return;
     }
     sendToPhone(frame);
   }
@@ -663,15 +686,24 @@ function createCompanion(options = {}) {
     // 手机端对反向请求的应答：无对应看护条目（已超时代答/进程重启作废/迟到）
     // 则静默丢弃，不向 app-server 转发重复响应（重复应答是协议错误源）。
     if (frame.id != null && (frame.result !== undefined || frame.error !== undefined) && !frame.method) {
-      const timer = pending.get(frame.id);
-      if (!timer) {
+      const entry = pending.get(frame.id);
+      if (!entry) {
         // 迟到/重复应答（已超时代答/进程重启作废/relay 断开代答）：不转发
         // （重复应答是协议错误源），但零观测会变成「手机点了允许却没生效」
         // 的无头案，留日志（只记 id，不含载荷）。
         log('phone-response-late', String(frame.id));
         return;
       }
-      clearTimeout(timer); pending.delete(frame.id);
+      // 代次防御：旧代次 wireId 正常已被 onRespawn 清出 pending，这里兜底
+      // 拒绝一切非当前代次的应答——绝不让旧批准命中新进程的请求。
+      if (entry.gen !== bridgeGeneration) {
+        clearTimeout(entry.timer); pending.delete(frame.id);
+        log('phone-response-stale-generation', String(frame.id));
+        return;
+      }
+      clearTimeout(entry.timer); pending.delete(frame.id);
+      // 还原引擎原生 id 再转发（对外 wireId 只存在于手机↔companion 段）
+      frame = { ...frame, id: entry.nativeId };
     }
     startBridge();
     if (!bridge) {
@@ -881,6 +913,25 @@ function createCompanion(options = {}) {
         }
       });
     });
+  }
+
+  // 工作区根解析（评审 #19）：x/file/* 接受可选 workspacePath（会话自己的
+  // 工作区——会话允许任意工作区，附件/下载边界必须跟随会话而非启动目录）。
+  // 无论显式还是缺省，一律 realpath 规范化（junction/symlink 一并还原）：
+  // 文件侧同样 realpath，两侧同表示比较，工作区根本身是链接时合法文件
+  // 不再被误判越界（2026-09-19 评审 P2）。根不可解析宁可报错，绝不静默
+  // 回退 cwd。
+  function resolveWorkspaceRoot(workspacePath) {
+    const raw = workspacePath == null || String(workspacePath).trim() === ''
+      ? cwd
+      : path.resolve(String(workspacePath).trim());
+    try {
+      const real = fs.realpathSync(raw);
+      if (!fs.statSync(real).isDirectory()) throw new Error('not-a-directory');
+      return real;
+    } catch {
+      throw safeError('X_BAD_PARAMS');
+    }
   }
 
   async function handleXMethod(frame) {
@@ -1190,6 +1241,9 @@ function createCompanion(options = {}) {
           // .wzxclaw-attachments/，返回节点绝对路径供消息引用（引擎 Read
           // →视觉管线自洽，APP-SERVER.md「附件入口实测」）。
           // 安全：文件名只取末段并做字符白名单，杜绝路径穿越。
+          // 工作区身份（评审 #19）：可选 workspacePath 指定落盘根——
+          // 会话允许任意工作区，附件必须落进消息所属会话的工作区而非
+          // 启动目录；缺省回退 cwd（兼容旧调用）。
           const p = frame.params || {};
           const rawName = String(p.name || '').trim();
           const safeName = rawName.replace(/[\\\/]/g, '_').replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
@@ -1200,7 +1254,8 @@ function createCompanion(options = {}) {
           if (!Number.isInteger(p.size) || p.size < 0 || p.size > 200 * 1024 * 1024) {
             throw safeError('X_BAD_PARAMS');
           }
-          const dir = path.join(cwd, '.wzxclaw-attachments');
+          const root = resolveWorkspaceRoot(p.workspacePath);
+          const dir = path.join(root, '.wzxclaw-attachments');
           fs.mkdirSync(dir, { recursive: true });
           const uploadId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
           const stamp = new Date().toISOString().slice(0, 10);
@@ -1267,15 +1322,28 @@ function createCompanion(options = {}) {
         case 'x/file/download/begin': {
           // 手机端文件下载（begin→chunk*→eof|abort，上传族的镜像）。
           // 安全边界：只允许工作区内文件（含 .wzxclaw-attachments）——
-          // resolve 后相对路径不得逃出 cwd，防配对链路被用来拖走整盘文件；
-          // 工作区外/不存在/非普通文件一律 X_NOT_FOUND，不区分透露细节。
+          // 以 realpath 解析后的真实路径做包含校验（评审 #20：字面
+          // path.relative 检查可被 symlink/junction 绕过），再以固定句柄
+          // 读取，杜绝「校验后目标被换」；工作区外/不存在/非普通文件
+          // 一律 X_NOT_FOUND/X_OUT_OF_WORKSPACE，不区分透露细节。
+          // 工作区身份（评审 #19）：可选 workspacePath 指定校验根
+          // （会话工作区），缺省回退启动 cwd。
           const p = frame.params || {};
           if (typeof p.path !== 'string' || p.path.trim().length === 0
             || p.path.length > 500) {
             throw safeError('X_BAD_PARAMS');
           }
-          const abs = path.resolve(p.path.trim());
-          const rel = path.relative(cwd, abs);
+          const root = resolveWorkspaceRoot(p.workspacePath);
+          // realpath 还原 symlink/junction 后，与同样 realpath 过的工作区根
+          // 做包含校验（评审 #20）。不做字面预检（2026-09-19 评审 P2）：
+          // 工作区根本身是链接时，字面表示与真实表示不一致会把合法文件
+          // 误判越界；realpath + 真实根的包含比较与调用方路径表示无关，
+          // 是唯一既防逃逸（`..` 穿越被 realpath 解析、工作区内链接指向
+          // 外部被还原）又不误判的权威检查。不存在 → X_NOT_FOUND。
+          let abs;
+          try { abs = fs.realpathSync(path.resolve(p.path.trim())); }
+          catch { throw safeError('X_NOT_FOUND'); }
+          const rel = path.relative(root, abs);
           if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
             // 与「文件不存在」分开报 reason（同一 -32103 码）：手机端给
             // 「仅限工作区内」与「文件不存在请重试」两种不同指引
@@ -1285,10 +1353,12 @@ function createCompanion(options = {}) {
           try { st = fs.statSync(abs); } catch { throw safeError('X_NOT_FOUND'); }
           if (!st.isFile()) throw safeError('X_NOT_FOUND');
           if (st.size > 200 * 1024 * 1024) throw safeError('X_BAD_PARAMS');
+          let fd;
+          try { fd = fs.openSync(abs, 'r'); } catch { throw safeError('X_NOT_FOUND'); }
           const downloadId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
           // 手机本地文件名：末段 + 字符白名单（同 x/file/begin 落盘名规则）
           const safeName = path.basename(abs).replace(/[^\w.\-\u4e00-\u9fa5]/g, '_') || 'file';
-          fileDownloads.set(downloadId, { absPath: abs, size: st.size, createdAt: Date.now() });
+          fileDownloads.set(downloadId, { fd, absPath: abs, size: st.size, createdAt: Date.now() });
           reply({ id: frame.id, result: { downloadId, name: safeName, size: st.size } });
           return;
         }
@@ -1304,17 +1374,14 @@ function createCompanion(options = {}) {
           const want = Math.min(DOWNLOAD_CHUNK_BYTES, dl.size - p.offset);
           const buf = Buffer.alloc(want);
           let bytesRead = 0;
-          const fd = fs.openSync(dl.absPath, 'r');
           try {
-            // 按块开读不持句柄：文件若在会话期间被改小，bytesRead < want
-            // 如实反映，eof 判定跟着 received 走，不回填零字节。
-            bytesRead = fs.readSync(fd, buf, 0, want, p.offset);
-          } finally {
-            fs.closeSync(fd);
-          }
+            // 从 begin 时打开的固定句柄读：文件在会话期间被改小/替换，
+            // bytesRead 如实反映，eof 判定跟着 received 走，不回填零字节
+            bytesRead = fs.readSync(dl.fd, buf, 0, want, p.offset);
+          } catch { throw safeError('X_FAILED'); }
           const received = p.offset + bytesRead;
           const eof = received >= dl.size;
-          if (eof) fileDownloads.delete(String(p.downloadId));
+          if (eof) closeDownload(String(p.downloadId));
           reply({ id: frame.id, result: {
             data: buf.subarray(0, bytesRead).toString('base64'),
             received,
@@ -1325,7 +1392,7 @@ function createCompanion(options = {}) {
         case 'x/file/download/abort': {
           // 幂等清理：会话不存在也回 ok（手机端取消/失败路径无需区分）
           const p = frame.params || {};
-          fileDownloads.delete(String(p.downloadId || ''));
+          closeDownload(String(p.downloadId || ''));
           reply({ id: frame.id, result: { ok: true } });
           return;
         }
@@ -1403,9 +1470,9 @@ function createCompanion(options = {}) {
       // relay 断开（重部署/闪断）时桥通常仍在：对未应答的反向请求立即代答 -32022，
       // 维持"每个转发的反向请求最终必有应答"的不变量，避免桌面回合中途无限挂起。
       let answered = 0;
-      for (const [id, timer] of pending) {
-        clearTimeout(timer);
-        if (bridge && bridge.write({ id, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } })) answered++;
+      for (const [, entry] of pending) {
+        clearTimeout(entry.timer);
+        if (bridge && bridge.write({ id: entry.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } })) answered++;
       }
       pending.clear();
       // 观测：代答了几条（0 条不打）。app-server 侧由此可对上「谁被拒绝」。
@@ -1459,7 +1526,7 @@ function createCompanion(options = {}) {
         authStage = 'authenticated';
         reattaching = false; // 接管握手完成：后续错误帧不再按"接管被拒"烧凭据
         matchedUp = msg.pair_status === 'matched';
-        if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
+        if (msg.pair_status === 'matched') { startBridge(); onStateChange(currentState()); }
         else onStateChange('waiting-pairing');
         return;
       }
@@ -1467,7 +1534,7 @@ function createCompanion(options = {}) {
         if (authStage !== 'authenticated') return;
         if (!['matched', 'waiting'].includes(msg.pair_status)) { conn.close(); return; }
         matchedUp = msg.pair_status === 'matched';
-        if (msg.pair_status === 'matched') { startBridge(); onStateChange('paired'); }
+        if (msg.pair_status === 'matched') { startBridge(); onStateChange(currentState()); }
         else onStateChange('waiting-pairing');
         return;
       }
@@ -1476,6 +1543,18 @@ function createCompanion(options = {}) {
         handlePhoneFrame(msg.payload);
       }
     });
+  }
+
+  // 状态投影唯一实现：getter 与 onStateChange 回调共用（评审 #18）。
+  // 此前回调无条件发 'paired'（桥未起/预检未完成也发），宿主缓存后
+  // 与 getter 的 paired-no-model 漂移，托盘/顶栏谎报健康。
+  function currentState() {
+    if (!ws) return 'disconnected';
+    if (authStage !== 'authenticated') return 'connecting';
+    // 以房间实际配对状态为准：手机离席时如实报告 waiting-pairing 而非残留 paired。
+    if (!matchedUp) return 'waiting-pairing';
+    if (bridgeDead) return 'app-server-dead';
+    return bridgeStarted && bridge ? 'paired' : 'paired-no-model';
   }
 
   return {
@@ -1497,18 +1576,15 @@ function createCompanion(options = {}) {
     },
     get pairingUrl() { return pairing ? pairing.url : null; },
     get state() {
-      if (!ws) return 'disconnected';
-      if (authStage !== 'authenticated') return 'connecting';
-      // 以房间实际配对状态为准：手机离席时如实报告 waiting-pairing 而非残留 paired。
-      if (!matchedUp) return 'waiting-pairing';
-      if (bridgeDead) return 'app-server-dead';
-      return bridgeStarted && bridge ? 'paired' : 'paired-no-model';
+      return currentState();
     },
   stop() {
     if (stopped) return Promise.resolve();
     stopped = true;
     clearTimeout(reconnectTimer);
     clearInterval(linkWatchTimer);
+    // 下载会话的固定句柄一并关闭（评审 #20）：中断的下载不留悬挂 fd
+    for (const [id] of fileDownloads) closeDownload(id);
     try {
       if (parseInt(fs.readFileSync(lockFile, 'utf8'), 10) === process.pid) fs.unlinkSync(lockFile);
     } catch { /* 锁已被接管或不存在 */ }

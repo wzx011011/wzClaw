@@ -67,6 +67,9 @@ function applySnapshot(s) {
   $('autoStart').checked = !!s.autoStart;
   $('btnFull').classList.toggle('active', s.mode === 'full');
   $('btnPet').classList.toggle('active', s.mode === 'pet');
+  // 节点启动错误上屏（评审 #17）：此前 companion-error 只进日志，
+  // ALREADY_RUNNING 等冲突被吞、preflight 误导为引擎故障
+  $('cfgMsg').textContent = s.companionError || '';
   for (const l of s.logs || []) pushLog(l.event, l.detail);
 }
 
@@ -166,8 +169,10 @@ async function bootstrap() {
     $('autoStart').parentElement.title = '便携版不支持开机自启，请使用安装版';
   }
   if (!firstRun.completed) {
-    renderDetection(firstRun.detected);
-    $('importOverlay').classList.remove('hidden');
+    // 首启自动打开导入向导：与手动「重新扫描」同一条加载路径
+    // （preview + 目录渲染）。此前只显示检测结果不加载目录，
+    // 「导入所选并继续」收集到空选择、静默跳过导入（评审 #14）。
+    await openImportWizard();
   }
 }
 
@@ -179,6 +184,10 @@ window.api.onEvent((ev) => {
     case 'pairing': setPairing(ev.payload.url, ev.payload.qr); break;
     case 'state': setState(ev.payload.state); break;
     case 'runtime-status': renderRuntime(ev.payload); break;
+    case 'companion-error':
+      // 启动错误即时上屏（评审 #17）
+      $('cfgMsg').textContent = ev.payload.message || '节点启动失败';
+      break;
     default: break;
   }
 });
@@ -187,8 +196,20 @@ $('btnFull').addEventListener('click', () => window.api.switchMode('full'));
 $('btnPet').addEventListener('click', () => window.api.switchMode('pet'));
 $('btnCopy').addEventListener('click', () => { const url = $('pairUrl').textContent; if (url) navigator.clipboard.writeText(url); });
 $('btnReconnect').addEventListener('click', async () => {
-  const s = await window.api.getSnapshot();
-  await window.api.saveConfig({ relayUrl: s.config.relayUrl, cwd: s.config.cwd, autoStart: s.autoStart });
+  $('cfgMsg').textContent = '';
+  // 显式重启连接（评审 #15）：走专用 stop+start 重建链路。此前只是保存
+  // 未变更的配置，生命周期直接复用既有实例，卡死的连接永远得不到重建。
+  $('btnReconnect').disabled = true;
+  try {
+    const r = await window.api.restartConnection();
+    if (r && r.companionError) {
+      $('cfgMsg').textContent = `重启失败：${r.companionError}`;
+    } else {
+      pushLog('reconnect', '连接已重建');
+    }
+  } finally {
+    $('btnReconnect').disabled = false;
+  }
 });
 $('btnBrowse').addEventListener('click', async () => { const dir = await window.api.pickCwd(); if (dir) $('cwd').value = dir; });
 $('btnSave').addEventListener('click', async () => {

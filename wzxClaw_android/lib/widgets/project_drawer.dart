@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
+import '../models/desktop_info.dart';
 import '../services/connection_manager.dart';
 import '../zcode/zcode_chat_store.dart';
 import 'session_list_tile.dart';
@@ -327,7 +328,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                           : null,
                       onTap: () {
                         Navigator.pop(ctx);
-                        ConnectionManager.instance.selectDesktop(d.desktopId);
+                        _switchDesktop(d);
                       },
                     );
                   },
@@ -338,6 +339,29 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         );
       },
     );
+  }
+
+  /// 抽屉内切换桌面端：走真实连接切换（connectToStored）。
+  /// 此前这里调 selectDesktop 只改选中标记，连接与请求仍留在原桌面
+  /// （「当前」标签与实际目标不符，P1 修复）。「当前」标记由连接身份
+  /// 驱动：连接成功后 ConnectionManager 会把 selectedDesktopId 对齐。
+  Future<void> _switchDesktop(DesktopInfo d) async {
+    final cm = ConnectionManager.instance;
+    // 点的就是当前已连接的桌面：无需重连
+    if (d.desktopId == cm.selectedDesktopId &&
+        cm.state == WsConnectionState.connected) {
+      return;
+    }
+    final ok = await cm.connectToStored(d.desktopId);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('切换桌面失败：未找到该配对'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   /// 弹出工作区切换选择器（共享实现，欢迎页同款）

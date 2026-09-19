@@ -50,6 +50,8 @@ let fullWin = null;
 let petWin = null;
 let tray = null;
 let quitting = false;
+// 最近一次 companion 启动错误（评审 #17）：null = 无；进快照供渲染层展示
+let companionError = null;
 let runtimeStatus = { category: 'checking', source: null, version: null, detailCode: null };
 let runtimeGate = null;
 const logTail = [];
@@ -141,11 +143,9 @@ function firstRunSnapshot() {
 }
 
 function saveConfig() {
-  try {
-    persistConfig();
-  } catch {
-    /* 配置写失败不致命：下次启动用默认值 */
-  }
+  // 持久化失败上抛（评审 #16）：吞掉错误会假成功，重启后悄悄回到旧配置。
+  // 调用方负责回滚与反馈。
+  persistConfig();
 }
 
 // ---- 日志与广播 ----
@@ -292,19 +292,24 @@ function startCompanion() {
             })
             .catch(() => broadcast('pairing', { url, qr: null }));
         },
-        onStateChange: (state) => {
-          lastState = state;
-          broadcast('state', { state });
+        onStateChange: () => {
+          // 状态以 core 的 state getter 为唯一投影（评审 #18）：此前缓存
+          // 回调参数，桥未起时 core 回调仍发 paired，顶栏/托盘谎报健康
+          lastState = companion ? companion.state : 'disconnected';
+          broadcast('state', { state: lastState });
           updateTray();
         },
       });
       companion.start();
       companionCfgKey = currentCfgKey();
+      companionError = null; // 启动成功：清掉上一次的启动错误（评审 #17）
       pushLog('app-companion-started', cfg.relayUrl);
     } catch (e) {
       // 典型：ALREADY_RUNNING（旧计划任务 companion 还在跑）——如实上屏
-      pushLog('app-companion-error', e.code || String(e.message || e));
-      broadcast('companion-error', { message: e.code || String(e.message || e) });
+      // 并保留在快照里（评审 #17：错误只进日志 = 用户看不见）
+      companionError = e.code || String(e.message || e);
+      pushLog('app-companion-error', companionError);
+      broadcast('companion-error', { message: companionError });
     }
   });
 }
@@ -394,9 +399,19 @@ function createPet() {
   petWin.loadFile(path.join(__dirname, 'renderer', 'pet.html'));
 }
 
+// 形态切换的持久化：写失败不得阻断窗口显示（2026-09-19 评审 P2）——
+// 托盘唤窗/宠物切回必须永远可用，写失败留观测，下次保存成功时覆盖
+function trySaveMode() {
+  try {
+    saveConfig();
+  } catch (e) {
+    pushLog('app-companion-error', `persist mode ${e && e.code ? e.code : e}`);
+  }
+}
+
 function showFull() {
   mode = 'full';
-  saveConfig();
+  trySaveMode();
   if (!fullWin || fullWin.isDestroyed()) createFull();
   fullWin.show();
   fullWin.focus();
@@ -406,7 +421,7 @@ function showFull() {
 
 function showPet() {
   mode = 'pet';
-  saveConfig();
+  trySaveMode();
   if (!petWin || petWin.isDestroyed()) createPet();
   petWin.show();
   if (fullWin && !fullWin.isDestroyed()) fullWin.hide();
@@ -466,8 +481,9 @@ function stateText(s) {
 
 function registerIpc() {
   ipcMain.handle('get-snapshot', () => ({
-    state: lastState,
-    stateText: stateText(lastState),
+    // 状态投影以 core state getter 为准（评审 #18）；core 不在时才回落缓存
+    state: companion ? companion.state : lastState,
+    stateText: stateText(companion ? companion.state : lastState),
     pairingUrl,
     qrDataUrl,
     mode,
@@ -477,7 +493,7 @@ function registerIpc() {
     logs: logTail.slice(-200),
     runtime: publicRuntimeStatus(),
     lastImport: importSnapshotSummary(),
-    companionError: null,
+    companionError,
   }));
   ipcMain.handle('get-first-run-status', () => firstRunSnapshot());
   ipcMain.handle('detect-zcode', () => safeDetectionSnapshot());
@@ -498,7 +514,12 @@ function registerIpc() {
       pushLog('zcode-import-applied',
         Object.entries(receipt.counts || {}).map(([k, v]) => `${k}:${v}`).join(' '),);
       cfg.lastImport = { importedAt: receipt.importedAt, counts: receipt.counts };
-      saveConfig();
+      try {
+        saveConfig();
+      } catch (e) {
+        // 快照摘要持久化失败不推翻导入结果，但必须留观测（评审 #16 同源）
+        pushLog('app-companion-error', `persist ${e && e.code ? e.code : e}`);
+      }
     }
     return receipt;
   });
@@ -539,6 +560,18 @@ function registerIpc() {
     }
   });
   ipcMain.handle('retry-runtime', () => ensureRuntimeThenStart());
+  // 显式重启连接（评审 #15）：「重启连接」必须真的重建链路（stop+start），
+  // 与「重试运行时」区分——后者不触碰已在线连接。串行队列保证与其它
+  // 生命周期操作互斥。
+  ipcMain.handle('restart-connection', async () => {
+    await stopCompanion();
+    // 重建链路后必须重跑 runtime 预检：新建实例的 descriptor 为空
+    // （runtimeManaged，等待热注入），只 start 不预检会永远停在
+    // paired-no-model、普通会话请求全部失败，而运行时面板还显示旧的
+    // ready（2026-09-19 评审 P1）
+    await ensureRuntimeThenStart();
+    return { ok: true, companionError, runtime: publicRuntimeStatus() };
+  });
   ipcMain.handle('switch-mode', (_e, m) => (m === 'pet' ? showPet() : showFull()));
   ipcMain.handle('pet-menu', (_e, x, y) => {
     const menu = Menu.buildFromTemplate([
@@ -565,9 +598,18 @@ function registerIpc() {
   ipcMain.handle('save-config', async (_e, next) => {
     const valid = validateCompanionSetup(next || {});
     if (!valid.ok) return valid;
+    const previous = { relayUrl: cfg.relayUrl, cwd: cfg.cwd };
     cfg.relayUrl = valid.relayUrl;
     cfg.cwd = valid.cwd;
-    saveConfig();
+    try {
+      saveConfig();
+    } catch (e) {
+      // 持久化失败：回滚内存配置并如实报错（评审 #16：不再假成功——
+      // 此前 ok:true 但重启后悄悄回到旧配置）
+      cfg.relayUrl = previous.relayUrl;
+      cfg.cwd = previous.cwd;
+      return { ok: false, error: `配置写入失败（未生效）：${e && e.code ? e.code : e}` };
+    }
     if (!isPortable()) app.setLoginItemSettings({ openAtLogin: !!next.autoStart });
     await ensureRuntimeThenStart(); // 换 relay/目录后先验证 runtime，再恢复连接
     return { ok: true, runtime: publicRuntimeStatus() };

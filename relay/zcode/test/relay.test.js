@@ -912,3 +912,103 @@ test('owner takeover terminates the old owner socket without clearing the new ow
   assert.deepEqual(got.payload, { hello: 1 });
   await closeClient(d2); await closeClient(p);
 });
+
+// —— 2026-09-19 评审修复回归：路由清理代次化与反向请求接手 ——
+
+// #21：真实 device 半开时，冒名 device 拿到质询但认证失败——此前 detach 仅凭
+// 尝试角色即清空全房路由，真实设备在途请求的应答被无声丢弃。修复后只有
+// 已认证且在位的 device 才按代次清自己的路由。
+test('未认证冒名 device 质询失败不清真实设备的在途路由', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p = await client(t, f.url); await auth(p, d.sid, d.hash);
+
+  // p 的在途请求：device 侧拿到改写 id，尚未应答
+  p.send({ type: 'data', payload: { id: 1, method: 'session/list' } });
+  const routed = await d.next('data');
+  assert.equal(routed.payload.method, 'session/list');
+
+  // d 置为半开（错过心跳）→ 冒名 device 可拿到质询；proof 错误 → 拒绝
+  const dState = [...f.relay._sockets.values()].find(
+    (s) => s.role === 'device' && s.room?.sid === d.sid);
+  dState.lastPongAt = 0;
+  const attacker = await client(t, f.url);
+  const nonce = await challenge(attacker, d.sid, 'device');
+  attacker.send({ type: 'auth_response', device_sid: d.sid, proof: proofFor('wrong-key', nonce, 'device', d.sid) });
+  assert.equal((await attacker.next('error')).code, 'AUTH_FAILED');
+
+  // 真实设备仍在位：在途请求的应答必须还能路由回 probe（路由未被清）
+  await delay(30);
+  d.send({ type: 'data', payload: { id: routed.payload.id, result: { sessions: [] } } });
+  assert.deepEqual((await p.next('data')).payload, { id: 1, result: { sessions: [] } });
+});
+
+// #22：反向请求的持有 probe 离席后，请求移交给其余健康 probe——此前路由
+// 直接删除，房间仍 matched 却无人能应答（companion 约 120s 超时拒绝）。
+test('持有反向请求的 probe 离席后请求移交给其余健康 probe', async (t) => {
+  const f = await fixture(t);
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  const p2 = await client(t, f.url); await auth(p2, d.sid, d.hash);
+
+  // device 发出反向请求：稳定选第一个健康 probe（p1）
+  d.send({ type: 'data', payload: { id: 'server-1', method: 'interaction/requestPermission', params: {} } });
+  const held = await p1.next('data');
+  assert.equal(held.payload.id, 'server-1');
+
+  // p1 离席：请求原样移交给 p2，不得无声蒸发
+  await closeClient(p1);
+  assert.deepEqual((await p2.next('data')).payload, held.payload);
+
+  // 移交后 p2 的应答正常回到 device（单点路由跟随新持有者，防双允许）
+  p2.send({ type: 'data', payload: { id: 'server-1', result: { decision: 'allow' } } });
+  assert.deepEqual((await d.next('data')).payload, { id: 'server-1', result: { decision: 'allow' } });
+});
+
+// #22 补充：全部 probe 离席时反向请求保留待命（不丢弃），新 probe 认证后补投。
+test('全部 probe 离席后反向请求待命，新 probe 入房补投', async (t) => {
+  const f = await fixture(t, { probeReplayGraceMs: 20 });
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  d.send({ type: 'data', payload: { id: 'server-9', method: 'interaction/requestPermission', params: {} } });
+  await p1.next('data');
+
+  await closeClient(p1); // 无健康 probe：路由保留（probe 置空待命）
+  const p2 = await client(t, f.url);
+  assert.equal((await auth(p2, d.sid, d.hash)).ack.pair_status, 'matched');
+  // 宽限期后 p2 仍在线才补投
+  assert.deepEqual((await p2.next('data')).payload,
+    { id: 'server-9', method: 'interaction/requestPermission', params: {} });
+});
+
+// 2026-09-19 评审 P2：设备列表的在线探测是短连 probe（无 onRequest 钩子，
+// 收到反向请求即同步默认 -32000 拒绝，见 connection_manager.probePairing）。
+// 认证即关闭的探测不得成为权限持有者——宽限期内离席不补投，路由继续
+// 待命，等下一个长连 probe；用户「查一下在不在线」不得杀掉等待中的权限。
+test('认证即关闭的在线探测不得补投孤儿权限（否则探测默认拒绝）', async (t) => {
+  const f = await fixture(t, { probeReplayGraceMs: 60 });
+  const d = await device(t, f.url);
+  const p1 = await client(t, f.url); await auth(p1, d.sid, d.hash);
+  d.send({ type: 'data', payload: { id: 'server-9', method: 'interaction/requestPermission', params: {} } });
+  await p1.next('data');
+  await closeClient(p1); // 路由待命（probe 置空）
+
+  // 模拟 probePairing：短连 probe，matched 后立即关闭
+  const scout = await client(t, f.url);
+  assert.equal((await auth(scout, d.sid, d.hash)).ack.pair_status, 'matched');
+  await closeClient(scout);
+
+  // 宽限期已过：device 不得收到探测的默认拒绝
+  await delay(150);
+  assert.equal(
+    d.messages.filter((m) => m.type === 'data' && m.payload && m.payload.error).length,
+    0,
+    '在线探测不得自动拒绝等待中的权限',
+  );
+
+  // 真实（长连）probe 入房：宽限期后收到补投
+  const p2 = await client(t, f.url);
+  assert.equal((await auth(p2, d.sid, d.hash)).ack.pair_status, 'matched');
+  assert.deepEqual((await p2.next('data')).payload,
+    { id: 'server-9', method: 'interaction/requestPermission', params: {} });
+});

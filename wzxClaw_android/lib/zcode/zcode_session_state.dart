@@ -114,6 +114,14 @@ class ZcodeSessionState {
   /// 消息的权威身份始终是 session/messages 的 info.id。
   String? streamingTurnId;
 
+  /// 最近一次 noteTurnStart / beginLocalTurn 记录的回合 id
+  String? lastSeenTurnId;
+
+  /// 回合代次：每次新回合开始（本地发送或 turn.started）单调递增。
+  /// 权威刷新收尾请求携带发起时的代次，完成时代次已前进 = 有更新回合
+  /// 在跑，绝不能收尾新回合（旧回合迟到的 session/messages 只做数据合并）。
+  int turnGeneration = 0;
+
   /// 最近一次 usage.delta 的 token 计数（回合收尾通知用）
   int lastInputTokens = 0;
   int lastOutputTokens = 0;
@@ -129,6 +137,14 @@ class ZcodeSessionState {
   /// null = 未知（未设置、或尚未收到 state.updated 的 mode patch）。
   /// 由 setMode 乐观更新，权威值以 patch.mode.current 回填为准。
   String? mode;
+
+  /// 本会话当前选中模型（'providerId/modelId'）。会话级状态：后台会话的
+  /// model patch / setModel 迟到响应只写回自己的容器，不串到别的会话。
+  String? modelRef;
+
+  /// 本会话思考强度（session/setThoughtLevel 乐观值）。会话级：切换会话
+  /// 各自独立；协议快照未实测携带该字段，无权威回填（如实显示未知）。
+  String? thoughtLevel;
 
   /// 视口渲染用消息快照（每次访问生成新列表）。
   /// 过滤：系统注入提醒（引擎把 TodoWrite 等提示以 user-role 入库）+
@@ -191,6 +207,20 @@ class ZcodeSessionState {
   /// 推进 seq 水位（单调，只增不减）
   void advanceSeq(int? seq) {
     if (seq != null && seq > lastSeq) lastSeq = seq;
+  }
+
+  /// 记录一次回合开始（turn.started）：turnId 变化才计代次（补放/重放
+  /// 的同回合事件不递增）
+  void noteTurnStart(String? turnId) {
+    if (turnId == null || turnId == lastSeenTurnId) return;
+    lastSeenTurnId = turnId;
+    turnGeneration++;
+  }
+
+  /// 本地发送开启新回合（turnId 未知的乐观路径；服务端 turn.started
+  /// 随后到达会再计一次——代次只用于「是否前进」比较，多计无害）
+  void beginLocalTurn() {
+    turnGeneration++;
   }
 
   // ──────────────────────────────────────────────

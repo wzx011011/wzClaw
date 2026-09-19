@@ -445,11 +445,14 @@ TurnVM buildTurnVM(
       case ChatProcessPartKind.text:
         final body = process.text ?? '';
         if (body.trim().isEmpty) continue;
+        // 过程中的叙述正文保留全文（评审 #10）：此前截成 157 字摘要且
+        // 无法展开，工具调用前后的说明/计划/代码在 UI 中不可获取；
+        // 折叠语义由回合收起承担，行内不再二次截断
         if (i == terminalTextIndex) {
           answer = body;
         } else {
           parts.add(
-            TurnPart.text(_plainExcerpt(body), key: process.id),
+            TurnPart.text(body, key: process.id),
           );
         }
         breakAggregate();
@@ -765,12 +768,6 @@ String _lastPathSegment(String s) {
   if (t.isEmpty) return '…';
   final idx = t.lastIndexOf('/');
   return idx >= 0 && idx < t.length - 1 ? t.substring(idx + 1) : t;
-}
-
-/// 叙述文本摘录：过长时截断（叙述在流程里是辅助角色，全文在正文段）
-String _plainExcerpt(String text) {
-  final t = text.trim();
-  return t.length > 160 ? '${t.substring(0, 157)}…' : t;
 }
 
 /// ── 渲染 ──────────────────────────────────────────────────────────

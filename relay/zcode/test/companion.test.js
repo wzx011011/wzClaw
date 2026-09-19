@@ -322,8 +322,11 @@ test('companion 配对 → 桥接 → 双向转发 + 反向请求代答/转发�
   await client.next((m) => m.type === 'data' && m.payload.method === 'fake/runtime-prefs'
     && m.payload.params.answered === true);
   // 未知反向请求转发给手机；手机应答回传。
-  await client.next((m) => m.type === 'data' && m.payload.id === 'server-2');
-  client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
+  // wireId 代次化：手机侧见到的是 companion 改写的唯一 id（不再是原生
+  // server-N），应答按原 id 回传即可。
+  const reverseRelay = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/test');
+  client.send({ type: 'data', payload: { id: reverseRelay.payload.id, result: { approved: true } } });
   await client.next((m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay'
     && m.payload.params.ok === true);
   // 手机请求 → app-server 响应。
@@ -402,7 +405,7 @@ test('反向请求超时默认长档：白名单方法短档、未知方法不�
   // 不转发——短档路径由「runtime-prefs 代答」用例覆盖，此处验证非白名单
   // 方法不被短档误杀）。
   emit('srv-perm', 'session/requestPermission');
-  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-perm');
+  await client.next((m) => m.type === 'data' && m.payload.method === 'session/requestPermission');
 
   // 短档（300ms）到期后：非白名单方法不受短档影响，仍在等待手机应答。
   await delay(900);
@@ -410,9 +413,10 @@ test('反向请求超时默认长档：白名单方法短档、未知方法不�
 
   // 权限类在放宽档内从容应答（模拟人看手机后点确认）：不触发代答。
   emit('srv-ask', 'interaction/askUser');
-  await client.next((m) => m.type === 'data' && m.payload.id === 'srv-ask');
+  const askFrame = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/askUser');
   await delay(300);
-  client.send({ type: 'data', payload: { id: 'srv-ask', result: { selectedLabels: ['A'] } } });
+  client.send({ type: 'data', payload: { id: askFrame.payload.id, result: { selectedLabels: ['A'] } } });
 
   // 超过放宽档（2000ms）仍未应答的权限类最终也被代答拒绝（-32022，与旧版一致）。
   const late = await client.next(
@@ -935,35 +939,39 @@ test('迟到/重复的应答被丢弃并留 phone-response-late 日志，不重�
   const parsed = new URL(pairingUrl);
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
   // 共享 fixture 启动即发的未知反向请求会经 relay 单点路由到本手机。
-  const reverse = await client.next((m) => m.type === 'data' && m.payload.id === 'server-2');
+  // wireId 代次化：手机侧按 method 捕获，应答携带收到的改写 id。
+  const reverse = await client.next((m) => m.type === 'data' && m.payload.method === 'interaction/test');
   assert.equal(reverse.payload.method, 'interaction/test');
-  client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
+  client.send({ type: 'data', payload: { id: reverse.payload.id, result: { approved: true } } });
   await client.next((m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay'
     && m.payload.params.ok === true);
 
   // 同一应答重发（迟到/重复）：不转发、留日志
-  client.send({ type: 'data', payload: { id: 'server-2', result: { approved: true } } });
+  client.send({ type: 'data', payload: { id: reverse.payload.id, result: { approved: true } } });
   await delay(400);
   const relays = client.messages.filter(
     (m) => m.type === 'data' && m.payload.method === 'fake/interaction-relay');
   assert.equal(relays.length, 1, '重复应答不得再次到达 app-server');
-  assert.ok(relayLogs.some((line) => line.startsWith('route-rejected-response server-2')),
+  assert.ok(relayLogs.some((line) => line.startsWith('route-rejected-response srv-')),
     'relay 丢弃非归属应答必须有观测');
 });
 
-// app-server 进程重启后 server-N id 从头计数：onRespawn 必须清空旧 pending，
-// 否则旧 id 的迟到应答会写进新进程（跨进程串话）。用 pid 标记 id 区分新旧实例。
-test('app-server 重启作废旧 pending：旧 id 迟到应答被丢弃留日志，新 id 正常应答', async (t) => {
+// P1-7 回归（2026-09-19 评审）：app-server 重启后原生 server-N id 从头复用，
+// 若手机侧仍按原生 id 寻址，旧进程请求的迟到应答会命中新进程同 id 的请求
+// （=一次未经确认的批准）。companion 对外改写为代次化 wireId：旧 wireId 的
+// 迟到应答被丢弃留观测，新 wireId 的应答按映射还原回引擎原生 id。
+// 两代进程刻意都发 'server-1'——正是旧实现被误配对的真实形状。
+test('app-server 重启复用原生 id：旧 wireId 迟到应答被丢弃，新 wireId 应答还原到引擎', async (t) => {
   const { relay, url: relayUrl } = await withRelay(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-respawn-'));
   const logs = [];
   let pairingUrl = '';
-  // pid 标记反向请求 id；fake/exit 触发干净退出 → 桥自动重启。
+  // 两代进程都发原生 id 'server-1'（复用场景）；fake/exit 触发干净退出 → 桥自动重启。
   const onDemandServer = `
     'use strict';
     let buf = '';
     const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');
-    send({ id: 'srv-' + process.pid, method: 'interaction/requestPermission', params: {} });
+    send({ id: 'server-1', method: 'interaction/requestPermission', params: {} });
     process.stdin.on('data', (chunk) => {
       buf += chunk.toString();
       let index;
@@ -973,9 +981,9 @@ test('app-server 重启作废旧 pending：旧 id 迟到应答被丢弃留日志
         if (!line) continue;
         let frame; try { frame = JSON.parse(line); } catch { continue; }
         if (frame.method === 'fake/exit') { process.exit(0); }
-        if (typeof frame.id === 'string' && frame.id.startsWith('srv-')
+        if (frame.id === 'server-1'
           && (frame.result !== undefined || frame.error !== undefined)) {
-          send({ method: 'fake/answered', params: { tag: frame.id, code: frame.error ? frame.error.code : null } });
+          send({ method: 'fake/answered', params: { tag: 'server-1', code: frame.error ? frame.error.code : null } });
         }
       }
     });
@@ -1002,28 +1010,30 @@ test('app-server 重启作废旧 pending：旧 id 迟到应答被丢弃留日志
   const parsed = new URL(pairingUrl);
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
   const first = await client.next(
-    (m) => m.type === 'data' && typeof m.payload.id === 'string' && m.payload.id.startsWith('srv-'));
-  const pid1 = first.payload.id;
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestPermission');
+  const wire1 = first.payload.id;
+  assert.notEqual(wire1, 'server-1', '手机侧必须看到代次化 wireId，而非原生 id');
 
-  // 触发子进程退出 → 桥自动重启（默认 1s 退避）；重启时 onRespawn 清空 pending
+  // 触发子进程退出 → 桥自动重启（默认 1s 退避）；新进程再次发 'server-1'
   client.send({ type: 'data', payload: { method: 'fake/exit' } });
   const second = await client.next(
-    (m) => m.type === 'data' && typeof m.payload.id === 'string'
-      && m.payload.id.startsWith('srv-') && m.payload.id !== pid1);
-  const pid2 = second.payload.id;
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestPermission'
+      && m.payload.id !== wire1);
+  const wire2 = second.payload.id;
 
-  // 旧 id 的迟到应答：pending 已被 onRespawn 清空 → 丢弃 + 日志，
-  // 绝不能写进新进程（若无清空，此应答会被转发并出现在 fake/answered）。
-  client.send({ type: 'data', payload: { id: pid1, result: { approved: true } } });
-  // 新 id 正常应答闭环（证明重启后链路可用，判据非「全都坏了」）
-  client.send({ type: 'data', payload: { id: pid2, result: { approved: false } } });
+  // 旧 wireId 的迟到应答：onRespawn 已作废旧代次 → 丢弃 + 日志，
+  // 绝不能写进新进程（否则旧批准会命中新进程同原生 id 的请求）。
+  client.send({ type: 'data', payload: { id: wire1, result: { approved: true } } });
+  // 新 wireId 正常应答闭环（证明重启后链路可用，判据非「全都坏了」）
+  client.send({ type: 'data', payload: { id: wire2, result: { approved: false } } });
   await client.next((m) => m.type === 'data' && m.payload.method === 'fake/answered'
-    && m.payload.params.tag === pid2);
+    && m.payload.params.tag === 'server-1');
   await delay(300);
-  assert.equal(client.messages.some((m) => m.type === 'data' && m.payload.method === 'fake/answered'
-    && m.payload.params.tag === pid1), false, '旧 id 迟到应答不得到达新进程');
-  assert.ok(logs.some((line) => line.startsWith(`phone-response-late ${pid1}`)),
-    '旧 id 迟到应答的丢弃必须有观测');
+  const answered = client.messages.filter(
+    (m) => m.type === 'data' && m.payload.method === 'fake/answered');
+  assert.equal(answered.length, 1, '只有新请求的应答到达引擎');
+  assert.ok(logs.some((line) => line.startsWith(`phone-response-late ${wire1}`)),
+    '旧 wireId 迟到应答的丢弃必须有观测');
 });
 
 // relay 断开（重部署/闪断）时对未应答反向请求的立即代答（-32022）必须真实
@@ -1089,24 +1099,29 @@ test('relay 断开：pending 立即代答 -32022 到 app-server 并留日志，�
   await waitFor(() => pairingUrl);
   const parsed = new URL(pairingUrl);
   await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
-  const first = await client.next(
+  // wireId 代次化：手机侧捕获改写 id 即可；引擎侧原生 id 由 fake/answers 上报，
+  // 判据为清单恰含一条 -32022 代答（当时仅一条在途反向请求）。
+  await client.next(
     (m) => m.type === 'data' && typeof m.payload.id === 'string' && m.payload.id.startsWith('srv-'));
-  const pid1 = first.payload.id;
 
   // 断开 companion ↔ relay（手机直连不受影响）：close 代答 -32022 并重连接管
   proxy.dropAll();
   await waitFor(() => logs.some((line) => line.startsWith('relay-closed-answer-pending count=1')),
     4000);
-  // 重连后同一手机（device 槽一直在房）matched，链路恢复
-  await waitFor(() => states.filter((s) => s === 'paired').length >= 2, 8000);
+  // 重连后同一手机（device 槽一直在房）matched，链路恢复。
+  // 判据 = disconnected 之后重新出现 paired（首次连接本就可能发出多次
+  // paired——auth_ack 与配对 notify 各一次——数次数会提前放行）
+  await waitFor(() => {
+    const idx = states.lastIndexOf('disconnected');
+    return idx >= 0 && states.slice(idx + 1).includes('paired');
+  }, 8000);
 
   // 向假 app-server 查询实际收到的应答清单：必须恰含那条 -32022 代答
   client.send({ type: 'data', payload: { method: 'fake/answers' } });
   const report = await client.next((m) => m.type === 'data'
     && m.payload.method === 'fake/answers-report');
-  const entry = report.payload.params.list.find((e) => e.tag === pid1);
-  assert.ok(entry, 'close 代答应答必须真实到达 app-server');
-  assert.equal(entry.code, -32022);
+  const timeouts = report.payload.params.list.filter((e) => e.code === -32022);
+  assert.equal(timeouts.length, 1, 'close 代答应答必须真实到达 app-server（恰一条）');
 });
 
 test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本地执行，不进 app-server）', async (t) => {
@@ -1819,7 +1834,11 @@ test('x/file/download/*：分块下载字节一致 + 工作区边界 + 会话清
   fs.mkdirSync(path.join(dir, 'subdir'), { recursive: true });
   const outsideCases = [
     ['工作区外绝对路径', outside, 'X_OUT_OF_WORKSPACE'],
-    ['.. 穿越到上级', path.join(dir, '..', 'escape.txt'), 'X_OUT_OF_WORKSPACE'],
+    // .. 穿越统一先做 realpath 解析：穿越到存在的外部文件 → 工作区外；
+    // 穿越到不存在的路径 → 文件不存在（不提前判越界，2026-09-19 评审：
+    // 字面预检会把链接工作区下的合法文件误判越界，已移除）
+    ['.. 穿越到存在的外部文件', path.join(dir, '..', path.basename(outside)), 'X_OUT_OF_WORKSPACE'],
+    ['.. 穿越到不存在的路径', path.join(dir, '..', 'escape.txt'), 'X_NOT_FOUND'],
     // cwd 本身 relative='' 也按工作区外拒绝（不可下载根目录）
     ['工作区根目录', dir, 'X_OUT_OF_WORKSPACE'],
     // 工作区内子目录：过边界校验、被 isFile 拒绝
@@ -1864,4 +1883,177 @@ test('x/file/download/*：分块下载字节一致 + 工作区边界 + 会话清
     params: { downloadId: b80.payload.result.downloadId, offset: 0 } } });
   const c85 = await client.next((m) => m.type === 'data' && m.payload.id === 85);
   assert.equal(c85.payload.error.code, -32103, 'abort 后会话即焚');
+});
+
+// 评审 #19/#20 回归（2026-09-19）：会话允许任意工作区，上传/下载边界必须
+// 跟随会话工作区（workspacePath 参数）而非 companion 启动目录；且包含
+// 校验以 realpath 计算，工作区内 symlink/junction 指向外部时必须拒绝。
+test('x/file 工作区身份跟随会话工作区，realpath 边界拒绝链接逃逸', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-ws-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-ws-state-'));
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: stateDir, // 启动目录独立：验证边界跟随 workspacePath 而非 cwd
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  const sessionWs = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-ws-session-'));
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(sessionWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  const ask = (id, method, params) =>
+    client.send({ type: 'data', payload: { id, method, params } });
+
+  // 1) 下载跟随 workspacePath：文件在启动目录之外、会话工作区之内 → 可下载
+  const secret = '会话工作区产物';
+  const inSession = path.join(sessionWs, 'artifact.txt');
+  fs.writeFileSync(inSession, secret);
+  ask(1, 'x/file/download/begin', { path: inSession, workspacePath: sessionWs });
+  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
+  assert.equal(b1.payload.error, undefined, '会话工作区内的文件可下载');
+  ask(2, 'x/file/download/chunk',
+    { downloadId: b1.payload.result.downloadId, offset: 0 });
+  const c2 = await client.next((m) => m.type === 'data' && m.payload.id === 2);
+  assert.equal(c2.payload.result.data, Buffer.from(secret, 'utf8').toString('base64'));
+
+  // 2) 不带 workspacePath 时仍以启动目录为界（兼容语义）：同一文件被拒
+  ask(3, 'x/file/download/begin', { path: inSession });
+  const b3 = await client.next((m) => m.type === 'data' && m.payload.id === 3);
+  assert.equal(b3.payload.error.data.reason, 'X_OUT_OF_WORKSPACE');
+
+  // 3) 上传落盘跟随 workspacePath：commit 后文件位于会话工作区
+  ask(4, 'x/file/begin', { name: 'upload.txt', size: 5, workspacePath: sessionWs });
+  const u4 = await client.next((m) => m.type === 'data' && m.payload.id === 4);
+  assert.equal(u4.payload.error, undefined);
+  ask(5, 'x/file/chunk', { uploadId: u4.payload.result.uploadId,
+    data: Buffer.from('hello', 'utf8').toString('base64') });
+  await client.next((m) => m.type === 'data' && m.payload.id === 5);
+  ask(6, 'x/file/commit', { uploadId: u4.payload.result.uploadId });
+  const u6 = await client.next((m) => m.type === 'data' && m.payload.id === 6);
+  assert.equal(u6.payload.error, undefined);
+  assert.ok(u6.payload.result.filePath.startsWith(sessionWs),
+    `附件应落在会话工作区（${u6.payload.result.filePath}）`);
+  assert.equal(fs.readFileSync(u6.payload.result.filePath, 'utf8'), 'hello');
+
+  // 4) symlink/junction 逃逸被拒：工作区内的链接指向外部目录
+  // （junction 仅支持目录；两端统一链接到外部目录再访问其下文件）
+  const outsideFile = path.join(dir, 'outside.txt');
+  fs.writeFileSync(outsideFile, 'top-secret');
+  const link = path.join(sessionWs, 'escape-dir');
+  fs.symlinkSync(dir, link, process.platform === 'win32' ? 'junction' : 'dir');
+  ask(7, 'x/file/download/begin',
+    { path: path.join(link, 'outside.txt'), workspacePath: sessionWs });
+  const b7 = await client.next((m) => m.type === 'data' && m.payload.id === 7);
+  assert.equal(b7.payload.error?.data?.reason, 'X_OUT_OF_WORKSPACE',
+    'realpath 边界必须拒绝链接逃逸');
+
+  // 5) workspacePath 不存在 → 显式 X_BAD_PARAMS（绝不静默回退 cwd）
+  ask(8, 'x/file/download/begin',
+    { path: inSession, workspacePath: path.join(sessionWs, 'missing') });
+  const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 8);
+  assert.equal(b8.payload.error?.data?.reason, 'X_BAD_PARAMS');
+});
+
+// 2026-09-19 评审 P2 回归：工作区根本身是 junction/symlink 时，根与文件必须
+// realpath 后同表示比较。此前「字面预检（文件未规范化 vs 规范化根）」与
+// 「缺省根未规范化（规范化文件 vs 未规范化根）」两种失配都会把合法文件
+// 误判 X_OUT_OF_WORKSPACE；链接根之外的逃逸仍必须拒绝。
+test('工作区根为 junction 时合法文件可下载，链接根之外的逃逸仍被拒', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-jw-state-'));
+  // 真实项目目录 + 指向它的 junction 工作区（真实场景：companion 以链接
+  // 路径作为 cwd/会话工作区启动）
+  const realWs = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-jw-real-'));
+  const aliasWs = path.join(stateDir, 'project-link');
+  fs.symlinkSync(realWs, aliasWs, process.platform === 'win32' ? 'junction' : 'dir');
+  const fileInWs = path.join(realWs, 'inside.txt');
+  fs.writeFileSync(fileInWs, 'junction-workspace');
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: aliasWs, // 缺省根 = 链接工作区
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-jw-out-'));
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(realWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  const ask = (id, method, params) =>
+    client.send({ type: 'data', payload: { id, method, params } });
+
+  // 1) 缺省根（cwd=链接），文件按链接路径给出 → 可下载
+  ask(1, 'x/file/download/begin', { path: path.join(aliasWs, 'inside.txt') });
+  const b1 = await client.next((m) => m.type === 'data' && m.payload.id === 1);
+  assert.equal(b1.payload.error, undefined,
+    `缺省链接根不得误判越界：${b1.payload.error?.data?.reason ?? ''}`);
+
+  // 2) 显式 workspacePath=链接，文件按链接路径给出 → 可下载
+  ask(2, 'x/file/download/begin',
+    { path: path.join(aliasWs, 'inside.txt'), workspacePath: aliasWs });
+  const b2 = await client.next((m) => m.type === 'data' && m.payload.id === 2);
+  assert.equal(b2.payload.error, undefined,
+    `显式链接根不得误判越界：${b2.payload.error?.data?.reason ?? ''}`);
+
+  // 3) 链接工作区 + 真实路径文件（表示混合）→ 可下载
+  ask(3, 'x/file/download/begin', { path: fileInWs, workspacePath: aliasWs });
+  const b3 = await client.next((m) => m.type === 'data' && m.payload.id === 3);
+  assert.equal(b3.payload.error, undefined,
+    `链接根下的真实路径不得误判越界：${b3.payload.error?.data?.reason ?? ''}`);
+
+  // 4) 逃逸仍被拒：链接根之外的真实目录文件
+  const outsideFile = path.join(outsideDir, 'secret.txt');
+  fs.writeFileSync(outsideFile, 'top-secret');
+  ask(4, 'x/file/download/begin', { path: outsideFile, workspacePath: aliasWs });
+  const b4 = await client.next((m) => m.type === 'data' && m.payload.id === 4);
+  assert.equal(b4.payload.error?.data?.reason, 'X_OUT_OF_WORKSPACE', '链接根之外的文件必须拒绝');
+
+  // 5) 上传到链接工作区：落盘在真实目录（同一物理位置），下载闭环
+  ask(5, 'x/file/begin', { name: 'up.txt', size: 2, workspacePath: aliasWs });
+  const u5 = await client.next((m) => m.type === 'data' && m.payload.id === 5);
+  assert.equal(u5.payload.error, undefined);
+  ask(6, 'x/file/chunk', { uploadId: u5.payload.result.uploadId,
+    data: Buffer.from('ok', 'utf8').toString('base64') });
+  await client.next((m) => m.type === 'data' && m.payload.id === 6);
+  ask(7, 'x/file/commit', { uploadId: u5.payload.result.uploadId });
+  const u7 = await client.next((m) => m.type === 'data' && m.payload.id === 7);
+  assert.equal(u7.payload.error, undefined);
+  assert.ok(u7.payload.result.filePath.startsWith(realWs),
+    `附件应落在链接工作区的真实目录（${u7.payload.result.filePath}）`);
+  ask(8, 'x/file/download/begin',
+    { path: u7.payload.result.filePath, workspacePath: aliasWs });
+  const b8 = await client.next((m) => m.type === 'data' && m.payload.id === 8);
+  assert.equal(b8.payload.error, undefined, '上传产物在工作区内可下载');
 });

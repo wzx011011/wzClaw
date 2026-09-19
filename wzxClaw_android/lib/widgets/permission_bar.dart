@@ -16,11 +16,16 @@ class PermissionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    // 来源标注（2026-09-19 评审 P1）：待处理请求保留后台有效性后，
+    // 请求可能不属于当前视口会话——用户必须在批准前看到它来自哪个
+    // 会话，否则会在 B 的上下文里批准 A 的操作（相对路径命令尤甚）
+    final sourceLabel =
+        ZcodeChatStore.instance.reverseSourceLabel(request.sessionId);
+    // 完整参数原文（评审 #11）：不做预截断——批准前必须能看到实际执行的
+    // 全部命令/路径/改动内容；长内容由外层滚动区（限高）消化
     String inputSummary = '';
     if (request.input.isNotEmpty) {
-      final encoded = const JsonEncoder.withIndent('  ').convert(request.input);
-      inputSummary =
-          encoded.length > 300 ? '${encoded.substring(0, 300)}…' : encoded;
+      inputSummary = const JsonEncoder.withIndent('  ').convert(request.input);
     }
 
     return Container(
@@ -50,6 +55,13 @@ class PermissionBar extends StatelessWidget {
               ),
             ],
           ),
+          if (sourceLabel != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              sourceLabel,
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             '${request.toolName} 想要执行：',
@@ -59,7 +71,7 @@ class PermissionBar extends StatelessWidget {
             const SizedBox(height: 6),
             Container(
               width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 120),
+              constraints: const BoxConstraints(maxHeight: 220),
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: colors.bgSecondary,

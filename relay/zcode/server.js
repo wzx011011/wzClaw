@@ -24,6 +24,9 @@ function createRelay(options = {}) {
     // RPC 路由必须有界且可回收。deadline 只约束 relay 的归属记录，不替代
     // companion/app-server 自己的请求超时；到期后迟到响应会以 unmatched 留观测。
     routeDeadlineMs: 2 * 60 * 1000, maxPendingRoutes: 256,
+    // 孤儿反向请求补投宽限：新 probe 认证后仍在线这么久才补投（见
+    // auth_response）。短连在线探测会在宽限内离席，从而不被当成权限应答者。
+    probeReplayGraceMs: 2000,
     // 流式 data 独立配额：不能沿用控制帧 120/10s 把正常回合掐断，也不能无限豁免。
     // 16 个满帧/窗口：单次 session/resume 截断回复可接近 1MiB，必须容纳；
     // 持续占用仍受字节总量和帧数双重限制。
@@ -82,22 +85,49 @@ function createRelay(options = {}) {
     if (state.role === 'probe') room.probes.delete(state.ws);
     else if (room[state.role] === state) room[state.role] = null;
     if (room.owner === state) room.owner = null;
-    // 清理路由归属，避免断线后 id 重用串到新连接。device 换代时旧内部
-    // 命名空间整体失效；probe 离席时仅移除属于该 probe 的记录。
-    if (state.role === 'device') {
-      room.requestRoutes.clear();
-      room.reverseRoutes.clear();
-    } else {
+    // 清理路由归属，避免断线后 id 重用串到新连接。清理必须核对
+    // 「已认证的槽位所有者 + 路由代次」（2026-09-19 评审修复）：
+    // - 认证失败的冒名 device 从未拥有设备槽，不得清真实设备的在途路由；
+    // - 被接管的旧 device 只清自己代次的路由，不伤新代次的在途请求。
+    if (state.role === 'device' && state.authenticated && state.deviceGen != null) {
+      for (const [id, route] of room.requestRoutes) {
+        if (route.deviceGen === state.deviceGen) room.requestRoutes.delete(id);
+      }
+      for (const [id, route] of room.reverseRoutes) {
+        if (route.deviceGen === state.deviceGen) room.reverseRoutes.delete(id);
+      }
+    } else if (state.role === 'probe') {
       for (const [id, route] of room.requestRoutes) {
         if (route.probe === state) room.requestRoutes.delete(id);
       }
-      for (const [id, route] of room.reverseRoutes) {
-        if (route.probe === state) room.reverseRoutes.delete(id);
-      }
+      // 反向请求不随持有者离席而丢失（2026-09-19 评审修复）：优先移交给
+      // 其他健康 probe；暂无则保留载荷待下一个 probe 入房后补投。
+      reassignReverseRoutes(room, state);
     }
     state.room = null;
     if (!room.device && room.probes.size === 0 && !room.owner && room.inactiveAt === null) room.inactiveAt = Date.now();
     notify(room);
+  }
+
+  // 把 [from]（离席 probe）名下的反向请求移交给健康 probe；无健康 probe 时
+  // 保留路由与载荷（deadline 到期由 sweep 统一清，companion 侧 120s 看护
+  // 也会代答拒绝，不会永久挂起）。
+  function reassignReverseRoutes(room, from) {
+    for (const [id, route] of room.reverseRoutes) {
+      if (route.probe !== from) continue;
+      const next = [...room.probes.values()].find((p) => !isStale(p) && p !== from);
+      if (next && route.payload) {
+        route.probe = next;
+        send(next.ws, { type: 'data', payload: route.payload });
+        logger('reverse-reassigned', `id=${id} reason=holder-left`);
+      } else if (!next) {
+        route.probe = null; // 待命：下一个 probe 认证后补投（见 auth_response）
+        logger('reverse-orphaned', `id=${id}`);
+      } else {
+        // 无载荷可重投的历史路由：只能删除
+        room.reverseRoutes.delete(id);
+      }
+    }
   }
   function fail(state, code = 'BAD_MESSAGE') {
     if (state.failed) return;
@@ -195,7 +225,8 @@ function createRelay(options = {}) {
         || [...rooms.values()].filter((room) => room.device || room.owner).length >= config.maxDevices) return fail(state, 'CAPACITY');
       const room = { sid, secret: msg.pass_hash, owner: state, device: null, probes: new Map(), inactiveAt: null,
         // relay 内部 ID 命名空间：probe 的同号请求改写后交给 device，响应再还原。
-        nextRequestId: 1, requestRoutes: new Map(), reverseRoutes: new Map() };
+        // deviceGen：device 槽代次（路由按代次归属清理，见 detach）。
+        nextRequestId: 1, requestRoutes: new Map(), reverseRoutes: new Map(), deviceGen: 0 };
       rooms.set(sid, room); state.room = room;
       send(ws, { type: 'device_register_ack', device_sid: sid }); return;
     }
@@ -246,6 +277,26 @@ function createRelay(options = {}) {
         // 回收后仍满员（质询期间被其他 probe 占满的认证竞态）：按容量拒绝。
         if (room.probes.size >= config.maxProbes) return fail(state, 'CAPACITY');
         room.probes.set(state.ws, state);
+        // 补投孤儿反向请求（原持有 probe 离席且无健康接手者的待命路由）。
+        // 不在认证时立即补投（2026-09-19 评审 P2）：设备列表的在线探测是
+        // 短连 probe，无交互能力（没有 onRequest 钩子，收到即同步默认
+        // -32000 拒绝）——立即补投会让用户「查一下在不在线」就杀掉等待
+        // 中的权限。宽限期后 probe 仍在线才补投：探测早已离席，长连 App
+        // 稳定在线；「多等」优于「立即拒绝」。补投后仍保持单点路由（防双允许）。
+        if (room.reverseRoutes.size > 0) {
+          const probeWs = state.ws;
+          setTimeout(() => {
+            if (probeWs.readyState !== WebSocket.OPEN) return;
+            if (room.probes.get(probeWs) !== state) return; // 已离席/被接管
+            for (const [id, route] of room.reverseRoutes) {
+              if (route.probe === null && route.payload) {
+                route.probe = state;
+                send(probeWs, { type: 'data', payload: route.payload });
+                logger('reverse-reassigned', `id=${id} reason=new-probe`);
+              }
+            }
+          }, config.probeReplayGraceMs).unref();
+        }
       } else {
         // 已验证持有 pass_hash 才允许清场：owner 与 device 槽的陈旧在位者
         // （半开）在验证通过后一并收回。典型场景：companion 断网留下半开连接
@@ -259,6 +310,8 @@ function createRelay(options = {}) {
         }
         if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
         room.device = state;
+        // 设备槽代次：本连接转发的路由都挂这个代次，detach 按代次精准清理
+        state.deviceGen = ++room.deviceGen;
       }
       room.inactiveAt = null; state.authenticated = true;
       clearTimeout(state.authTimer);
@@ -274,7 +327,12 @@ function createRelay(options = {}) {
       if (!isObject(msg.payload)) return fail(state);
       // 未配对时外发数据静默丢弃：认证设备（companion）常在手机离开后仍有
       // app-server 尾流数据，踢掉会迫使其重注册轮换 sid/hash，手机端配对全部失效。
-      if (!matched(state.room)) return;
+      if (!matched(state.room)) {
+        // 重连窗口（device 槽短暂为空）的下行帧静默丢弃是既有语义，
+        // 但零观测会让「手机发了却没生效」变成无头案——留计数日志
+        logger('data-dropped-unmatched', `role=${state.role}`);
+        return;
+      }
       if (state.role === 'device') {
         const kind = classifyFrame(msg.payload);
         if (kind === 'response' && typeof msg.payload.id === 'number') {
@@ -284,8 +342,23 @@ function createRelay(options = {}) {
           send(route.probe.ws, { type: 'data', payload: { ...msg.payload, id: route.sourceId } });
         } else if (kind === 'reverse-request') {
           // 反向请求只能由一个手机回答。稳定选择第一个健康 probe，避免双允许。
+          // 路由保留原始载荷：持有 probe 离席时可移交给其他 probe（见 detach）。
           const probe = [...state.room.probes.values()].find((p) => !isStale(p));
-          if (!probe) { logger('route-no-probe', String(msg.payload.id)); return; }
+          if (!probe) {
+            // 全部 probe 失联：保留载荷待命（下一个 probe 入房补投），
+            // 不再直接丢弃——丢弃会让权限无人能答而房间看似正常
+            if (!state.room.reverseRoutes.has(msg.payload.id)
+              && state.room.reverseRoutes.size >= config.maxPendingRoutes) {
+              logger('route-capacity-reverse', `count=${state.room.reverseRoutes.size}`);
+              return;
+            }
+            state.room.reverseRoutes.set(msg.payload.id, {
+              probe: null, deadlineAt: Date.now() + config.routeDeadlineMs,
+              deviceGen: state.deviceGen ?? null, payload: msg.payload,
+            });
+            logger('route-no-probe', String(msg.payload.id));
+            return;
+          }
           if (!state.room.reverseRoutes.has(msg.payload.id)
             && state.room.reverseRoutes.size >= config.maxPendingRoutes) {
             logger('route-capacity-reverse', `count=${state.room.reverseRoutes.size}`);
@@ -293,6 +366,7 @@ function createRelay(options = {}) {
           }
           state.room.reverseRoutes.set(msg.payload.id, {
             probe, deadlineAt: Date.now() + config.routeDeadlineMs,
+            deviceGen: state.deviceGen ?? null, payload: msg.payload,
           });
           send(probe.ws, msg);
         } else {
@@ -310,7 +384,8 @@ function createRelay(options = {}) {
           }
           const wireId = state.room.nextRequestId++;
           state.room.requestRoutes.set(wireId, { probe: state, sourceId: msg.payload.id,
-            deadlineAt: Date.now() + config.routeDeadlineMs });
+            deadlineAt: Date.now() + config.routeDeadlineMs,
+            deviceGen: state.room.deviceGen });
           send(state.room.device.ws, { type: 'data', payload: { ...msg.payload, id: wireId } });
         } else if (kind === 'reverse-request') {
           // 字符串 method+id 只允许来自 device（app-server 的反向请求）。probe

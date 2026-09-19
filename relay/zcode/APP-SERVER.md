@@ -37,6 +37,12 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
   - 响应 `{id, result}` / `{id, error:{code,message,data?}}`
   - device/app-server 反向请求：`id` 形如 `"server-1"`，客户端必须应答
     `{id:"server-1", result}`；probe 发出的字符串 `method+id` 会被 relay 显式拒绝
+    - **手机↔companion 段的 wireId 改写（2026-09-19 评审 #7）**：引擎子进程
+      重启后 `server-N` id 从头复用，直接透传会让旧进程请求的迟到应答命中
+      新进程同 id 的请求（未经确认的批准）。companion 对外把 id 改写为全局
+      唯一 wireId `srv-<序号>@g<代次>`（每次引擎 spawn/respawn 递增代次），
+      应答按映射还原回引擎原生 id；旧代次 wireId 的迟到应答丢弃并留
+      `phone-response-late` 观测。原生 `server-N` id 只存在于引擎↔companion 段
 - 无需 initialize 握手：连上即可调 `session/list`（发 `initialize` 反而 Method not found）。
 
 ## 已验证（E: 盘真实数据）
@@ -592,24 +598,30 @@ chunk|commit` 的镜像）。relay 零改动：数字 id request 经 `data` 信�
 
 | 方法 | params | 返回 | 说明 |
 |---|---|---|---|
-| `x/file/download/begin` | `{path}` | `{downloadId, name, size}` | `name` 取末段并按 `[^\w.\-一-龥]` 白名单化；`size` 为 statSync 真实大小 |
-| `x/file/download/chunk` | `{downloadId, offset}` | `{data(base64), received, eof}` | 读 `[offset, offset+256KB)`；`eof=true` 时会话即焚；`received=offset+实读字节` |
-| `x/file/download/abort` | `{downloadId}` | `{ok:true}` | 幂等清理（会话不存在也回 ok） |
+| `x/file/download/begin` | `{path, workspacePath?}` | `{downloadId, name, size}` | `name` 取末段并按 `[^\w.\-一-龥]` 白名单化；`size` 为 statSync 真实大小 |
+| `x/file/download/chunk` | `{downloadId, offset}` | `{data(base64), received, eof}` | 从 begin 时打开的固定 fd 读 `[offset, offset+256KB)`；`eof=true` 时会话即焚（fd 关闭）；`received=offset+实读字节` |
+| `x/file/download/abort` | `{downloadId}` | `{ok:true}` | 幂等清理（会话不存在也回 ok），fd 一并关闭 |
 | `x/file/abort` | `{uploadId}` | `{ok:true}` | 上传族对称清理：删会话与 `.part` 临时文件；幂等 |
 
-**安全边界（2026-09-18 定）**：只允许工作区内文件——`path.resolve` 后
-`path.relative(cwd, resolved)` 不得为空/以 `..` 开头/绝对路径（含
-`.wzxclaw-attachments` 天然在内）；单文件上限 200MB（同上传）。拒绝码统一
-`-32103`，但 `data.reason` 区分两种情形供手机端给不同指引：工作区外
-（含 `..` 逃逸）报 `X_OUT_OF_WORKSPACE`；目录、不存在、eof/abort 后的
-失效会话报 `X_NOT_FOUND`。`..` 形式的路径经 resolve 落在工作区内时
-不构成逃逸，按普通路径处理（如 `dir/sub/../a.txt` ≡ `dir/a.txt`）。
+**工作区身份（2026-09-19 评审 #19）**：`begin`/`x/file/begin` 接受可选
+`workspacePath`（消息所属会话的工作区）——会话允许任意工作区，附件落盘
+与下载边界必须跟随会话工作区而非 companion 启动目录；缺省回退 `cwd`
+（兼容旧调用）。`workspacePath` 必须是真实存在的目录（realpath 解析），
+否则显式 `-32100`，**绝不静默回退 cwd**（错误的根宁可报错）。
 
-**会话模型**：begin 时路径校验一次并存 `fileDownloads` 表（downloadId →
-{absPath,size,createdAt}），chunk 只认 id 不重复校验；eof/abort 后即焚，
-30 分钟过期清理兜底（同上传表）。offset 越界属参数错（`-32100`），
-**不销毁会话**；会话期间文件被改小时 `received` 按实读字节前进，手机端
-以 `eof && received===size` 做完整性断言。
+**安全边界（2026-09-19 修订，二轮评审更新）**：包含校验以「realpath 后的
+工作区根 + realpath 后的目标」同表示比较（评审 #20：字面校验可被链接
+绕过；二轮评审 P2：工作区根本身是 junction/symlink 时，字面预检与「根未
+规范化」都会把合法文件误判越界，故**不再做字面预检**——realpath + 真实根
+的包含比较与调用方路径表示无关，`..` 穿越被 realpath 解析、工作区内链接
+指向外部被还原，是唯一既防逃逸又不误判的权威检查；缺省根 cwd 同样
+realpath 规范化）。realpath 失败 → `X_NOT_FOUND`；realpath 后仍在根外 →
+`X_OUT_OF_WORKSPACE`（`..` 穿越到存在的外部文件即此路径）。通过后 begin
+即打开**固定 fd**，chunk 从 fd 读——校验后目标被替换不影响本次传输一致
+性；eof/abort/30 分钟过期/companion stop 统一关 fd。单文件上限 200MB
+（同上传）。拒绝码统一 `-32103`，`data.reason` 区分：工作区外报
+`X_OUT_OF_WORKSPACE`；目录、不存在、失效会话报 `X_NOT_FOUND`。
+`dir/sub/../a.txt` ≡ `dir/a.txt`（resolve 后 realpath，同一物理文件）。
 
 **限速约束**：chunk 256KB（base64 后 ~349KB，低于 relay 1MB 帧限），手机端
 串行逐块 await，远低于 relay data 帧配额（2000 条 / 16MiB 每 10s）。

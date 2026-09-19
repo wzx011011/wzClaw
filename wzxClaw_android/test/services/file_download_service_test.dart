@@ -268,6 +268,108 @@ void main() {
     expect(task.phase, FileDownloadPhase.failed);
     expect(task.error, contains('不完整'));
   });
+
+  test('begin 携带会话工作区身份（下载边界跟随会话工作区）', () async {
+    Map<String, dynamic>? captured;
+    FileDownloadService.debugRequester = (method, [params]) async {
+      captured = params;
+      return {'downloadId': 'dl-ws', 'name': 'a.txt', 'size': 1};
+    };
+
+    final task = await FileDownloadService.begin(
+      r'E:\other\report.txt',
+      workspacePath: r'E:\sessions\proj',
+    );
+
+    expect(task.phase, FileDownloadPhase.awaitingChoice);
+    expect(captured?['path'], r'E:\other\report.txt');
+    expect(captured?['workspacePath'], r'E:\sessions\proj');
+  });
+
+  test('取消与最后一个 chunk 交错：不落盘、不触发保存、终态 cancelled', () async {
+    // 评审 #13 回归：此前 cancel 先 await 清理再置状态，清理窗口内返回的
+    // 末块会继续写盘并进入保存流程（终态 failed、临时文件残留）。
+    final chunkStarted = Completer<void>();
+    final chunkRelease = Completer<Map<String, dynamic>>();
+    final abortStarted = Completer<void>();
+    final abortRelease = Completer<void>();
+    final saveCalls = <Map<String, dynamic>>[];
+    FileDownloadService.debugRequester = (method, [params]) async {
+      switch (method) {
+        case 'x/file/download/chunk':
+          chunkStarted.complete();
+          return chunkRelease.future;
+        case 'x/file/download/abort':
+          if (!abortStarted.isCompleted) abortStarted.complete();
+          await abortRelease.future;
+          return {'ok': true};
+        default:
+          fail('unexpected method $method');
+      }
+    };
+    FileDownloadService.debugBridge = (method, args) async {
+      saveCalls.add(Map<String, dynamic>.from(args));
+      return {'ok': false, 'reason': 'no-file'};
+    };
+
+    final task = FileDownloadTask(
+      nodePath: '/workspace/race.txt',
+      name: 'race.txt',
+      size: 3,
+      downloadId: 'dl-race',
+    );
+    final pulling = FileDownloadService.pull(
+      task,
+      forPreview: false,
+      onChanged: (_) {},
+    );
+    await chunkStarted.future;
+    final cancellation = FileDownloadService.cancel(task, onChanged: (_) {});
+    // cancel 先置终态再 await 清理：abort 开启时 cancelled 已生效
+    await abortStarted.future;
+    expect(
+      task.phase,
+      FileDownloadPhase.cancelled,
+      reason: '取消必须立即生效，不等远端 abort 返回',
+    );
+    // 末块此刻才返回：不得落盘或触发保存
+    chunkRelease.complete({
+      'data': base64Encode([1, 2, 3]),
+      'received': 3,
+      'eof': true,
+    });
+    abortRelease.complete();
+    await Future.wait([pulling, cancellation]);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(saveCalls, isEmpty, reason: '已取消的任务不得进入保存');
+    expect(task.phase, FileDownloadPhase.cancelled);
+    expect(_soleTempFile(tempBase), isNull, reason: '取消后不留临时文件');
+  });
+
+  test('拉取中重复触发 pull 被忽略（确认面板可重复弹出，不叠加拉取）', () async {
+    var chunkCalls = 0;
+    FileDownloadService.debugRequester = (method, [params]) async {
+      if (method == 'x/file/download/begin') {
+        return {'downloadId': 'dl-dup', 'name': 'a.bin', 'size': 2};
+      }
+      if (method == 'x/file/download/chunk') {
+        chunkCalls += 1;
+        return {'data': base64Encode(Uint8List(2)), 'received': 2, 'eof': true};
+      }
+      fail('unexpected method $method');
+    };
+    FileDownloadService.debugBridge = (method, args) async =>
+        method == 'preview' ? {'ok': true} : {'ok': true, 'uri': 'content://x'};
+
+    final task = await FileDownloadService.begin('ignored');
+    final first = FileDownloadService.pull(task, forPreview: true);
+    final second = FileDownloadService.pull(task, forPreview: false);
+    await Future.wait([first, second]);
+
+    expect(chunkCalls, 1, reason: '第二次 pull 应被 awaitingChoice 门卫忽略');
+    expect(task.phase, FileDownloadPhase.previewing);
+  });
 }
 
 File? _soleTempFile(Directory root) {

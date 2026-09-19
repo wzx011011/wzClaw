@@ -12,10 +12,15 @@ class PermissionRequest {
   final String toolName;
   final Map<String, dynamic> input;
 
+  /// 请求所属会话（协议 params.sessionId，实测存在）。归属用：
+  /// 待处理请求不再随视口切换被拒绝，条上标注来源会话供用户判断。
+  final String? sessionId;
+
   const PermissionRequest({
     required this.toolCallId,
     required this.toolName,
     required this.input,
+    this.sessionId,
   });
 }
 
@@ -26,10 +31,14 @@ class AskUserQuestion {
   final List<Map<String, String>> options; // [{label, description}]
   final bool multiSelect;
 
+  /// 请求所属会话（同 PermissionRequest.sessionId，归属用）
+  final String? sessionId;
+
   const AskUserQuestion({
     required this.questionId,
     required this.question,
     required this.options,
     this.multiSelect = false,
+    this.sessionId,
   });
 }
