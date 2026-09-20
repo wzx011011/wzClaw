@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { fetchPlanModelIds, buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay,
-  PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME } = require('../lib/plan-overlay');
+  PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME, PLAN_API } = require('../lib/plan-overlay');
 
 test('fetchPlanModelIds：解析 data[].id、非 200/空列表/网络失败/缺 token 各有错误码', async () => {
   const ok = async () => ({ ok: true, json: async () => ({ data: [{ id: 'glm-5.3' }, { id: 'glm-5.3-flash' }, {}] }) });
@@ -41,13 +41,15 @@ test('buildPlanOverlay：追加规则不改既有条目；不带 enabled；模�
   assert.equal(rules.filter((r) => r.providerId === 'imported:x:1').length, 1, '既有条目保留');
   const plan = rules.find((r) => r.providerId === PLAN_PROVIDER_ID);
   assert.ok(plan, '套餐条目存在');
-  assert.equal(plan.providerName, PLAN_PROVIDER_NAME);
-  // 实测配方：条目带 enabled 字段会导致整个 provider 静默失效
+  assert.equal(plan.providerName, PLAN_PROVIDER_NAME);  // 实测配方：条目带 enabled 字段会导致整个 provider 静默失效
   assert.equal('enabled' in plan, false);
   assert.deepEqual(plan.config.personalModelIds, ['glm-5.3', 'glm-5.3-flash']);
   assert.deepEqual(plan.config.modelOrder, ['glm-5.3', 'glm-5.3-flash']);
   assert.equal(plan.config.access.type, 'api-key');
   assert.equal(plan.config.access.apiKey, 'tok');
+  // 0.16.9 实测：api 字段必填（缺失 → provider 整体静默失效；type 非法 →
+  // 整个个人配置文件被拒，连导入 provider 一起消失）
+  assert.deepEqual(plan.config.api, PLAN_API);
   const pmr = overlay.config.modelConfigRules.providerModelRules;
   assert.equal(pmr.length, 3, '既有 1 条 + 新 2 条');
   assert.deepEqual(pmr.filter((r) => r.providerId === PLAN_PROVIDER_ID).map((r) => r.modelId),

@@ -67,9 +67,12 @@ function handleLine(line) {
 
 function startEngine(cwd) {
   const zc = defaultZcodeCommand();
+  // --overlay <path>：带上 companion 的套餐注入 env（复现 companion spawn）
+  const overlay = flag('--overlay', null);
+  const extra = overlay ? { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: overlay } : {};
   child = spawn(zc.command, [...zc.args, 'app-server', '--cwd', cwd], {
     cwd, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ANTHROPIC_API_KEY: readModelAuth(path.join(os.homedir(), '.zcode/v2/config.json')) },
+    env: { ...process.env, ANTHROPIC_API_KEY: readModelAuth(path.join(os.homedir(), '.zcode/v2/config.json')), ...extra },
   });
   buffer = '';
   child.stdout.on('data', (chunk) => {
@@ -113,7 +116,16 @@ async function createSession(cwd, label) {
   const info = modelOf(r.result);
   const available = r.result.settings && r.result.settings.model
     ? r.result.settings.model.available : [];
-  report.steps.push({ step: label, ok: true, availableCount: available.length, ...info });
+  // 按 provider 聚合打印目录构成（诊断注入是否生效）
+  const byProvider = {};
+  for (const m of available) {
+    const ref = m && m.ref; if (!ref) continue;
+    (byProvider[ref.providerId] ??= []).push(ref.modelId);
+  }
+  report.steps.push({
+    step: label, ok: true, availableCount: available.length,
+    byProvider, ...info,
+  });
   return {
     sessionId: r.result.session.sessionId, available, ...info,
   };

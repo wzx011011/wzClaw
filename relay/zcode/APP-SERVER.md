@@ -158,8 +158,14 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
    - `modelConfigRules.providerModelRules` 每模型一条
      `{providerId, modelId, config:{properties:{}}}`，label/ctx/reasoning
      元数据由 builtin release 的正则规则自动补全。
-3. spawn 时以 env 覆盖指向副本，引擎原生物化套餐模型（实测 10/10，
-   glm-5.3-flash ctx=1M、maxOut=128K、reasoning low/high/max）。
+   【0.16.9 变化（2026-09-20 probe-modeldefault --overlay 实测）】
+   providerRule **必须带 `api:{type,baseUrl}`**（套餐端点 = `anthropic-messages`
+   + `https://open.bigmodel.cn/api/anthropic`），缺失 → 该 provider 整体
+   静默失效（目录零模型）；api.type 非法（如 `anthropic`）→ **整个个人
+   配置文件被拒**，连导入 provider 一起消失。合法 type 枚举：
+   `anthropic-messages | openai-chat-completions | openai-responses`。
+3. spawn 时以 env 覆盖指向副本，引擎原生物化套餐模型（3.12.3 实测
+   10/10；0.16.9 需上行的 api 字段，修复后 21 条目录含 glm 全家桶）。
 4. 选择：`session/setModel` 参数 `{sessionId, model:{providerId, modelId,
    options:{reasoningLevel}}}`（model 是对象不是字符串；reasoningLevel
    必须取目录 reasoning.levels 的 value，如 high/max）。

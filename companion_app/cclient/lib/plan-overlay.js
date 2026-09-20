@@ -20,6 +20,16 @@ const PLAN_PROVIDER_NAME = 'BigModel';
 const PLAN_MODELS_URL = 'https://open.bigmodel.cn/api/anthropic/v1/models';
 const PLAN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 小时：套餐目录基本静态
 
+// 0.16.9 实测（probe-modeldefault --overlay 二分）：providerRule 必须带
+// api.{type,baseUrl}，否则该 provider 整体静默失效（目录里一个模型都不
+// 出现）；api.type 非法更狠——整个个人配置文件被拒，连导入 provider 一起
+// 消失。合法 type 枚举：anthropic-messages | openai-chat-completions |
+// openai-responses。计费端点 = 套餐 key 的 Anthropic 兼容端点。
+const PLAN_API = {
+  type: 'anthropic-messages',
+  baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+};
+
 // 拉套餐模型 ID 列表。token 即桌面登录态（与 ANTHROPIC_API_KEY 同源），
 // 只经 header 注入，绝不打印/落日志。
 async function fetchPlanModelIds({ token, fetchApi = globalThis.fetch, timeoutMs = 10000 } = {}) {
@@ -69,7 +79,7 @@ function buildPlanOverlay({ baseRaw, modelIds, token, providerId = PLAN_PROVIDER
     && typeof overlay.config.providerConfigRules === 'object' ? overlay.config.providerConfigRules : {};
   pcr.providerRules = Array.isArray(pcr.providerRules) ? pcr.providerRules : [];
   pcr.providerRules = pcr.providerRules.filter((r) => r && r.providerId !== providerId);
-  // 注意：条目不带 enabled 字段（实测配方）。
+  // 注意：条目不带 enabled 字段（实测配方）；api 字段 0.16.9 起必填。
   pcr.providerRules.push({
     providerId,
     providerName,
@@ -77,6 +87,7 @@ function buildPlanOverlay({ baseRaw, modelIds, token, providerId = PLAN_PROVIDER
       group: 'standard-personal',
       personalModelIds: [...modelIds],
       modelOrder: [...modelIds],
+      api: { ...PLAN_API },
       access: { type: 'api-key', apiKey: token },
     },
   });
@@ -108,5 +119,6 @@ function writePlanOverlay({ overlay, stateDir }) {
 
 module.exports = {
   PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME, PLAN_MODELS_URL, PLAN_CACHE_TTL_MS,
-  fetchPlanModelIds, buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay,
+  PLAN_API, fetchPlanModelIds, buildPlanOverlay, defaultPersonalConfigPath,
+  writePlanOverlay,
 };
