@@ -843,7 +843,7 @@ class ZcodeSessionState {
       final id = inc.protoId;
       final existingIdx = id == null ? null : byProto[id];
       if (existingIdx != null) {
-        items[existingIdx] = inc;
+        items[existingIdx] = _healToolInputs(items[existingIdx], inc);
         if (id != null) byProto[id] = existingIdx;
         _consumeStreamingAt(existingIdx);
         continue;
@@ -878,6 +878,52 @@ class ZcodeSessionState {
         if (id != null) byProto[id] = items.length - 1;
       }
     }
+  }
+
+  /// 权威替换时的工具输入回填：0.16.9 真机偶发权威 part 缺 state.input
+  /// （终端行空详情/「输入未捕获」），而流式投影按 toolCallId 捕获过完整
+  /// 输入。同 callId 有则回填到权威 part 上——流式观测与权威数据都不丢。
+  ZcodeSessionItem _healToolInputs(ZcodeSessionItem oldItem, ZcodeSessionItem inc) {
+    final oldParts = oldItem.message.processParts;
+    final healed = <ChatProcessPart>[];
+    var changed = false;
+    for (final p in inc.message.processParts) {
+      final tool = p.toolCall;
+      final hasInput = tool != null &&
+          ((tool.inputSummary?.isNotEmpty ?? false) ||
+              (tool.inputFull?.isNotEmpty ?? false));
+      if (tool == null || hasInput) {
+        healed.add(p);
+        continue;
+      }
+      ChatProcessPart? healedPart;
+      for (final op in oldParts) {
+        final ot = op.toolCall;
+        if (ot == null || ot.toolCallId != tool.toolCallId) continue;
+        final otHasInput = (ot.inputSummary?.isNotEmpty ?? false) ||
+            (ot.inputFull?.isNotEmpty ?? false);
+        if (otHasInput) {
+          healedPart = p.copyWith(
+            toolCall: tool.copyWith(
+              inputSummary: ot.inputSummary,
+              inputFull: ot.inputFull,
+            ),
+          );
+        }
+        break;
+      }
+      if (healedPart != null) changed = true;
+      healed.add(healedPart ?? p);
+    }
+    if (!changed) return inc;
+    return ZcodeSessionItem(
+      protoId: inc.protoId,
+      turnId: inc.turnId,
+      synced: inc.synced,
+      truncated: inc.truncated,
+      dirty: inc.dirty,
+      message: inc.message.copyWith(processParts: List.unmodifiable(healed)),
+    );
   }
 
   /// 权威数据替换了流式占位所在下标时消费占位游标：

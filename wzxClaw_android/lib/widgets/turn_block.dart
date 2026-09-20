@@ -563,11 +563,14 @@ TurnVM buildTurnVM(
         ? _writtenFilePath(view)
         : null;
     final label = _familyLabel(cls, view.name, running: running);
+    // 已完成但输入缺失（0.16.9 偶发）：显式标注而非空白行
+    final resolvedTarget = _toolTarget(view.name, view.input);
+    final target = resolvedTarget.isEmpty && !running ? '输入未捕获' : resolvedTarget;
     parts.add(
       TurnPart.tool(
         TurnToolRow(
           verb: label,
-          target: _toolTarget(view.name, view.input),
+          target: target,
           add: delta?.$1,
           del: delta?.$2,
           filePath: written,
@@ -762,7 +765,8 @@ TurnVM buildTurnVM(
           breakAggregate();
           continue;
         }
-        // 显式 Agent/Task 工具 → 内联子智能体行；其余按普通工具行处理
+        // 显式 Agent/Task 工具 → 内联子智能体行；专属工具 → 各自结构行；
+        // 其余按普通工具行处理
         if (tool.toolName == 'Agent' || tool.toolName == 'Task') {
           final input = tool.inputFull ?? tool.inputSummary ?? '';
           final view = toolViewOf(process, source.createdAt!);
@@ -781,7 +785,15 @@ TurnVM buildTurnVM(
           );
           counts['子智能体'] = (counts['子智能体'] ?? 0) + 1;
         } else {
-          emitTool(toolViewOf(process, source.createdAt!));
+          // 专属工具行（官方每工具结构卡的行级等价）：清单/任务/技能
+          final special = _specialToolRow(tool, toolInput);
+          if (special != null) {
+            parts.add(special.$1);
+            counts[special.$2] = (counts[special.$2] ?? 0) + 1;
+            breakAggregate();
+          } else {
+            emitTool(toolViewOf(process, source.createdAt!));
+          }
         }
       case ChatProcessPartKind.marker:
         breakAggregate();
@@ -966,6 +978,29 @@ String _toolTarget(String name, String? input) {
       if (desc != null) return _singleLine(desc, 48);
       break;
   }
+  // 未知工具：结构化提取常见语义键；提取不到退化为纯动词行——原始
+  // JSON 留在展开详情里（_prettyInput 会格式化），不再裸奔到行上
+  if (json != null) {
+    const commonKeys = [
+      'task_id',
+      'skill',
+      'pattern',
+      'query',
+      'url',
+      'file_path',
+      'filePath',
+      'path',
+      'command',
+      'cmd',
+      'name',
+      'description',
+    ];
+    for (final k in commonKeys) {
+      final v = json[k];
+      if (v is String && v.trim().isNotEmpty) return _singleLine(v.trim(), 60);
+    }
+    return '';
+  }
   return _lastPathSegment(_singleLine(raw, 60));
 }
 
@@ -1048,6 +1083,42 @@ List<TurnDetailLine> _toolDetails(_ToolView v) {
   return lines;
 }
 
+/// 专属工具行：Skill → 技能行（官方语义的干净行）。返回 null = 走通用
+/// 工具行。TodoWrite/TaskOutput 属记账型工具（官方时间线不渲染，
+/// 见 _isBookkeepingTool），不在此列。
+(TurnPart, String)? _specialToolRow(ToolCallInfo tool, String? input) {
+  final running = tool.status == ToolCallStatus.running;
+  final failed = tool.isError;
+  switch (tool.toolName) {
+    case 'Skill':
+      final parsed = _tryParseInputObject(input) ?? const {};
+      final skill = parsed['skill']?.toString() ?? '';
+      final args = parsed['args']?.toString();
+      final output = (tool.outputFull ?? tool.outputSummary)?.trim();
+      final details = <TurnDetailLine>[
+        if (args != null && args.trim().isNotEmpty)
+          TurnDetailLine(_capBlock(args.trim()), kind: DetailLineKind.cmd),
+        if (output != null && output.isNotEmpty)
+          TurnDetailLine(_capBlock(output)),
+      ];
+      return (
+        TurnPart.tool(
+          TurnToolRow(
+            verb: '技能',
+            target: _singleLine(skill, 48),
+            running: running,
+            failed: failed,
+            details: details,
+          ),
+          key: tool.toolCallId.isEmpty ? null : tool.toolCallId,
+        ),
+        '技能',
+      );
+    default:
+      return null;
+  }
+}
+
 String _prettyInput(String name, String input) {
   if (name == 'Bash') {
     if (input.startsWith('{')) {
@@ -1076,10 +1147,14 @@ String _capBlock(String s, [int max = 8000]) {
   return t.length <= max ? t : '${t.substring(0, max)}…（已截断）';
 }
 
-/// 聚合行的成员明细行（展开逐文件/逐命令显示）
+/// 聚合行的成员明细行（展开逐文件/逐命令显示）。已完成成员输入缺失时
+/// 显式降级标注（0.16.9 偶发权威 part 缺 state.input），不留视觉空白
 TurnDetailLine _memberLine(_ToolView v) {
   final target = _toolTarget(v.name, v.input);
-  return TurnDetailLine('· $target${v.failed ? '  ⚠' : ''}');
+  final display = target.isEmpty && v.status != ToolCallStatus.running
+      ? '输入未捕获'
+      : target;
+  return TurnDetailLine('· $display${v.failed ? '  ⚠' : ''}');
 }
 
 String _lastPathSegment(String s) {

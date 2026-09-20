@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wzxclaw_android/models/chat_message.dart';
 import 'package:wzxclaw_android/widgets/turn_block.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
+import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 import 'zcode_test_fakes.dart';
 
 void main() {
@@ -138,6 +139,98 @@ void main() {
       // 渲染层数据：recovered 徽标成立
       final vm = buildTurnVM([store.messages.last], busy: false);
       expect(vm.parts.last.tool!.recovered, isTrue);
+    });
+  });
+
+  group('权威替换工具输入回填（终端空详情根治）', () {
+    test('权威 part 缺 input、流式投影有 → 同 callId 回填', () {
+      final state = ZcodeSessionState('sess-heal');
+      // 流式投影：Bash 工具带完整输入（tool_input_delta 累积产物）
+      state.upsertStreamingTool(
+        const ToolCallInfo(
+          toolCallId: 'call-1',
+          toolName: 'Bash',
+          inputSummary: '{"command":"npm test"}',
+          inputFull: '{"command":"npm test"}',
+          status: ToolCallStatus.done,
+        ),
+        assistantMessageId: 'msg-a',
+        turnId: 'turn-1',
+      );
+
+      // 权威批次：同消息但缺 input（0.16.9 偶发形状）
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-a',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            processParts: [
+              const ChatProcessPart.tool(
+                ToolCallInfo(
+                  toolCallId: 'call-1',
+                  toolName: 'Bash',
+                  outputSummary: 'ok',
+                  status: ToolCallStatus.done,
+                ),
+                id: 'part_1',
+              ),
+            ],
+          ),
+        ),
+      ]);
+
+      final healed = state.items.single.message.processParts
+          .map((p) => p.toolCall)
+          .whereType<ToolCallInfo>()
+          .single;
+      // 流式捕获的输入不丢，权威已有的输出保留
+      expect(healed.inputFull, '{"command":"npm test"}');
+      expect(healed.outputSummary, 'ok');
+    });
+
+    test('权威 input 完整时不被流式旧值覆盖', () {
+      final state = ZcodeSessionState('sess-keep');
+      state.upsertStreamingTool(
+        const ToolCallInfo(
+          toolCallId: 'call-2',
+          toolName: 'Bash',
+          inputSummary: 'stale',
+          inputFull: 'stale',
+          status: ToolCallStatus.running,
+        ),
+        assistantMessageId: 'msg-b',
+      );
+
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-b',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            processParts: [
+              const ChatProcessPart.tool(
+                ToolCallInfo(
+                  toolCallId: 'call-2',
+                  toolName: 'Bash',
+                  inputSummary: 'fresh',
+                  inputFull: 'fresh',
+                  status: ToolCallStatus.done,
+                ),
+                id: 'part_2',
+              ),
+            ],
+          ),
+        ),
+      ]);
+
+      final healed = state.items.single.message.processParts
+          .map((p) => p.toolCall)
+          .whereType<ToolCallInfo>()
+          .single;
+      expect(healed.inputFull, 'fresh');
     });
   });
 }

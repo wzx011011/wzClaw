@@ -776,7 +776,8 @@ void main() {
 
       expect(vm.parts, hasLength(2));
       expect((vm.parts[0].tool!).verb, '终端');
-      expect((vm.parts[0].tool!).target, '');
+      // 已完成 + 输入缺失 → 显式降级标注（不留空白行）
+      expect((vm.parts[0].tool!).target, '输入未捕获');
       expect((vm.parts[1].tool!).verb, '终端');
     });
 
@@ -1100,6 +1101,116 @@ void main() {
       // to/消息 同时出现在 dl 行与输入 JSON 详情里 → 至少一个即可
       expect(find.textContaining('agent_8d4a', findRichText: true), findsWidgets);
       expect(find.textContaining('请输出最终清单', findRichText: true), findsWidgets);
+    });
+  });
+
+  group('专属工具行与降级（官方结构对齐）', () {
+    test('Skill → 技能行：目标为技能名，不裸奔 JSON', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Skill',
+                input: '{"skill":"wzxclaw-review"}',
+                id: 't3',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      expect(vm.parts, hasLength(1));
+      final row = vm.parts.single.tool!;
+      expect(row.verb, '技能');
+      expect(row.target, 'wzxclaw-review');
+      expect(vm.countsLabel, contains('技能 1'));
+    });
+
+    test('未知工具：行上不裸奔 JSON，原始输入留在展开详情', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'MysteryTool',
+                input: '{"baz":"hello world"}',
+                output: 'ok',
+                id: 't4',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.target, isNot(contains('baz')));
+      expect(row.details.any((l) => l.text.contains('hello world')), isTrue);
+    });
+
+    test('已完成工具输入缺失：行目标显式标注「输入未捕获」', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(_call('Bash', id: 't5')), // 无输入无输出
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.target, '输入未捕获');
+    });
+
+    testWidgets('输出流末尾有且仅有一个等待圈（官方同款，仅忙碌时）',
+        (tester) async {
+      Widget pump(TurnVM vm) => MaterialApp(
+            theme: ThemeData(extensions: const [AppColors.dark]),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: TurnBlockView(vm: vm, defaultCollapsed: false),
+              ),
+            ),
+          );
+
+      final busyVm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm test"}',
+                id: 'b1',
+              ),
+            ),
+          ], isStreaming: true,),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(pump(busyVm));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      final doneVm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm test"}',
+                output: 'ok',
+                id: 'b1',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      await tester.pumpWidget(pump(doneVm));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
     });
   });
 }
