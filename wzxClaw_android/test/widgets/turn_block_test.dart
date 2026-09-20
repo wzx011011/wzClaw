@@ -961,32 +961,48 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
-    test('记账型工具不渲染且不打断相邻分组（官方时间线同形态）', () {
+    test('官方 kind 标签：TodoWrite=待办、RespondToCoordinator=消息卡、未知=裸名',
+        () {
       final vm = buildTurnVM(
         [
           _assistant([
             ChatProcessPart.tool(
-              _call('Read', input: '{"file_path":"/a/one.dart"}', id: 'r1'),
+              _call(
+                'TodoWrite',
+                input:
+                    '{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"pending"}]}',
+                id: 'tw1',
+              ),
             ),
             ChatProcessPart.tool(
-              _call('TodoWrite', input: '{"todos":[{"content":"x"}]}', id: 't1'),
+              _call(
+                'RespondToCoordinator',
+                input: '{"summary":"阶段结论","message":"详细正文"}',
+                id: 'rc1',
+              ),
             ),
             ChatProcessPart.tool(
-              _call('TaskUpdate', input: '{"status":"running"}', id: 't2'),
+              _call('mcp__computer-use__screenshot', input: '{}', id: 'mcp1'),
             ),
             ChatProcessPart.tool(
-              _call('Read', input: '{"file_path":"/a/two.dart"}', id: 'r2'),
+              _call('TaskUpdate', input: '{"status":"running"}', id: 'tu1'),
             ),
           ]),
         ],
         busy: false,
       );
-      // TodoWrite/TaskUpdate 不出现；两侧 Read 跨过它们仍然成组
-      expect(vm.parts, hasLength(1));
-      final row = vm.parts.first.tool!;
-      expect(row.verb, '查阅');
-      expect(row.count, 2);
-      expect(vm.countsLabel.contains('任务'), isFalse);
+      // 四行全部渲染（官方时间线不隐藏工具），各自语义
+      expect(vm.parts, hasLength(4));
+      expect(vm.parts[0].tool!.verb, '待办');
+      expect(vm.parts[0].tool!.target, '共 2 项 · 已完成 1');
+      // RespondToCoordinator：官方 kind=message → 消息卡（回报给协调器）
+      expect(vm.parts[1].kind, TurnPartKind.message);
+      expect(vm.parts[1].message!.to, '协调器');
+      expect(vm.parts[1].message!.summary, '阶段结论');
+      // MCP 工具名美化
+      expect(vm.parts[2].tool!.verb, 'computer-use · screenshot');
+      // 官方工具宇宙之外 → 裸名兜底
+      expect(vm.parts[3].tool!.verb, 'TaskUpdate');
     });
 
     test('TaskOutput 渲染：任务输出 + 任务 id 目标 + 行尾「已获取」注', () {
@@ -1010,30 +1026,6 @@ void main() {
       expect(row.verb, '任务输出');
       expect(row.target, 'exec_7a3d3efd-4795');
       expect(row.statusNote, '已获取');
-    });
-
-    test('RespondToCoordinator 簿记行不渲染；MCP 工具名美化', () {
-      final vm = buildTurnVM(
-        [
-          _assistant([
-            ChatProcessPart.tool(
-              _call(
-                'RespondToCoordinator',
-                input: '{"summary":"done"}',
-                id: 'rc1',
-              ),
-            ),
-            ChatProcessPart.tool(
-              _call('mcp__computer-use__screenshot', input: '{}', id: 'mcp1'),
-            ),
-          ]),
-        ],
-        busy: false,
-      );
-      // RespondToCoordinator 已隐藏，只剩 MCP 行
-      expect(vm.parts, hasLength(1));
-      expect(vm.parts.first.tool!.verb, 'computer-use · screenshot');
-      expect(vm.countsLabel.contains('RespondToCoordinator'), isFalse);
     });
 
     testWidgets('被工具接续的思考段停表；回合头纯文字无图标', (tester) async {

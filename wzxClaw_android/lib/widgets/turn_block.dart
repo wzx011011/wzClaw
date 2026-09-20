@@ -95,6 +95,11 @@ Map<String, dynamic>? _tryParseInputObject(String? input) {
 /// 家族 + 分组资格分类。消息卡按输入结构识别（to + message/summary，
 /// 官方 kind local_agent_message），不认工具名。
 _ToolClass _classifyTool(String toolName, String? input) {
+  // 官方 kind=message（app.asar 映射表逐字提取）：子智能体向协调器回报
+  // （输入 summary+message，无 to），与 SendMessage 同类
+  if (toolName == 'RespondToCoordinator') {
+    return const _ToolClass(_ToolFamily.message);
+  }
   final parsed = _tryParseInputObject(input);
   if (parsed != null &&
       parsed['to'] is String &&
@@ -144,6 +149,33 @@ _ToolClass _classifyTool(String toolName, String? input) {
   }
 }
 
+/// 工具 → kind 中文标签（app.asar chat.toolCall.kind.* + 工具→kind 映射
+/// 逐字提取，官方语义）。未知工具返回 null（回退工具名裸显示）。
+String? _officialKindLabel(String toolName) {
+  switch (toolName) {
+    case 'TaskOutput':
+      return '任务输出';
+    case 'TaskStop':
+      return '停止任务';
+    case 'TodoWrite':
+    case 'TodoRead':
+      return '待办';
+    case 'GoalRead':
+      return 'Goal';
+    case 'ReadSessionContext':
+      return '会话上下文';
+    case 'js':
+    case 'js_reset':
+    case 'js_add_node_module_dir':
+    case 'mcp__node_repl__js':
+    case 'mcp__node_repl__js_reset':
+    case 'mcp__node_repl__js_add_node_module_dir':
+      return 'Node.js';
+    default:
+      return null;
+  }
+}
+
 /// 种类标签（运行中换动作文案；动作文案 UI 侧挂渐变扫光）
 String _familyLabel(_ToolClass cls, String toolName, {required bool running}) {
   switch (cls.family) {
@@ -161,9 +193,10 @@ String _familyLabel(_ToolClass cls, String toolName, {required bool running}) {
       return running ? '正在发送消息' : '消息';
     case _ToolFamily.other:
       if (toolName == 'WebFetch' || toolName == 'web-fetch') return '获取';
-      if (toolName == 'TaskOutput') return '任务输出';
-      if (toolName.startsWith('mcp__')) return _mcpToolLabel(toolName);
-      return toolName;
+      // 官方 kind 标签优先（TodoWrite=待办/TaskOutput=任务输出/…）；
+      // 其余 MCP 工具做 server · tool 美化；未知回退工具名
+      return _officialKindLabel(toolName) ??
+          (toolName.startsWith('mcp__') ? _mcpToolLabel(toolName) : toolName);
   }
 }
 
@@ -756,10 +789,6 @@ TurnVM buildTurnVM(
           breakAggregate();
           continue;
         }
-        // 记账型工具（官方时间线不渲染）：TodoWrite 是任务面板内部簿记、
-        // TaskOutput/TaskUpdate 是子智能体输出轮询——渲染出来只会是一行
-        // 裸 JSON。跳过且不打断相邻工具分组（官方同形态）
-        if (_isBookkeepingTool(tool.toolName)) continue;
         final toolInput = tool.inputFull ?? tool.inputSummary;
         // 消息卡（官方 aFt 对齐）：识别靠输入结构（to + message/summary，
         // kind local_agent_message），不认工具名
@@ -769,7 +798,10 @@ TurnVM buildTurnVM(
           parts.add(
             TurnPart.message(
               TurnMessageData(
-                to: json['to']?.toString() ?? '',
+                to: json['to']?.toString() ??
+                    (tool.toolName == 'RespondToCoordinator'
+                        ? '协调器'
+                        : ''),
                 summary: json['summary']?.toString(),
                 body: json['message']?.toString(),
                 running: tool.status == ToolCallStatus.running,
@@ -865,15 +897,6 @@ class _ProcessSource {
 
 enum _ProcessSourceKind { part, marker, agentMessage }
 
-
-/// 记账型工具（官方时间线不渲染）：TodoWrite = 任务面板内部簿记；
-/// TaskUpdate = 子智能体状态更新；RespondToCoordinator = 工作流协调器
-/// 簿记（回报经 <subagent-message> 卡片呈现）。
-/// 注意：TaskOutput 官方是渲染的（「任务输出 <id> 已获取」），不入列。
-bool _isBookkeepingTool(String name) =>
-    name == 'TodoWrite' ||
-    name == 'TaskUpdate' ||
-    name == 'RespondToCoordinator';
 
 /// TaskOutput 行尾状态注（官方「任务输出 <id> 已获取」同位渲染）
 String? _taskOutputNote(_ToolView view) {
@@ -1121,12 +1144,36 @@ List<TurnDetailLine> _toolDetails(_ToolView v) {
 }
 
 /// 专属工具行：Skill → 技能行（官方语义的干净行）。返回 null = 走通用
-/// 工具行。TodoWrite/TaskOutput 属记账型工具（官方时间线不渲染，
-/// 见 _isBookkeepingTool），不在此列。
+/// 工具行（TodoWrite=待办/TaskOutput=任务输出 走官方 kind 标签通用行）。
 (TurnPart, String)? _specialToolRow(ToolCallInfo tool, String? input) {
   final running = tool.status == ToolCallStatus.running;
   final failed = tool.isError;
   switch (tool.toolName) {
+    case 'TodoWrite':
+    case 'TodoRead':
+      // 官方 kind=todo（待办）：行内给进度摘要
+      final parsed = _tryParseInputObject(input) ?? const {};
+      final todos = parsed['todos'];
+      var total = 0;
+      var done = 0;
+      if (todos is List) {
+        total = todos.length;
+        for (final t in todos) {
+          if (t is Map && t['status']?.toString() == 'completed') done++;
+        }
+      }
+      return (
+        TurnPart.tool(
+          TurnToolRow(
+            verb: '待办',
+            target: total > 0 ? '共 $total 项 · 已完成 $done' : '',
+            running: running,
+            failed: failed,
+          ),
+          key: tool.toolCallId.isEmpty ? null : tool.toolCallId,
+        ),
+        '待办',
+      );
     case 'Skill':
       final parsed = _tryParseInputObject(input) ?? const {};
       final skill = parsed['skill']?.toString() ?? '';
