@@ -964,30 +964,7 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
-    // 官方语义「新会话继承最近一次选择的模型」：建会后应用节点默认。
-    // 引擎的全局默认是桌面端最后全局选的、与手机选择无关（实测探针
-    // probe-modeldefault），这一步是手机端等价实现。失败不阻断首条
-    // 消息（引擎默认兜底），原因进日志。
-    try {
-      final catalog = await NodeCatalogService.instance.modelCatalog();
-      final def = catalog.defaultModel;
-      if (def != null && def.providerId.isNotEmpty && def.modelId.isNotEmpty) {
-        // 老默认没落过档位时从目录条目补解析（imported 模型必填）
-        final level = def.reasoningDefaultLevel ??
-            catalog.models
-                .where((e) => e.key == def.key)
-                .map((e) => e.reasoningLevelForRequest)
-                .firstWhere((l) => l != null, orElse: () => null);
-        await _store.applySessionModel(
-          newSid,
-          providerId: def.providerId,
-          modelId: def.modelId,
-          reasoningLevel: level,
-        );
-      }
-    } catch (e) {
-      debugPrint('[model] 新会话应用默认模型失败: $e');
-    }
+    await _applyNodeDefaultToSession(newSid);
     // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息，
     // 失败原因已进 store.error）
     final pendingLevel = _pendingThoughtLevel;
@@ -3665,6 +3642,35 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  /// 建会话后应用节点默认模型——官方「选择即全局、新会话继承」语义的
+  /// 手机端等价实现。引擎的全局默认是桌面端最后全局选的、与手机选择
+  /// 无关（实测探针 probe-modeldefault），不覆盖则新会话跟随桌面。
+  /// 失败静默降级（引擎默认兜底），原因进日志；发消息前 await，
+  /// 保证首条消息就用上默认模型。
+  Future<void> _applyNodeDefaultToSession(String sid) async {
+    try {
+      final catalog = await NodeCatalogService.instance.modelCatalog();
+      final def = catalog.defaultModel;
+      if (def == null || def.providerId.isEmpty || def.modelId.isEmpty) {
+        return; // 从未在手机上选过模型：保持引擎全局默认
+      }
+      // 老默认没落过档位时从目录条目补解析（imported 模型必填）
+      final level = def.reasoningDefaultLevel ??
+          catalog.models
+              .where((e) => e.key == def.key)
+              .map((e) => e.reasoningLevelForRequest)
+              .firstWhere((l) => l != null, orElse: () => null);
+      await _store.applySessionModel(
+        sid,
+        providerId: def.providerId,
+        modelId: def.modelId,
+        reasoningLevel: level,
+      );
+    } catch (e) {
+      debugPrint('[model] 新会话应用默认模型失败: $e');
+    }
+  }
+
   /// 卡片「新建会话」：把被阻塞原文迁移到全新会话发出（一步迁移）。
   /// 旧会话坏在模型配置上，/clear 也走 session/send 同样被拒（实测死循环），
   /// 必须经 session/create 建新会话。
@@ -3684,6 +3690,8 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
+    // 迁移场景最依赖默认模型（旧会话正是坏在模型上）：先应用再发
+    await _applyNodeDefaultToSession(_store.activeSessionId!);
     unawaited(_store.sendMessage(content));
   }
 
