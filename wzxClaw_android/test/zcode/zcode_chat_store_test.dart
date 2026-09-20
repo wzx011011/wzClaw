@@ -1090,6 +1090,53 @@ void main() {
       });
     });
 
+    test('tool_input_delta 累积：分片拼接成完整输入，全量到达后清缓冲',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-delta');
+      var seq = 0;
+      void push(String kind, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-delta',
+          type: 'model.streaming',
+          seq: seq,
+          turnId: 'turn-d',
+          payload: {...payload, 'kind': kind},
+        );
+      }
+
+      ToolCallInfo toolById() => store.messages
+          .expand((m) => m.processParts)
+          .map((p) => p.toolCall)
+          .whereType<ToolCallInfo>()
+          .firstWhere((t) => t.toolCallId == 'call-d1');
+
+      push('tool_input_start', {
+        'toolCallId': 'call-d1', 'toolName': 'Bash', 'assistantMessageId': 'msg-d1',
+      });
+      push('tool_input_delta', {'toolCallId': 'call-d1', 'delta': '{"comm'});
+      push('tool_input_delta', {'toolCallId': 'call-d1', 'delta': 'and":"npm test"}'});
+      expect(toolById().inputFull, '{"command":"npm test"}');
+
+      // 累计快照形态：新分片以前缀包含旧累积时替换而非重复拼接
+      push('tool_input_delta', {
+        'toolCallId': 'call-d1', 'delta': '{"command":"npm test"} {"extra":1}',
+      });
+      expect(toolById().inputFull, '{"command":"npm test"} {"extra":1}');
+
+      // 全量到达（tool_call 带 input）：权威输入替换
+      push('tool_call', {
+        'toolCallId': 'call-d1',
+        'input': {'command': 'npm test'},
+      });
+      expect(toolById().inputFull, '{"command":"npm test"}');
+      expect(seq, greaterThan(0));
+    });
+
     test('未打开会话时 setModel 失败并置 error', () async {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);

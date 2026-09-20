@@ -1981,13 +1981,14 @@ class ZcodeChatStore extends ChangeNotifier {
               'session=${state.sessionId}');
           return;
         }
-        final previous = state.streamingTool(toolCallId);
-        final input = '${previous?.inputFull ?? ''}$delta';
+        // 累积挂在 state 缓冲上：回合中途权威合并会整体替换流式消息，
+        // 从 part 续接会因 part 丢失而把输入拼残（终端行空详情根因）
+        final input = state.accumulateToolInput(toolCallId, delta);
         state.upsertStreamingTool(
           _updatedTool(
             toolCallId: toolCallId,
             payload: payload,
-            previous: previous,
+            previous: state.streamingTool(toolCallId),
             lifecycle: 'input_streaming',
             input: input,
             hasInput: true,
@@ -2014,6 +2015,8 @@ class ZcodeChatStore extends ChangeNotifier {
           assistantMessageId: assistantId,
           turnId: turnId,
         );
+        // 输入就绪即视为权威（全量输入已由 delta 累积完）
+        state.clearToolInputBuffer(toolCallId);
         return;
       case 'tool_call':
         final toolCallId = _nonEmpty(payload['toolCallId']);
@@ -2034,6 +2037,8 @@ class ZcodeChatStore extends ChangeNotifier {
           assistantMessageId: assistantId,
           turnId: turnId,
         );
+        // 全量输入到达即权威，累积缓冲完成使命
+        if (payload.containsKey('input')) state.clearToolInputBuffer(toolCallId);
         return;
       // 边界事件可能因协议过滤根本不抵达手机；已知但无内容的边界不记成
       // 未知协议，以免正常会话日志被噪声淹没。

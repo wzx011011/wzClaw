@@ -234,6 +234,34 @@ class ZcodeSessionState {
   bool get hasTurnInFlight =>
       isStreaming || isWaitingForResponse || streamingIndex >= 0;
 
+  /// 工具输入累积缓冲（按 toolCallId）。回合中途的权威合并会整体替换
+  /// 流式消息（合并后的服务端版本不含在途工具），工具 part 因此丢失，
+  /// 后续 tool_input_delta 若从 part 里续接就会从零拼错——缓冲挂在
+  /// state 上与消息生命周期解耦，合并不掉。
+  final Map<String, String> _toolInputBuffers = {};
+
+  /// 累积一条 tool_input_delta，返回累积后的完整输入文本。兼容两种
+  /// 引擎发送形态：增量分片（追加）与累计快照（新分片以前缀包含旧
+  /// 累积时直接替换，避免重复拼接）。
+  String accumulateToolInput(String toolCallId, String delta) {
+    final prev = _toolInputBuffers[toolCallId];
+    final String next;
+    if (prev == null || prev.isEmpty) {
+      next = delta;
+    } else if (delta.length > prev.length && delta.startsWith(prev)) {
+      next = delta;
+    } else {
+      next = '$prev$delta';
+    }
+    _toolInputBuffers[toolCallId] = next;
+    return next;
+  }
+
+  /// 工具拿到权威输入（tool_call 全量 / 结果终态）后清缓冲
+  void clearToolInputBuffer(String toolCallId) {
+    _toolInputBuffers.remove(toolCallId);
+  }
+
   /// 思维链面板数据源：当前流式消息最近一段 reasoning 的实时内容
   /// （正文在其后到达时仍返回最近思考段；canonical parts 是唯一存储）。
   String get liveThinkingText {
@@ -792,6 +820,7 @@ class ZcodeSessionState {
     streamingTurnId = null;
     lastInputTokens = 0;
     lastOutputTokens = 0;
+    _toolInputBuffers.clear();
   }
 
   /// 合并权威消息批次（session/messages 响应已按服务端数组顺序排列）：

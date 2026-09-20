@@ -735,6 +735,10 @@ TurnVM buildTurnVM(
           breakAggregate();
           continue;
         }
+        // 记账型工具（官方时间线不渲染）：TodoWrite 是任务面板内部簿记、
+        // TaskOutput/TaskUpdate 是子智能体输出轮询——渲染出来只会是一行
+        // 裸 JSON。跳过且不打断相邻工具分组（官方同形态）
+        if (_isBookkeepingTool(tool.toolName)) continue;
         final toolInput = tool.inputFull ?? tool.inputSummary;
         // 消息卡（官方 aFt 对齐）：识别靠输入结构（to + message/summary，
         // kind local_agent_message），不认工具名
@@ -831,6 +835,11 @@ class _ProcessSource {
 
 enum _ProcessSourceKind { part, marker, agentMessage }
 
+
+/// 记账型工具（官方时间线不渲染）：TodoWrite = 任务面板内部簿记；
+/// TaskOutput / TaskUpdate = 子智能体输出轮询与状态更新。
+bool _isBookkeepingTool(String name) =>
+    name == 'TodoWrite' || name == 'TaskOutput' || name == 'TaskUpdate';
 
 /// 查阅/终端组成员行：种类标签（运行中动作文案）+ 目标 + 自身状态与详情
 TurnToolRow _memberRow(_ToolView view) {
@@ -1242,6 +1251,16 @@ class _TurnBlockViewState extends State<TurnBlockView> {
                 TurnPartKind.text => const SizedBox.shrink(),
               },
             ),
+        // 流式存活指示（官方对齐）：输出流末尾一个小等待圈
+        if (vm.busy)
+          const Padding(
+            padding: EdgeInsets.only(top: 6, left: 4),
+            child: SizedBox(
+              width: 13,
+              height: 13,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
         // 正文（文档流：无框直接渲染 Markdown，永不被折叠隐藏）
         if (vm.answerMarkdown.isNotEmpty)
           Padding(

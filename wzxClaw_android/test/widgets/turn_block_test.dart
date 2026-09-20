@@ -924,10 +924,68 @@ void main() {
       // 运行中：组行动画在 target 位（· 正在执行 <命令>）
       expect(find.byType(AnimatedGradientText), findsOneWidget);
       expect(find.textContaining('正在执行'), findsOneWidget);
-      // 行内零转圈
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // 行内零转圈；输出流末尾恰有一个流式存活等待圈（官方对齐）
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       // 完成行无 ✓ 图标
       expect(find.byIcon(Icons.check), findsNothing);
+    });
+
+    testWidgets('完成态无任何转圈', (tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm test"}',
+                output: 'ok',
+                id: 'done2',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    test('记账型工具不渲染且不打断相邻分组（官方时间线同形态）', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('Read', input: '{"file_path":"/a/one.dart"}', id: 'r1'),
+            ),
+            ChatProcessPart.tool(
+              _call('TodoWrite', input: '{"todos":[{"content":"x"}]}', id: 't1'),
+            ),
+            ChatProcessPart.tool(
+              _call('TaskOutput', input: '{"task_id":"agent_1"}', id: 't2'),
+            ),
+            ChatProcessPart.tool(
+              _call('Read', input: '{"file_path":"/a/two.dart"}', id: 'r2'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      // TodoWrite/TaskOutput 不出现；两侧 Read 跨过它们仍然成组
+      expect(vm.parts, hasLength(1));
+      final row = vm.parts.first.tool!;
+      expect(row.verb, '查阅');
+      expect(row.count, 2);
+      expect(vm.countsLabel.contains('任务'), isFalse);
     });
 
     testWidgets('被工具接续的思考段停表；回合头纯文字无图标', (tester) async {
@@ -962,9 +1020,10 @@ void main() {
       );
       await tester.pump();
 
-      // 思考段被工具打断已停表 → 灰字「思考」；无转圈
+      // 思考段被工具打断已停表 → 灰字「思考」；行内无转圈，
+      // 输出流末尾恰有一个流式存活等待圈（官方对齐）
       expect(find.text('思考'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       // 回合头纯文字（工作中…），无完成勾
       expect(find.textContaining('工作中'), findsOneWidget);
       expect(find.byIcon(Icons.check_circle_outline), findsNothing);
@@ -994,7 +1053,8 @@ void main() {
 
       expect(find.text('正在思考'), findsOneWidget);
       expect(find.byType(AnimatedGradientText), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // 输出流末尾一个流式存活等待圈（官方对齐），思考行内无
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
     testWidgets('消息卡：运行中「正在发送消息」渐变，展开见 dl 三行',
