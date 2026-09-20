@@ -113,7 +113,12 @@ class ZcodeModelInfo {
   final String? providerLabel;
   final int? contextWindow;
   final int? maxOutputTokens;
-  final bool reasoning;
+
+  /// 推理档位（引擎快照 reasoning.levels 的 value，如 low/high/max）。
+  /// 非空时 setModel 必须带 options.reasoningLevel（实测契约，imported
+  /// 模型缺失即 -32603）
+  final List<String> reasoningLevels;
+  final String? reasoningDefaultLevel;
 
   const ZcodeModelInfo({
     required this.providerId,
@@ -122,11 +127,20 @@ class ZcodeModelInfo {
     this.providerLabel,
     this.contextWindow,
     this.maxOutputTokens,
-    this.reasoning = false,
+    this.reasoningLevels = const [],
+    this.reasoningDefaultLevel,
   });
 
   /// 'providerId/modelId' 引用形态（setModel 兜底同款）
   String get ref => '$providerId/$modelId';
+
+  /// setModel 所需的推理档位：默认档位（须在档位表内）优先，回退首个；
+  /// 无档位返回 null
+  String? get reasoningLevelForRequest {
+    final def = reasoningDefaultLevel;
+    if (def != null && reasoningLevels.contains(def)) return def;
+    return reasoningLevels.isNotEmpty ? reasoningLevels.first : null;
+  }
 
   /// UI 显示名：优先 label，退回 modelId
   String get displayName =>
@@ -1213,6 +1227,12 @@ class ZcodeChatStore extends ChangeNotifier {
       final slash = model.indexOf('/');
       if (slash > 0) {
         attempted = true;
+        // 兜底模型的推理档位从快照目录解析：imported 模型不带档位会被
+        // 引擎 -32603 拒绝，自愈永远失败
+        final level = _modelCatalog
+            .where((m) => m.ref == model)
+            .map((m) => m.reasoningLevelForRequest)
+            .firstWhere((l) => l != null, orElse: () => null);
         final error = await zcodeSetModelResend(
           request: client.request,
           sessionId: state.sessionId,
@@ -1220,6 +1240,7 @@ class ZcodeChatStore extends ChangeNotifier {
           providerId: model.substring(0, slash),
           modelId: model.substring(slash + 1),
           reason: reason,
+          reasoningLevel: level,
         );
         if (error == null) {
           // 已恢复：继续走流式（期间可能已换代：换代即丢弃，T2 已接管）
@@ -3047,6 +3068,25 @@ class ZcodeChatStore extends ChangeNotifier {
         final modelId = _nonEmpty(ref is Map ? ref['modelId'] : null);
         if (providerId != null && modelId != null) {
           models.add('$providerId/$modelId');
+          // 引擎 reasoning 形状（实测）：{levels:[{value,label}...],
+          // defaultLevel?}——档位取每项的 value；缺失/畸形一律视为无档位
+          // （setModel 不带 options）
+          final reasoning = m['reasoning'];
+          String? levelOf(Object? e) {
+            if (e is String) return e.isEmpty ? null : e;
+            if (e is Map) {
+              final v = e['value']?.toString();
+              return (v == null || v.isEmpty) ? null : v;
+            }
+            return null;
+          }
+
+          final levels = reasoning is Map && reasoning['levels'] is List
+              ? (reasoning['levels'] as List)
+                  .map(levelOf)
+                  .whereType<String>()
+                  .toList(growable: false)
+              : const <String>[];
           catalog.add(
             ZcodeModelInfo(
               providerId: providerId,
@@ -3059,7 +3099,10 @@ class ZcodeChatStore extends ChangeNotifier {
               maxOutputTokens: m['maxOutputTokens'] is num
                   ? (m['maxOutputTokens'] as num).toInt()
                   : null,
-              reasoning: m['reasoning'] == true,
+              reasoningLevels: levels,
+              reasoningDefaultLevel: levels.isEmpty
+                  ? null
+                  : (reasoning['defaultLevel']?.toString()),
             ),
           );
         }
@@ -3088,10 +3131,19 @@ class ZcodeChatStore extends ChangeNotifier {
     if (pid != null && mid != null) state.modelRef = '$pid/$mid';
   }
 
-  /// 设置会话模型（session/setModel；实测只接受对象 {providerId, modelId}）。
+  /// 设置会话模型（session/setModel）。实测契约（APP-SERVER.md 0.16.9）：
+  /// model 为对象 {providerId, modelId, options?{reasoningLevel}}——
+  /// imported 模型（Codex/DeepSeek 导入）**必填** reasoningLevel（取目录
+  /// reasoning.levels 的 value），缺失即 -32603 "Reasoning level is
+  /// required"。[reasoningLevel] 由调用方从目录条目解析（见
+  /// NodeModelEntry.reasoningLevelForRequest）；无档位模型不传、不带 options。
   /// 乐观更新 currentModelRef；权威值以随后的 state.updated 快照回填为准。
   /// 返回是否成功（失败时 error 已置位）。
-  Future<bool> setModel(String providerId, String modelId) async {
+  Future<bool> setModel(
+    String providerId,
+    String modelId, {
+    String? reasoningLevel,
+  }) async {
     final client = _client;
     final sessionId = _activeSessionId;
     if (client == null || sessionId == null || !client.paired) {
@@ -3105,7 +3157,12 @@ class ZcodeChatStore extends ChangeNotifier {
     try {
       await client.request('session/setModel', {
         'sessionId': sessionId,
-        'model': {'providerId': providerId, 'modelId': modelId},
+        'model': {
+          'providerId': providerId,
+          'modelId': modelId,
+          if (reasoningLevel != null && reasoningLevel.isNotEmpty)
+            'options': {'reasoningLevel': reasoningLevel},
+        },
       });
       // 会话级乐观回显：只写本会话容器，不串其他会话
       _stateFor(sessionId).modelRef = '$providerId/$modelId';

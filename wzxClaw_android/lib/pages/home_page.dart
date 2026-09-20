@@ -3378,9 +3378,16 @@ class _ChatPageState extends State<ChatPage> {
               } else {
                 final catalog = snap.data!;
                 // 层级分组（对齐桌面选择器）：provider 显示名分组、套餐组置顶；
-                // 组头点击折叠/展开，默认展开套餐组与含默认模型的组
+                // 组头点击折叠/展开，默认展开套餐组与含默认模型的组。
+                // 引擎目录可用时只显示引擎证实条目——导入快照（available:
+                // false，未经引擎证实）不再作为一等选项混排（官方选择器
+                // 同样只显示 live registry）；引擎不可用（degraded）时快照
+                // 是唯一信息源，照旧显示并带降级横幅
+                final selectableModels = catalog.degraded
+                    ? catalog.models
+                    : catalog.models.where((m) => m.available).toList();
                 final groups = <String, List<NodeModelEntry>>{};
-                for (final m in catalog.models) {
+                for (final m in selectableModels) {
                   (groups[m.groupLabel(m.providerId)] ??= []).add(m);
                 }
                 final orderedNames = [
@@ -3488,6 +3495,9 @@ class _ChatPageState extends State<ChatPage> {
                                     modelId: m.modelId,
                                   ),
                                   retryContent: retryContent,
+                                  // imported 模型 setModel 必填推理档位
+                                  // （实测契约：缺失即 -32603）
+                                  reasoningLevel: m.reasoningLevelForRequest,
                                 );
                               },
                               child: Padding(
@@ -3655,16 +3665,23 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 应用模型选择：有会话 → 会话内 setModel（非默认模型时顺带设节点默认）；
   /// 无会话（新任务态）→ 仅落盘节点默认（新会话应用，companion 实测语义）。
+  /// [reasoningLevel] 随选择下发（imported 模型 setModel/落盘默认都必填，
+  /// 见 NodeModelEntry.reasoningLevelForRequest）。
   /// [retryContent] = 「模型不可用」卡片的重发原文：切换成功后自动重发，
   /// 并清除阻塞卡。
   Future<void> _applyModelChoice(
     String? sessionId,
     SessionModelUse m, {
     String? retryContent,
+    String? reasoningLevel,
   }) async {
     try {
       if (sessionId != null) {
-        final changed = await _store.setModel(m.providerId, m.modelId);
+        final changed = await _store.setModel(
+          m.providerId,
+          m.modelId,
+          reasoningLevel: reasoningLevel,
+        );
         if (!changed) throw StateError(_store.error ?? '切换模型失败');
         _store.clearModelBlocked();
       }
@@ -3675,6 +3692,7 @@ class _ChatPageState extends State<ChatPage> {
           await NodeCatalogService.instance.configureDefault(
             providerId: m.providerId,
             modelId: m.modelId,
+            reasoningLevel: reasoningLevel,
           );
           configuredDefault = true;
         } catch (e) {

@@ -9,7 +9,8 @@
 // 时序出处：relay/zcode/probe-modelheal4.js 真链路验证
 // （RESULT: healed-by-setmodel-rematerialize）：
 //   setModel → close → resume → send
-// - setModel 只接受 {providerId, modelId} 对象，字符串 'p/m' 被 -32602 拒
+// - setModel model 为对象 {providerId, modelId, options?{reasoningLevel}}；
+//   imported 模型必填 reasoningLevel（0.16.9 实测，缺失即 -32603）
 // - close + resume 重新物化运行时是关键：只 setModel 后重发仍 -32031
 // 可用模型的解析（缓存 vs resume 现取）由调用方各自完成。
 // ============================================================
@@ -26,6 +27,9 @@ typedef ZcodeRequestFn = Future<dynamic> Function(
 
 /// setModel + 重新物化 + 重发一次。
 ///
+/// [reasoningLevel]：imported 模型（Codex/DeepSeek 导入）setModel 必填
+/// 推理档位（实测契约，缺失即 -32603）；无档位模型传 null、不带 options。
+///
 /// 返回 null = 重发已被接受（订阅由调用方按各自链路补发）；
 /// 非 null = 给用户看的错误文案（已含原始 [reason]）。
 Future<String?> zcodeSetModelResend({
@@ -35,11 +39,17 @@ Future<String?> zcodeSetModelResend({
   required String providerId,
   required String modelId,
   required String reason,
+  String? reasoningLevel,
 }) async {
   try {
     await request('session/setModel', {
       'sessionId': sessionId,
-      'model': {'providerId': providerId, 'modelId': modelId},
+      'model': {
+        'providerId': providerId,
+        'modelId': modelId,
+        if (reasoningLevel != null && reasoningLevel.isNotEmpty)
+          'options': {'reasoningLevel': reasoningLevel},
+      },
     });
     await request('session/close', {'sessionId': sessionId});
     await request('session/resume', {'sessionId': sessionId});
@@ -72,10 +82,35 @@ Future<String?> zcodeHealWithAvailableModel({
     final modelCfg = settings?['model'] as Map?;
     final available = modelCfg?['available'] as List? ?? const [];
     Map? ref;
+    String? reasoningLevel;
     for (final item in available) {
-      final r = item is Map ? item['ref'] as Map? : null;
+      final m = item is Map ? item : null;
+      final r = m?['ref'] as Map?;
       if (r is Map && r['providerId'] is String && r['modelId'] is String) {
         ref = r;
+        // 引擎 reasoning 形状（实测）：{levels:[{value,label}...],
+        // defaultLevel?}——imported 模型缺失档位 setModel 会被 -32603 拒绝
+        final reasoning = m?['reasoning'];
+        if (reasoning is Map && reasoning['levels'] is List) {
+          String? levelOf(Object? e) {
+            if (e is String) return e.isEmpty ? null : e;
+            if (e is Map) {
+              final v = e['value']?.toString();
+              return (v == null || v.isEmpty) ? null : v;
+            }
+            return null;
+          }
+
+          final levels = (reasoning['levels'] as List)
+              .map(levelOf)
+              .whereType<String>()
+              .toList(growable: false);
+          if (levels.isNotEmpty) {
+            final def = reasoning['defaultLevel']?.toString();
+            reasoningLevel =
+                (def != null && levels.contains(def)) ? def : levels.first;
+          }
+        }
         break;
       }
     }
@@ -87,6 +122,7 @@ Future<String?> zcodeHealWithAvailableModel({
       providerId: ref['providerId'] as String,
       modelId: ref['modelId'] as String,
       reason: reason,
+      reasoningLevel: reasoningLevel,
     );
   } catch (e) {
     // 吞掉自愈链的真实失败步骤会误导用户（网络断/超时被当成模型问题）

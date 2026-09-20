@@ -40,6 +40,15 @@ class NodeModelEntry {
 
   /// 套餐组（companion 注入的 BigModel 套餐 provider），手机端置顶展示
   final bool planGroup;
+
+  /// 推理档位（引擎目录 reasoning.levels 的 value，如 low/high/max）。
+  /// 非空时 session/setModel 必须带 options.reasoningLevel（实测契约：
+  /// imported 模型缺失即 -32603 "Reasoning level is required"）
+  final List<String> reasoningLevels;
+
+  /// 引擎标注的默认推理档位；无标注时调用方取 levels 首个
+  final String? reasoningDefaultLevel;
+
   const NodeModelEntry({
     required this.providerId,
     required this.modelId,
@@ -50,7 +59,17 @@ class NodeModelEntry {
     this.vision = false,
     this.contextWindow,
     this.planGroup = false,
+    this.reasoningLevels = const [],
+    this.reasoningDefaultLevel,
   });
+
+  /// setModel 所需的推理档位：默认档位（须在档位表内）优先，回退首个；
+  /// 无档位返回 null（请求不带 options）
+  String? get reasoningLevelForRequest {
+    final def = reasoningDefaultLevel;
+    if (def != null && reasoningLevels.contains(def)) return def;
+    return reasoningLevels.isNotEmpty ? reasoningLevels.first : null;
+  }
 
   String get key => '$providerId/$modelId';
 
@@ -143,17 +162,42 @@ class NodeCatalogService {
     final models = (r['models'] as List? ?? [])
         .whereType<Map>()
         .map(
-          (m) => NodeModelEntry(
-            providerId: m['providerId']?.toString() ?? '',
-            modelId: m['modelId']?.toString() ?? '',
-            available: m['available'] == true,
-            source: m['source']?.toString() ?? '',
-            label: m['label']?.toString() ?? '',
-            providerLabel: m['providerLabel']?.toString() ?? '',
-            vision: m['vision'] == true,
-            contextWindow: m['contextWindow'] is int ? m['contextWindow'] as int : null,
-            planGroup: m['planGroup'] == true,
-          ),
+          (m) {
+            // 引擎 reasoning 形状（实测）：{levels:[{value,label}...],
+            // defaultLevel?}——档位取每项的 value；缺失/畸形一律视为
+            // 无档位（setModel 不带 options）
+            final reasoning = m['reasoning'];
+            String? levelOf(Object? e) {
+              if (e is String) return e.isEmpty ? null : e;
+              if (e is Map) {
+                final v = e['value']?.toString();
+                return (v == null || v.isEmpty) ? null : v;
+              }
+              return null;
+            }
+
+            final levels = reasoning is Map && reasoning['levels'] is List
+                ? (reasoning['levels'] as List)
+                    .map(levelOf)
+                    .whereType<String>()
+                    .toList(growable: false)
+                : const <String>[];
+            return NodeModelEntry(
+              providerId: m['providerId']?.toString() ?? '',
+              modelId: m['modelId']?.toString() ?? '',
+              available: m['available'] == true,
+              source: m['source']?.toString() ?? '',
+              label: m['label']?.toString() ?? '',
+              providerLabel: m['providerLabel']?.toString() ?? '',
+              vision: m['vision'] == true,
+              contextWindow: m['contextWindow'] is int ? m['contextWindow'] as int : null,
+              planGroup: m['planGroup'] == true,
+              reasoningLevels: levels,
+              reasoningDefaultLevel: levels.isEmpty
+                  ? null
+                  : (reasoning['defaultLevel']?.toString()),
+            );
+          },
         )
         .where((m) => m.providerId.isNotEmpty && m.modelId.isNotEmpty)
         .toList();
@@ -193,16 +237,21 @@ class NodeCatalogService {
   /// 设置节点默认模型（审查 P2-9 语义拆分）：只落盘默认值、新会话生效；
   /// 绝不隐式修改已有会话。唯一例外是显式传 [applySessionTarget]（目标
   /// sessionId），用于「模型不可用自愈」流程对当前会话的重试。
+  /// [reasoningLevel] 随默认值落盘（companion 对活跃会话的即时 setModel
+  /// 与新会话应用都需要：imported 模型缺失档位会被引擎 -32603 拒绝）。
   Future<ConfigureResult> configureDefault({
     required String providerId,
     required String modelId,
     String? applySessionTarget,
+    String? reasoningLevel,
   }) async {
     final r = await _call('x/model/configure', {
       'providerId': providerId,
       'modelId': modelId,
       if (applySessionTarget != null && applySessionTarget.isNotEmpty)
         'applySessionTarget': applySessionTarget,
+      if (reasoningLevel != null && reasoningLevel.isNotEmpty)
+        'reasoningLevel': reasoningLevel,
     });
     if (r is! Map || r['ok'] != true) throw StateError('设置默认模型失败');
     return ConfigureResult(

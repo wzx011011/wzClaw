@@ -50,11 +50,15 @@ process.stdin.on('data', (chunk) => {
       } else if (frame.method === 'session/list') {
         send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
       } else if (frame.method === 'session/setModel') {
-        // 观测（P2-9 语义拆分断言用）：追加记录被 setModel 的会话到文件
+        // 观测（P2-9 语义拆分断言用）：追加记录被 setModel 的会话到文件；
+        // FULL 探针记完整 params（reasoningLevel options 断言用）
         try {
           const fs = require('fs');
           const f = process.env.SETMODEL_PROBE;
           if (f) fs.appendFileSync(f, `${frame.params && frame.params.sessionId}
+`);
+          const full = process.env.SETMODEL_PROBE_FULL;
+          if (full) fs.appendFileSync(full, `${JSON.stringify(frame.params)}
 `);
         } catch { /* 观测失败不影响应答 */ }
         send({ id: frame.id, result: { ok: true } });

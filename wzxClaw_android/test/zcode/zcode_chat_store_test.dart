@@ -951,7 +951,14 @@ void main() {
                     'label': 'GLM-5.3',
                     'contextWindow': 200000,
                     'maxOutputTokens': 128000,
-                    'reasoning': true,
+                    // 引擎实测形状：levels 每项 {value,label}，defaultLevel 直取
+                    'reasoning': {
+                      'levels': [
+                        {'value': 'high', 'label': 'high'},
+                        {'value': 'max', 'label': 'max'},
+                      ],
+                      'defaultLevel': 'high',
+                    },
                     'providerLabel': 'BigModel',
                   },
                   {
@@ -975,7 +982,12 @@ void main() {
       await store.openSession('sess-m');
       expect(store.modelCatalog.length, 2);
       expect(store.modelCatalog.first.displayName, 'GLM-5.3');
-      expect(store.modelCatalog.first.reasoning, isTrue);
+      // reasoning 映射（实测形状 {levels:[{value,label}], defaultLevel}）
+      expect(store.modelCatalog.first.reasoningLevels, ['high', 'max']);
+      expect(store.modelCatalog.first.reasoningDefaultLevel, 'high');
+      expect(store.modelCatalog.first.reasoningLevelForRequest, 'high');
+      expect(store.modelCatalog.last.reasoningLevels, isEmpty);
+      expect(store.modelCatalog.last.reasoningLevelForRequest, isNull);
       expect(store.modelCatalog.first.contextWindow, 200000);
       expect(
         store.modelCatalog.first.ref,
@@ -988,6 +1000,7 @@ void main() {
         'glm-5.3-flash',
       );
       expect(ok, isTrue);
+      // 无档位模型：不带 options（实测契约允许缺省）
       expect(setModelParams.single, {
         'sessionId': 'sess-m',
         'model': {
@@ -1000,6 +1013,54 @@ void main() {
         store.currentModelRef,
         'builtin:bigmodel-coding-plan/glm-5.3-flash',
       );
+    });
+
+    test('setModel 带推理档位：imported 模型必填 options.reasoningLevel', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/resume'] = (_) => {
+            'projection': {'status': 'idle'},
+            'messages': [],
+            'settings': {
+              'model': {
+                'available': [
+                  {
+                    // imported 形状：providerId 带导入哈希，reasoning 必填
+                    'ref': {'providerId': 'imported:codex:abc123', 'modelId': 'gpt-5.6-sol'},
+                    'label': 'GPT-5.6 Sol',
+                    'reasoning': {
+                      'levels': [
+                        {'value': 'low', 'label': 'low'},
+                        {'value': 'high', 'label': 'high'},
+                      ],
+                      'defaultLevel': 'high',
+                    },
+                  },
+                ],
+              },
+            },
+          };
+      final setModelParams = <Map<String, dynamic>?>[];
+      fake.handlers['session/setModel'] = (params) {
+        setModelParams.add(params);
+        return {'ok': true};
+      };
+      final store = pairedStore(fake);
+
+      await store.openSession('sess-imported');
+      final ok = await store.setModel(
+        'imported:codex:abc123',
+        'gpt-5.6-sol',
+        reasoningLevel: 'high',
+      );
+      expect(ok, isTrue);
+      expect(setModelParams.single, {
+        'sessionId': 'sess-imported',
+        'model': {
+          'providerId': 'imported:codex:abc123',
+          'modelId': 'gpt-5.6-sol',
+          'options': {'reasoningLevel': 'high'},
+        },
+      });
     });
 
     test('未打开会话时 setModel 失败并置 error', () async {

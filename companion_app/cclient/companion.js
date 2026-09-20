@@ -895,9 +895,11 @@ function createCompanion(options = {}) {
     return null;
   }
 
-  function writeModelDefault(providerId, modelId) {
+  function writeModelDefault(providerId, modelId, reasoningLevel) {
+    // reasoningLevel：imported 模型 setModel 必填推理档位（0.16.9 实测，
+    // 缺失 -32603）；随默认值落盘，应用端建会后 setModel 时携带
     const tmp = `${modelDefaultFile}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ providerId, modelId, updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify({ providerId, modelId, ...(reasoningLevel ? { reasoningLevel } : {}), updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, modelDefaultFile);
   }
 
@@ -1382,7 +1384,9 @@ function createCompanion(options = {}) {
             || /[/\s]/.test(p.providerId) || /[/\s]/.test(p.modelId)) {
             throw safeError('X_BAD_PARAMS');
           }
-          writeModelDefault(p.providerId, p.modelId);
+          writeModelDefault(p.providerId, p.modelId,
+            typeof p.reasoningLevel === 'string' && p.reasoningLevel.trim()
+              ? p.reasoningLevel.trim() : null);
           // 审查 P2-9：「设节点默认」与「改指定会话模型」语义分离——只有
           // 调用方显式给 applySessionTarget（目标 sessionId）才对已有会话
           // setModel；绝不自作主张改 session/list 第一项（那可能是用户
@@ -1392,10 +1396,13 @@ function createCompanion(options = {}) {
           if (typeof p.applySessionTarget === 'string' && p.applySessionTarget.trim()) {
             appliedTarget = p.applySessionTarget.trim();
             try {
+              const reasoningLevel = typeof p.reasoningLevel === 'string' && p.reasoningLevel.trim()
+                ? p.reasoningLevel.trim() : null;
               const r = await bridgeRequest({
                 id: nextLocalId(), method: 'session/setModel',
                 params: { sessionId: appliedTarget,
-                  model: { providerId: p.providerId, modelId: p.modelId } },
+                  model: { providerId: p.providerId, modelId: p.modelId,
+                    ...(reasoningLevel ? { options: { reasoningLevel } } : {}) } },
               });
               appliedToActive = Boolean(r && !r.error);
             } catch { /* setModel 失败不回滚默认值（新会话仍会应用） */ }

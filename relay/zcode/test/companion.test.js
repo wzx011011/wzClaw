@@ -1449,6 +1449,8 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   // setModel 观测探针（P2-9 断言：谁被 setModel 全记录在此）
   const setModelProbe = path.join(stateDir, 'setmodel-probe.txt');
   process.env.SETMODEL_PROBE = setModelProbe;
+  const setModelProbeFull = path.join(stateDir, 'setmodel-probe-full.txt');
+  process.env.SETMODEL_PROBE_FULL = setModelProbeFull;
   const setModelTargets = () => {
     try {
       return fs
@@ -1544,6 +1546,35 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   ask(23, 'x/model/configure', { providerId: 'builtin:p1/x', modelId: 'm' });
   const bad = await client.next((m) => m.type === 'data' && m.payload.id === 23);
   assert.equal(bad.payload.error.code, -32100);
+
+  // reasoningLevel 随 configure 透传（0.16.9 实测：imported 模型 setModel
+  // 必填 options.reasoningLevel，缺失即 -32603）
+  const setModelFrames = () => fs.readFileSync(setModelProbeFull, 'utf8')
+    .split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+  ask(212, 'x/model/configure', {
+    providerId: 'builtin:p1', modelId: 'glm-x',
+    applySessionTarget: 'engine-session-2',
+    reasoningLevel: 'high',
+  });
+  const conf3 = await client.next((m) => m.type === 'data' && m.payload.id === 212);
+  assert.equal(conf3.payload.result.ok, true);
+  await waitFor(() => setModelFrames().some((p) => p.sessionId === 'engine-session-2'), 3000);
+  const frame212 = setModelFrames().find((p) => p.sessionId === 'engine-session-2');
+  assert.deepEqual(frame212.model,
+    { providerId: 'builtin:p1', modelId: 'glm-x', options: { reasoningLevel: 'high' } });
+  const savedLevel = JSON.parse(fs.readFileSync(defaultFile, 'utf8'));
+  assert.equal(savedLevel.reasoningLevel, 'high', '档位随默认值落盘');
+
+  // 不带 reasoningLevel：setModel 帧不带 options（无档位模型允许缺省）
+  ask(213, 'x/model/configure', {
+    providerId: 'builtin:p1', modelId: 'glm-mini',
+    applySessionTarget: 'engine-session-3',
+  });
+  const conf4 = await client.next((m) => m.type === 'data' && m.payload.id === 213);
+  assert.equal(conf4.payload.result.ok, true);
+  await waitFor(() => setModelFrames().some((p) => p.sessionId === 'engine-session-3'), 3000);
+  const frame213 = setModelFrames().find((p) => p.sessionId === 'engine-session-3');
+  assert.deepEqual(frame213.model, { providerId: 'builtin:p1', modelId: 'glm-mini' });
 
   // x/extensions/list：快照摘要如实返回
   ask(24, 'x/extensions/list', {});
