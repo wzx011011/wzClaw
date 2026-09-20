@@ -1586,7 +1586,14 @@ class _AgentRowViewState extends State<_AgentRowView> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(width: 6),
+                // 与思考行同节奏的中点分隔（标签 · 内容），不再用纯间距
+                Text(
+                  ' · ',
+                  style: TextStyle(
+                    color: colors.textMuted,
+                    fontSize: 12.5,
+                  ),
+                ),
                 Flexible(
                   child: data.running
                       ? AnimatedGradientText(

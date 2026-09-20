@@ -2049,6 +2049,14 @@ class ZcodeChatStore extends ChangeNotifier {
       case 'reasoning_start':
       case 'reasoning_end':
         return;
+      case 'api_retry':
+        // 引擎流重试（CLI 0.16.9）：当前尝试作废、全部重发。剔除在途
+        // 消息的死残部（思考/正文/无结果工具），让重发从干净状态开始——
+        // 否则重发副本与残部叠加，出现整段重复文本 + 重复子智能体行
+        state.discardAbortedAttempt();
+        debugPrint('[zcode-store] api_retry：已清理在途尝试残部 '
+            'session=${state.sessionId}');
+        return;
       case 'error':
         debugPrint('[zcode-store] model.streaming error '
             'session=${state.sessionId}');

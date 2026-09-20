@@ -1433,6 +1433,61 @@ void main() {
       expect(notifier.shown.last['status'], 'success');
     });
 
+    test('api_retry：在途尝试残部剔除，重发不叠加（流重试根治）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-retry');
+      var seq = 0;
+      void push(String kind, Map<String, dynamic> payload) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-retry',
+          type: 'model.streaming',
+          seq: seq,
+          turnId: 'turn-r',
+          payload: {...payload, 'kind': kind},
+        );
+      }
+
+      // 尝试 1：思考 + 正文 + 运行中工具（随后引擎流重试）
+      push('reasoning_delta', {'delta': '先想想'});
+      push('text_delta', {'delta': '我先按当前代码链路核实两件事，再给结论。'});
+      push('tool_call', {
+        'toolCallId': 'call-old',
+        'tool': 'Bash',
+        'input': {'command': 'npm test'},
+      });
+      push('api_retry', {
+        'attempt': 1,
+        'maxRetries': 2,
+        'retryDelayMs': 0,
+        'error': 'boom',
+      });
+
+      // 残部剔除：思考/正文/无结果工具全部清空
+      expect(
+        store.messages.expand((m) => m.processParts),
+        isEmpty,
+        reason: 'api_retry 后在途残部（思考/正文/未完成工具）必须清空',
+      );
+
+      // 尝试 2（重发）：干净的思考 + 正文各一份，不再叠加
+      push('reasoning_delta', {'delta': '再想想'});
+      push('text_delta', {'delta': '重跑后的结论。'});
+      final texts = store.messages
+          .expand((m) => m.processParts)
+          .where((p) => p.kind == ChatProcessPartKind.text)
+          .map((p) => p.text)
+          .toList();
+      expect(
+        texts,
+        ['重跑后的结论。'],
+        reason: '重发的正文只有一份（根治整段重复）',
+      );
+    });
+
     test('工具回合：turn.completed(toolCallCount>0) 走增量权威刷新（afterMessageId 水位）',
         () async {
       final fake = FakeZcodeRelayClient();

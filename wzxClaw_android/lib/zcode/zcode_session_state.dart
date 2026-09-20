@@ -262,6 +262,39 @@ class ZcodeSessionState {
     _toolInputBuffers.remove(toolCallId);
   }
 
+  /// api_retry（引擎流重试标记，CLI 0.16.9 源码钉死）：引擎将重跑当前
+  /// 模型尝试，会把思考/正文/工具调用全部重发（新 callId），而废弃尝试
+  /// 不落库。在途未确认消息里的「死残部」——思考段、正文、无结果的
+  /// 运行中工具——就此剔除，重试的重发从干净状态开始（已出结果的工具
+  /// 保留，权威刷新再对账）。否则重发的副本与残部叠加，出现整段重复。
+  void discardAbortedAttempt() {
+    for (var i = items.length - 1; i >= 0; i--) {
+      final it = items[i];
+      if (it.synced || it.message.role != MessageRole.assistant) continue;
+      final parts = it.message.processParts;
+      if (parts.isEmpty) continue;
+      final kept = parts
+          .where(
+            (p) =>
+                p.kind == ChatProcessPartKind.tool &&
+                p.toolCall != null &&
+                (p.toolCall!.status == ToolCallStatus.done ||
+                    p.toolCall!.status == ToolCallStatus.error),
+          )
+          .toList(growable: false);
+      if (kept.length == parts.length) continue;
+      // 先记死残部的工具输入缓冲，一并清掉
+      for (final p in parts) {
+        if (!kept.contains(p)) {
+          final t = p.toolCall;
+          if (t != null) clearToolInputBuffer(t.toolCallId);
+        }
+      }
+      it.message = it.message.copyWith(processParts: kept);
+      it.dirty = true;
+    }
+  }
+
   /// 思维链面板数据源：当前流式消息最近一段 reasoning 的实时内容
   /// （正文在其后到达时仍返回最近思考段；canonical parts 是唯一存储）。
   String get liveThinkingText {
