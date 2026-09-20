@@ -46,6 +46,16 @@ class ChatPage extends StatefulWidget {
   @visibleForTesting
   static ZcodeChatStore? debugStoreOverride;
 
+  /// 两条消息请求内容的合并草稿：原样拼接（附件引用随文本并入），
+  /// 分隔线区分来源；用户可在输入框继续编辑后发送
+  static String mergeMessageDrafts(String dragged, String target) {
+    final a = dragged.trim();
+    final b = target.trim();
+    if (a.isEmpty) return b;
+    if (b.isEmpty) return a;
+    return '$a\n\n———\n\n$b';
+  }
+
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
@@ -1813,7 +1823,7 @@ class _ChatPageState extends State<ChatPage> {
     final parsed = splitAttachmentMarkers(msg.text);
     final displayText = parsed.displayText;
     final attachmentPaths = parsed.attachmentPaths;
-    return GestureDetector(
+    Widget bubble({bool hoverTarget = false}) => GestureDetector(
       onLongPress: () => _showMessageActions(msg),
       child: Align(
         alignment: Alignment.centerRight,
@@ -1823,6 +1833,9 @@ class _ChatPageState extends State<ChatPage> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: colors.userBubble,
+            border: hoverTarget
+                ? Border.all(color: colors.accent, width: 1.5)
+                : null,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(16),
               topRight: Radius.circular(16),
@@ -1860,7 +1873,99 @@ class _ChatPageState extends State<ChatPage> {
         ),
       ),
     );
+    return LongPressDraggable<String>(
+      data: msg.text,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 240,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: colors.userBubble,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(blurRadius: 14, color: Colors.black38),
+            ],
+          ),
+          child: Text(
+            msg.text,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 12.5),
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.35, child: bubble()),
+      child: DragTarget<String>(
+        onWillAcceptWithDetails: (details) {
+          final data = details.data;
+          return data.trim().isNotEmpty && data.trim() != msg.text.trim();
+        },
+        onAcceptWithDetails: (details) =>
+            _proposeMessageMerge(details.data, target: msg.text),
+        builder: (context, candidate, _) =>
+            bubble(hoverTarget: candidate.isNotEmpty),
+      ),
+    );
   }
+
+  /// 拖拽合并确认：预览合并草稿，用户同意后写回输入框（发送即最终
+  /// 同意）。附件引用随文本并入草稿。
+  void _proposeMessageMerge(String dragged, {required String target}) {
+    final merged = ChatPage.mergeMessageDrafts(dragged, target);
+    showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.of(dialogCtx).bgSecondary,
+        title: Text(
+          '合并这两条消息？',
+          style: TextStyle(
+            color: AppColors.of(dialogCtx).textPrimary,
+            fontSize: 16,
+          ),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Text(
+              merged,
+              style: TextStyle(
+                color: AppColors.of(dialogCtx).textSecondary,
+                fontSize: 12.5,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text(
+              '取消',
+              style: TextStyle(color: AppColors.of(dialogCtx).textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, merged),
+            child: Text(
+              '合并到输入框',
+              style: TextStyle(color: AppColors.of(dialogCtx).accent),
+            ),
+          ),
+        ],
+      ),
+    ).then((result) {
+      if (result is String && result.isNotEmpty) {
+        _inputController.text = result;
+        _inputController.selection = TextSelection.collapsed(
+          offset: result.length,
+        );
+        _inputFocusNode.requestFocus();
+      }
+    });
+  }
+
 
   /// 气泡内附件块：图片显示缩略图（本地缓存直读），点击全屏预览；
   /// 无本地副本（历史消息/重启后）或非图片 → 下载入口块，点击走
@@ -2386,6 +2491,24 @@ class _ChatPageState extends State<ChatPage> {
       ),
       child: Column(
         children: [
+          // 待发附件 chip 行（官方布局）：在输入框上方（会话框内），横向
+          // 滚动；官方块状样式：缩略图 + 环形进度 + 角标移除，点击预览
+          if (_attachments.isNotEmpty) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final attachment in _attachments)
+                    _AttachmentChip(
+                      attachment: attachment,
+                      onRemove: () => _removeAttachment(attachment),
+                      onPreview: () => _previewAttachment(attachment),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
           // 输入内容独占上方整行；生成中不锁输入，提示切换为排队语
           TextField(
             controller: _inputController,
@@ -2421,24 +2544,6 @@ class _ChatPageState extends State<ChatPage> {
                 : null,
             onChanged: _onInputChanged,
           ),
-          // 待发附件 chip 行（官方样式）：输入框下方、工具栏上方，
-          // 横向滚动；缩略图 + 文件名 + 大小/进度 + 移除，点击预览
-          if (_attachments.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final attachment in _attachments)
-                    _AttachmentChip(
-                      attachment: attachment,
-                      onRemove: () => _removeAttachment(attachment),
-                      onPreview: () => _previewAttachment(attachment),
-                    ),
-                ],
-              ),
-            ),
-          ],
           const SizedBox(height: 8),
           _buildComposerToolbar(colors, isConnected),
         ],
@@ -3987,68 +4092,16 @@ class _AttachmentChip extends StatelessWidget {
   final VoidCallback onRemove;
   final VoidCallback onPreview;
 
-  /// 字节数人性化：B/KB/MB（一位小数，≥100KB 进位显示整数）
-  static String formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    final kb = bytes / 1024;
-    if (kb < 1024) return '${kb >= 100 ? kb.round() : kb.toStringAsFixed(1)} KB';
-    final mb = kb / 1024;
-    return '${mb >= 100 ? mb.round() : mb.toStringAsFixed(1)} MB';
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final a = attachment;
-    // 状态行：错误 > 上传中进度 > 完成大小
-    final Widget status;
-    if (a.error != null) {
-      status = Text(
-        a.error!,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: colors.error, fontSize: 10.5),
-      );
-    } else if (a.done) {
-      status = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle, size: 11, color: colors.success),
-          const SizedBox(width: 3),
-          Flexible(
-            child: Text(
-              formatBytes(a.size),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textMuted, fontSize: 10.5),
-            ),
-          ),
-        ],
-      );
-    } else {
-      status = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 54,
-            child: LinearProgressIndicator(
-              value: a.progress,
-              minHeight: 3,
-              color: colors.accent,
-              backgroundColor: colors.border,
-            ),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            '${(a.progress * 100).toStringAsFixed(0)}%',
-            style: TextStyle(color: colors.textMuted, fontSize: 10.5),
-          ),
-        ],
-      );
-    }
+    // 官方块状样式：方形缩略图 + 环形进度覆盖 + 角标移除
+    final uploading = a.error == null && !a.done;
     return Container(
-      constraints: const BoxConstraints(maxWidth: 220),
       margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.all(5),
+      width: 64,
+      height: 64,
       decoration: BoxDecoration(
         color: colors.bgTertiary,
         border: Border.all(
@@ -4056,62 +4109,102 @@ class _AttachmentChip extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
           // 缩略图（点击预览）：本地文件直读；缺失/解码失败回退图标
-          GestureDetector(
-            onTap: onPreview,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                width: 44,
-                height: 44,
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: onPreview,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(9),
                 child: a.localPath != null
                     ? Image.file(
                         File(a.localPath!),
                         fit: BoxFit.cover,
-                        cacheWidth: 88,
+                        cacheWidth: 128,
                         errorBuilder: (_, Object e, StackTrace? s) => Icon(
-                          Icons.image_outlined,
-                          size: 20,
+                          Icons.insert_drive_file_outlined,
+                          size: 22,
                           color: colors.textMuted,
                         ),
                       )
                     : Icon(
-                        Icons.image_outlined,
-                        size: 20,
+                        Icons.insert_drive_file_outlined,
+                        size: 22,
                         color: colors.textMuted,
                       ),
               ),
             ),
           ),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  a.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 12,
-                  ),
+          // 上传中：环形进度 + 中央百分比（官方同位）
+          if (uploading)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black38,
+                alignment: Alignment.center,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: CircularProgressIndicator(
+                        value: (a.progress >= 0 && a.progress <= 1)
+                            ? a.progress
+                            : null,
+                        strokeWidth: 2.5,
+                        valueColor: const AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    ),
+                    Text(
+                      '${(a.progress * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                status,
-              ],
+              ),
             ),
-          ),
-          IconButton(
-            onPressed: onRemove,
-            constraints: const BoxConstraints.tightFor(width: 24, height: 24),
-            padding: EdgeInsets.zero,
-            tooltip: '移除附件',
-            icon: Icon(Icons.close, size: 14, color: colors.textMuted),
+          // 完成 ✓ / 错误警示（左下角）
+          if (a.error != null)
+            const Positioned(
+              left: 4,
+              bottom: 4,
+              child: Icon(
+                Icons.error_outline,
+                size: 14,
+                color: Colors.redAccent,
+              ),
+            )
+          else if (a.done)
+            const Positioned(
+              left: 4,
+              bottom: 4,
+              child: Icon(
+                Icons.check_circle,
+                size: 13,
+                color: Colors.greenAccent,
+              ),
+            ),
+          // 角标移除（官方右上角 X）
+          Positioned(
+            top: -1,
+            right: -1,
+            child: GestureDetector(
+              onTap: onRemove,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: colors.bgPrimary.withValues(alpha: 0.9),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.border),
+                ),
+                child: Icon(Icons.close, size: 11, color: colors.textPrimary),
+              ),
+            ),
           ),
         ],
       ),

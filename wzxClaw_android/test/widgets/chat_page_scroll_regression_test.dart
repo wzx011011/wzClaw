@@ -200,4 +200,19 @@ void main() {
       reason: '真正的用户消息不受影响',
     );
   });
+
+  test('合并草稿：两条请求内容拼接，附件引用随文本并入', () {
+    final nl = String.fromCharCode(10);
+    final merged = ChatPage.mergeMessageDrafts(
+      '第一条请求$nl[附件已上传到节点: /tmp/a.png]',
+      '第二条请求，接着第一条继续',
+    );
+    expect(merged, contains('第一条请求'));
+    expect(merged, contains('/tmp/a.png'));
+    expect(merged, contains('第二条请求，接着第一条继续'));
+    expect(merged, contains('———'));
+    // 空侧兜底：一侧为空直接返回另一侧
+    expect(ChatPage.mergeMessageDrafts('', '只有一边'), '只有一边');
+    expect(ChatPage.mergeMessageDrafts('只有一边', ''), '只有一边');
+  });
 }
