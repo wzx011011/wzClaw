@@ -208,6 +208,7 @@ class NodeCatalogService {
             modelId: def['modelId']?.toString() ?? '',
             available: true,
             source: 'configured',
+            reasoningDefaultLevel: def['reasoningLevel']?.toString(),
           )
         : null;
     return NodeModelCatalog(

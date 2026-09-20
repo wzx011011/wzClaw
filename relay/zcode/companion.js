@@ -881,7 +881,8 @@ function createCompanion(options = {}) {
   //   available，实测唯一可信目录源）；导入快照（companion_app 的
   //   import-snapshot.json）作为目录补充展示，标记 unavailable=false 待引擎证实。
   // - 默认模型是 companion 自己的配置（model-default.json，0600），绝不写
-  //   ~/.zcode；新会话由手机端在建会后先 setModel 应用。
+  //   ~/.zcode；语义对齐官方「选择即全局」：每次选择都更新默认，手机端
+  //   建会后 setModel 应用（含 reasoningLevel，imported 模型必填）。
   const modelDefaultFile = statePaths.modelDefaultFile;
   let engineModelCatalog = []; // [{providerId,modelId}] 引擎实测可用
   let engineCatalogAt = 0;
@@ -1372,7 +1373,8 @@ function createCompanion(options = {}) {
           const def = readModelDefault();
           reply({ id: frame.id, result: {
             models,
-            default: def ? { providerId: def.providerId, modelId: def.modelId } : null,
+            default: def ? { providerId: def.providerId, modelId: def.modelId,
+              ...(def.reasoningLevel ? { reasoningLevel: def.reasoningLevel } : {}) } : null,
             degraded,
           } });
           return;

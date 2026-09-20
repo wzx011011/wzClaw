@@ -1565,6 +1565,12 @@ test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落�
   const savedLevel = JSON.parse(fs.readFileSync(defaultFile, 'utf8'));
   assert.equal(savedLevel.reasoningLevel, 'high', '档位随默认值落盘');
 
+  // 目录回读 default 带档位（手机端建会后应用默认时直接取用）
+  ask(214, 'x/model/catalog', {});
+  const cat3 = await client.next((m) => m.type === 'data' && m.payload.id === 214);
+  assert.deepEqual(cat3.payload.result.default,
+    { providerId: 'builtin:p1', modelId: 'glm-x', reasoningLevel: 'high' });
+
   // 不带 reasoningLevel：setModel 帧不带 options（无档位模型允许缺省）
   ask(213, 'x/model/configure', {
     providerId: 'builtin:p1', modelId: 'glm-mini',

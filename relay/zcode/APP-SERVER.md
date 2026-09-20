@@ -173,10 +173,11 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
 - **会话级 `session/setModel` 不回写全局**：对会话 A setModel 到其他
   模型后新建会话 B，B 仍取全局默认（实测）。手机端切模型只影响当前
   会话，这是设计而非 bug。
-- companion 的「节点默认」（model-default.json）当前**无消费方**——仅
-  在 `x/model/catalog` 的 default 字段回显（= 手机端弹层「默认」标记）；
-  「新会话由手机端建会后先 setModel 应用默认」在手机端建会话流程中
-  **未实现**（注释声称有，代码没有）。
+- companion 的「节点默认」（model-default.json）语义已对齐官方「选择即
+  全局」：每次选择（会话内/新任务态）都落盘默认（含 reasoningLevel），
+  手机端建会后主动 setModel 应用（2026-09-20 实现；此前仅 UI 标记、
+  无消费方）。引擎侧的全局当前模型手机端无法直接写——会话级 setModel
+  是唯一入口。
 - 推论：手机端要「新会话用我选的模型」，唯一路径是建会后主动
   setModel（引擎无全局 set-model 协议面，会话级是唯一入口）。
 

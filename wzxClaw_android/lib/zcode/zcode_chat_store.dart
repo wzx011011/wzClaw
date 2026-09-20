@@ -3155,15 +3155,13 @@ class ZcodeChatStore extends ChangeNotifier {
       return false;
     }
     try {
-      await client.request('session/setModel', {
-        'sessionId': sessionId,
-        'model': {
-          'providerId': providerId,
-          'modelId': modelId,
-          if (reasoningLevel != null && reasoningLevel.isNotEmpty)
-            'options': {'reasoningLevel': reasoningLevel},
-        },
-      });
+      await _setModelRaw(
+        client,
+        sessionId: sessionId,
+        providerId: providerId,
+        modelId: modelId,
+        reasoningLevel: reasoningLevel,
+      );
       // 会话级乐观回显：只写本会话容器，不串其他会话
       _stateFor(sessionId).modelRef = '$providerId/$modelId';
       notifyListeners();
@@ -3172,6 +3170,49 @@ class ZcodeChatStore extends ChangeNotifier {
       _fail('切换模型失败：$e');
       return false;
     }
+  }
+
+  /// 对指定会话应用模型（不要求它是当前视口会话；失败抛异常由调用方
+  /// 决定是否容忍）：建会话后应用节点默认的唯一入口（官方「选择即全局、
+  /// 新会话继承」语义的手机端等价实现——引擎无全局 set-model 协议面）。
+  Future<void> applySessionModel(
+    String sessionId, {
+    required String providerId,
+    required String modelId,
+    String? reasoningLevel,
+  }) async {
+    final client = _client;
+    if (client == null || !client.paired) {
+      throw StateError('未连接 ZCode');
+    }
+    await _setModelRaw(
+      client,
+      sessionId: sessionId,
+      providerId: providerId,
+      modelId: modelId,
+      reasoningLevel: reasoningLevel,
+    );
+    // 后台会话同样乐观回显（容器按会话隔离，不串视口）
+    _stateFor(sessionId).modelRef = '$providerId/$modelId';
+    notifyListeners();
+  }
+
+  Future<void> _setModelRaw(
+    ZcodeRelayClient client, {
+    required String sessionId,
+    required String providerId,
+    required String modelId,
+    String? reasoningLevel,
+  }) async {
+    await client.request('session/setModel', {
+      'sessionId': sessionId,
+      'model': {
+        'providerId': providerId,
+        'modelId': modelId,
+        if (reasoningLevel != null && reasoningLevel.isNotEmpty)
+          'options': {'reasoningLevel': reasoningLevel},
+      },
+    });
   }
 
   // ──────────────────────────────────────────────

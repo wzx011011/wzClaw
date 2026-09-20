@@ -1063,6 +1063,33 @@ void main() {
       });
     });
 
+    test('applySessionModel：对非视口会话应用模型（建会后应用默认的入口）',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final setModelParams = <Map<String, dynamic>?>[];
+      fake.handlers['session/setModel'] = (params) {
+        setModelParams.add(params);
+        return {'ok': true};
+      };
+      final store = pairedStore(fake);
+      // 不 openSession：applySessionModel 不依赖当前视口
+
+      await store.applySessionModel(
+        'sess-new',
+        providerId: 'imported:codex:abc123',
+        modelId: 'gpt-5.6-sol',
+        reasoningLevel: 'high',
+      );
+      expect(setModelParams.single, {
+        'sessionId': 'sess-new',
+        'model': {
+          'providerId': 'imported:codex:abc123',
+          'modelId': 'gpt-5.6-sol',
+          'options': {'reasoningLevel': 'high'},
+        },
+      });
+    });
+
     test('未打开会话时 setModel 失败并置 error', () async {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);

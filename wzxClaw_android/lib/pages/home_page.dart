@@ -964,6 +964,30 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
+    // 官方语义「新会话继承最近一次选择的模型」：建会后应用节点默认。
+    // 引擎的全局默认是桌面端最后全局选的、与手机选择无关（实测探针
+    // probe-modeldefault），这一步是手机端等价实现。失败不阻断首条
+    // 消息（引擎默认兜底），原因进日志。
+    try {
+      final catalog = await NodeCatalogService.instance.modelCatalog();
+      final def = catalog.defaultModel;
+      if (def != null && def.providerId.isNotEmpty && def.modelId.isNotEmpty) {
+        // 老默认没落过档位时从目录条目补解析（imported 模型必填）
+        final level = def.reasoningDefaultLevel ??
+            catalog.models
+                .where((e) => e.key == def.key)
+                .map((e) => e.reasoningLevelForRequest)
+                .firstWhere((l) => l != null, orElse: () => null);
+        await _store.applySessionModel(
+          newSid,
+          providerId: def.providerId,
+          modelId: def.modelId,
+          reasoningLevel: level,
+        );
+      }
+    } catch (e) {
+      debugPrint('[model] 新会话应用默认模型失败: $e');
+    }
     // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息，
     // 失败原因已进 store.error）
     final pendingLevel = _pendingThoughtLevel;
@@ -3685,19 +3709,18 @@ class _ChatPageState extends State<ChatPage> {
         if (!changed) throw StateError(_store.error ?? '切换模型失败');
         _store.clearModelBlocked();
       }
+      // 官方语义「选择即全局」：无论会话内还是新任务态，选择都更新节点
+      // 默认——新会话继承最近一次选择（companion 落盘，建会后应用）
       var configuredDefault = false;
-      if (sessionId == null) {
-        // 新任务态：节点默认是新会话生效的唯一途径，必设
-        try {
-          await NodeCatalogService.instance.configureDefault(
-            providerId: m.providerId,
-            modelId: m.modelId,
-            reasoningLevel: reasoningLevel,
-          );
-          configuredDefault = true;
-        } catch (e) {
-          debugPrint('[model] 设为节点默认失败: $e');
-        }
+      try {
+        await NodeCatalogService.instance.configureDefault(
+          providerId: m.providerId,
+          modelId: m.modelId,
+          reasoningLevel: reasoningLevel,
+        );
+        configuredDefault = true;
+      } catch (e) {
+        debugPrint('[model] 设为节点默认失败: $e');
       }
       if (mounted) {
         final msg = sessionId == null
