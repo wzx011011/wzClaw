@@ -164,6 +164,22 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
    options:{reasoningLevel}}}`（model 是对象不是字符串；reasoningLevel
    必须取目录 reasoning.levels 的 value，如 high/max）。
 
+### 新会话的初始模型（2026-09-20，probe-modeldefault.js 实测）
+
+- `session/create` 的初始模型 = **引擎全局持久化的「当前模型」**
+  （落 `~/.zcode/v2/config.json`，桌面客户端选择时写；app-server 启动
+  读）：全新引擎进程 + 全新临时工作区的首会话即继承（本机实测
+  gpt-6-astra），引擎重启后依然不变。
+- **会话级 `session/setModel` 不回写全局**：对会话 A setModel 到其他
+  模型后新建会话 B，B 仍取全局默认（实测）。手机端切模型只影响当前
+  会话，这是设计而非 bug。
+- companion 的「节点默认」（model-default.json）当前**无消费方**——仅
+  在 `x/model/catalog` 的 default 字段回显（= 手机端弹层「默认」标记）；
+  「新会话由手机端建会后先 setModel 应用默认」在手机端建会话流程中
+  **未实现**（注释声称有，代码没有）。
+- 推论：手机端要「新会话用我选的模型」，唯一路径是建会后主动
+  setModel（引擎无全局 set-model 协议面，会话级是唯一入口）。
+
 其他实测：独立引擎存在反向请求 `startup/storageState`（连发 5 次，
 不阻塞 session/create，companion 暂不代答）；`session/models` 等目录
 方法均 -32601。
