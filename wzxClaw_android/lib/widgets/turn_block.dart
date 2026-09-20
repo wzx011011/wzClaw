@@ -161,8 +161,19 @@ String _familyLabel(_ToolClass cls, String toolName, {required bool running}) {
       return running ? '正在发送消息' : '消息';
     case _ToolFamily.other:
       if (toolName == 'WebFetch' || toolName == 'web-fetch') return '获取';
+      if (toolName.startsWith('mcp__')) return _mcpToolLabel(toolName);
       return toolName;
   }
+}
+
+/// MCP 工具名美化：mcp__<server>__<tool> → '<server> · <tool>'
+/// （裸名又长又带双下划线，官方按 server 分组展示）
+String _mcpToolLabel(String name) {
+  final parts = name.split('__');
+  if (parts.length >= 3 && parts[1].isNotEmpty) {
+    return '${parts[1]} · ${parts.sublist(2).join('_')}';
+  }
+  return name;
 }
 
 /// 运行态动作词（组行「查阅 · 正在读取 x.dart」用）
@@ -849,9 +860,14 @@ enum _ProcessSourceKind { part, marker, agentMessage }
 
 
 /// 记账型工具（官方时间线不渲染）：TodoWrite = 任务面板内部簿记；
-/// TaskOutput / TaskUpdate = 子智能体输出轮询与状态更新。
+/// TaskOutput / TaskUpdate = 子智能体输出轮询与状态更新；
+/// RespondToCoordinator = 工作流协调器簿记（子智能体回报经
+/// <subagent-message> 卡片呈现，见 home_page，不在此重复占行）。
 bool _isBookkeepingTool(String name) =>
-    name == 'TodoWrite' || name == 'TaskOutput' || name == 'TaskUpdate';
+    name == 'TodoWrite' ||
+    name == 'TaskOutput' ||
+    name == 'TaskUpdate' ||
+    name == 'RespondToCoordinator';
 
 /// 查阅/终端组成员行：种类标签（运行中动作文案）+ 目标 + 自身状态与详情
 TurnToolRow _memberRow(_ToolView view) {

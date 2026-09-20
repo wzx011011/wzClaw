@@ -989,6 +989,30 @@ void main() {
       expect(vm.countsLabel.contains('任务'), isFalse);
     });
 
+    test('RespondToCoordinator 簿记行不渲染；MCP 工具名美化', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'RespondToCoordinator',
+                input: '{"summary":"done"}',
+                id: 'rc1',
+              ),
+            ),
+            ChatProcessPart.tool(
+              _call('mcp__computer-use__screenshot', input: '{}', id: 'mcp1'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      // RespondToCoordinator 已隐藏，只剩 MCP 行
+      expect(vm.parts, hasLength(1));
+      expect(vm.parts.first.tool!.verb, 'computer-use · screenshot');
+      expect(vm.countsLabel.contains('RespondToCoordinator'), isFalse);
+    });
+
     testWidgets('被工具接续的思考段停表；回合头纯文字无图标', (tester) async {
       final vm = buildTurnVM(
         [

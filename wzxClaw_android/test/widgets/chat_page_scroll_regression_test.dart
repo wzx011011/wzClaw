@@ -58,15 +58,15 @@ Future<ScrollController> _pumpPage(
   WidgetTester tester, {
   int cacheCount = 80,
   FakeZcodeSessionCache? cache,
+  List<ZcodeSessionItem>? customMessages,
 }) async {
   SharedPreferences.setMockInitialValues({});
   ZcodeNotifier.resetInstanceForTest();
   ZcodeNotifier.setInstanceForTest(FakeZcodeNotifier());
 
   final effectiveCache = cache ?? FakeZcodeSessionCache();
-  effectiveCache.messages['sess-scroll'] = [
-    for (var i = 0; i < cacheCount; i++) _seed(i),
-  ];
+  effectiveCache.messages['sess-scroll'] = customMessages ??
+      [for (var i = 0; i < cacheCount; i++) _seed(i)];
   final fake = FakeZcodeRelayClient();
   FakeSessionServer().bind(fake);
   final store = ZcodeChatStore(cache: effectiveCache)
@@ -156,6 +156,48 @@ void main() {
       findsOneWidget,
       reason: '贴顶前视口顶部的消息是「历史 80」；前插 40 条更早消息后它必须'
           '原位不动（锚点补偿），而不是被重置回更早的新加载内容',
+    );
+  });
+
+  testWidgets('子智能体回报信封：渲染为回报卡片而非用户气泡', (tester) async {
+    ZcodeSessionItem seedUser(String t, int ms) => ZcodeSessionItem(
+          protoId: 'u$ms',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.user,
+            processParts: [ChatProcessPart.text(t)],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(
+              1700000000000 + ms,
+            ),
+          ),
+        );
+
+    await _pumpPage(
+      tester,
+      customMessages: [
+        seedUser('前面的问题', 0),
+        seedUser(
+          '<subagent-message from="Explore">\n审查结论：架构总体健康，三端分层清晰。\n</subagent-message>',
+          1,
+        ),
+      ],
+    );
+
+    expect(
+      find.text('子智能体回报'),
+      findsOneWidget,
+      reason: '机器注入的子智能体回报必须以回报卡片呈现',
+    );
+    expect(
+      find.textContaining('<subagent-message'),
+      findsNothing,
+      reason: '协议信封标签不外露',
+    );
+    expect(find.textContaining('审查结论'), findsOneWidget);
+    expect(
+      find.textContaining('前面的问题'),
+      findsOneWidget,
+      reason: '真正的用户消息不受影响',
     );
   });
 }

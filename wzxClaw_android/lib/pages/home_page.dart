@@ -1740,6 +1740,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildUserBubble(ChatMessage msg) {
+    // 协调器注入的子智能体回报（<subagent-message> 信封）：机器消息，
+    // 绝不能渲染成用户气泡——以独立中性卡片呈现
+    if (msg.isSubagentReport) {
+      return _SubagentReportCard(message: msg);
+    }
     final colors = AppColors.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
     // 附件标记行 → 图片块（解析口径单一来源：attachment_service）；其余为文本
@@ -4479,5 +4484,104 @@ class _ChipAction extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 子智能体回报卡片：协调器把子智能体结果以 <subagent-message> 信封
+/// 注入主会话（user-role 消息）。它是机器注入的内部消息，绝不能渲染
+/// 成用户气泡（官方在子智能体 UI 呈现）——以独立中性卡片呈现，默认
+/// 收起，点击展开全文。
+class _SubagentReportCard extends StatefulWidget {
+  const _SubagentReportCard({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  State<_SubagentReportCard> createState() => _SubagentReportCardState();
+}
+
+class _SubagentReportCardState extends State<_SubagentReportCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final body = _stripEnvelope(widget.message.text.trim());
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.all(10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.86,
+        ),
+        decoration: BoxDecoration(
+          color: colors.bgSecondary,
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.smart_toy_outlined,
+                    size: 13,
+                    color: colors.textMuted,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '子智能体回报',
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 15,
+                    color: colors.textMuted,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _expanded
+                    ? body
+                    : (body.length > 200
+                        ? '${body.substring(0, 200)}…'
+                        : body),
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 12,
+                  height: 1.45,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 剥掉 <subagent-message …> / </subagent-message> 信封标签，只展示
+  /// 回报正文（标签是协议信封，不是内容）
+  static String _stripEnvelope(String raw) {
+    const open = '<subagent-message';
+    const close = '</subagent-message>';
+    var text = raw;
+    if (text.startsWith(open)) {
+      final gt = text.indexOf('>');
+      if (gt != -1) text = text.substring(gt + 1);
+    }
+    final closeIdx = text.lastIndexOf(close);
+    if (closeIdx != -1) text = text.substring(0, closeIdx);
+    return text.trim();
   }
 }

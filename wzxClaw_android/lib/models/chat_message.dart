@@ -379,6 +379,11 @@ class ChatMessage {
     return false;
   }
 
+  /// 协调器注入的子智能体回报信封（<subagent-message>…</subagent-message>
+  /// user-role 消息）：是机器注入的内部消息，不是用户说的话——绝不能
+  /// 渲染成用户气泡（官方在子智能体 UI 里呈现，不混进主对话）。
+  bool get isSubagentReport => text.trimLeft().startsWith('<subagent-message');
+
   /// 是否存在可渲染内容（marker 不算——只有 step 边界的消息视觉为空）
   bool get hasVisibleContent =>
       processParts.any((part) => part.kind != ChatProcessPartKind.marker);
