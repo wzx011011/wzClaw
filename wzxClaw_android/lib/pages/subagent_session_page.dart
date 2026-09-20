@@ -72,8 +72,19 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
     });
     if (_isRunning) {
       await _loadTimeline();
-      _pollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) {
-        if (mounted) _loadTimeline();
+      _pollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) async {
+        if (!mounted) return;
+        // 运行状态与时间线同拍刷新：任务结束必须收敛到终态并停表，
+        // 不能永远显示「正在工作」（旧实现只重拉消息、不重拉状态）
+        final detail = await _fetchDetail();
+        if (!mounted) return;
+        if (detail != null) setState(() => _detail = detail);
+        if (_isRunning) {
+          await _loadTimeline();
+        } else {
+          _pollTimer?.cancel();
+          _pollTimer = null;
+        }
       });
     }
   }
@@ -112,9 +123,13 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
         'limit': 200,
       });
       if (!mounted) return;
-      if (msgs is! Map || msgs['result'] is! Map) return; // -32004 等：静默保留旧时间线
+      // relay client 已解包 result：有效载荷即 {messages:[...]}。旧实现
+      // 再读一层 msgs['result']，正常响应被当成空直接丢弃（时间线恒空）。
+      if (msgs is! Map || msgs['messages'] is! List) {
+        return; // -32004 等：静默保留旧时间线
+      }
       final rows = <_SubTimelineRow>[];
-      for (final m in (msgs['result']['messages'] as List?) ?? []) {
+      for (final m in (msgs['messages'] as List? ?? const [])) {
         if (m is! Map) continue;
         final role = m['info'] is Map ? (m['info'] as Map)['role']?.toString() : null;
         for (final p in (m['parts'] as List?) ?? []) {

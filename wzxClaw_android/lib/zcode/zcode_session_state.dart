@@ -234,17 +234,6 @@ class ZcodeSessionState {
   bool get hasTurnInFlight =>
       isStreaming || isWaitingForResponse || streamingIndex >= 0;
 
-  /// 当前未确认过程里是否已有仅靠 model.response 无法表达的内容。工具、
-  /// 思考和 marker 必须等 session/messages 回填，纯 text 回合可沿用旧的
-  /// 本地收尾快速路径。
-  bool get hasNonTextStreamingProcess => items.any((item) {
-        if (item.synced || item.message.role != MessageRole.assistant) {
-          return false;
-        }
-        return item.message.processParts
-            .any((part) => part.kind != ChatProcessPartKind.text);
-      });
-
   /// 思维链面板数据源：当前流式消息最近一段 reasoning 的实时内容
   /// （正文在其后到达时仍返回最近思考段；canonical parts 是唯一存储）。
   String get liveThinkingText {

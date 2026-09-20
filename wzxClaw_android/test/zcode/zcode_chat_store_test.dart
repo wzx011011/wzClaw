@@ -1230,10 +1230,12 @@ void main() {
       expect(store.messages.last.usage?.outputTokens, 2);
       expect(store.isStreaming, isFalse);
       expect(store.isWaitingForResponse, isFalse);
-      // 纯文本回合免权威刷新：没有新增 session/messages 请求
+      // 每个完成回合都做增量权威刷新（P1 修复）：纯文本也不例外——
+      // persist 只收 synced，跳过刷新 = 最新问答永远进不了 SQLite，
+      // 离线重开即丢
       expect(
         fake.requests.where((e) => e.key == 'session/messages').length,
-        messagesReqsBefore,
+        greaterThan(messagesReqsBefore),
       );
       // 任务完成通知
       expect(notifier.shown.single['status'], 'success');

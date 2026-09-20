@@ -1087,6 +1087,7 @@ class TurnBlockView extends StatefulWidget {
     super.key,
     required this.vm,
     this.defaultCollapsed,
+    this.onFoldChanged,
     this.answerBuilder,
     this.onDownloadFile,
     this.onAnswerLongPress,
@@ -1097,6 +1098,9 @@ class TurnBlockView extends StatefulWidget {
 
   /// null = 自动（busy 展开 / 完成折叠）
   final bool? defaultCollapsed;
+
+  /// 用户点击头部切换折叠（宿主按块身份持久化，滚动重建/前插不丢）
+  final ValueChanged<bool>? onFoldChanged;
 
   /// 正文 Markdown 渲染器（宿主传入富渲染；缺省纯文本）。
   /// 第二参 isStreaming = 该回合进行中：宿主应降级为纯文本渲染，
@@ -1144,7 +1148,11 @@ class _TurnBlockViewState extends State<TurnBlockView> {
       children: [
         if (showHeader)
           InkWell(
-            onTap: () => setState(() => _collapsed = !_collapsed),
+            onTap: () {
+              final next = !_collapsed;
+              setState(() => _collapsed = next);
+              widget.onFoldChanged?.call(next);
+            },
             child: Padding(
               padding: const EdgeInsets.fromLTRB(2, 4, 2, 4),
               child: Row(
@@ -1205,10 +1213,10 @@ class _TurnBlockViewState extends State<TurnBlockView> {
               ),
             ),
           ),
-        // 叙述正文永不被折叠（官方对齐）：折叠只作用于工具/思考/子智能体
-        // 行。回合以工具收尾时，末段文字留在过程位置——永远可见，不再
-        // 出现「折叠吞掉最终答案」。中间叙述与回答区同管线渲染（流式
-        // 降级纯文本，完成态 markdown）。
+        // 引擎原序单遍渲染（运行时/历史一致性）：叙述正文永远可见（不参与
+        // 折叠），思考/工具/子智能体/消息行归折叠区。旧实现把全部正文提到
+        // 过程行之前、过程行整体放其后——reasoning→text→tool→text 会被
+        // 拆散重排，展开后的视觉顺序不再是引擎顺序。
         for (final part in vm.parts)
           if (part.kind == TurnPartKind.text)
             Padding(
@@ -1216,32 +1224,24 @@ class _TurnBlockViewState extends State<TurnBlockView> {
               child: widget.answerBuilder != null
                   ? widget.answerBuilder!(part.text ?? '', vm.busy)
                   : MarkdownBodyLite(markdown: part.text ?? ''),
+            )
+          else if (!_collapsed)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 2),
+              child: switch (part.kind) {
+                TurnPartKind.thinking => _ThinkRow(data: part.think!),
+                TurnPartKind.tool => _ToolRowView(
+                    data: part.tool!,
+                    onDownloadFile: widget.onDownloadFile,
+                  ),
+                TurnPartKind.agent => _AgentRowView(
+                    data: part.agent!,
+                    onOpenSubagent: widget.onOpenSubagent,
+                  ),
+                TurnPartKind.message => _MessageRowView(data: part.message!),
+                TurnPartKind.text => const SizedBox.shrink(),
+              },
             ),
-        // 过程（可折叠）：仅工具/思考/子智能体行
-        if (!_collapsed)
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final part in vm.parts)
-                  if (part.kind == TurnPartKind.thinking)
-                    _ThinkRow(data: part.think!)
-                  else if (part.kind == TurnPartKind.tool)
-                    _ToolRowView(
-                      data: part.tool!,
-                      onDownloadFile: widget.onDownloadFile,
-                    )
-                  else if (part.kind == TurnPartKind.agent)
-                    _AgentRowView(
-                      data: part.agent!,
-                      onOpenSubagent: widget.onOpenSubagent,
-                    )
-                  else if (part.kind == TurnPartKind.message)
-                    _MessageRowView(data: part.message!),
-              ],
-            ),
-          ),
         // 正文（文档流：无框直接渲染 Markdown，永不被折叠隐藏）
         if (vm.answerMarkdown.isNotEmpty)
           Padding(

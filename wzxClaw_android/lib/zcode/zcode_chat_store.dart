@@ -2590,15 +2590,11 @@ class ZcodeChatStore extends ChangeNotifier {
       authoritativeText: authoritativeText,
       usage: usage,
     );
-    // 纯正文回合保留低延迟本地收尾；一旦出现工具、思考或协议 marker，
-    // model.response 无法复原其交错顺序，必须改由权威 parts 回填。
-    final needsAuthority =
-        toolCallCount != 0 || state.hasNonTextStreamingProcess;
-    if (needsAuthority) {
-      unawaited(_refreshAuthoritative(state));
-    } else {
-      unawaited(_persistSession(state));
-    }
+    // 每个完成回合都做增量权威刷新（评审 P1 修复）：纯文本回合此前只走
+    // 本地收尾，session/messages 未确认 → 永远进不了 SQLite（persist 只收
+    // synced），离线重开即丢最新问答。本地收尾保持即时（finalizeStreaming
+    // 已做）；并发合并由 _refreshAuthoritative 的 single-flight 保证。
+    unawaited(_refreshAuthoritative(state));
     // 任务完成本地通知（App 在后台也能感知；后台会话同样通知）
     _notifier.showTaskDone(
       status: status,
@@ -3643,9 +3639,15 @@ class ZcodeChatStore extends ChangeNotifier {
             ChatProcessPart.tool(_mapToolPart(rawPart), id: partId),
           );
           break;
+        case 'step-start':
+        case 'step-finish':
+          // 结构性 step 边界：实时路径显式忽略（见 _applyModelStreaming），
+          // 权威映射同样不保留——marker 会打断工具聚合，同一回合运行中
+          // 成组、重进后拆组（运行时/历史不一致）。
+          break;
         default:
-          // step-start/step-finish/file/subagent/retry 和未来类型不强行伪装成
-          // 文本；保留 marker，以便缓存、调试与后续原生语义扩展可见。
+          // file/subagent/retry 和未来类型不强行伪装成文本；保留 marker，
+          // 以便缓存、调试与后续原生语义扩展可见（未知类型必须留观测）。
           processParts.add(ChatProcessPart.marker(type, id: partId));
       }
     }

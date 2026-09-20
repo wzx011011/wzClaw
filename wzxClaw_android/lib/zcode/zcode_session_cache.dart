@@ -246,7 +246,9 @@ class ZcodeSessionCache {
 
     // 第二档保留全部顺序和类型，压缩文本/工具详情；超限则只保留前 128 行
     // 并追加诊断标记。运行时与服务端权威历史不受此限制。
-    cached = cached
+    // 内容一旦被压缩改变就必须置 truncated：否则该行永远不会再被
+    // 权威补齐（标记是「内容不完整」的唯一事实源）。
+    final compressed = cached
         .map(
           (part) => switch (part.kind) {
             ChatProcessPartKind.text ||
@@ -259,6 +261,13 @@ class ZcodeSessionCache {
           },
         )
         .toList(growable: false);
+    for (var i = 0; i < compressed.length; i++) {
+      if (_partContentChanged(cached[i], compressed[i])) {
+        truncated = true;
+        break;
+      }
+    }
+    cached = compressed;
     encoded = jsonEncode(cached.map((part) => part.toJson()).toList());
     if (encoded.length <= _kMaxCachedMessageChars) return (encoded, truncated);
 

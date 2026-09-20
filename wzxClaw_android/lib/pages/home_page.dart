@@ -41,6 +41,11 @@ import 'subagent_session_page.dart';
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
 
+  /// 测试注入口：widget 测试注入替身 store（与各 service 的 debugRequester
+  /// 同一模式；生产恒为 null，走 ZcodeChatStore.instance 单例）
+  @visibleForTesting
+  static ZcodeChatStore? debugStoreOverride;
+
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
@@ -76,7 +81,7 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 直连栈数据源（R1 换接线）：连接层不变（ConnectionManager 供帧），
   /// 页面只认识数据容器
-  ZcodeChatStore get _store => ZcodeChatStore.instance;
+  ZcodeChatStore get _store => ChatPage.debugStoreOverride ?? ZcodeChatStore.instance;
 
   // thinkingContent 是 getter（随 notifyListeners 推进），而思维链面板
   // 组件吃 Stream<String>——页内广播桥做范式转换，组件签名不变
@@ -104,9 +109,19 @@ class _ChatPageState extends State<ChatPage> {
   String _draftKey = '__new__';
   Timer? _draftPersistTimer;
 
-  /// 上滑加载更早的进行中标记与「已到最早」提示（每会话提示一次）
+  /// 上滑加载更早的进行中标记与「已到最早」提示（每会话提示一次）。
+  /// _loadOlderExhausted：本地缓存已确认无更早（added==0）——贴顶触发
+  /// 的门卫，绝不每次手势都空跑一次「加载 + 状态切换」。
   bool _loadingOlder = false;
   bool _oldestNoticeShown = false;
+  bool _loadOlderExhausted = false;
+
+  /// 会话切换后等首帧非空内容 → 一次性定位到底部（聊天语义 = 打开即最新）
+  bool _pendingJumpToBottom = false;
+
+  /// 回合折叠状态按「块身份」持久（键见 _buildMessageList）：滚动回收
+  /// 重建、加载更早前插都不丢用户手动展开/收起的选择
+  final Map<String, bool> _turnFoldState = {};
 
   String _composeOutgoing(String text, Iterable<AttachmentUpload> attachments) {
     final refs = attachments.map((a) => '[附件已上传到节点: ${a.nodePath}]').join('\n');
@@ -675,6 +690,9 @@ class _ChatPageState extends State<ChatPage> {
         _slashSuggestions = [];
         _loadingOlder = false;
         _oldestNoticeShown = false;
+        _loadOlderExhausted = false;
+        _turnFoldState.clear();
+        _previousGroupCount = 0;
         _inputController.text = _drafts[_draftKey] ?? '';
         _inputController.selection = TextSelection.collapsed(
           offset: _inputController.text.length,
@@ -683,6 +701,9 @@ class _ChatPageState extends State<ChatPage> {
         // 冷启动恢复：持久化草稿仅当会话上下文匹配时载入
         unawaited(_restorePersistedDraft(_draftKey));
       }
+      // 打开即最新（含冷启动首次进入活动会话）：等首帧非空内容到位后
+      // 一次性定位到底部
+      _pendingJumpToBottom = true;
     }
     final thinking = _store.liveThinkingText;
     if (thinking != _lastThinking) {
@@ -703,6 +724,18 @@ class _ChatPageState extends State<ChatPage> {
             : _store.selectedWorkspacePath,
       );
     });
+    // 会话切换后一次性定位到底部（发送路径早已如此，打开/切换路径此前
+    // 缺失，视口落在历史顶部）。等首帧非空内容到位（缓存秒开或网络尾窗）
+    // 再跳，跳进空列表/骨架屏没有意义。
+    if (_pendingJumpToBottom &&
+        _displayMessages.isNotEmpty &&
+        !_isSessionLoading) {
+      _pendingJumpToBottom = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      });
+    }
     // 回合运行中起 1Hz 心跳（tok/s 衰减/已耗时不随增量暂停而冻结）
     final busy = _isStreaming || _isWaiting;
     if (busy && _busyTickTimer == null) {
@@ -778,6 +811,7 @@ class _ChatPageState extends State<ChatPage> {
   void _onScroll() {
     if (_scrollController.position.pixels <= 50 &&
         !_loadingOlder &&
+        !_loadOlderExhausted &&
         _store.activeSessionId != null) {
       unawaited(_loadOlderWithFeedback());
     }
@@ -790,20 +824,38 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 上滑加载更早：加载中顶部细进度条；一次无新增 = 到底，提示一次
+  /// 上滑加载更早：加载中顶部细进度条；一次无新增 = 到底，提示一次。
+  /// 前插只向列表头部增长：记录加载前的滚动范围，加载完成后把视口平移
+  /// 同样的增量——用户正在看的那条消息原地不动（锚点补偿）。
   Future<void> _loadOlderWithFeedback() async {
+    final maxBefore = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : null;
     setState(() => _loadingOlder = true);
     try {
       final added = await _store.loadOlderMessages();
-      if (added == 0 && mounted && !_oldestNoticeShown) {
-        _oldestNoticeShown = true; // 每会话只提示一次，不反复打扰
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已经是最早的消息了'),
-            duration: Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      if (added == 0) {
+        _loadOlderExhausted = true; // 之后贴顶不再触发（门卫）
+        if (mounted && !_oldestNoticeShown) {
+          _oldestNoticeShown = true;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('已经是最早的消息了'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } else if (maxBefore != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scrollController.hasClients) return;
+          final grown =
+              _scrollController.position.maxScrollExtent - maxBefore;
+          if (grown > 0) {
+            _scrollController
+                .jumpTo(_scrollController.position.pixels + grown);
+          }
+        });
       }
     } finally {
       if (mounted) setState(() => _loadingOlder = false);
@@ -1554,10 +1606,15 @@ class _ChatPageState extends State<ChatPage> {
     //（含 info.agent 子智能体消息）按序进入回合块，TurnBlockView 按引擎
     // 原序渲染思考/正文/工具/子智能体行。没有任何旁路分组。
     final blocks = <Object>[];
+    final blockKeys = <ValueKey<String>>[];
+    // 块身份键：角色 + 服务端毫秒时间 + 同键出现序（确定性去重）。前插/
+    // 滚动回收重建按 key 配对，折叠状态跟块走，不随下标漂移。
+    final keySeen = <String, int>{};
     var turnBuf = <ChatMessage>[];
     void flushTurn() {
       if (turnBuf.isEmpty) return;
       blocks.add(_TurnEntry(List.of(turnBuf)));
+      blockKeys.add(_blockKey('turn', turnBuf.first, keySeen));
       turnBuf = <ChatMessage>[];
     }
 
@@ -1565,6 +1622,7 @@ class _ChatPageState extends State<ChatPage> {
       if (msg.role == MessageRole.user) {
         flushTurn();
         blocks.add(msg);
+        blockKeys.add(_blockKey('user', msg, keySeen));
         continue;
       }
       turnBuf.add(msg);
@@ -1588,11 +1646,14 @@ class _ChatPageState extends State<ChatPage> {
           return _buildModelBlockedCard(colors);
         }
         final block = blocks[index];
+        final blockKey = blockKeys[index];
         Widget child;
         if (block is _TurnEntry) {
           final isLast = index == blocks.length - 1;
           final busy = isLast && (_isStreaming || _isWaiting);
+          final keyStr = blockKey.value;
           child = TurnBlockView(
+            key: blockKey,
             vm: buildTurnVM(
               block.messages,
               busy: busy,
@@ -1610,9 +1671,12 @@ class _ChatPageState extends State<ChatPage> {
               busyElapsed: busy ? _store.streamElapsed : null,
             ),
             onOpenSubagent: _openSubagentSession,
-            defaultCollapsed: index < blocks.length - 2 ? true : false,
-            // 折叠策略（实时/历史观感一致性）：仅倒数第三及更早的回合
-            // 折叠，最近两回合保持展开——重进会话不再整屏折叠
+            // 折叠策略（实时/历史观感一致性）：仅倒数第三及更早的回合默认
+            // 折叠，最近两回合保持展开；用户手动改过的按块身份记忆——
+            // 滚动回收重建、加载更早前插都不丢
+            defaultCollapsed:
+                _turnFoldState[keyStr] ?? index < blocks.length - 2,
+            onFoldChanged: (v) => _turnFoldState[keyStr] = v,
             // 流式中降级纯文本（防半截 markdown 裸露 + 逐 chunk 全量重解析）
             answerBuilder: (md, streaming) =>
                 _buildMarkdownBody(md, isStreaming: streaming),
@@ -1620,25 +1684,48 @@ class _ChatPageState extends State<ChatPage> {
             onAnswerLongPress: _showTurnActions,
           );
         } else {
-          child = _buildUserBubble(block as ChatMessage);
+          child = KeyedSubtree(
+            key: blockKey,
+            child: _buildUserBubble(block as ChatMessage),
+          );
         }
         // Animate only newly appended items
         if (index >= prevCount) {
-          return AnimatedMessageItem(child: child);
+          return AnimatedMessageItem(key: blockKey, child: child);
         }
         return child;
       },
     );
-    // 上滑加载更早时顶部细进度条（有反馈，不再无声）
-    if (_loadingOlder) {
-      return Column(
-        children: [
-          const LinearProgressIndicator(minHeight: 2),
-          Expanded(child: list),
-        ],
-      );
-    }
-    return list;
+    // 树身份稳定（滚动回归根治）：进度条必须是列表的兄弟 overlay，绝不
+    // 改变 ListView 的子树槽位——旧实现按 _loadingOlder 在「裸列表」与
+    // 「Column(进度条+列表)」之间切换，Element/ScrollPosition 每次销毁
+    // 重建，位置归零 + 正在进行的拖动手势被杀（体验倒退根因）。
+    return Stack(
+      children: [
+        list,
+        if (_loadingOlder)
+          const Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+      ],
+    );
+  }
+
+  /// 块身份键：同一 (kind, role, 毫秒) 重复出现时追加出现序，键确定性
+  /// 且跨重建稳定（绝不使用列表下标——下标随前插漂移）
+  ValueKey<String> _blockKey(
+    String kind,
+    ChatMessage first,
+    Map<String, int> seen,
+  ) {
+    final base =
+        '$kind:${first.role.name}:${first.createdAt.millisecondsSinceEpoch}';
+    final n = seen.putIfAbsent(base, () => -1) + 1;
+    seen[base] = n;
+    return ValueKey(n == 0 ? base : '$base#$n');
   }
 
   // ── User bubble ────────────────────────────────────────────────────

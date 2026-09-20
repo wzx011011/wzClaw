@@ -128,6 +128,7 @@ class ToolCallInfo {
         background: background ?? this.background,
         description: description ?? this.description,
         outputTruncated: outputTruncated ?? this.outputTruncated,
+        everError: everError ?? this.everError,
       );
 
   Map<String, dynamic> toJson() => {
