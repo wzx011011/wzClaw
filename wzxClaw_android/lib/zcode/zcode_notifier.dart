@@ -119,7 +119,9 @@ class ZcodeNotifier {
   /// 状态未知（保守按后台）时照常弹出。
   ///
   /// [status] turn.terminal 的 status（success → 完成，其他 → 失败）
-  /// [tokens] 本回合 token 数（展示用，可空）
+  /// [summary] 回合回答摘要（≤80 字符；通知正文的主力——用户关心的是
+  /// 「回答了什么」，不是内部状态行）。为空时回退状态行兜底。
+  /// [tokens] 本回合 token 数（仅兜底状态行展示）
   /// [sessionId] 点击通知时回传的 payload（可空）
   /// [desktopId]/[desktopName] 多桌面：payload 变为 JSON（含桌面 id 供路由
   /// 切换），标题带桌面名区分来源
@@ -129,6 +131,7 @@ class ZcodeNotifier {
     String? sessionId,
     String? desktopId,
     String? desktopName,
+    String? summary,
   }) {
     if (!_enabled || _lifecycleState == AppLifecycleState.resumed) return;
 
@@ -136,15 +139,24 @@ class ZcodeNotifier {
     final title = desktopName == null || desktopName.isEmpty
         ? (ok ? 'ZCode 任务完成' : 'ZCode 任务失败')
         : (ok ? '$desktopName · 任务完成' : '$desktopName · 任务失败');
-    final body = StringBuffer('状态: $status');
-    if (tokens != null) body.write(' · $tokens tokens');
+    final summaryText = summary?.trim();
+    final body = (summaryText != null && summaryText.isNotEmpty)
+        ? (summaryText.length <= 80
+            ? summaryText
+            : '${summaryText.substring(0, 80)}…')
+        : () {
+            // 无可用摘要（如失败回合无文本）：状态行兜底
+            final fallback = StringBuffer('状态: $status');
+            if (tokens != null) fallback.write(' · $tokens tokens');
+            return fallback.toString();
+          }();
     // 多桌面 payload：JSON{桌面id, 会话id}；单桌面/旧路径保持纯 sessionId
     final payload = desktopId == null
         ? sessionId
         : jsonEncode({'d': desktopId, if (sessionId != null) 's': sessionId});
     showSystemNotification(
       title: title,
-      body: body.toString(),
+      body: body,
       payload: payload,
     );
   }

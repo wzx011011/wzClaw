@@ -2621,18 +2621,47 @@ class ZcodeChatStore extends ChangeNotifier {
     // synced），离线重开即丢最新问答。本地收尾保持即时（finalizeStreaming
     // 已做）；并发合并由 _refreshAuthoritative 的 single-flight 保证。
     unawaited(_refreshAuthoritative(state));
-    // 任务完成本地通知（App 在后台也能感知；后台会话同样通知）
+    // 任务完成本地通知（App 在后台也能感知；后台会话同样通知）。
+    // 正文 = 回合回答摘要（用户关心「回答了什么」，不是内部状态行）；
+    // 无可用文本时 notifier 走状态行兜底
     _notifier.showTaskDone(
       status: status,
       tokens: tokenCount ?? (state.lastInputTokens + state.lastOutputTokens),
       sessionId: state.sessionId,
       desktopId: desktopId,
       desktopName: desktopName,
+      summary: _turnNoticeSummary(
+        authoritativeText ?? _lastAssistantText(state, turnId),
+      ),
     );
     if (!_isActive(state)) {
       unawaited(refreshSessions()); // 后台徽标靠 session/list 刷新
     }
     _notifyIfActive(state);
+  }
+
+  /// 通知正文摘要：压平空白、≤80 字符（超出截断加 …）；无可用文本返回
+  /// null（notifier 走状态行兜底）
+  String? _turnNoticeSummary(String? raw) {
+    var text = (raw ?? '').trim();
+    if (text.isEmpty) return null;
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.isEmpty) return null;
+    return text.length <= 80 ? text : '${text.substring(0, 80)}…';
+  }
+
+  /// 当前回合最后一条非空 assistant 文本（权威全文缺省时的通知摘要回退
+  /// 来源）。严格限定 turnId——绝不能把上一回合的回答填进本回合通知。
+  String? _lastAssistantText(ZcodeSessionState state, String? turnId) {
+    if (turnId == null) return null;
+    for (final it in state.items.reversed) {
+      if (it.turnId != turnId) continue;
+      final m = it.message;
+      if (m.role == MessageRole.assistant && m.text.trim().isNotEmpty) {
+        return m.text;
+      }
+    }
+    return null;
   }
 
   // ──────────────────────────────────────────────

@@ -1376,8 +1376,61 @@ void main() {
       expect(notifier.shown.single['status'], 'success');
       expect(notifier.shown.single['tokens'], 42);
       expect(notifier.shown.single['sessionId'], 'sess-p');
+      // 通知正文 = 回合回答摘要（不再是内部状态行）
+      expect(notifier.shown.single['summary'], 'Hello');
       // 推送可用：全程无降级轮询
       expect(fake.requests.any((e) => e.key == 'session/events'), isFalse);
+    });
+
+    test('通知摘要：超长截断；无文本回退状态行', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      await store.openSession('sess-n');
+      var seq = 0;
+      void push(String type, Map<String, dynamic> payload, {String turnId = 'turn-n'}) {
+        seq++;
+        pushEvent(
+          store,
+          sessionId: 'sess-n',
+          type: type,
+          seq: seq,
+          turnId: turnId,
+          payload: payload,
+        );
+      }
+
+      // 超长回答：截断到 80 字 + …
+      final long = '好' * 120;
+      push('turn.started', {'messageId': 'srv-u-n', 'input': 'hi'});
+      push('turn.completed', {
+        'response': long,
+        'tokenCount': 1,
+        'toolCallCount': 0,
+        'resultType': 'success',
+      });
+      expect(notifier.shown.last['summary'], '${'好' * 80}…');
+
+      // 无文本回合：摘要为空，由 notifier 走状态行兜底（且绝不回填
+      // 上一回合的回答文本）
+      push(
+        'turn.started',
+        {'messageId': 'srv-u-n2', 'input': 'hi2'},
+        turnId: 'turn-n2',
+      );
+      push(
+        'turn.completed',
+        {
+          'tokenCount': 2,
+          'toolCallCount': 0,
+          'resultType': 'success',
+        },
+        turnId: 'turn-n2',
+      );
+      expect(notifier.shown.last['summary'], isNull);
+      expect(notifier.shown.last['status'], 'success');
     });
 
     test('工具回合：turn.completed(toolCallCount>0) 走增量权威刷新（afterMessageId 水位）',

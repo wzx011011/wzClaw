@@ -78,8 +78,14 @@ class FakeZcodeNotifier extends ZcodeNotifier {
     String? sessionId,
     String? desktopId,
     String? desktopName,
+    String? summary,
   }) {
-    shown.add({'status': status, 'tokens': tokens, 'sessionId': sessionId});
+    shown.add({
+      'status': status,
+      'tokens': tokens,
+      'sessionId': sessionId,
+      'summary': summary,
+    });
   }
 
   @override
