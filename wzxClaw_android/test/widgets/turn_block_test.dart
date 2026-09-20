@@ -972,7 +972,7 @@ void main() {
               _call('TodoWrite', input: '{"todos":[{"content":"x"}]}', id: 't1'),
             ),
             ChatProcessPart.tool(
-              _call('TaskOutput', input: '{"task_id":"agent_1"}', id: 't2'),
+              _call('TaskUpdate', input: '{"status":"running"}', id: 't2'),
             ),
             ChatProcessPart.tool(
               _call('Read', input: '{"file_path":"/a/two.dart"}', id: 'r2'),
@@ -981,12 +981,35 @@ void main() {
         ],
         busy: false,
       );
-      // TodoWrite/TaskOutput 不出现；两侧 Read 跨过它们仍然成组
+      // TodoWrite/TaskUpdate 不出现；两侧 Read 跨过它们仍然成组
       expect(vm.parts, hasLength(1));
       final row = vm.parts.first.tool!;
       expect(row.verb, '查阅');
       expect(row.count, 2);
       expect(vm.countsLabel.contains('任务'), isFalse);
+    });
+
+    test('TaskOutput 渲染：任务输出 + 任务 id 目标 + 行尾「已获取」注', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'TaskOutput',
+                input: '{"task_id":"exec_7a3d3efd-4795"}',
+                output: 'ok',
+                id: 'to1',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      expect(vm.parts, hasLength(1));
+      final row = vm.parts.first.tool!;
+      expect(row.verb, '任务输出');
+      expect(row.target, 'exec_7a3d3efd-4795');
+      expect(row.statusNote, '已获取');
     });
 
     test('RespondToCoordinator 簿记行不渲染；MCP 工具名美化', () {

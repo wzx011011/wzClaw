@@ -161,6 +161,7 @@ String _familyLabel(_ToolClass cls, String toolName, {required bool running}) {
       return running ? '正在发送消息' : '消息';
     case _ToolFamily.other:
       if (toolName == 'WebFetch' || toolName == 'web-fetch') return '获取';
+      if (toolName == 'TaskOutput') return '任务输出';
       if (toolName.startsWith('mcp__')) return _mcpToolLabel(toolName);
       return toolName;
   }
@@ -229,6 +230,7 @@ class TurnToolRow {
     this.lifecycle,
     this.filePath,
     this.memberRows,
+    this.statusNote,
   });
 
   /// 中文动词：查阅/执行/写入/读取/搜索/文件/列表
@@ -272,6 +274,10 @@ class TurnToolRow {
 
   /// 实时生命周期的短状态，用于等待权限/参数流入等尚未形成结果的阶段。
   final String? lifecycle;
+
+  /// 行尾弱化状态注（如 TaskOutput 的「已获取」——官方同位渲染）。
+  /// null = 无
+  final String? statusNote;
 }
 
 class TurnDetailLine {
@@ -592,6 +598,7 @@ TurnVM buildTurnVM(
           details: _memberDetails(view),
           subagentType: view.subagentType,
           lifecycle: view.lifecycle,
+          statusNote: _taskOutputNote(view),
         ),
         key: view.callId.isEmpty ? null : view.callId,
       ),
@@ -860,14 +867,23 @@ enum _ProcessSourceKind { part, marker, agentMessage }
 
 
 /// 记账型工具（官方时间线不渲染）：TodoWrite = 任务面板内部簿记；
-/// TaskOutput / TaskUpdate = 子智能体输出轮询与状态更新；
-/// RespondToCoordinator = 工作流协调器簿记（子智能体回报经
-/// <subagent-message> 卡片呈现，见 home_page，不在此重复占行）。
+/// TaskUpdate = 子智能体状态更新；RespondToCoordinator = 工作流协调器
+/// 簿记（回报经 <subagent-message> 卡片呈现）。
+/// 注意：TaskOutput 官方是渲染的（「任务输出 <id> 已获取」），不入列。
 bool _isBookkeepingTool(String name) =>
     name == 'TodoWrite' ||
-    name == 'TaskOutput' ||
     name == 'TaskUpdate' ||
     name == 'RespondToCoordinator';
+
+/// TaskOutput 行尾状态注（官方「任务输出 <id> 已获取」同位渲染）
+String? _taskOutputNote(_ToolView view) {
+  if (view.name != 'TaskOutput') return null;
+  return switch (view.status) {
+    ToolCallStatus.running => '获取中',
+    ToolCallStatus.error => '获取失败',
+    _ => '已获取',
+  };
+}
 
 /// 查阅/终端组成员行：种类标签（运行中动作文案）+ 目标 + 自身状态与详情
 TurnToolRow _memberRow(_ToolView view) {
@@ -992,6 +1008,11 @@ String _toolTarget(String name, String? input) {
     case 'Task':
       final desc = pick(['description', 'agent_type', 'prompt']);
       if (desc != null) return _singleLine(desc, 48);
+      break;
+    case 'TaskOutput':
+      // 官方同形态：目标 = 任务 id（行尾另挂「已获取」状态注）
+      final taskId = pick(['task_id']);
+      if (taskId != null) return taskId;
       break;
   }
   // 未知工具：结构化提取常见语义键；提取不到退化为纯动词行——原始
@@ -1904,6 +1925,17 @@ class _ToolRowViewState extends State<_ToolRowView> {
                       color: colors.error,
                       fontSize: 12,
                       fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+                // 行尾弱化状态注（官方「任务输出 … 已获取」同位）
+                if (d.statusNote != null) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    d.statusNote!,
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 11.5,
                     ),
                   ),
                 ],
