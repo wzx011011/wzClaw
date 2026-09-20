@@ -434,7 +434,47 @@ telemetry 侧 `v4/telemetry/event kind=tool.lifecycle` 的 phase 轨迹：
  "id":"part_…","sessionID":"sess_…","messageID":"msg_…"}
 ```
 
-assistant 消息可以只含工具 part（`step-start / tool / step-finish`，
+### reasoning / text part 形状（session/messages，probe-reasoning-part 实测 2026-09-20）
+
+所有 part 统一携带 `id`（part_ 前缀）、`sessionID`、`messageID`；text 与
+reasoning 均自带毫秒时间 `time{start,end}`——**思考/正文耗时可直接从权威
+数据计算，历史加载与实时同源**（手机端据此渲染「思考 · 持续了 N 秒」）：
+
+```json
+{"type":"reasoning",
+ "text":"**Calculating 137×214**",
+ "time":{"start":1789877666292,"end":1789877672279},
+ "id":"part_…","sessionID":"sess_…","messageID":"msg_…"}
+```
+
+注意：最小回合（"只回复 1"）可以完全不产出 reasoning part
+（step-finish.tokens.reasoning=0）；part 顺序 =
+`step-start → (reasoning)* → text → step-finish`。
+
+### session/subagents 响应形状（probe-subagents-map 实测 2026-09-20）
+
+`session/subagents {sessionId}`（sessionId 必填，缺省 -32602）：
+
+```json
+{"revision":2,
+ "childSessionIds":["sess_subagent_agent_…",…],   // 派生规则 = "sess_subagent_"+agentId
+ "running":[…同 ended 元素…],
+ "ended":{"total":48,"items":[
+   {"childSessionId":"sess_subagent_agent_d6882beb-…",
+    "agentId":"agent_d6882beb-…",
+    "toolCallId":"call_242a41215d53419fb780efdb",   // ← 父回合工具调用 ID（面板入口钥匙）
+    "subagentType":"general-purpose",
+    "title":"Align preview view modes",
+    "startedAt":1788798958043,
+    "status":"success",
+    "summary":"…结果摘要…"}]}}
+```
+
+已结束子会话的转录**不可**经 `session/messages(childSessionId)` 读取——
+实测 `-32004 "Session is not active"`；面板对已结束子任务展示
+title/status/summary，运行中子任务可正常拉取子会话 messages。
+
+### assistant 消息可以只含工具 part（`step-start / tool / step-finish`，
 无 text part）——映射时不能按"无文本即丢弃"过滤工具消息。
 
 ### 其他

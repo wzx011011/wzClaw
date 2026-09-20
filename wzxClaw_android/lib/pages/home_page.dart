@@ -36,6 +36,7 @@ import '../widgets/workspace_switcher_sheet.dart';
 import '../widgets/markdown_path_link.dart';
 import '../widgets/markdown_table_export.dart';
 import '../zcode/zcode_chat_store.dart';
+import 'subagent_session_page.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -131,6 +132,24 @@ class _ChatPageState extends State<ChatPage> {
       _sentAttachmentLocalPaths.remove(_sentAttachmentLocalPaths.keys.first);
     }
     setState(() => _attachments.removeWhere(attachments.contains));
+  }
+
+  /// 子智能体行点击 → 子会话面板（probe-subagents-map：toolCallId ↔
+  /// childSessionId 已钉）。父会话 = 当前活动会话。
+  void _openSubagentSession(dynamic data) {
+    final parentSid = _store.activeSessionId;
+    final toolCallId = data.toolCallId as String?;
+    if (parentSid == null || toolCallId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SubagentSessionPage(
+          parentSessionId: parentSid,
+          toolCallId: toolCallId,
+          agentType: data.agentType as String? ?? '子智能体',
+          fallbackTitle: data.target as String? ?? '',
+        ),
+      ),
+    );
   }
 
   /// 全屏预览本地图片（附件 chip / 气泡缩略图点击入口）
@@ -1590,7 +1609,10 @@ class _ChatPageState extends State<ChatPage> {
               tpsIsEstimate: busy,
               busyElapsed: busy ? _store.streamElapsed : null,
             ),
-            defaultCollapsed: isLast ? null : true,
+            onOpenSubagent: _openSubagentSession,
+            defaultCollapsed: index < blocks.length - 2 ? true : false,
+            // 折叠策略（实时/历史观感一致性）：仅倒数第三及更早的回合
+            // 折叠，最近两回合保持展开——重进会话不再整屏折叠
             // 流式中降级纯文本（防半截 markdown 裸露 + 逐 chunk 全量重解析）
             answerBuilder: (md, streaming) =>
                 _buildMarkdownBody(md, isStreaming: streaming),

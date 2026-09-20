@@ -54,6 +54,10 @@ class ToolCallInfo {
   /// 引擎结果声明输出被截断时为 true。
   final bool outputTruncated;
 
+  /// 同 callId 生命周期内曾见过错误（先败后成 = 已重试恢复）。
+  /// 实时投影 OR 累积并随缓存持久化；权威数据只有终态，尽力而为。
+  final bool everError;
+
   const ToolCallInfo({
     required this.toolCallId,
     required this.toolName,
@@ -76,6 +80,7 @@ class ToolCallInfo {
     this.background = false,
     this.description,
     this.outputTruncated = false,
+    this.everError = false,
   });
 
   ToolCallInfo copyWith({
@@ -99,6 +104,7 @@ class ToolCallInfo {
     bool? background,
     String? description,
     bool? outputTruncated,
+    bool? everError,
   }) =>
       ToolCallInfo(
         toolCallId: toolCallId,
@@ -147,6 +153,7 @@ class ToolCallInfo {
         if (background) 'background': true,
         if (description != null) 'description': description,
         if (outputTruncated) 'outputTruncated': true,
+        if (everError) 'everError': true,
       };
 
   factory ToolCallInfo.fromJson(Map<String, dynamic> json) {
@@ -185,6 +192,7 @@ class ToolCallInfo {
       background: json['background'] == true,
       description: json['description'] as String?,
       outputTruncated: json['outputTruncated'] == true,
+      everError: json['everError'] == true,
     );
   }
 }

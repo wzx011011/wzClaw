@@ -66,12 +66,11 @@ void main() {
     expect(vm.parts[1].text, contains('开始执行'));
 
     final row = vm.parts[2].tool!;
-    expect(row.verb, '执行');
+    expect(row.verb, '终端'); // 官方对齐：shell 家族标签终端（非「执行」）
     expect(row.target, 'npm test'); // Bash 提取命令本体
     expect(row.details.any((line) => line.text.contains('ok')), isTrue);
-    expect(row.defaultOpen, isTrue); // 完成且有输出 → 默认展开
     expect(vm.answerMarkdown, '测试通过。');
-    expect(vm.countsLabel, contains('执行 1'));
+    expect(vm.countsLabel, contains('终端 1'));
   });
 
   test('查阅聚合：相邻 Read 合并为查阅伞，成员行独立展开详情', () {
@@ -98,19 +97,16 @@ void main() {
     final row = vm.parts.first.tool!;
     expect(row.verb, '查阅');
     expect(row.count, 2);
-    expect(row.target, '2 文件');
+    expect(row.target, '· 2 文件'); // 半角间隔点 + 桶计数
     // 组行不直接挂详情；二级是成员行，成员各自带目标与输入/输出
     expect(row.details, isEmpty);
     expect(row.memberRows, hasLength(2));
-    expect(row.memberRows![0].verb, '文件');
+    expect(row.memberRows![0].verb, '读取'); // 成员行挂种类标签
     expect(row.memberRows![0].target, 'one.dart');
     expect(
       row.memberRows![1].details.any((d) => d.text.contains('20 行')),
       isTrue,
     );
-    // 任一成员完成且有输出 → 组默认展开成员列表；成员自身默认收起
-    expect(row.defaultOpen, isTrue);
-    expect(row.memberRows![1].defaultOpen, isFalse);
     expect(vm.countsLabel, contains('查阅 1'));
   });
 
@@ -150,14 +146,15 @@ void main() {
     expect(vm.parts, hasLength(1));
     final row = vm.parts.first.tool!;
     expect(row.verb, '查阅');
-    expect(row.target, '2 搜索，1 列表');
+    expect(row.target, '· 2 搜索, 1 列表'); // 官方半角逗号
     expect(row.memberRows, hasLength(3));
-    expect(row.memberRows![0].verb, '列表');
-    expect(row.memberRows![1].verb, '搜索');
-    expect(row.memberRows![2].verb, '搜索');
+    // 官方对齐：shell 成员完成态一律挂家族标签「终端」（桶只体现在组计数）
+    expect(row.memberRows![0].verb, '终端');
+    expect(row.memberRows![1].verb, '终端');
+    expect(row.memberRows![2].verb, '终端');
   });
 
-  test('写入/非白名单命令不进查阅：npm 单行保持执行', () {
+  test('非白名单 shell 单发落单行，挂「终端」标签', () {
     final vm = buildTurnVM(
       [
         _assistant([
@@ -170,7 +167,7 @@ void main() {
     );
 
     final row = vm.parts.first.tool!;
-    expect(row.verb, '执行');
+    expect(row.verb, '终端'); // 不再叫「执行」
     expect(row.memberRows, isNull);
   });
 
@@ -244,7 +241,6 @@ void main() {
     final row = vm.parts.first.tool!;
     expect(row.failed, isTrue);
     expect(row.recovered, isFalse);
-    expect(row.defaultOpen, isTrue); // 有错误原因输出 → 展开可读
   });
 
   test('Edit 行数增减：old/new 去公共前后缀后计算 +N -M', () {
@@ -291,8 +287,8 @@ void main() {
       busy: false,
     );
 
-    expect((vm.parts[0].tool!).verb, '文件');
-    expect((vm.parts[1].tool!).verb, '列表');
+    expect((vm.parts[0].tool!).verb, '读取'); // 单发挂种类标签
+    expect((vm.parts[1].tool!).verb, '终端'); // 白名单 shell 单发=终端
     expect((vm.parts[2].tool!).verb, '写入');
   });
 
@@ -322,7 +318,6 @@ void main() {
     ]);
     final agent = vm.parts[1].agent!;
     expect(agent.agentType, 'Explore');
-    expect(agent.defaultOpen, isTrue);
     expect(vm.answerMarkdown, '调查完毕');
     expect(vm.countsLabel, contains('子智能体 1'));
   });
@@ -581,6 +576,470 @@ void main() {
       );
 
       expect(find.byIcon(Icons.download_outlined), findsNothing);
+    });
+  });
+
+  group('展开只由点击驱动（官方对齐）', () {
+    // 完成且有输出的工具行：结果到达绝不自动弹开
+    Future<TurnVM> pumpCompletedTool(WidgetTester tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm test"}',
+                output: '全部通过',
+                id: 'c1',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      return vm;
+    }
+
+    testWidgets('完成且有输出的行默认收起，点击展开，再点收起', (tester) async {
+      await pumpCompletedTool(tester);
+
+      // 默认收起：详情输出不可见
+      expect(find.textContaining('全部通过'), findsNothing);
+
+      // 点击行 → 展开
+      await tester.tap(find.text('终端'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('全部通过'), findsOneWidget);
+
+      // 再点 → 收起
+      await tester.tap(find.text('终端'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('全部通过'), findsNothing);
+    });
+
+    testWidgets('查阅组默认收起；点开组后成员行仍收起，再点成员才看详情',
+        (tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"grep -n a lib/x.dart"}',
+                output: 'x.dart:3',
+                id: 'g1',
+              ),
+            ),
+            ChatProcessPart.tool(
+              _call(
+                'Read',
+                input: '{"file_path":"/a/one.dart"}',
+                output: '10 行',
+                id: 'g2',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+
+      // 组默认收起：成员目标与详情都不可见
+      expect(find.text('one.dart'), findsNothing);
+      expect(find.textContaining('10 行'), findsNothing);
+
+      // 点开组 → 成员行出现，但成员详情仍收起
+      await tester.tap(find.text('查阅'));
+      await tester.pumpAndSettle();
+      expect(find.text('one.dart'), findsOneWidget);
+      expect(find.textContaining('10 行'), findsNothing);
+
+      // 点成员行 → 才看到该成员详情
+      await tester.tap(find.text('one.dart'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('10 行'), findsOneWidget);
+    });
+  });
+
+  group('分类体系（官方分类表逐格断言）', () {
+    test('单条只读 bash（grep）→ 终端标签，不成组', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"grep -n foo lib/a.dart"}',
+                output: 'a.dart:3',
+                id: 'g1',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.verb, '终端');
+      expect(row.memberRows, isNull);
+      expect(vm.countsLabel, contains('终端 1'));
+    });
+
+    test('连续非白名单 shell ≥2 → 终端组「N 个命令」+ 成员行', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm test"}',
+                output: 'ok',
+                id: 't1',
+              ),
+            ),
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"flutter analyze"}',
+                output: '0 issues',
+                id: 't2',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.verb, '终端');
+      expect(row.target, '· 2 个命令');
+      expect(row.memberRows, hasLength(2));
+      expect(row.memberRows![0].verb, '终端');
+      expect(row.memberRows![0].target, 'npm test');
+      // 终端组单发/成组同标签：计数恒为 终端 1
+      expect(vm.countsLabel, contains('终端 1'));
+    });
+
+    test('终端组被 text 断组 → 落单行（相邻性规则）', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('Bash', input: '{"command":"npm test"}', id: 't1'),
+            ),
+            const ChatProcessPart.text('中间说明'),
+            ChatProcessPart.tool(
+              _call('Bash', input: '{"command":"flutter analyze"}', id: 't2'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final toolParts =
+          vm.parts.where((p) => p.kind == TurnPartKind.tool).toList();
+      expect(toolParts, hasLength(2));
+      expect(toolParts[0].tool!.verb, '终端');
+      expect(toolParts[0].tool!.memberRows, isNull);
+      expect(toolParts[1].tool!.memberRows, isNull);
+    });
+
+    test('空参数 shell 相邻两条：两边都不进组 → 两条单行终端', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(_call('Bash', input: '', id: 'e1')),
+            ChatProcessPart.tool(_call('Bash', id: 'e2')),
+          ]),
+        ],
+        busy: false,
+      );
+
+      expect(vm.parts, hasLength(2));
+      expect((vm.parts[0].tool!).verb, '终端');
+      expect((vm.parts[0].tool!).target, '');
+      expect((vm.parts[1].tool!).verb, '终端');
+    });
+
+    test('写入重定向 shell → 终端组资格（不进查阅）', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('Bash', input: '{"command":"echo a > out.txt"}', id: 'r1'),
+            ),
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"echo b >> out.txt"}',
+                id: 'r2',
+              ),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.verb, '终端');
+      expect(row.target, '· 2 个命令');
+    });
+
+    test('混合 read + 白名单 bash ≥2 → 查阅组，shell 计入搜索桶', () {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"grep -n foo lib/a.dart"}',
+                id: 'm1',
+              ),
+            ),
+            ChatProcessPart.tool(
+              _call('Read', input: '{"file_path":"/a/one.dart"}', id: 'm2'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      final row = vm.parts.single.tool!;
+      expect(row.verb, '查阅');
+      expect(row.target, '· 1 搜索, 1 文件');
+      expect(row.memberRows![0].verb, '终端');
+      expect(row.memberRows![1].verb, '读取');
+    });
+
+    test('SendMessage 输入（to+message）→ 消息卡，标题=摘要', () {
+      const input = '{"to":"agent_8d4a","summary":"边界已确认",'
+          '"message":"请输出最终清单"}';
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('SendMessage', input: input, output: '已送达', id: 'sm1'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+
+      expect(vm.parts.single.kind, TurnPartKind.message);
+      final msg = vm.parts.single.message!;
+      expect(msg.to, 'agent_8d4a');
+      expect(msg.summary, '边界已确认');
+      expect(msg.body, '请输出最终清单');
+      expect(msg.running, isFalse);
+      expect(vm.countsLabel, contains('消息 1'));
+    });
+
+    test('Glob：与 Read 相邻进查阅组文件桶；单发挂工具名', () {
+      final grouped = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('Glob', input: '{"pattern":"lib/**.dart"}', id: 'gl1'),
+            ),
+            ChatProcessPart.tool(
+              _call('Read', input: '{"file_path":"/a/one.dart"}', id: 'gl2'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      expect(grouped.parts.single.tool!.verb, '查阅');
+      expect(grouped.parts.single.tool!.target, '· 2 文件');
+
+      final single = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call('Glob', input: '{"pattern":"lib/**.dart"}', id: 'gl3'),
+            ),
+          ]),
+        ],
+        busy: false,
+      );
+      expect(single.parts.single.tool!.verb, 'Glob');
+    });
+  });
+
+  group('走马灯与零圈圈（官方状态呈现）', () {
+    testWidgets('运行中工具行动词挂渐变；完成行无 ✓ 无转圈', (tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                status: ToolCallStatus.running,
+                input: '{"command":"npm test"}',
+                id: 'run1',
+              ),
+            ),
+            ChatProcessPart.tool(
+              _call(
+                'Bash',
+                input: '{"command":"npm run build"}',
+                output: 'built',
+                id: 'done1',
+              ),
+            ),
+          ]),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // 运行中：组行动画在 target 位（· 正在执行 <命令>）
+      expect(find.byType(AnimatedGradientText), findsOneWidget);
+      expect(find.textContaining('正在执行'), findsOneWidget);
+      // 行内零转圈
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // 完成行无 ✓ 图标
+      expect(find.byIcon(Icons.check), findsNothing);
+    });
+
+    testWidgets('被工具接续的思考段停表；回合头纯文字无图标', (tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant(
+            [
+              const ChatProcessPart.reasoning('正在核对协议字段'),
+              ChatProcessPart.tool(
+                _call(
+                  'Read',
+                  status: ToolCallStatus.running,
+                  input: '{"file_path":"/a.dart"}',
+                  id: 'rr1',
+                ),
+              ),
+            ],
+            isStreaming: true,
+          ),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // 思考段被工具打断已停表 → 灰字「思考」；无转圈
+      expect(find.text('思考'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // 回合头纯文字（工作中…），无完成勾
+      expect(find.textContaining('工作中'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_outline), findsNothing);
+    });
+
+    testWidgets('运行中思考段：正在思考渐变可见', (tester) async {
+      final vm = buildTurnVM(
+        [
+          _assistant(
+            [const ChatProcessPart.reasoning('想想')],
+            isStreaming: true,
+          ),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('正在思考'), findsOneWidget);
+      expect(find.byType(AnimatedGradientText), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('消息卡：运行中「正在发送消息」渐变，展开见 dl 三行',
+        (tester) async {
+      const input = '{"to":"agent_8d4a","summary":"边界已确认",'
+          '"message":"请输出最终清单"}';
+      final vm = buildTurnVM(
+        [
+          _assistant([
+            ChatProcessPart.tool(
+              _call(
+                'SendMessage',
+                input: input,
+                status: ToolCallStatus.running,
+                id: 'sm-run',
+              ),
+            ),
+          ]),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('正在发送消息'), findsOneWidget);
+      expect(find.text('边界已确认'), findsOneWidget);
+
+      await tester.tap(find.text('正在发送消息'));
+      // 渐变是无限动画，pumpAndSettle 永不静默——用显式拍帧
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // dl 行是 SelectableText.rich，需 findRichText 才能匹配 span
+      expect(find.textContaining('目标子智能体', findRichText: true), findsOneWidget);
+      // to/消息 同时出现在 dl 行与输入 JSON 详情里 → 至少一个即可
+      expect(find.textContaining('agent_8d4a', findRichText: true), findsWidgets);
+      expect(find.textContaining('请输出最终清单', findRichText: true), findsWidgets);
     });
   });
 }

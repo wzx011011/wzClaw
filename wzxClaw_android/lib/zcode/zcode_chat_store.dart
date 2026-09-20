@@ -1304,6 +1304,44 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// 子智能体详情（probe-subagents-map 钉死的形状）：按 toolCallId 在
+  /// running[] / ended.items[] 里找对应条目。ended 元素 =
+  /// {childSessionId, agentId, toolCallId, subagentType, title, startedAt,
+  /// status, summary}；running 条目同构（status/summary 可能为空）。
+  /// 找不到 / 未连接 / 失败返回 null（尽力而为）。
+  Future<Map<String, dynamic>?> fetchSubagentDetail(String toolCallId) async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || !client.paired || sessionId == null) return null;
+    try {
+      final result = await client.request('session/subagents', {
+        'sessionId': sessionId,
+      });
+      if (result is! Map) return null;
+      final phases = <String, Object?>{
+        'running': result['running'],
+        'ended': (result['ended'] is Map)
+            ? (result['ended'] as Map)['items']
+            : null,
+      };
+      for (final entry in phases.entries) {
+        final items = entry.value;
+        if (items is! List) continue;
+        for (final item in items) {
+          if (item is Map && item['toolCallId'] == toolCallId) {
+            return {
+              ...item.cast<String, dynamic>(),
+              'phase': entry.key,
+            };
+          }
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 关闭会话（session/close，协议实测存在）：结束该会话在节点上的运行，
   /// 释放占用；引擎无 delete——会话记录仍在列表中（close ≠ delete）。
   /// 若关闭的是视口会话，页面回到欢迎态。
@@ -2338,6 +2376,8 @@ class ZcodeChatStore extends ChangeNotifier {
       background: background,
       description: meta(['description']) ?? previous?.description,
       outputTruncated: outputTruncated ?? previous?.outputTruncated ?? false,
+      // 先败后成 = 已重试恢复：生命周期内见错即置位并随缓存持久化
+      everError: toolError || (previous?.everError ?? false),
     );
   }
 
@@ -3582,7 +3622,17 @@ class ZcodeChatStore extends ChangeNotifier {
         case 'reasoning':
           final text = rawPart['text'];
           if (text is String) {
-            processParts.add(ChatProcessPart.reasoning(text, id: partId));
+            // 权威 part 自带 time{start,end}（probe-reasoning-part 实测）：
+            // 历史思考耗时「持续了 N 秒」与实时同源，不再只依赖本地墙钟
+            final time = rawPart['time'];
+            processParts.add(
+              ChatProcessPart.reasoning(
+                text,
+                id: partId,
+                startedAtMs: time is Map ? _toIntOrNull(time['start']) : null,
+                closedAtMs: time is Map ? _toIntOrNull(time['end']) : null,
+              ),
+            );
           } else {
             processParts.add(ChatProcessPart.marker(type, id: partId));
             debugPrint('[zcode-store] reasoning part 缺少字符串 text，已保留 marker');
@@ -3683,6 +3733,8 @@ class ZcodeChatStore extends ChangeNotifier {
       outputSummary: errorText ?? _summaryOf(output),
       status: status,
       isError: status == ToolCallStatus.error,
+      // 权威数据只有终态：error 终态即 everError（重试历史不可知，尽力而为）
+      everError: status == ToolCallStatus.error,
       inputFull: _fullOf(input),
       outputFull: errorText ?? _fullOf(output),
       lifecycle: statusStr.isEmpty ? null : statusStr,
