@@ -1270,17 +1270,26 @@ class ZcodeChatStore extends ChangeNotifier {
     _fail(attempted ? healError : '发送失败：$reason');
   }
 
-  /// 停止生成（session/stop + 增量权威刷新）
+  /// 停止生成（session/stop + 增量权威刷新）。
+  /// R03：停止请求失败/超时时引擎可能仍在运行——绝不强制收尾（清
+  /// streaming/waiting 会标空闲并放出队列下一条），只做不收尾的权威
+  /// 对账并显式提示；真实终态由 turn.completed / 权威数据到达时收敛。
   Future<void> stopGeneration() async {
     final client = _client;
     final state = _activeState;
     if (client == null || state == null) return;
+    var stopped = true;
     try {
       await client.request('session/stop', {'sessionId': state.sessionId});
     } catch (_) {
-      // 停止请求失败也继续拉权威消息
+      stopped = false;
     }
-    await _refreshAuthoritative(state);
+    if (stopped) {
+      await _refreshAuthoritative(state);
+      return;
+    }
+    await _pullIncremental(state);
+    _fail('停止请求未确认，回合可能仍在运行');
   }
 
   /// 子智能体线程（session/subagents）。0.16.9 实测 schema：sessionId
@@ -1294,22 +1303,36 @@ class ZcodeChatStore extends ChangeNotifier {
       return const [];
     }
     try {
+      // 实测形状（probe-subagentflow）：{revision, childSessionIds[],
+      // running[], ended:{total, items[]}}，items = {childSessionId,
+      // agentId, toolCallId, subagentType, title, startedAt, status,
+      // summary}。协议无 messages 字段。
       final result = await client.request('session/subagents', {
         'sessionId': sessionId,
-        'action': 'show',
       });
-      final rows = (result is Map ? result['messages'] : null) as List? ?? [];
+      if (result is! Map) return const [];
+      final rows = <Map<String, dynamic>>[];
+      for (final entry in {
+        'running': result['running'],
+        'ended': (result['ended'] is Map) ? (result['ended'] as Map)['items'] : null,
+      }.entries) {
+        final items = entry.value;
+        if (items is! List) continue;
+        for (final item in items) {
+          if (item is! Map) continue;
+          rows.add(item.cast<String, dynamic>());
+        }
+      }
       final byAgent = <String, List<Map<String, dynamic>>>{};
-      for (final row in rows.whereType<Map>()) {
-        final info = row['info'] is Map ? row['info'] as Map : const {};
-        final agent = info['agent']?.toString() ?? '';
-        final msg = _mapProtocolMessage(row);
-        if (msg == null) continue;
-        final time = info['time'] is Map ? info['time'] as Map : const {};
+      for (final row in rows) {
+        final agent = row['subagentType']?.toString() ?? '';
         byAgent.putIfAbsent(agent, () => []).add({
-          'role': msg.role.name,
-          'content': msg.text,
-          'created_at': (time['created'] as num?)?.toInt() ?? 0,
+          'role': 'assistant',
+          'content': row['summary']?.toString() ?? '',
+          'created_at': (row['startedAt'] as num?)?.toInt() ?? 0,
+          'status': row['status']?.toString(),
+          'title': row['title']?.toString(),
+          'childSessionId': row['childSessionId']?.toString(),
         });
       }
       int newest(SubagentThread t) => t.messages
@@ -2850,12 +2873,13 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// session/read 轻量 meta（2–5KB）：运行状态 + eventSeq 水位种子
   void _applyReadMeta(ZcodeSessionState state, Map read) {
-    // settings.model.available 播种可用模型缓存（与 resume 同形状）；
-    // current 归会话容器
+    // R06：session/read 用 modelAvailability:'current'（APP-SERVER.md
+    // 实测），available 最多只有当前模型一条——绝不喂给节点级全量目录
+    // 缓存（会把完整目录覆盖成单条，自愈选模被污染）；current 照常归
+    // 会话容器。
     final settings = read['settings'];
     if (settings is Map) {
       final modelPatch = settings['model'];
-      _cacheModelCatalog(modelPatch);
       _applyCurrentModelRef(state, modelPatch);
     }
     final projection = read['projection'];

@@ -80,20 +80,28 @@ void main() {
     Map<String, dynamic>? subagentsParams;
     fake.handlers['session/subagents'] = (params) {
       subagentsParams = params;
+      // probe-subagentflow 实测形状：running[] + ended.items[]，元素
+      // {childSessionId, agentId, toolCallId, subagentType, title,
+      //  startedAt, status, summary}——协议无 messages 字段
       return {
-        'messages': [
-          {
-            'info': {
-              'id': 'sa-2',
-              'agent': 'Explore',
-              'role': 'assistant',
-              'time': {'created': 200},
+        'revision': 2,
+        'childSessionIds': ['sess_subagent_agent_aaaa'],
+        'running': [],
+        'ended': {
+          'total': 1,
+          'items': [
+            {
+              'childSessionId': 'sess_subagent_agent_aaaa',
+              'agentId': 'agent_aaaa',
+              'toolCallId': 'call_a1',
+              'subagentType': 'Explore',
+              'title': '评估 runtime 去桌面依赖',
+              'startedAt': 200,
+              'status': 'success',
+              'summary': '子智能体结论',
             },
-            'parts': [
-              {'type': 'text', 'text': '子智能体结论'},
-            ],
-          },
-        ],
+          ],
+        },
       };
     };
     final store = fedStore(fake);
@@ -103,10 +111,11 @@ void main() {
 
     // 协议契约锚定：缺 sessionId 会被 0.16.9 引擎 -32602 拒绝
     expect(subagentsParams?['sessionId'], 'sess-1');
-    expect(subagentsParams?['action'], 'show');
+    expect(subagentsParams?.containsKey('action'), isFalse);
     expect(threads, hasLength(1));
     expect(threads.first.agent, 'Explore');
     expect(threads.first.messages.single['content'], '子智能体结论');
+    expect(threads.first.messages.single['status'], 'success');
   });
 
   test('fetchSubagentThreads：无活动会话直接返回空，不发请求', () async {

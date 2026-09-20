@@ -24,8 +24,8 @@ NAS relay
 
 | 路径 | 职责 |
 |---|---|
-| `wzxClaw_android/lib/zcode/` | 手机端核心：ZcodeChatStore（每会话状态容器/同步层/反向请求/通知）、ZcodeDesktopRegistry（多桌面注册表）、relay 客户端、权限组件、SQLite 缓存 |
-| `wzxClaw_android/lib/services/` | 连接层 + 扩展服务：ConnectionManager（relay 连接/设备列表/供帧桥/zcodeRequest 通道）、GitService、ChatRuntimeService、NodeCatalogService（后三者走 x/* 扩展） |
+| `wzxClaw_android/lib/zcode/` | 手机端核心：ZcodeChatStore（每会话状态容器/同步层/反向请求/通知）、relay 客户端、权限组件、SQLite 缓存（多桌面注册表已退役：现由 ConnectionManager 单活动连接 + 多份已保存配对实现） |
+| `wzxClaw_android/lib/services/` | 连接层 + 扩展服务：ConnectionManager（relay 连接/设备列表/供帧桥/zcodeRequest 通道）、GitService、ChatRuntimeService、NodeCatalogService、FileDownloadService 等（GitService/NodeCatalogService/FileDownloadService 走 x/* 扩展；ChatRuntimeService 调原生 session/* 只读接口） |
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
 | `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
@@ -54,7 +54,7 @@ node relay/zcode/probe-models.js    # 模型目录快照结构
 
 # 手机端
 cd wzxClaw_android
-flutter analyze        # CI 门禁 --no-fatal-infos：info 也算失败，必须 0 issues
+flutter analyze        # CI 门禁：info 也算失败，必须 0 issues（默认 --no-fatal-infos 已从 workflows 移除，R10）
 flutter test           # 用例数随功能演进，不在文档写死
 
 # 手机端 release APK（2026-09-16 定）：
@@ -80,9 +80,11 @@ CI 环境已钉版与本地一致（**Node 24 / Flutter 3.41.6**，见
 CI 无 NAS 凭据），**发布后半程一律手工**，按序：
 
 1. **relay**：`cd relay/zcode && npm test` 全绿 → `scp relay/zcode/server.js
-   nas:/tmp/` → `docker cp` 进容器 `/app/server.js` → `docker restart
-   wzxclaw-zcode-relay` → 容器内 `grep` 新特性标记 + 日志确认 device 重连
-   （auth-ok）。容器无 bind mount，只能 docker cp + restart。
+   relay/zcode/lib nas:/tmp/` → `docker cp` 进容器 `/app/server.js` 与
+   `/app/lib/`（server.js 运行依赖 lib/proof、lib/protocol、lib/constants，
+   只发 server.js 会漏依赖，R14）→ `docker restart wzxclaw-zcode-relay` →
+   容器内 `grep` 新特性标记 + 日志确认 device 重连（auth-ok）。
+   容器无 bind mount，只能 docker cp + restart。
 2. **companion CLI**：跑的是工作区源码（计划任务当前 Disabled），改完
    重启进程即生效，无需出包。
 3. **companion 桌面**：`cd companion_app && npm run dist` → Setup/Portable

@@ -88,8 +88,10 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
    重复运行幂等：先删旧任务再重建，改完 VBS 重跑即可。
 2. **验证**：注销重登，或立即手动触发 `schtasks /run /tn wzxClawZcodeCompanion`，
    然后 `tasklist | findstr node.exe` 看进程、看日志确认已连上 relay。
-3. **配对**：日志里最新的 `配对 URL`（`https://zcode.5945.top/pair?...`）复制到
-   手机 App 粘贴（或自行生成二维码）完成扫码配对。
+3. **配对**：配对 URL **不进日志**（R01：URL 含持有者凭据）。它已写入
+   配对产物文件——`%USERPROFILE%\.wzxclaw\zcode-companion\mid` 同目录的
+   pairing 产物（`--qr-png` 可指定 PNG 路径），从该文件取 URL 复制到
+   手机 App 完成扫码配对。
 
 - 日志：`%USERPROFILE%\.wzxclaw\zcode-companion\autostart.log`（追加式，VBS 自动
   建目录；清理日志前先结束 companion 进程）。

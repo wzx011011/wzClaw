@@ -964,21 +964,83 @@ class _ChatPageState extends State<ChatPage> {
       }
       return;
     }
-    await _applyNodeDefaultToSession(newSid);
-    // 新任务态暂存的思考档位：会话建好后补发（失败不阻断首条消息，
-    // 失败原因已进 store.error）
+    // R02：首发前置（默认模型/思考档位/权限模式）任一失败 → 绝不让
+    // 首条消息以错误的模型或权限模式执行——保留原文、显式报错
+    if (!await _applyNodeDefaultToSession(newSid)) {
+      _restoreUnsent(text, requeueOnFailure: requeueOnFailure);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('默认模型应用失败，消息未发送'),
+            duration: Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
     final pendingLevel = _pendingThoughtLevel;
     if (pendingLevel != null) {
       _pendingThoughtLevel = null;
-      await _store.setThoughtLevel(pendingLevel);
+      final okLevel = await _store.setThoughtLevel(pendingLevel);
+      if (!okLevel) {
+        _restoreUnsent(text, requeueOnFailure: requeueOnFailure);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('思考档位设置失败，消息未发送'),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
     }
     final pendingMode = _pendingPermissionMode;
     if (pendingMode != null) {
       _pendingPermissionMode = null;
-      await _store.setMode(pendingMode);
+      final okMode = await _store.setMode(pendingMode);
+      if (!okMode) {
+        _restoreUnsent(text, requeueOnFailure: requeueOnFailure);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('权限模式设置失败，消息未发送'),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+    }
+    // 最后一道绑定校验（R04）：目标会话必须仍是当前视口会话
+    if (_store.activeSessionId != newSid) {
+      _restoreUnsent(text, requeueOnFailure: requeueOnFailure);
+      return;
     }
     unawaited(_store.sendMessage(text));
     if (attachments.isNotEmpty) _removeSentAttachments(attachments);
+  }
+
+  /// R02/R04 配套：未发出的首条消息原路退回——排队来源回插队首，
+  /// 输入来源回填输入框（保持原有"失败不蒸发"语义）
+  void _restoreUnsent(String text, {_QueuedSend? requeueOnFailure}) {
+    if (requeueOnFailure != null) {
+      setState(() => _sendQueue.insert(0, requeueOnFailure));
+    } else {
+      _inputController.text = text;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('新会话前置设置失败，消息未发送'),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _editQueued(_QueuedSend item) async {
@@ -3650,14 +3712,15 @@ class _ChatPageState extends State<ChatPage> {
   /// 建会话后应用节点默认模型——官方「选择即全局、新会话继承」语义的
   /// 手机端等价实现。引擎的全局默认是桌面端最后全局选的、与手机选择
   /// 无关（实测探针 probe-modeldefault），不覆盖则新会话跟随桌面。
-  /// 失败静默降级（引擎默认兜底），原因进日志；发消息前 await，
-  /// 保证首条消息就用上默认模型。
-  Future<void> _applyNodeDefaultToSession(String sid) async {
+  /// 返回是否可继续发送：应用失败 = false（用户选定的模型未生效，
+  /// 首条消息绝不能落到错误模型上）；从未选择过默认 = true。
+  /// 失败原因进日志。
+  Future<bool> _applyNodeDefaultToSession(String sid) async {
     try {
       final catalog = await NodeCatalogService.instance.modelCatalog();
       final def = catalog.defaultModel;
       if (def == null || def.providerId.isEmpty || def.modelId.isEmpty) {
-        return; // 从未在手机上选过模型：保持引擎全局默认
+        return true; // 从未在手机上选过模型：保持引擎全局默认
       }
       // 老默认没落过档位时从目录条目补解析（imported 模型必填）
       final level = def.reasoningDefaultLevel ??
@@ -3671,8 +3734,10 @@ class _ChatPageState extends State<ChatPage> {
         modelId: def.modelId,
         reasoningLevel: level,
       );
+      return true;
     } catch (e) {
       debugPrint('[model] 新会话应用默认模型失败: $e');
+      return false;
     }
   }
 

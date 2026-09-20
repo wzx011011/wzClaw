@@ -57,7 +57,7 @@ jobs:
 
       - name: Analyze and test
         run: |
-          flutter analyze --no-fatal-infos
+          flutter analyze
           flutter test
 
       - name: Build release-mode APK

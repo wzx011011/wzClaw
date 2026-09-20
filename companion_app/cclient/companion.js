@@ -502,21 +502,25 @@ function createCompanion(options = {}) {
     if (planModelIds && Date.now() - planModelIdsAt < PLAN_CACHE_TTL_MS) {
       return Promise.resolve(planModelIds);
     }
+    // R08：single-flight 必须在 settle 后清空自身（finally），否则成功
+    // 路径的已完成 Promise 永久占据槽位——TTL 刷新与登录后恢复全部失效。
     planFetchInFlight = (async () => {
       let planToken;
-      try { planToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json')); }
-      catch { planFetchInFlight = null; return null; }
+      try {
+        planToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json'));
+      } catch {
+        return null;
+      }
       try {
         planModelIds = await planModelFetch({ token: planToken });
         planModelIdsAt = Date.now();
         log('plan-models-refreshed', `count=${planModelIds.length}`);
       } catch (error) {
-        planFetchInFlight = null;
         log('plan-models-unavailable', error.code || '');
         return null;
       }
       return planModelIds;
-    })();
+    })().finally(() => { planFetchInFlight = null; });
     return planFetchInFlight;
   }
   // 创建即后台拉取：手机配对起桥时清单通常已就绪，overlay 随首次 spawn 生效
@@ -931,6 +935,9 @@ function createCompanion(options = {}) {
   // 拉引擎可用目录：单飞 + 60s 缓存（目录基本静态，每请求拉一次太重）。
   // 通道：对活跃会话 resume。无活跃会话（如刚启动）时目录为空并返回
   // imported 作为兜底——手机端 UI 两种来源都展示。
+  // R07：会话有单运行时归属，session/list 首条可能被桌面等其他运行时
+  // 持有（resume -32004）——依次尝试后续会话，不能因首条不可访问就判定
+  // 整个节点无目录；全部不可访问才降级。
   async function fetchEngineModelCatalog() {
     if (engineModelCatalog.length && Date.now() - engineCatalogAt < 60000) {
       return engineModelCatalog;
@@ -938,45 +945,55 @@ function createCompanion(options = {}) {
     const list = await bridgeRequest({ id: nextLocalId(), method: 'session/list' });
     const sessions = list && list.result && Array.isArray(list.result.sessions)
       ? list.result.sessions : [];
-    const active = sessions.find((s) => s && typeof s.sessionId === 'string');
-    if (!active) {
-      engineModelCatalog = [];
+    let sawEngineReply = false;
+    for (const s of sessions) {
+      if (!s || typeof s.sessionId !== 'string' || !s.sessionId) continue;
+      let resume = null;
+      try {
+        resume = await bridgeRequest({
+          id: nextLocalId(), method: 'session/resume',
+          params: { sessionId: s.sessionId },
+        });
+      } catch { resume = null; }
+      if (!resume || resume.error || !resume.result) {
+        sawEngineReply = sawEngineReply || Boolean(resume && resume.error);
+        continue;
+      }
+      sawEngineReply = true;
+      const settings = resume.result.settings;
+      // settings.model.available 是引擎投影的可用目录（实测权威）。
+      // settings.model.current 只证明「该会话当前正用这个模型」，不是可选目录
+      // 证据（current 可指向已失效模型），不得并入 available——手机端把
+      // current 冒充可选项会让选择打到不可用模型上。
+      const available = settings && settings.model && Array.isArray(settings.model.available)
+        ? settings.model.available : [];
+      if (!available.length) continue;
+      // 透传手机端层级弹层所需元数据（label/providerLabel/ctx/视觉/reasoning），
+      // 显示名优先级：引擎 providerLabel → 个人配置 providerName → providerId。
+      engineModelCatalog = available
+        .map((e) => {
+          if (!e || !e.ref || typeof e.ref.providerId !== 'string' || !e.ref.providerId
+            || typeof e.ref.modelId !== 'string' || !e.ref.modelId) return null;
+          return {
+            providerId: e.ref.providerId,
+            modelId: e.ref.modelId,
+            label: typeof e.label === 'string' && e.label ? e.label : e.ref.modelId,
+            providerLabel: typeof e.providerLabel === 'string' && e.providerLabel
+              ? e.providerLabel : (providerNameMap[e.ref.providerId] || e.ref.providerId),
+            contextWindow: Number.isFinite(e.contextWindow) ? e.contextWindow : null,
+            maxOutputTokens: Number.isFinite(e.maxOutputTokens) ? e.maxOutputTokens : null,
+            vision: Boolean(e.properties && e.properties.inputFormat && e.properties.inputFormat.supportsImage),
+            reasoning: (e.reasoning && Array.isArray(e.reasoning.levels))
+              ? { levels: e.reasoning.levels, defaultLevel: e.reasoning.defaultLevel ?? null }
+              : null,
+          };
+        })
+        .filter(Boolean);
       engineCatalogAt = Date.now();
       return engineModelCatalog;
     }
-    const resume = await bridgeRequest({
-      id: nextLocalId(), method: 'session/resume',
-      params: { sessionId: active.sessionId },
-    });
-    if (!resume || resume.error) throw safeError('X_MODEL_BRIDGE_DOWN');
-    const settings = resume && resume.result && resume.result.settings;
-    // settings.model.available 是引擎投影的可用目录（实测权威）。
-    // settings.model.current 只证明「该会话当前正用这个模型」，不是可选目录
-    // 证据（current 可指向已失效模型），不得并入 available——手机端把
-    // current 冒充可选项会让选择打到不可用模型上。
-    const available = settings && settings.model && Array.isArray(settings.model.available)
-      ? settings.model.available : [];
-    // 透传手机端层级弹层所需元数据（label/providerLabel/ctx/视觉/reasoning），
-    // 显示名优先级：引擎 providerLabel → 个人配置 providerName → providerId。
-    engineModelCatalog = available
-      .map((e) => {
-        if (!e || !e.ref || typeof e.ref.providerId !== 'string' || !e.ref.providerId
-          || typeof e.ref.modelId !== 'string' || !e.ref.modelId) return null;
-        return {
-          providerId: e.ref.providerId,
-          modelId: e.ref.modelId,
-          label: typeof e.label === 'string' && e.label ? e.label : e.ref.modelId,
-          providerLabel: typeof e.providerLabel === 'string' && e.providerLabel
-            ? e.providerLabel : (providerNameMap[e.ref.providerId] || e.ref.providerId),
-          contextWindow: Number.isFinite(e.contextWindow) ? e.contextWindow : null,
-          maxOutputTokens: Number.isFinite(e.maxOutputTokens) ? e.maxOutputTokens : null,
-          vision: Boolean(e.properties && e.properties.inputFormat && e.properties.inputFormat.supportsImage),
-          reasoning: (e.reasoning && Array.isArray(e.reasoning.levels))
-            ? { levels: e.reasoning.levels, defaultLevel: e.reasoning.defaultLevel ?? null }
-            : null,
-        };
-      })
-      .filter(Boolean);
+    if (sawEngineReply) throw safeError('X_MODEL_BRIDGE_DOWN');
+    engineModelCatalog = [];
     engineCatalogAt = Date.now();
     return engineModelCatalog;
   }
@@ -1344,7 +1361,9 @@ function createCompanion(options = {}) {
           // 可用目录：引擎实测（settings.model.available，唯一可信源）+
           // 导入快照补充（标记 imported，未经引擎证实可用性）。
           // 条目透传层级弹层元数据；套餐条目带 planGroup 供手机端置顶。
-          if (!planModelIds) void refreshPlanModels();
+          // TTL 到期即后台刷新（refreshPlanModels 内部有 single-flight
+          // 与 TTL 判定），登录恢复后套餐目录能自动跟上
+          void refreshPlanModels();
           let engine = [];
           let degraded = false;
           try {
@@ -1877,6 +1896,23 @@ if (require.main === module) {
     console.error('用法: node companion.js --relay ws://127.0.0.1:18884/ws [--cwd <工作目录>] [--no-qr] [--mid-file <路径>] [--qr-png <路径>]');
     process.exitCode = 1;
   } else {
+    void (async () => {
+    // R09（版本锁全入口）：CLI 与 GUI 共用同一运行时基线。确认「不支持
+    // 的版本前缀」→ fail-fast 拒绝启动（锁定已验证版本是 AGENTS 明文
+    // 要求）；版本读取失败只告警不阻塞（与 GUI 预检 version-failed 分
+    // 级一致，不把基础设施抖动一票否决）。
+    try {
+      const resolvedCli = resolveZcodeRuntime(process.env);
+      if (resolvedCli.category === 'resolved') {
+        const v = await runRuntimeCommand(resolvedCli, ['--version'], { env: process.env });
+        const versionText = (v.versionText || v.stdout).match(/\d+\.\d+(?:\.\d+)?/)?.[0] || null;
+        if (versionText && !SUPPORTED_RUNTIME_PREFIXES.some((prefix) => versionText.startsWith(prefix))) {
+          console.error(`[companion] 运行时版本 ${versionText} 不在已验证基线 [${SUPPORTED_RUNTIME_PREFIXES.join(', ')}]，拒绝启动（R09 版本锁；先跑探针复核并更新基线）`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+    } catch { /* 版本探测失败：不阻塞启动 */ }
     let qrTerminal;
     try { qrTerminal = require('qrcode-terminal'); } catch { qrTerminal = null; }
     let companion;
@@ -1889,13 +1925,20 @@ if (require.main === module) {
         ...(midFileIdx !== -1 && args[midFileIdx + 1] ? { midFile: args[midFileIdx + 1] } : {}),
         logger: (event, detail) => console.error(`[companion] ${event}${detail ? ` ${detail}` : ''}`),
         onPairing: (url) => {
-          console.log('配对 URL（扫码或粘贴到手机 App）:');
-          if (qrTerminal && noQrIdx === -1) {
+          // R01（P0）：--no-qr 是自启动/无人值守入口，stdout/stderr 会被
+          // 重定向进普通日志；配对 URL 含持有者凭据（sid/hash），绝不入
+          // 日志——只落受保护产物文件，人去固定路径取码。
+          if (noQrIdx !== -1) {
+            console.error('配对 URL 已写入配对产物文件（不在日志中出现）');
+          } else {
+            console.log('配对 URL（扫码或粘贴到手机 App）:');
             console.log('');
             // 必须以方法形式调用（内部依赖 this.error 取纠错级别）
-            qrTerminal.generate(url, { small: true });
+            if (qrTerminal) {
+              qrTerminal.generate(url, { small: true });
+            }
+            console.log(url);
           }
-          console.log(url);
           // 二维码 PNG/文本链接写到固定位置：口令与房间号确定性派生，
           // 内容几乎永不变化——用户始终去同一路径取码。
           writePairingArtifacts(
@@ -1933,5 +1976,6 @@ if (require.main === module) {
         process.once(signal, () => { clearInterval(keepalive); companion.stop(); process.exit(0); });
       }
     }
+    })();
   }
 }
