@@ -197,13 +197,25 @@ class ChatProcessPart {
     this.rawType,
     this.text,
     this.toolCall,
+    this.startedAtMs,
+    this.closedAtMs,
   });
 
   const ChatProcessPart.text(String text, {String? id})
       : this._(kind: ChatProcessPartKind.text, id: id, text: text);
 
-  const ChatProcessPart.reasoning(String text, {String? id})
-      : this._(kind: ChatProcessPartKind.reasoning, id: id, text: text);
+  const ChatProcessPart.reasoning(
+    String text, {
+    String? id,
+    int? startedAtMs,
+    int? closedAtMs,
+  }) : this._(
+          kind: ChatProcessPartKind.reasoning,
+          id: id,
+          text: text,
+          startedAtMs: startedAtMs,
+          closedAtMs: closedAtMs,
+        );
 
   const ChatProcessPart.tool(ToolCallInfo toolCall, {String? id})
       : this._(
@@ -230,9 +242,19 @@ class ChatProcessPart {
   final String? text;
   final ToolCallInfo? toolCall;
 
+  /// 分段起点（毫秒墙钟，实时流式期间本地记录）。思考耗时的分子：
+  /// 「思考 · 持续了 N 秒」= closedAtMs − startedAtMs；运行中随心跳
+  /// 用当前时间滚算。权威回填的分段无本地时间 → null（只显示「思考」）。
+  final int? startedAtMs;
+
+  /// 分段闭合时间（后续不同类 part 插入或回合终结核销；仅思考分段使用）
+  final int? closedAtMs;
+
   ChatProcessPart copyWith({
     String? text,
     ToolCallInfo? toolCall,
+    int? startedAtMs,
+    int? closedAtMs,
   }) =>
       ChatProcessPart._(
         kind: kind,
@@ -240,6 +262,8 @@ class ChatProcessPart {
         rawType: rawType,
         text: text ?? this.text,
         toolCall: toolCall ?? this.toolCall,
+        startedAtMs: startedAtMs ?? this.startedAtMs,
+        closedAtMs: closedAtMs ?? this.closedAtMs,
       );
 
   Map<String, dynamic> toJson() => {
@@ -248,6 +272,8 @@ class ChatProcessPart {
         if (rawType != null) 'rawType': rawType,
         if (text != null) 'text': text,
         if (toolCall != null) 'toolCall': toolCall!.toJson(),
+        if (startedAtMs != null) 'startedAtMs': startedAtMs,
+        if (closedAtMs != null) 'closedAtMs': closedAtMs,
       };
 
   factory ChatProcessPart.fromJson(Map<String, dynamic> json) {
@@ -258,6 +284,9 @@ class ChatProcessPart {
       _ => ChatProcessPartKind.text,
     };
     final rawToolCall = json['toolCall'];
+    int? msOf(Object? v) => v is num
+        ? v.toInt()
+        : int.tryParse(v?.toString() ?? '');
     return ChatProcessPart._(
       kind: kind,
       id: json['id']?.toString(),
@@ -266,6 +295,8 @@ class ChatProcessPart {
       toolCall: rawToolCall is Map
           ? ToolCallInfo.fromJson(Map<String, dynamic>.from(rawToolCall))
           : null,
+      startedAtMs: msOf(json['startedAtMs']),
+      closedAtMs: msOf(json['closedAtMs']),
     );
   }
 }

@@ -1262,15 +1262,21 @@ class ZcodeChatStore extends ChangeNotifier {
     await _refreshAuthoritative(state);
   }
 
-  /// 子智能体线程（session/subagents {action:'show'}，作用于本进程最近
-  /// materialize 的会话）：逐行经 _mapProtocolMessage 映射后按 info.agent
+  /// 子智能体线程（session/subagents）。0.16.9 实测 schema：sessionId
+  /// 必填（缺省 -32602 ZodError，probe-surface-report 已钉）——作用于
+  /// 当前活动会话。响应逐行经 _mapProtocolMessage 映射后按 info.agent
   /// 分组，最新线程在前。失败返回空列表（尽力而为）。
   Future<List<SubagentThread>> fetchSubagentThreads() async {
     final client = _client;
-    if (client == null || !client.paired) return const [];
+    final sessionId = _activeSessionId;
+    if (client == null || !client.paired || sessionId == null) {
+      return const [];
+    }
     try {
-      final result =
-          await client.request('session/subagents', {'action': 'show'});
+      final result = await client.request('session/subagents', {
+        'sessionId': sessionId,
+        'action': 'show',
+      });
       final rows = (result is Map ? result['messages'] : null) as List? ?? [];
       final byAgent = <String, List<Map<String, dynamic>>>{};
       for (final row in rows.whereType<Map>()) {

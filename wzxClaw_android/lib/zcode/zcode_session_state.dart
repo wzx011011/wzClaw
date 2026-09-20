@@ -385,6 +385,7 @@ class ZcodeSessionState {
       final last = parts.removeLast();
       parts.add(last.copyWith(text: '${last.text ?? ''}$delta'));
     } else {
+      _sealTrailingReasoning(parts);
       parts.add(ChatProcessPart.text(delta));
     }
     it.message = it.message.copyWith(
@@ -413,7 +414,12 @@ class ZcodeSessionState {
       final last = parts.removeLast();
       parts.add(last.copyWith(text: '${last.text ?? ''}$delta'));
     } else {
-      parts.add(ChatProcessPart.reasoning(delta));
+      parts.add(
+        ChatProcessPart.reasoning(
+          delta,
+          startedAtMs: _clock().millisecondsSinceEpoch,
+        ),
+      );
     }
     it.message = it.message.copyWith(
       processParts: parts,
@@ -421,6 +427,21 @@ class ZcodeSessionState {
     );
     it.dirty = true;
     if (isWaitingForResponse) isWaitingForResponse = false;
+  }
+
+  /// 核销尾部思考分段的闭合时间（耗时 = 闭合 − 起点）。在追加异类
+  /// part（正文/工具/marker）与回合终结核销；已闭合或权威回填（无
+  /// 本地起点）的分段不动。
+  void _sealTrailingReasoning(List<ChatProcessPart> parts) {
+    if (parts.isEmpty) return;
+    final last = parts.last;
+    if (last.kind == ChatProcessPartKind.reasoning &&
+        last.startedAtMs != null &&
+        last.closedAtMs == null) {
+      parts[parts.length - 1] = last.copyWith(
+        closedAtMs: _clock().millisecondsSinceEpoch,
+      );
+    }
   }
 
   /// 把实时工具生命周期投影到原序过程流。后续 scheduled/started/progress/
@@ -466,6 +487,7 @@ class ZcodeSessionState {
     if (partIndex >= 0) {
       parts[partIndex] = parts[partIndex].copyWith(toolCall: tool);
     } else {
+      _sealTrailingReasoning(parts);
       parts.add(ChatProcessPart.tool(tool));
     }
     it.message = it.message.copyWith(
@@ -760,6 +782,8 @@ class ZcodeSessionState {
           parts.add(ChatProcessPart.text(authoritativeText));
         }
       }
+      // 回合终结核销：尾部思考分段此刻闭合（后续不再有 part 追加）
+      _sealTrailingReasoning(parts);
       it.message = it.message.copyWith(
         isStreaming: false,
         processParts: parts,

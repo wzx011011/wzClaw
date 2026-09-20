@@ -74,7 +74,7 @@ void main() {
     expect(vm.countsLabel, contains('执行 1'));
   });
 
-  test('读取聚合：相邻 Read 合并，成员保留完整输入输出', () {
+  test('查阅聚合：相邻 Read 合并为查阅伞，成员行独立展开详情', () {
     final vm = buildTurnVM(
       [
         _assistant([
@@ -96,14 +96,82 @@ void main() {
 
     expect(vm.parts, hasLength(1));
     final row = vm.parts.first.tool!;
-    expect(row.verb, '读取');
+    expect(row.verb, '查阅');
     expect(row.count, 2);
-    expect(row.target, '· 2 文件');
-    // 每个成员的目标行 + 输入 + 有输出成员的输出
-    expect(row.details.map((d) => d.text), contains('· one.dart'));
-    expect(row.details.map((d) => d.text), contains('· two.dart'));
-    expect(row.details.any((d) => d.text.contains('20 行')), isTrue);
-    expect(row.defaultOpen, isTrue); // 任一成员有输出即展开
+    expect(row.target, '2 文件');
+    // 组行不直接挂详情；二级是成员行，成员各自带目标与输入/输出
+    expect(row.details, isEmpty);
+    expect(row.memberRows, hasLength(2));
+    expect(row.memberRows![0].verb, '文件');
+    expect(row.memberRows![0].target, 'one.dart');
+    expect(
+      row.memberRows![1].details.any((d) => d.text.contains('20 行')),
+      isTrue,
+    );
+    // 任一成员完成且有输出 → 组默认展开成员列表；成员自身默认收起
+    expect(row.defaultOpen, isTrue);
+    expect(row.memberRows![1].defaultOpen, isFalse);
+    expect(vm.countsLabel, contains('查阅 1'));
+  });
+
+  test('Bash 语义分桶：只读命令按内容归类（2 搜索，1 列表）', () {
+    final vm = buildTurnVM(
+      [
+        _assistant([
+          ChatProcessPart.tool(
+            _call(
+              'Bash',
+              input: '{"command":"wc -l APP-SERVER.md && ls relay"}',
+              output: '824 行',
+              id: 'b1',
+            ),
+          ),
+          ChatProcessPart.tool(
+            _call(
+              'Bash',
+              input: '{"command":"grep -n thinking lib/a.dart"}',
+              output: '3 命中',
+              id: 'b2',
+            ),
+          ),
+          ChatProcessPart.tool(
+            _call(
+              'Bash',
+              input: '{"command":"rg -n duration lib/b.dart"}',
+              output: '5 命中',
+              id: 'b3',
+            ),
+          ),
+        ]),
+      ],
+      busy: false,
+    );
+
+    expect(vm.parts, hasLength(1));
+    final row = vm.parts.first.tool!;
+    expect(row.verb, '查阅');
+    expect(row.target, '2 搜索，1 列表');
+    expect(row.memberRows, hasLength(3));
+    expect(row.memberRows![0].verb, '列表');
+    expect(row.memberRows![1].verb, '搜索');
+    expect(row.memberRows![2].verb, '搜索');
+  });
+
+  test('写入/非白名单命令不进查阅：npm 单行保持执行', () {
+    final vm = buildTurnVM(
+      [
+        _assistant([
+          ChatProcessPart.tool(
+            _call('Bash', input: '{"command":"npm test"}', id: 'n1'),
+          ),
+        ]),
+      ],
+      busy: false,
+    );
+
+    final row = vm.parts.first.tool!;
+    expect(row.verb, '执行');
+    expect(row.memberRows, isNull);
   });
 
   test('正文/reasoning 打断聚合：不再合并后续同类工具', () {
@@ -204,6 +272,8 @@ void main() {
           ChatProcessPart.tool(
             _call('FileRead', input: '{"file_path":"/a/x.dart"}', id: 'f1'),
           ),
+          // marker 打断：避免查阅家族相邻成组，验证单行动词映射
+          const ChatProcessPart.marker('step-start', id: 'm1'),
           ChatProcessPart.tool(
             _call(
               'ShellExecute',
@@ -212,6 +282,7 @@ void main() {
               id: 'f2',
             ),
           ),
+          const ChatProcessPart.marker('step-finish', id: 'm2'),
           ChatProcessPart.tool(
             _call('FileWrite', input: '{"file_path":"/a/y.dart"}', id: 'f3'),
           ),
@@ -220,8 +291,8 @@ void main() {
       busy: false,
     );
 
-    expect((vm.parts[0].tool!).verb, '读取');
-    expect((vm.parts[1].tool!).verb, '执行');
+    expect((vm.parts[0].tool!).verb, '文件');
+    expect((vm.parts[1].tool!).verb, '列表');
     expect((vm.parts[2].tool!).verb, '写入');
   });
 
@@ -284,7 +355,7 @@ void main() {
     expect(vm.answerMarkdown, '汇总完成');
   });
 
-  test('运行中：工具行 running 态；reasoning 行 running', () {
+  test('运行中：工具行 running；被工具接续的思考段已停表', () {
     final vm = buildTurnVM(
       [
         _assistant(
@@ -305,9 +376,53 @@ void main() {
       busy: true,
     );
 
-    expect(vm.parts[0].think!.running, isTrue);
+    // 官方对齐：思考段后工具已在执行 → 思考段不再跟整轮转圈
+    expect(vm.parts[0].think!.running, isFalse);
     expect(vm.parts[1].tool!.running, isTrue);
     expect(vm.busy, isTrue);
+  });
+
+  test('思考分段状态：整轮运行中，已闭合分段停表、只有尾部分段 running', () {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final vm = buildTurnVM(
+      [
+        _assistant(
+          [
+            // 第一段：已被工具插入核销（closed = start + 4000）
+            ChatProcessPart.reasoning(
+              '先想想',
+              startedAtMs: now - 10000,
+              closedAtMs: now - 6000,
+            ),
+            ChatProcessPart.tool(
+              _call('Read', input: '{"file_path":"/a.dart"}', id: 'r9'),
+            ),
+            // 第二段：仍在流式的尾部分段（无 closedAt）
+            ChatProcessPart.reasoning('再想想', startedAtMs: now - 2000),
+          ],
+          isStreaming: true,
+        ),
+      ],
+      busy: true,
+    );
+
+    expect(vm.parts[0].think!.running, isFalse, reason: '已闭合分段不跟整轮转圈');
+    expect(vm.parts[0].think!.duration, const Duration(seconds: 4));
+    expect(vm.parts[1].tool!.running, isFalse);
+    expect(vm.parts[2].think!.running, isTrue, reason: '尾部分段才是正在思考');
+    expect(vm.parts[2].think!.duration, isNotNull); // 随当前时间滚算
+  });
+
+  test('思考分段无本地时间（权威回填）→ duration null，不显示秒数', () {
+    final vm = buildTurnVM(
+      [
+        _assistant([const ChatProcessPart.reasoning('历史思考')]),
+      ],
+      busy: false,
+    );
+
+    expect(vm.parts[0].think!.duration, isNull);
+    expect(vm.parts[0].think!.running, isFalse);
   });
 
   group('回合指标（首字延迟 / tok/s）', () {

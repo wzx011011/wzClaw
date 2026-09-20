@@ -21,17 +21,20 @@ void main() {
   });
 
   test('displayLabel：引擎友好名优先；label 与 id 同文时才美化', () {
-    final friendly = NodeModelEntry(
+    const friendly = NodeModelEntry(
       providerId: 'p',
       modelId: 'glm-5.3-flash',
       available: true,
       source: 'engine',
       label: 'GLM-5.3-Flash（旗舰）',
     );
-    expect(friendly.displayLabel, 'GLM-5.3-Flash（旗舰）',
-        reason: '引擎给了不同友好名：原样保留');
+    expect(
+      friendly.displayLabel,
+      'GLM-5.3-Flash（旗舰）',
+      reason: '引擎给了不同友好名：原样保留',
+    );
 
-    final rawId = NodeModelEntry(
+    const rawId = NodeModelEntry(
       providerId: 'imported:deepseek',
       modelId: 'deepseek-v4-pro',
       available: true,
@@ -40,7 +43,7 @@ void main() {
     );
     expect(rawId.displayLabel, 'DeepSeek-V4-Pro');
 
-    final noLabel = NodeModelEntry(
+    const noLabel = NodeModelEntry(
       providerId: 'imported:codex',
       modelId: 'gpt-6-astra',
       available: true,

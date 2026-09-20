@@ -6,11 +6,37 @@ import 'package:image_picker/image_picker.dart';
 import 'connection_manager.dart';
 import 'transfer_rate_limiter.dart';
 
+/// 附件引用标记行正则（composeOutgoing 生成；服务端权威消息原样带回）
+final _attachmentMarkerRE = RegExp(r'^\[附件已上传到节点: (.*)\]$');
+
+/// 拆分消息文本：附件标记行 → 节点路径列表，其余行合并为展示文本。
+/// 用户气泡渲染单一入口（标记行还原成图片块，不裸露路径文字）。
+({String displayText, List<String> attachmentPaths}) splitAttachmentMarkers(
+  String text,
+) {
+  final paths = <String>[];
+  final lines = <String>[];
+  for (final line in text.replaceAll('\r\n', '\n').split('\n')) {
+    final marker = _attachmentMarkerRE.firstMatch(line.trim());
+    if (marker != null) {
+      paths.add(marker.group(1)!);
+    } else {
+      lines.add(line);
+    }
+  }
+  return (displayText: lines.join('\n').trim(), attachmentPaths: paths);
+}
+
 /// 待发送附件的上传状态（页面持有列表，字段可变随进度更新）
 class AttachmentUpload {
-  AttachmentUpload({required this.name, required this.size});
+  AttachmentUpload({required this.name, required this.size, this.localPath});
 
   final String name;
+
+  /// 手机本地文件路径（选图来源 XFile.path）：chip 缩略图与全屏预览的
+  /// 数据源。上传后仍保留——发送瞬间气泡缩略图靠它渲染，不回读节点。
+  final String? localPath;
+
   final int size;
 
   /// 节点侧落盘绝对路径（commit 成功后非空——消息引用它）
@@ -77,8 +103,11 @@ class AttachmentService {
     } catch (e) {
       return _failed('读取图片失败: $e');
     }
-    final uploadRecord =
-        AttachmentUpload(name: picked.name, size: bytes.length);
+    final uploadRecord = AttachmentUpload(
+      name: picked.name,
+      size: bytes.length,
+      localPath: picked.path,
+    );
     onCreated?.call(uploadRecord);
     return upload(
       uploadRecord,

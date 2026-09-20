@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +26,7 @@ import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/git_branch_sheet.dart';
+import '../widgets/image_viewer_page.dart';
 import '../widgets/status_panel_card.dart';
 import '../widgets/permission_bar.dart';
 import '../widgets/project_drawer.dart';
@@ -110,8 +112,35 @@ class _ChatPageState extends State<ChatPage> {
     return refs.isEmpty ? text : '$refs\n$text';
   }
 
+  /// 已发送附件「节点路径 → 手机本地路径」缓存：用户气泡缩略图与
+  /// 点击预览的数据源（本会话生命周期内存态；重启后历史附件无本地
+  /// 副本，走节点下载入口）。只保留最近 [_sentAttachmentCacheMax] 条，
+  /// 超出淘汰最旧——缓存不是事实来源，事实是消息文本里的节点路径。
+  static const _sentAttachmentCacheMax = 32;
+  final Map<String, String> _sentAttachmentLocalPaths = {};
+
   void _removeSentAttachments(Iterable<AttachmentUpload> attachments) {
+    for (final a in attachments) {
+      final node = a.nodePath;
+      final local = a.localPath;
+      if (node != null && node.isNotEmpty && local != null && local.isNotEmpty) {
+        _sentAttachmentLocalPaths[node] = local;
+      }
+    }
+    while (_sentAttachmentLocalPaths.length > _sentAttachmentCacheMax) {
+      _sentAttachmentLocalPaths.remove(_sentAttachmentLocalPaths.keys.first);
+    }
     setState(() => _attachments.removeWhere(attachments.contains));
+  }
+
+  /// 全屏预览本地图片（附件 chip / 气泡缩略图点击入口）
+  void _previewLocalImage(String localPath, String title) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => ImageViewerPage(filePath: localPath, title: title),
+      ),
+    );
   }
 
   /// 附件/下载的归属工作区（评审 #19）：有活动会话 = 会话自己的工作区；
@@ -156,6 +185,23 @@ class _ChatPageState extends State<ChatPage> {
 
   void _removeAttachment(AttachmentUpload attachment) {
     setState(() => _attachments.remove(attachment));
+  }
+
+  /// chip 点击预览：有本地副本直接全屏预览；无副本（异常态）提示。
+  /// 仅上传失败且无本地文件时不可预览——正常选图必有 localPath。
+  void _previewAttachment(AttachmentUpload attachment) {
+    final local = attachment.localPath;
+    if (local == null || local.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('该附件没有本地副本，无法预览'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    _previewLocalImage(local, attachment.name);
   }
 
   /// 当前草稿持久化（单对键：最后活动上下文才恢复，避免键无限增长）
@@ -1575,9 +1621,21 @@ class _ChatPageState extends State<ChatPage> {
 
   // ── User bubble ────────────────────────────────────────────────────
 
+  /// 图片扩展名（节点落盘名保留原始扩展；这些能被 Flutter 解码预览）
+  static const _imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'];
+
+  static bool _isImagePath(String nodePath) {
+    final lower = nodePath.toLowerCase();
+    return _imageExtensions.any(lower.endsWith);
+  }
+
   Widget _buildUserBubble(ChatMessage msg) {
     final colors = AppColors.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
+    // 附件标记行 → 图片块（解析口径单一来源：attachment_service）；其余为文本
+    final parsed = splitAttachmentMarkers(msg.text);
+    final displayText = parsed.displayText;
+    final attachmentPaths = parsed.attachmentPaths;
     return GestureDetector(
       onLongPress: () => _showMessageActions(msg),
       child: Align(
@@ -1595,14 +1653,118 @@ class _ChatPageState extends State<ChatPage> {
               bottomRight: Radius.circular(4),
             ),
           ),
-          child: Text(
-            msg.text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              height: 1.5,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (displayText.isNotEmpty)
+                Text(
+                  displayText,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+              if (attachmentPaths.isNotEmpty) ...[
+                if (displayText.isNotEmpty) const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    for (final nodePath in attachmentPaths)
+                      _buildAttachmentTile(colors, nodePath),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 气泡内附件块：图片显示缩略图（本地缓存直读），点击全屏预览；
+  /// 无本地副本（历史消息/重启后）或非图片 → 下载入口块，点击走
+  /// 既有节点下载流程（确认 sheet → 拉取 → 保存/预览）。
+  Widget _buildAttachmentTile(AppColors colors, String nodePath) {
+    final local = _sentAttachmentLocalPaths[nodePath];
+    final isImage = _isImagePath(nodePath);
+    final name = nodePath.replaceAll('\\', '/').split('/').last;
+    if (isImage && local != null && local.isNotEmpty) {
+      return GestureDetector(
+        onTap: () => _previewLocalImage(local, name),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 96,
+            height: 96,
+            child: Image.file(
+              File(local),
+              fit: BoxFit.cover,
+              cacheWidth: 192,
+              errorBuilder: (_, Object e, StackTrace? s) => _attachmentTileFallback(
+                colors,
+                name: name,
+                isImage: isImage,
+                nodePath: nodePath,
+              ),
             ),
           ),
+        ),
+      );
+    }
+    return _attachmentTileFallback(
+      colors,
+      name: name,
+      isImage: isImage,
+      nodePath: nodePath,
+    );
+  }
+
+  Widget _attachmentTileFallback(
+    AppColors colors, {
+    required String name,
+    required bool isImage,
+    required String nodePath,
+  }) {
+    return GestureDetector(
+      onTap: () => _startFileDownload(nodePath),
+      child: Container(
+        width: 96,
+        height: 96,
+        decoration: BoxDecoration(
+          color: Colors.black26,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isImage ? Icons.image_outlined : Icons.insert_drive_file_outlined,
+              size: 26,
+              color: Colors.white70,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 10),
+            ),
+            const SizedBox(height: 2),
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.download_outlined, size: 11, color: Colors.white54),
+                SizedBox(width: 2),
+                Text('点击下载', style: TextStyle(color: Colors.white54, fontSize: 10)),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -2025,22 +2187,6 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
-              if (_attachments.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final attachment in _attachments)
-                          _AttachmentChip(
-                            attachment: attachment,
-                            onRemove: () => _removeAttachment(attachment),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
               // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
               // 语义未定，先不暴露——用户 2026-09-17 定）
               _buildSendQueueStrip(colors),
@@ -2098,6 +2244,24 @@ class _ChatPageState extends State<ChatPage> {
                 : null,
             onChanged: _onInputChanged,
           ),
+          // 待发附件 chip 行（官方样式）：输入框下方、工具栏上方，
+          // 横向滚动；缩略图 + 文件名 + 大小/进度 + 移除，点击预览
+          if (_attachments.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final attachment in _attachments)
+                    _AttachmentChip(
+                      attachment: attachment,
+                      onRemove: () => _removeAttachment(attachment),
+                      onPreview: () => _previewAttachment(attachment),
+                    ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           _buildComposerToolbar(colors, isConnected),
         ],
@@ -3585,95 +3749,142 @@ class _ChatPageState extends State<ChatPage> {
 // ── Custom code block builder with syntax highlight + copy ────────────
 
 class _AttachmentChip extends StatelessWidget {
-  const _AttachmentChip({required this.attachment, required this.onRemove});
+  const _AttachmentChip({
+    required this.attachment,
+    required this.onRemove,
+    required this.onPreview,
+  });
 
   final AttachmentUpload attachment;
   final VoidCallback onRemove;
+  final VoidCallback onPreview;
+
+  /// 字节数人性化：B/KB/MB（一位小数，≥100KB 进位显示整数）
+  static String formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb >= 100 ? kb.round() : kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    return '${mb >= 100 ? mb.round() : mb.toStringAsFixed(1)} MB';
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    final a = attachment;
+    // 状态行：错误 > 上传中进度 > 完成大小
+    final Widget status;
+    if (a.error != null) {
+      status = Text(
+        a.error!,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: colors.error, fontSize: 10.5),
+      );
+    } else if (a.done) {
+      status = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle, size: 11, color: colors.success),
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text(
+              formatBytes(a.size),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+            ),
+          ),
+        ],
+      );
+    } else {
+      status = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 54,
+            child: LinearProgressIndicator(
+              value: a.progress,
+              minHeight: 3,
+              color: colors.accent,
+              backgroundColor: colors.border,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            '${(a.progress * 100).toStringAsFixed(0)}%',
+            style: TextStyle(color: colors.textMuted, fontSize: 10.5),
+          ),
+        ],
+      );
+    }
     return Container(
-      constraints: const BoxConstraints(maxWidth: 200),
+      constraints: const BoxConstraints(maxWidth: 220),
       margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: colors.bgTertiary,
         border: Border.all(
-          color: attachment.error != null ? colors.error : colors.border,
+          color: a.error != null ? colors.error : colors.border,
         ),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.insert_drive_file_outlined,
-                size: 13,
-                color: colors.textMuted,
+          // 缩略图（点击预览）：本地文件直读；缺失/解码失败回退图标
+          GestureDetector(
+            onTap: onPreview,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: a.localPath != null
+                    ? Image.file(
+                        File(a.localPath!),
+                        fit: BoxFit.cover,
+                        cacheWidth: 88,
+                        errorBuilder: (_, Object e, StackTrace? s) => Icon(
+                          Icons.image_outlined,
+                          size: 20,
+                          color: colors.textMuted,
+                        ),
+                      )
+                    : Icon(
+                        Icons.image_outlined,
+                        size: 20,
+                        color: colors.textMuted,
+                      ),
               ),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  attachment.name,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  a.name,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colors.textPrimary,
                     fontSize: 12,
                   ),
                 ),
-              ),
-              IconButton(
-                onPressed: onRemove,
-                constraints:
-                    const BoxConstraints.tightFor(width: 24, height: 24),
-                padding: EdgeInsets.zero,
-                tooltip: '移除附件',
-                icon: Icon(Icons.close, size: 14, color: colors.textMuted),
-              ),
-            ],
-          ),
-          if (attachment.error != null)
-            Text(
-              attachment.error!,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.error, fontSize: 10.5),
-            )
-          else if (attachment.done)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle, size: 11, color: colors.success),
-                const SizedBox(width: 3),
-                Text(
-                  '已上传',
-                  style: TextStyle(color: colors.textMuted, fontSize: 10.5),
-                ),
-              ],
-            )
-          else
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 60,
-                  child: LinearProgressIndicator(
-                    value: attachment.progress,
-                    minHeight: 3,
-                    color: colors.accent,
-                    backgroundColor: colors.border,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '${(attachment.progress * 100).toStringAsFixed(0)}%',
-                  style: TextStyle(color: colors.textMuted, fontSize: 10.5),
-                ),
+                const SizedBox(height: 2),
+                status,
               ],
             ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            constraints: const BoxConstraints.tightFor(width: 24, height: 24),
+            padding: EdgeInsets.zero,
+            tooltip: '移除附件',
+            icon: Icon(Icons.close, size: 14, color: colors.textMuted),
+          ),
         ],
       ),
     );

@@ -67,30 +67,56 @@ void main() {
     );
   });
 
-  test('fetchSubagentThreads：按 info.agent 聚合', () async {
+  test('fetchSubagentThreads：请求带 sessionId（0.16.9 必填）+ 按 agent 聚合',
+      () async {
     final fake = FakeZcodeRelayClient();
-    fake.handlers['session/subagents'] = (_) => {
-          'messages': [
-            {
-              'info': {
-                'id': 'sa-2',
-                'agent': 'Explore',
-                'role': 'assistant',
-                'time': {'created': 200},
-              },
-              'parts': [
-                {'type': 'text', 'text': '子智能体结论'},
-              ],
-            },
-          ],
+    fake.handlers['session/resume'] = (_) => {
+          'session': {
+            'workspace': {'workspaceKey': 'k1', 'workspacePath': 'E:\\proj'},
+          },
+          'projection': {'status': 'idle'},
+          'messages': [],
         };
+    Map<String, dynamic>? subagentsParams;
+    fake.handlers['session/subagents'] = (params) {
+      subagentsParams = params;
+      return {
+        'messages': [
+          {
+            'info': {
+              'id': 'sa-2',
+              'agent': 'Explore',
+              'role': 'assistant',
+              'time': {'created': 200},
+            },
+            'parts': [
+              {'type': 'text', 'text': '子智能体结论'},
+            ],
+          },
+        ],
+      };
+    };
+    final store = fedStore(fake);
+
+    await store.openSession('sess-1');
+    final threads = await store.fetchSubagentThreads();
+
+    // 协议契约锚定：缺 sessionId 会被 0.16.9 引擎 -32602 拒绝
+    expect(subagentsParams?['sessionId'], 'sess-1');
+    expect(subagentsParams?['action'], 'show');
+    expect(threads, hasLength(1));
+    expect(threads.first.agent, 'Explore');
+    expect(threads.first.messages.single['content'], '子智能体结论');
+  });
+
+  test('fetchSubagentThreads：无活动会话直接返回空，不发请求', () async {
+    final fake = FakeZcodeRelayClient();
     final store = fedStore(fake);
 
     final threads = await store.fetchSubagentThreads();
 
-    expect(threads, hasLength(1));
-    expect(threads.first.agent, 'Explore');
-    expect(threads.first.messages.single['content'], '子智能体结论');
+    expect(threads, isEmpty);
+    expect(fake.requests.map((e) => e.key), isNot(contains('session/subagents')));
   });
 
   test('ingestNotifyFrame：未知通知帧不崩溃', () {

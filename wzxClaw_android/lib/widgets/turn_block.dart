@@ -70,12 +70,14 @@ class TurnToolRow {
     this.subagentType,
     this.lifecycle,
     this.filePath,
+    this.memberRows,
   });
 
-  /// 中文动词：编辑/查阅/执行/写入/读取/搜索
+  /// 中文动词：查阅/执行/写入/读取/搜索/文件/列表
   final String verb;
 
-  /// 目标：文件末段，或聚合的「· 2 文件」「· 2 个命令」
+  /// 目标：文件末段、命令摘要，或聚合计数「2 搜索，1 列表」，
+  /// 或组运行态摘要「正在读取 x.dart」
   final String target;
 
   /// Write 家族的目标文件完整路径（手机端「下载到手机」入口数据源；
@@ -99,10 +101,16 @@ class TurnToolRow {
   /// 失败后重试成功过（显示「已重试恢复」）
   final bool recovered;
 
-  /// 二级展开的详情行（diff/命令输出，纯文本行）
+  /// 二级展开的详情行（diff/命令输出，纯文本行）。组行（查阅伞）
+  /// 不挂详情——二级是 [memberRows]，成员行各自挂详情。
   final List<TurnDetailLine> details;
 
+  /// 组行的成员行（查阅伞展开后的逐成员列表；null = 普通单行）。
+  /// 成员行是完整的工具行：各自独立展开输入/输出详情。
+  final List<TurnToolRow>? memberRows;
+
   /// 完成且已有结果时默认展开一次；用户之后的开合操作仍被本地状态保留。
+  /// 组行只展开成员列表；成员行默认收起（官方对齐），逐个点开看详情。
   final bool defaultOpen;
 
   /// Agent 的 subagent_type（Explore/general-purpose 等）；非 Agent 工具为 null。
@@ -290,7 +298,13 @@ TurnVM buildTurnVM(
       continue;
     }
     for (final part in message.processParts) {
-      sequence.add(_ProcessSource.part(part, message.createdAt));
+      sequence.add(
+        _ProcessSource.part(
+          part,
+          message.createdAt,
+          streaming: message.isStreaming,
+        ),
+      );
     }
   }
 
@@ -315,43 +329,139 @@ TurnVM buildTurnVM(
     currentMembers = <_ToolView>[];
   }
 
+  /// 查阅伞行（官方对齐）：verb=查阅，target=分桶计数或运行态摘要，
+  /// 二级为成员行（每行独立展开自己的输入/输出详情）
+  TurnToolRow exploreRow(List<_ToolView> members) {
+    final bucketCounts = <_ExploreBucket, int>{};
+    for (final member in members) {
+      final bucket = _exploreBucketOf(member);
+      if (bucket != null) {
+        bucketCounts[bucket] = (bucketCounts[bucket] ?? 0) + 1;
+      }
+    }
+    _ToolView? trailingRunning;
+    for (final member in members) {
+      if (member.status == ToolCallStatus.running) trailingRunning = member;
+    }
+    final String target;
+    if (trailingRunning != null) {
+      // 运行中：摘要末个运行成员的动作（「正在读取 x.dart」）
+      target =
+          '正在${_bucketAction(_exploreBucketOf(trailingRunning))} '
+          '${_toolTarget(trailingRunning.name, trailingRunning.input)}';
+    } else {
+      target = [
+        if ((bucketCounts[_ExploreBucket.search] ?? 0) > 0)
+          '${bucketCounts[_ExploreBucket.search]} 搜索',
+        if ((bucketCounts[_ExploreBucket.list] ?? 0) > 0)
+          '${bucketCounts[_ExploreBucket.list]} 列表',
+        if ((bucketCounts[_ExploreBucket.file] ?? 0) > 0)
+          '${bucketCounts[_ExploreBucket.file]} 文件',
+      ].join('，');
+    }
+    return TurnToolRow(
+      verb: '查阅',
+      target: target,
+      count: members.length,
+      running: trailingRunning != null,
+      failed: members.any((member) => member.failed),
+      recovered: members.any((member) => member.recovered),
+      memberRows: [
+        for (final member in members) _exploreMemberRow(member),
+      ],
+      defaultOpen: members.any(
+        (member) =>
+            member.status != ToolCallStatus.running && member.output != null,
+      ),
+    );
+  }
+
   void emitTool(_ToolView view) {
     final verb = turnToolVerb(
       view.name,
       done: view.status != ToolCallStatus.running,
     );
-    // 聚合：仅相邻同类（读取/搜索/执行）合并为一行，展开逐成员显示
-    final aggregate = verb == '读取' || verb == '搜索' || verb == '执行';
-    if (aggregate &&
-        verb == lastVerb &&
-        parts.isNotEmpty &&
-        parts.last.kind == TurnPartKind.tool) {
+    // 查阅聚合（官方对齐）：连续的查阅类工具（读取/搜索/只读 shell）
+    // 并入同一伞行，按语义分桶计数；≥2 个成员才成组，单发保留原动词行。
+    final bucket = _exploreBucketOf(view);
+    if (bucket != null && lastVerb == _kExploreVerb) {
+      final firstUpgrade = currentMembers.length == 1;
       currentMembers = List.of(currentMembers)..add(view);
       final row = parts.last.tool!;
       parts[parts.length - 1] = TurnPart.tool(
-        TurnToolRow(
-          verb: verb,
-          target: '· ${currentMembers.length}${verb == '执行' ? ' 个命令' : ' 文件'}',
-          count: currentMembers.length,
-          running: currentMembers
-              .any((member) => member.status == ToolCallStatus.running),
-          failed: currentMembers.any((member) => member.failed),
-          recovered: currentMembers.any((member) => member.recovered),
-          details: [
-            for (final member in currentMembers) ..._memberDetails(member),
-          ],
-          defaultOpen: currentMembers.any(
-            (member) =>
-                member.status != ToolCallStatus.running &&
-                member.output != null,
-          ),
-        ),
+        exploreRow(currentMembers),
         key: row.target,
       );
-      counts[verb] = (counts[verb] ?? 0) + 1;
+      if (firstUpgrade) {
+        // 首个成员此前按语义动词计数过：成组后并入「查阅」
+        final firstBucket = _exploreBucketOf(currentMembers.first);
+        if (firstBucket != null) {
+          final bucketVerb = _bucketVerb(firstBucket);
+          final c = counts[bucketVerb] ?? 0;
+          if (c <= 1) {
+            counts.remove(bucketVerb);
+          } else {
+            counts[bucketVerb] = c - 1;
+          }
+        }
+        counts['查阅'] = (counts['查阅'] ?? 0) + 1;
+      }
       return;
     }
+    if (bucket != null) {
+      // 首个查阅成员：先按语义动词渲染单行；下一个连续成员到来时
+      // 升级为伞行并把该计数并回查阅
+      currentMembers = [view];
+      lastVerb = _kExploreVerb;
+      final bucketVerb = _bucketVerb(bucket);
+      parts.add(
+        TurnPart.tool(
+          TurnToolRow(
+            verb: bucketVerb,
+            target: _toolTarget(view.name, view.input),
+            running: view.status == ToolCallStatus.running,
+            failed: view.failed,
+            recovered: view.recovered,
+            elapsed: view.status == ToolCallStatus.running
+                ? DateTime.now().difference(view.createdAt)
+                : null,
+            details: _memberDetails(view),
+            defaultOpen:
+                view.status != ToolCallStatus.running && view.output != null,
+            lifecycle: view.lifecycle,
+          ),
+          key: view.callId.isEmpty ? null : view.callId,
+        ),
+      );
+      counts[bucketVerb] = (counts[bucketVerb] ?? 0) + 1;
+      return;
+    }
+    // 终端聚合：相邻执行（非只读 shell）仍合并「· N 个命令」
     currentMembers = [view];
+    if (verb == '执行' &&
+        lastVerb == verb &&
+        parts.isNotEmpty &&
+        parts.last.kind == TurnPartKind.tool) {
+      final previous = parts.last.tool!;
+      final mergedCount = (previous.count ?? 1) + 1;
+      parts[parts.length - 1] = TurnPart.tool(
+        TurnToolRow(
+          verb: verb,
+          target: '· $mergedCount 个命令',
+          count: mergedCount,
+          running:
+              previous.running || view.status == ToolCallStatus.running,
+          failed: previous.failed || view.failed,
+          recovered: previous.recovered || view.recovered,
+          details: [...previous.details, ..._memberDetails(view)],
+          defaultOpen: previous.defaultOpen ||
+              (view.status != ToolCallStatus.running &&
+                  view.output != null),
+        ),
+        key: previous.target,
+      );
+      return;
+    }
     final delta = _editLineDelta(view.name, view.input);
     final written = view.status != ToolCallStatus.running && !view.failed
         ? _writtenFilePath(view)
@@ -459,9 +569,25 @@ TurnVM buildTurnVM(
       case ChatProcessPartKind.reasoning:
         final body = process.text ?? '';
         if (body.isNotEmpty) {
+          // 分段状态（官方对齐）：只有流式消息尾部的思考段是「正在思考」，
+          // 之前的分段已闭合——固定显示自己的持续时长，不再跟着整轮转圈
+          final isLiveTail = busy &&
+              source.isStreamingMessage &&
+              i == sequence.length - 1;
+          final started = process.startedAtMs;
+          Duration? duration;
+          if (started != null) {
+            final end =
+                process.closedAtMs ?? DateTime.now().millisecondsSinceEpoch;
+            duration = Duration(milliseconds: end - started);
+          }
           parts.add(
             TurnPart.think(
-              TurnThinkData(content: body, running: busy),
+              TurnThinkData(
+                content: body,
+                running: isLiveTail,
+                duration: duration,
+              ),
               key: process.id,
             ),
           );
@@ -517,17 +643,22 @@ TurnVM buildTurnVM(
 }
 
 class _ProcessSource {
-  _ProcessSource.part(ChatProcessPart value, this.createdAt)
-      : part = value,
+  _ProcessSource.part(
+    ChatProcessPart value,
+    this.createdAt, {
+    bool streaming = false,
+  })  : part = value,
         kind = value.kind == ChatProcessPartKind.marker
             ? _ProcessSourceKind.marker
             : _ProcessSourceKind.part,
-        message = null;
+        message = null,
+        isStreamingMessage = streaming;
   _ProcessSource.agentMessage(ChatMessage value)
       : message = value,
         kind = _ProcessSourceKind.agentMessage,
         part = null,
-        createdAt = value.createdAt;
+        createdAt = value.createdAt,
+        isStreamingMessage = value.isStreaming;
 
   final _ProcessSourceKind kind;
   final ChatProcessPart? part;
@@ -535,9 +666,119 @@ class _ProcessSource {
 
   /// 所属消息的创建时间（工具行运行计时用）
   final DateTime? createdAt;
+
+  /// 所属消息是否仍在流式（思考分段「正在思考」判定用）
+  final bool isStreamingMessage;
 }
 
 enum _ProcessSourceKind { part, marker, agentMessage }
+
+/// ── 查阅分桶（官方对齐）──────────────────────────────────────────
+/// 只读查阅类工具与 shell 命令归入同一「查阅」伞：按语义分桶计数
+/// （搜索/列表/文件），组行可展开为成员行，成员行各自展开详情。
+/// 分类规则对齐官方前端（app.asar LOt/mLt）：rg/grep 家族 → 搜索；
+/// ls/find/tree/dir → 列表；其余白名单命令 → 文件；写入/重定向命令
+/// 不进查阅，按普通「执行」行处理。
+
+/// 查阅伞动词标记（聚合游标专用，不直接渲染）
+const _kExploreVerb = '#explore';
+
+enum _ExploreBucket { search, list, file }
+
+/// 只读 shell 白名单（官方 mLt：wc/ls/grep/rg + 分桶正则里的 find/tree/dir）
+const _readOnlyShellCommands = {
+  'wc', 'ls', 'grep', 'rg', 'ripgrep', 'find', 'tree', 'dir',
+};
+
+final _searchCmdRE = RegExp(r'(^|\s)(rg|grep|ripgrep|git\s+grep)(\s|$)', caseSensitive: false);
+final _listCmdRE = RegExp(r'(^|\s)(ls|find|tree|dir)(\s|$)', caseSensitive: false);
+
+/// 提取 shell 命令本体（结构化输入 JSON 的 command/cmd/script）
+String? _shellCommand(String? input) {
+  final raw = input?.trim() ?? '';
+  if (!raw.startsWith('{')) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) {
+      for (final key in ['command', 'cmd', 'script']) {
+        final v = decoded[key];
+        if (v is String && v.trim().isNotEmpty) return v.trim();
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// 只读 shell 判定：无重定向/输入重定向，且 && || ; 分隔的每段
+/// 首命令都在白名单内（`wc -l f && ls` 合法；`cat f`、`npm t` 不进查阅）
+bool _isReadOnlyShell(String cmd) {
+  if (RegExp(r'>{1,2}').hasMatch(cmd) || cmd.contains('<')) return false;
+  for (final segment in cmd.split(RegExp(r'&&|\|\||;'))) {
+    final tokens = segment.trim().split(RegExp(r'\s+'));
+    if (tokens.isEmpty || tokens.first.isEmpty) continue;
+    if (!_readOnlyShellCommands.contains(tokens.first.toLowerCase())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// 工具的查阅分桶；null = 不属于查阅家族（写入/编辑/子智能体/网络获取等）
+_ExploreBucket? _exploreBucketOf(_ToolView view) {
+  switch (view.name) {
+    case 'Read':
+    case 'FileRead':
+    case 'file-read':
+    case 'Glob':
+      return _ExploreBucket.file;
+    case 'Grep':
+    case 'WebSearch':
+    case 'web-search':
+      return _ExploreBucket.search;
+    case 'Bash':
+    case 'ShellExecute':
+    case 'shell':
+      final cmd = _shellCommand(view.input);
+      if (cmd == null || !_isReadOnlyShell(cmd)) return null;
+      if (_searchCmdRE.hasMatch(cmd)) return _ExploreBucket.search;
+      if (_listCmdRE.hasMatch(cmd)) return _ExploreBucket.list;
+      return _ExploreBucket.file;
+    default:
+      return null;
+  }
+}
+
+/// 分桶的成员行动词
+String _bucketVerb(_ExploreBucket? bucket) => switch (bucket) {
+      _ExploreBucket.search => '搜索',
+      _ExploreBucket.list => '列表',
+      _ => '文件',
+    };
+
+/// 分桶的运行态动作（组行「正在读取 x.dart」用）
+String _bucketAction(_ExploreBucket? bucket) => switch (bucket) {
+      _ExploreBucket.search => '搜索',
+      _ExploreBucket.list => '扫描',
+      _ => '读取',
+    };
+
+/// 查阅组成员行：语义动词 + 目标 + 自身状态与详情（默认收起）
+TurnToolRow _exploreMemberRow(_ToolView view) {
+  return TurnToolRow(
+    verb: _bucketVerb(_exploreBucketOf(view)),
+    target: _toolTarget(view.name, view.input),
+    running: view.status == ToolCallStatus.running,
+    failed: view.failed,
+    recovered: view.recovered,
+    elapsed: view.status == ToolCallStatus.running
+        ? DateTime.now().difference(view.createdAt)
+        : null,
+    details: _memberDetails(view),
+    defaultOpen: false,
+    lifecycle: view.lifecycle,
+  );
+}
+
 
 List<TurnDetailLine> _memberDetails(_ToolView view) {
   final lines = <TurnDetailLine>[_memberLine(view)];
@@ -1216,11 +1457,13 @@ class _ToolRowViewState extends State<_ToolRowView> {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final d = widget.data;
+    final expandable =
+        d.details.isNotEmpty || (d.memberRows?.isNotEmpty ?? false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         InkWell(
-          onTap: d.details.isEmpty
+          onTap: !expandable
               ? null
               : () => setState(() {
                     _userToggled = true;
@@ -1230,7 +1473,7 @@ class _ToolRowViewState extends State<_ToolRowView> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                if (d.details.isNotEmpty)
+                if (expandable)
                   Icon(
                     _open ? Icons.expand_less : Icons.expand_more,
                     size: 12,
@@ -1351,6 +1594,21 @@ class _ToolRowViewState extends State<_ToolRowView> {
             ),
           ),
         ),
+        // 组行（查阅伞）展开 = 成员行列表；成员行各自可再展开详情
+        if (_open && (d.memberRows?.isNotEmpty ?? false))
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final member in d.memberRows!)
+                  _ToolRowView(
+                    data: member,
+                    onDownloadFile: widget.onDownloadFile,
+                  ),
+              ],
+            ),
+          ),
         if (_open && d.details.isNotEmpty)
           Container(
             width: double.infinity,

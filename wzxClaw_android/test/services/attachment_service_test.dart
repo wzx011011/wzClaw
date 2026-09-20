@@ -77,4 +77,50 @@ void main() {
     expect(upload.error, contains('非法 received'));
     expect(upload.nodePath, isNull);
   });
+
+// ============================================================
+// splitAttachmentMarkers — 附件标记行解析（用户气泡渲染契约）
+// ============================================================
+group('splitAttachmentMarkers', () {
+  test('标记行提取为节点路径，其余行为文本', () {
+    const text = '[附件已上传到节点: '
+        r'E:\w\.wzxclaw-attachments\a.png]'
+        '\n'
+        '[附件已上传到节点: '
+        r'E:\w\.wzxclaw-attachments\b.jpg]'
+        '\n'
+        '这两张图对比一下';
+    final parsed = splitAttachmentMarkers(text);
+
+    expect(parsed.attachmentPaths, [
+      r'E:\w\.wzxclaw-attachments\a.png',
+      r'E:\w\.wzxclaw-attachments\b.jpg',
+    ]);
+    expect(parsed.displayText, '这两张图对比一下');
+  });
+
+  test('无标记：原样返回（trim 后），路径列表为空', () {
+    final parsed = splitAttachmentMarkers('  普通消息  ');
+
+    expect(parsed.displayText, '普通消息');
+    expect(parsed.attachmentPaths, isEmpty);
+  });
+
+  test('行内其他方括号文本不误判（必须整行匹配标记）', () {
+    const text = '[思考] 这不是附件标记\n正常行';
+    final parsed = splitAttachmentMarkers(text);
+
+    expect(parsed.attachmentPaths, isEmpty);
+    expect(parsed.displayText, contains('[思考]'));
+  });
+
+  test('CRLF 换行也能拆分', () {
+    const text =
+        '[附件已上传到节点: /nas/x.png]\r\n带 win 换行的文本';
+    final parsed = splitAttachmentMarkers(text);
+
+    expect(parsed.attachmentPaths, ['/nas/x.png']);
+    expect(parsed.displayText, '带 win 换行的文本');
+  });
+});
 }
