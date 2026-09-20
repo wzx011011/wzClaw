@@ -45,7 +45,6 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
   Map<String, dynamic>? _detail;
   bool _loading = true;
   String? _error;
-  List<_SubTimelineRow> _timeline = const [];
   Timer? _pollTimer;
 
   @override
@@ -71,7 +70,6 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
       _error = detail == null ? '未在 session/subagents 中找到该子任务' : null;
     });
     if (_isRunning) {
-      await _loadTimeline();
       _pollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) async {
         if (!mounted) return;
         // 运行状态与时间线同拍刷新：任务结束必须收敛到终态并停表，
@@ -80,8 +78,7 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
         if (!mounted) return;
         if (detail != null) setState(() => _detail = detail);
         if (_isRunning) {
-          await _loadTimeline();
-        } else {
+            } else {
           _pollTimer?.cancel();
           _pollTimer = null;
         }
@@ -112,54 +109,6 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
       _error = '加载失败：$e';
       return null;
     }
-  }
-
-  Future<void> _loadTimeline() async {
-    final childSid = _detail?['childSessionId']?.toString();
-    if (childSid == null || childSid.isEmpty) return;
-    try {
-      final msgs = await _request('session/messages', {
-        'sessionId': childSid,
-        'limit': 200,
-      });
-      if (!mounted) return;
-      // relay client 已解包 result：有效载荷即 {messages:[...]}。旧实现
-      // 再读一层 msgs['result']，正常响应被当成空直接丢弃（时间线恒空）。
-      if (msgs is! Map || msgs['messages'] is! List) {
-        return; // -32004 等：静默保留旧时间线
-      }
-      final rows = <_SubTimelineRow>[];
-      for (final m in (msgs['messages'] as List? ?? const [])) {
-        if (m is! Map) continue;
-        final role = m['info'] is Map ? (m['info'] as Map)['role']?.toString() : null;
-        for (final p in (m['parts'] as List?) ?? []) {
-          if (p is! Map) continue;
-          final type = p['type']?.toString();
-          if (type == 'text' && (p['text'] as String?)?.trim().isNotEmpty == true) {
-            rows.add(_SubTimelineRow(kind: role == 'user' ? 'user' : 'text', text: p['text'].toString()));
-          } else if (type == 'reasoning') {
-            rows.add(_SubTimelineRow(kind: 'thinking', text: (p['text'] ?? '').toString()));
-          } else if (type == 'tool') {
-            final state = p['state'] is Map ? p['state'] as Map : const {};
-            rows.add(_SubTimelineRow(kind: 'tool', text: (p['tool'] ?? '').toString(), detail: _toolBrief(state)));
-          }
-        }
-      }
-      setState(() => _timeline = rows);
-    } catch (_) {
-      // 轮询失败静默保留旧时间线（下一拍重试）
-    }
-  }
-
-  String _toolBrief(Map state) {
-    final input = state['input'];
-    if (input is Map) {
-      for (final key in ['command', 'file_path', 'pattern', 'query', 'url']) {
-        final v = input[key];
-        if (v is String && v.trim().isNotEmpty) return v.trim();
-      }
-    }
-    return (state['title'] ?? '').toString();
   }
 
   @override
@@ -233,9 +182,11 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
                     if (_detail?['phase'] == 'ended') ...[
                       _statusCard(context),
                       const SizedBox(height: 8),
-                      _summaryCard(context),
                     ],
-                    for (final row in _timeline) _timelineRow(context, row),
+                    // 回报内容（session/subagents 的 summary，含子智能体的
+                    // 阶段性结论；probe-subagentflow 实测：子会话转录经
+                    // session/messages 恒为空，summary 是唯一可读载体）
+                    _summaryCard(context),
                   ],
                 ),
     );
@@ -289,48 +240,5 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
     );
   }
 
-  Widget _timelineRow(BuildContext context, _SubTimelineRow row) {
-    final colors = AppColors.of(context);
-    final label = switch (row.kind) {
-      'thinking' => '思考',
-      'tool' => '工具',
-      'user' => '派发',
-      _ => null,
-    };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (label != null)
-            Text(
-              label,
-              style: TextStyle(color: colors.textMuted, fontSize: 11),
-            ),
-          Text(
-            row.text,
-            style: TextStyle(
-              color: row.kind == 'user' ? colors.textSecondary : colors.textPrimary,
-              fontSize: 13,
-              height: 1.5,
-            ),
-          ),
-          if (row.detail != null)
-            Text(
-              row.detail!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textMuted, fontSize: 11.5),
-            ),
-        ],
-      ),
-    );
-  }
 }
 
-class _SubTimelineRow {
-  const _SubTimelineRow({required this.kind, required this.text, this.detail});
-  final String kind;
-  final String text;
-  final String? detail;
-}
