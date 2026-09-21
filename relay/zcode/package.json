@@ -10,5 +10,9 @@
   },
   "scripts": {
     "test": "node --test --test-force-exit test/*.test.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10",
+    "zod": "^4.6.5"
   }
 }
