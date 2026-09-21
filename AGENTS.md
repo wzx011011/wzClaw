@@ -28,9 +28,9 @@ NAS relay
 | `wzxClaw_android/lib/services/` | 连接层 + 扩展服务：ConnectionManager（relay 连接/设备列表/供帧桥/zcodeRequest 通道）、GitService、ChatRuntimeService、NodeCatalogService、FileDownloadService 等（GitService/NodeCatalogService/FileDownloadService 走 x/* 扩展；ChatRuntimeService 调原生 session/* 只读接口） |
 | `relay/zcode/server.js` | sid/hash 房间 relay（多 probe、注册密钥、半开接管、确定性房间号） |
 | `relay/zcode/companion.js` | Windows 常驻节点：拉起 app-server、配对码、单实例锁、自启动 |
-| `companion_app/` | Windows 桌面版 companion（Electron）：装好即连 NAS、配对二维码、完整/宠物双形态，`npm run dist` 打包 |
+| `desktop/`（submodule） | **大脑节点桌面壳（2026-09-21 起唯一桌面形态）**：开源 ZCode 桌面端 fork（wzx011011/ZCode，分支 `feat/wzxcompanion-integration`）内嵌 companion-core（`packages/desktop/companion-core/`，逐字拷贝自 `relay/zcode`，见其 README.md）——扫码配对二维码、桌面宠物、完整 IDE 三合一 |
 | `relay/zcode/test/` | relay / CLI companion 协议与回归测试（node --test） |
-| `wzxClaw_desktop/` | **Legacy** 旧 Electron IDE：仅保留维护与迁移参考，不进入主 CI 或 Release |
+| `relay/zcode/vendor/` + `scripts/build-zcode-protocol.mjs` | 协议契约层 vendor：从 `third_party/zcode`（官方开源快照 submodule，钉 872ad96）构建方法表/全量 zod schema/错误码，产物提交入库 |
 
 > 注：`packages/`、`mobile/`、`_nas_deploy/` 及旧 relay 全部遗留（源码
 > `relay/server.js`、`relay/lib/`，部署套件 Dockerfile/compose/nginx/test 等）
@@ -40,6 +40,11 @@ NAS relay
 > 2026-09-17 退役删除，恢复一律从 git 历史取源码。NAS 侧旧 relay 容器
 > `wzxclaw-relay` 已于 2026-09-15 下线（停容器、删镜像与网络；
 > `/volume1/docker/wzxclaw-relay/` 目录暂留未删）。
+> **2026-09-21 新增删除**：`wzxClaw_desktop/`（Legacy IDE）与 `companion_app/`
+> （旧桌面 companion 壳）已按用户指示删除——开源 ZCode 桌面端（`desktop`
+> submodule）实测接管大脑节点角色后成为唯一桌面形态；连带清理
+> legacy-desktop.yml、CI companion 打包 job、`companion-v*` 发布流与
+> relay 的 cclient 漂移测试，恢复一律从 git 历史取源码。
 
 ## 常用命令
 
@@ -87,14 +92,18 @@ CI 无 NAS 凭据），**发布后半程一律手工**，按序：
    容器无 bind mount，只能 docker cp + restart。
 2. **companion CLI**：跑的是工作区源码（计划任务当前 Disabled），改完
    重启进程即生效，无需出包。
-3. **companion 桌面**：`cd companion_app && npm run dist` → Setup/Portable
-   双产物按命名 `wzxClawCompanion-{Setup,Portable}-<版本>.exe` scp 到
-   `/volume1/share/zcode/`（哈希比对）。
+3. **桌面端（desktop submodule）**：relay 核心变更后先
+   `node scripts/sync-companion-core.mjs` 同步到 submodule 的
+   `packages/desktop/companion-core/`（逐字拷贝，双侧同 commit 提交）→
+   desktop 内 `pnpm install && pnpm --filter @zcode/desktop build` →
+   出安装包 `pnpm --filter @zcode/desktop bundle`（NSIS/Portable）。
+   上游升级：desktop 内 fetch + rebase 集成分支，diff 协议目录后重建。
 4. **Android**：按「APK 发布纪律」（patch +1 → build → apksigner/zip 校验 →
    scp → 哈希比对）。
 5. 发布后 NAS `/volume1/share/zcode/` **只保留最新版本**（2026-09-19
    用户定：旧版本即删，含两种历史命名变体 `wzxClawCompanion-*` 与
-   `wzxClaw-Companion-*`）。
+   `wzxClaw-Companion-*`；2026-09-21 起 companion exe 不再产出，
+   遗留安装包可清理）。
 
 ## 设计原则（2026-09-15 审查定稿）
 
@@ -177,7 +186,8 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
   每次出包 patch 版本 +1（pubspec 带 +N 保 versionCode 递增），文件名带
   版本号 `wzxClaw-android-release-vX.Y.Z.apk`。根 `release.yml` 的 `android-v*`
   仅构建并校验候选 artifact：当前 release 使用 debug signing 且 CI 无 NAS 凭据，
-  不创建正式 Release；`companion-v*` 独立发布 Companion，绝不发布 Legacy Desktop。
+  不创建正式 Release；`companion-v*` 发布流已于 2026-09-21 随 companion_app
+  退役删除（桌面端改走 desktop submodule 出包）。
 
 ## 外部服务
 
@@ -185,6 +195,16 @@ commit a1af416 整改记录——最严重一处：权限应答形状错误导�
   **整条支线已退役**：NAS 容器与旧 relay 源码 2026-09-15 删除；
   brain-adapter / 夹具 / Dockerfile.brain / remote_control_page 2026-09-17 删除；
   恢复需从 git 历史取源码
-- NAS relay（v2 配对流）：`wss://zcode.5945.top/ws`（容器 wzxclaw-zcode-relay）
+- NAS relay（v2 配对流）：`wss://zcode.5945.top/ws`（容器 wzxclaw-zcode-relay，
+  NAS 本机 127.0.0.1:18884，NAS nginx 按 SNI 路由）。
+  **2026-09-21 实测链路纪律**：
+  - `*.5945.top` 子域走 IPv4+443（经阿里云 VPS frp `nas-https` 隧道）时
+    TLS ClientHello 被 SNI 过滤 RST（未备案子域；`www.5945.top` 主站不拦）——
+    手机等纯 IPv4 客户端连不上是**这个原因**，与代码无关；
+  - 现役绕行：frpc.toml 的 `nas-https-alt-38698/38684`（非 443 端口不过滤，
+    TLS 直通 NAS nginx 仍按 SNI 路由到 relay），手机旧配对链接即此端口；
+  - frpc 症状「work connection pool is full, discarding」刷屏 = 隧道僵死
+    （半开连接塞满池子），**`docker restart frpc` 即愈**（09-20/09-21 两次实证）；
+  - 桌面端/PC 能连是因为有 IPv6 直连 NAS（AAAA）或代理出口，排查时勿被误导。
 - 模型：智谱编码计划（`builtin:bigmodel-coding-plan`），凭据在 `~/.zcode/`，
   计费随 key/端点走（Flash 免费政策适用范围未实测，见会话记录）

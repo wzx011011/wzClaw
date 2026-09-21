@@ -13,7 +13,6 @@ const { createRelay } = require('../server');
 const { createCompanion, readRegistrationSecretFile, resolveRegistrationSecret,
   probeZcodeRuntime, resolveZcodeRuntime, defaultZcodeCommand,
   runtimeProcessEnv } = require('../companion');
-const { applyImport } = require('../../../companion_app/zcode-importer');
 
 const FAKE_APP_SERVER = path.join(__dirname, 'fixtures', 'fake-app-server.js');
 
@@ -1366,57 +1365,6 @@ test('companion x/* 扩展方法：git 状态/分支/检出与 fs/exists（本�
   assert.equal(reply99.payload.result.sessions[0].sessionId, 'sess_mock');
   assert.ok(client.messages.every((m) => m.payload?.method !== 'fake/x-leak'),
     'x/* 方法不得转发给 app-server');
-});
-
-test('GUI importer 与 core 共享显式 snapshotPath，工作区/偏好/扩展端到端可读', async (t) => {
-  const { relay, url: relayUrl } = await withRelay(t);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-shared-state-'));
-  const stateDir = path.join(dir, 'state');
-  const snapshotPath = path.join(stateDir, 'gui-import.json');
-  const receipt = applyImport({
-    manifest: {
-      models: { selectedModel: null, providers: [] },
-      workspaces: ['C:\\work\\one', 'C:\\work\\two'],
-      preferences: { locale: 'zh-CN', keepAwakeWhileRunning: true },
-      extensions: { skills: ['skill-a'], plugins: [], commands: ['review'], mcpCount: 2 },
-    },
-    selection: { workspaces: true, preferences: true, extensions: true },
-    snapshotPath,
-  });
-  assert.equal(receipt.ok, true);
-  let pairingUrl = '';
-  const companion = createCompanion({
-    relayUrl,
-    cwd: dir,
-    stateDir,
-    snapshotPath,
-    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
-    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
-    onPairing: (url) => { pairingUrl = url; },
-  });
-  const client = phone(relayUrl);
-  cleanup(t, [
-    () => companion.stop(),
-    () => { client.close(); },
-    () => relay.close(),
-    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
-  ]);
-  companion.start();
-  await waitFor(() => pairingUrl);
-  const parsed = new URL(pairingUrl);
-  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
-  const ask = (id, method) => client.send({ type: 'data', payload: { id, method, params: {} } });
-
-  ask(41, 'x/workspaces/list');
-  assert.deepEqual((await client.next((m) => m.payload?.id === 41)).payload.result.workspaces,
-    ['C:\\work\\one', 'C:\\work\\two']);
-  ask(42, 'x/preferences/summary');
-  assert.deepEqual((await client.next((m) => m.payload?.id === 42)).payload.result,
-    { count: 2, keys: ['keepAwakeWhileRunning', 'locale'], importedAt: receipt.importedAt });
-  ask(43, 'x/extensions/list');
-  const extensions = (await client.next((m) => m.payload?.id === 43)).payload.result;
-  assert.deepEqual(extensions.skills, ['skill-a']);
-  assert.deepEqual(extensions.commands, ['review']);
 });
 
 test('companion x/model/* 与 x/extensions/list：目录合并/默认模型落盘/扩展摘要', async (t) => {

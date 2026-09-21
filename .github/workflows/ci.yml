@@ -30,36 +30,6 @@ jobs:
       - name: Run relay and companion tests
         run: npm test
 
-  companion-windows-package:
-    name: Companion Windows Package
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: companion_app
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: companion_app/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Companion tests
-        run: npm test
-
-      - name: Build unpacked Windows package
-        run: npm run dist:dir
-
-      - name: Verify package contents
-        shell: bash
-        run: COMPANION_ASAR='dist/win-unpacked/resources/app.asar' npm run test:package
-
   android-analyze-test:
     name: Android Analyze & Test
     runs-on: ubuntu-latest

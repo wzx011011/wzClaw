@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "android-v*"
-      - "companion-v*"
 
 concurrency:
   group: product-release-${{ github.ref }}
@@ -87,60 +86,3 @@ jobs:
             wzxClaw_android/build/app/outputs/flutter-apk/wzxClaw-android-release-v${{ env.VERSION }}.apk.sha256
           if-no-files-found: error
           retention-days: 14
-
-  companion-release:
-    name: Companion Release (Windows)
-    if: startsWith(github.ref_name, 'companion-v')
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    defaults:
-      run:
-        working-directory: companion_app
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: companion_app/package-lock.json
-
-      - name: Verify tag matches package version
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#companion-v}"
-          package_version="$(node -p "require('./package.json').version")"
-          test "$tag_version" = "$package_version" || {
-            printf 'Tag version %s does not match package version %s\n' "$tag_version" "$package_version" >&2
-            exit 1
-          }
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Companion tests
-        run: npm test
-
-      - name: Build Windows packages
-        run: npm run dist
-
-      - name: Verify packaged contents
-        shell: bash
-        run: COMPANION_ASAR='dist/win-unpacked/resources/app.asar' npm run test:package
-
-      - name: Publish Companion release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: wzxClaw Companion ${{ github.ref_name }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: companion_app/dist/*.exe
-          body: |
-            Windows Companion node release.
-
-            This CI package does not embed the private ZCode runtime. Install and sign in to
-            the official ZCode desktop application on the target machine before using it.
