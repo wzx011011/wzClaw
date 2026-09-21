@@ -39,21 +39,43 @@ const MAX_NDJSON_BUFFER = 32 * 1024 * 1024;
 // 显式 unsupported-version，不做「能启动就算兼容」的假设。
 const SUPPORTED_RUNTIME_PREFIXES = ['0.16.'];
 
-const RUNTIME_PREFERENCES_METHOD = 'session/requestRuntimePreferences';
-const RUNTIME_PREFERENCES_RESULT = { nativeSearchEnhancementsEnabled: false };
+// ---- 官方开源协议契约层（third_party/zcode，Apache-2.0，vendor bundle）----
+// 方法名/通知表/错误码/帧校验 schema 一律以 vendor/zcode-protocol.cjs 为唯一
+// 事实源（scripts/build-zcode-protocol.mjs 从官方源码构建，升级流程见其头注）；
+// 此前的手写字符串常量与探测猜测全部废弃。
+const zc = require('./vendor/zcode-protocol.cjs');
+const OFFICIAL_METHODS = zc.zcodeProtocolMethods;
+// 官方 host 控制面通知词汇表（zcodeProtocolNotifications）：存储握手/MCP 遥测/
+// 资源采样等进程级控制面通知是引擎→宿主域，不是会话事件流——不向手机转发
+// （手机端无从消费，转发即噪音），留观测计数。
+const HOST_CONTROL_NOTIFICATIONS = new Set(Object.values(zc.zcodeProtocolNotifications));
 
-// companion 本地代答的反向请求白名单（0.16.9 新增面，probe-surface-0169 /
-// probe-storagestate 实测）：
-// - session/requestRuntimePreferences：运行时偏好，固定关闭搜索增强；
-// - startup/storageState：会话数据库外置化握手，答 {} = 宿主不持存储态，
-//   引擎自行新建库（对照实验：答与不答 create 均完整，引擎不等应答）；
-// - process/mcpTelemetry：MCP 遥测通知应答，载荷无处消费。
-// 不代答的后果：转发手机 → 120s 长档超时 → -32022，且每次引擎启动
-// storageState 5 连发会在手机端积累 pending 看护与 phone-response-late 日志。
+// 运行时偏好的宿主代答值：形状由官方 result schema（strict）钉死——关闭搜索
+// 增强与记忆，AskUser 自动裁决与 modelContextBudgetStrategy 取官方默认。
+// 此前只答单字段靠引擎侧 zod default 兜底；现在经同一 schema parse 出规范全量。
+const RUNTIME_PREFERENCES_METHOD = OFFICIAL_METHODS.sessionRequestRuntimePreferences;
+const RUNTIME_PREFERENCES_RESULT =
+  zc.zcodeSessionRuntimePreferencesResultSchema.parse({
+    nativeSearchEnhancementsEnabled: false,
+    memoryEnabled: false,
+    askUserQuestionAutoResolutionEnabled: true,
+    modelContextBudgetStrategy: 'preflight-v1',
+  });
+
+// companion 本地代答的反向请求白名单（官方源码语义 + probe-surface-0169 /
+// probe-storagestate 实测双锚定）：
+// - session/requestRuntimePreferences：官方 result schema 钉形（见上）；
+// - startup/storageState / process/mcpTelemetry：官方形态是通知
+//   （zcodeProtocolNotifications 表，engine→host 推进度、不等应答）；0.16.9
+//   引擎实测以带 id 请求形态发（答与不答 create 均完整）——对请求形态保留
+//   幂等空答（官方 zcodeProtocolEmptyResultSchema 同形）防 120s 看护堆积，
+//   通知形态由 HOST_CONTROL_NOTIFICATIONS 观测消化。
 const LOCALLY_ANSWERED_REVERSE = {
   [RUNTIME_PREFERENCES_METHOD]: RUNTIME_PREFERENCES_RESULT,
-  'startup/storageState': {},
-  'process/mcpTelemetry': {},
+  [zc.zcodeProtocolNotifications.storageStartup]:
+    zc.zcodeProtocolEmptyResultSchema.parse({}),
+  [zc.zcodeProtocolNotifications.mcpTelemetry]:
+    zc.zcodeProtocolEmptyResultSchema.parse({}),
 };
 
 // 默认解析本机 ZCode 安装（可被 options.zcodeCommand 覆盖，测试注入假进程用）。
@@ -454,6 +476,10 @@ function createCompanion(options = {}) {
     // 套餐模型拉取函数（lib/plan-overlay.fetchPlanModelIds）。默认关闭：
     // 仅 GUI 壳与 CLI 入口显式传入启用；测试不传即零网络依赖。
     planModelFetch = null,
+    // 宿主活动钩子（可选，2026-09-21 桌面宠物集成）：把「值得通知的事」
+    // 投给宿主 UI（需要确认/需要回答/回答摘要/已处理），内容逻辑与手机端
+    // 通知一致。纯只读观测，回调异常被吞掉，绝不影响桥的转发与应答。
+    onActivity = null,
   } = options;
   if (typeof relayUrl !== 'string' || !/^wss?:\/\/.+\/ws$/.test(relayUrl)) throw safeError('INVALID_RELAY_URL');
   if (registrationSecret !== undefined && (typeof registrationSecret !== 'string' || !registrationSecret.length)) {
@@ -572,6 +598,39 @@ function createCompanion(options = {}) {
   }, 5 * 60 * 1000).unref();
 
   function log(event, detail) { logger(event, detail); }
+
+  // ---- 宿主活动投影（onActivity 可选）----
+  // 只观察两类流：① engine→手机的反向请求（权限/提问 = 「需要你处理」）；
+  // ② session/event 文本流的头部累计（turn.terminal 时给出回答摘要）。
+  // 与手机端通知同内容逻辑；宿主不传 onActivity 时零开销零行为变化。
+  const emitActivity = (kind, title) => {
+    if (typeof onActivity !== 'function') return;
+    try { onActivity({ kind, title }); } catch { /* 宿主回调异常不影响桥 */ }
+  };
+
+  // 回答头部累计器：sessionId → 已累计文本（截到 400 字符，摘要取开头）。
+  // turn.terminal 后清空；error/中断同样由 terminal 兜底清理。
+  const answerHeads = new Map();
+  function trackSessionEventActivity(params) {
+    if (!isObject(params) || typeof params.sessionId !== 'string') return;
+    const sessionId = params.sessionId;
+    const events = Array.isArray(params.events) ? params.events : [];
+    for (const event of events) {
+      const payload = isObject(event) ? event.payload : null;
+      const kind = payload ? payload.kind : null;
+      if (kind === 'text_delta' && typeof payload.delta === 'string') {
+        const current = answerHeads.get(sessionId) || '';
+        if (current.length < 400) {
+          answerHeads.set(sessionId, (current + payload.delta).slice(0, 400));
+        }
+      } else if (kind === 'turn.terminal') {
+        const head = (answerHeads.get(sessionId) || '').trim();
+        answerHeads.delete(sessionId);
+        if (head) emitActivity('answer', head.slice(0, 140));
+      }
+    }
+  }
+
 
   function ensureMid() {
     fs.mkdirSync(statePaths.stateDir, { recursive: true });
@@ -777,12 +836,27 @@ function createCompanion(options = {}) {
         bridge.write({ id: frame.id, result: LOCALLY_ANSWERED_REVERSE[frame.method] });
         return;
       }
+      // 活动投影：要转发给手机的交互请求 = 「需要用户处理」
+      if (frame.method === OFFICIAL_METHODS.interactionRequestPermission) {
+        const toolName = isObject(frame.params) && typeof frame.params.toolName === 'string'
+          ? frame.params.toolName : '工具调用';
+        emitActivity('confirm', `需要确认：${toolName}`);
+      } else if (frame.method === OFFICIAL_METHODS.interactionRequestUserInput) {
+        const questions = isObject(frame.params) && Array.isArray(frame.params.questions)
+          ? frame.params.questions : [];
+        const first = isObject(questions[0]) ? questions[0] : null;
+        const text = (first && typeof first.question === 'string' && first.question)
+          || (isObject(frame.params) && typeof frame.params.prompt === 'string' && frame.params.prompt)
+          || '需要你的回答';
+        emitActivity('ask', `需要回答：${text.slice(0, 120)}`);
+      }
       const nativeId = frame.id;
       const wireId = `srv-${++nextReverseWireId}@g${bridgeGeneration}`;
       const timeoutMs = isFastMethod(frame.method) ? requestTimeoutMs : permissionRequestTimeoutMs;
       const timer = setTimeout(() => {
         const entry = pending.get(wireId);
         if (entry && pending.delete(wireId) && bridge) {
+          emitActivity('clear', '');
           bridge.write({ id: entry.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
         }
       }, timeoutMs).unref();
@@ -793,6 +867,10 @@ function createCompanion(options = {}) {
       pending.set(wireId, entry);
       deliverReverse(entry);
       return;
+    }
+    // 活动投影：session/event 通知流的回答摘要累计（转发不受影响）
+    if (onActivity && frame.method === 'session/event' && frame.id == null) {
+      trackSessionEventActivity(frame.params);
     }
     sendToPhone(frame);
   }
@@ -846,6 +924,8 @@ function createCompanion(options = {}) {
         return;
       }
       clearTimeout(entry.timer); pending.delete(frame.id);
+      // 已处理（批准/拒绝/回答都算）：宿主活动清除，气泡回落到连接状态
+      emitActivity('clear', '');
       // 还原引擎原生 id 再转发（对外 wireId 只存在于手机↔companion 段）
       frame = { ...frame, id: entry.nativeId };
     }
