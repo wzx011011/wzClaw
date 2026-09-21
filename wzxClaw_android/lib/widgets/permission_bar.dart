@@ -67,6 +67,20 @@ class PermissionBar extends StatelessWidget {
             '${request.toolName} 想要执行：',
             style: TextStyle(color: colors.textSecondary, fontSize: 12),
           ),
+          if (request.riskLevel != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '风险级：${request.riskLevel}',
+              style: TextStyle(color: colors.textMuted, fontSize: 11),
+            ),
+          ],
+          if (request.reason != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              request.reason!,
+              style: TextStyle(color: colors.textMuted, fontSize: 11),
+            ),
+          ],
           if (inputSummary.isNotEmpty) ...[
             const SizedBox(height: 6),
             Container(
@@ -96,10 +110,11 @@ class PermissionBar extends StatelessWidget {
             children: [
               TextButton(
                 onPressed: () => ZcodeChatStore.instance
-                    .respondToPermission(request.toolCallId, approved: false),
+                    .respondToPermission(request.requestId, approved: false),
                 style: TextButton.styleFrom(
                   foregroundColor: colors.error,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                     side: BorderSide(color: colors.error),
@@ -110,10 +125,11 @@ class PermissionBar extends StatelessWidget {
               const SizedBox(width: 8),
               TextButton(
                 onPressed: () => ZcodeChatStore.instance
-                    .respondToPermission(request.toolCallId, approved: true),
+                    .respondToPermission(request.requestId, approved: true),
                 style: TextButton.styleFrom(
                   foregroundColor: colors.success,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                     side: BorderSide(color: colors.success),
@@ -124,20 +140,26 @@ class PermissionBar extends StatelessWidget {
               const SizedBox(width: 8),
               TextButton(
                 onPressed: () => ZcodeChatStore.instance.respondToPermission(
-                    request.toolCallId,
-                    approved: true,
-                    remember: true,),
+                  request.requestId,
+                  approved: true,
+                  remember: true,
+                ),
                 style: TextButton.styleFrom(
                   foregroundColor: colors.success,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                     side: BorderSide(color: colors.success),
                   ),
                 ),
-                child: const Text('总是允许',
-                    style: TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600,),),
+                child: const Text(
+                  '总是允许',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ),

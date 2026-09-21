@@ -1404,7 +1404,7 @@ class _ChatPageState extends State<ChatPage> {
                 AskUserBar(
                   // 请求身份 key：队列轮转同位换题时强制重建，
                   // 上一题的已选/补充文本绝不带入下一题（2026-09-19 评审 P2）
-                  key: ValueKey(_store.activeAskUser!.questionId),
+                  key: ValueKey(_store.activeAskUser!.requestId),
                   question: _store.activeAskUser!,
                 ),
               _buildSlashSuggestions(),

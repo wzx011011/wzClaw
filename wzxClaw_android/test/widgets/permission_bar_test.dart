@@ -17,9 +17,11 @@ void main() {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
+            requestId: 'perm-tc-1',
             toolCallId: 'tc-1',
             toolName: 'Bash',
             input: {'command': 'ls -la'},
+            options: [],
           ),
         ),
       ),);
@@ -32,9 +34,11 @@ void main() {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
+            requestId: 'perm-tc-2',
             toolCallId: 'tc-2',
             toolName: 'FileWrite',
             input: {'path': '/tmp/test.txt'},
+            options: [],
           ),
         ),
       ),);
@@ -48,9 +52,11 @@ void main() {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
+            requestId: 'perm-tc-3',
             toolCallId: 'tc-3',
             toolName: 'Bash',
             input: {},
+            options: [],
           ),
         ),
       ),);
@@ -62,9 +68,11 @@ void main() {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
-            toolCallId: 'tc-3',
+            requestId: 'perm-tc-4',
+            toolCallId: 'tc-4',
             toolName: 'Bash',
             input: {},
+            options: [],
           ),
         ),
       ),);
@@ -76,9 +84,11 @@ void main() {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
+            requestId: 'perm-tc-5',
             toolCallId: 'tc-5',
             toolName: 'Grep',
             input: {},
+            options: [],
           ),
         ),
       ),);

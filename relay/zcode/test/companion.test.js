@@ -2399,3 +2399,66 @@ test('runtime 版本不在支持基线内：预检拒绝而非放行', async () 
   await delay(120);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// 同一 requestId 的重宣告（官方引擎每秒重发同一交互）：应答最新 wireId 后
+// 同组兄弟 wireId 必须一并撤看护——否则兄弟到点会被代答 -32022，打到引擎
+// 已 settle 的请求上（幽灵超时）。
+test('同 requestId 重宣告：应答最新 wireId 后兄弟不再代答', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-reannounce-'));
+  const onDemandServer = path.join(__dirname, 'fixtures', 'on-demand-reverse-server.cjs');
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [onDemandServer] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    requestTimeoutMs: 300,
+    permissionRequestTimeoutMs: 1200,
+    logger: (event, detail) => console.error('[wzx-log]', event, detail),
+    onPairing: () => {},
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => companion.pairingUrl);
+  const parsed = new URL(companion.pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+  await waitFor(() => companion.state === 'paired');
+
+  let emitId = 100;
+  const emitReverse = (tag, requestId) => client.send({
+    type: 'data', payload: { id: emitId++, method: 'emit/reverse', params: { tag, requestId } },
+  });
+
+  // 同一交互两次宣告：业务 requestId 相同，帧 id 不同
+  emitReverse('srv-r1-a', 'req-shared');
+  const first = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestUserInput');
+  emitReverse('srv-r1-b', 'req-shared');
+  // client.next 会扫历史缓冲：排除第一帧，专等第二次宣告的 wireId
+  const second = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'interaction/requestUserInput'
+      && m.payload.id !== first.payload.id);
+  assert.notEqual(first.payload.id, second.payload.id, '两次宣告 wireId 必须不同');
+
+  // 手机应答最新宣告（srv-r1-b）：companion 还原原生 id 转发引擎
+  client.send({ type: 'data', payload: { id: second.payload.id, result: { action: 'accept' } } });
+  const answered = await client.next(
+    (m) => m.type === 'data' && m.payload.method === 'fake/answered'
+      && m.payload.params.tag === 'srv-r1-b' && m.payload.params.code === null,
+    3000);
+  assert.ok(answered, 'srv-r1-b 应答必须还原转发给引擎');
+
+  // 关键判据：兄弟 srv-r1-a 不再被代答（既有应答已结清整组）
+  await delay(2000);
+  assert.equal(client.messages.some(
+    (m) => m.type === 'data' && m.payload.method === 'fake/answered'
+      && m.payload.params.tag === 'srv-r1-a'), false,
+    '兄弟 wireId 不得在应答后再代答 -32022');
+});

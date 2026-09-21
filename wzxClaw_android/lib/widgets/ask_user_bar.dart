@@ -3,7 +3,13 @@ import '../config/app_colors.dart';
 import '../zcode/zcode_reverse_models.dart';
 import '../zcode/zcode_chat_store.dart';
 
-/// A bar that appears when the desktop agent asks the user a question.
+/// AskUser 条：官方 interaction/requestUserInput 的手机端 UI。
+///
+/// - 支持一次多题（官方 questions[]），按序展示、一次提交；
+/// - 单选点选即记录，多选勾选；选项提交 value（显示 label）；
+/// - 每题带可选自由文本（无选项的题 = 纯自由文本题）；
+/// - 答案按官方归一化组装：{题目原文: 答案}，多选 ", " 连接；
+/// - 提交 = {action:"accept", content:{answers}}；关闭 = cancel。
 class AskUserBar extends StatefulWidget {
   final AskUserQuestion question;
   const AskUserBar({super.key, required this.question});
@@ -13,61 +19,81 @@ class AskUserBar extends StatefulWidget {
 }
 
 class _AskUserBarState extends State<AskUserBar> {
-  final Set<String> _selected = {};
-  bool _showOther = false;
-  final _otherController = TextEditingController();
+  /// 每题的选中 value 集合（多选）或单值（单选）
+  final Map<int, Set<String>> _selected = {};
 
-  @override
-  void dispose() {
-    _otherController.dispose();
-    super.dispose();
-  }
+  /// 每题的自由文本（有输入时优先于选项）
+  final Map<int, TextEditingController> _freeText = {};
 
   @override
   void didUpdateWidget(covariant AskUserBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 换题即清态（2026-09-19 评审 P2）：队列轮转会在同一组件位置直接换
-    // question（配合调用方的 ValueKey 双保险），上一题的已选项/补充文本
-    // 绝不带入下一题——否则会把 A 的答案提交给 B
-    if (oldWidget.question.questionId != widget.question.questionId) {
-      setState(() {
-        _selected.clear();
-        _showOther = false;
-        _otherController.clear();
-      });
+    // 换题即清态（2026-09-19 评审 P2 同源）：上一请求的已选/自由文本
+    // 绝不带入下一请求
+    if (oldWidget.question.requestId != widget.question.requestId) {
+      _resetFor(widget.question);
     }
   }
 
-  void _submitSelection() {
-    ZcodeChatStore.instance.respondToAskUser(
-      widget.question.questionId,
-      _selected.toList(),
-    );
+  @override
+  void dispose() {
+    for (final c in _freeText.values) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
-  void _submitOther() {
-    final text = _otherController.text.trim();
-    if (text.isEmpty) return;
-    ZcodeChatStore.instance.respondToAskUser(
-      widget.question.questionId,
-      [],
-      customText: text,
-    );
+  // 换题即清态（与旧实现一致）：上一请求的作答绝不带入下一请求
+  void _resetFor(AskUserQuestion next) {
+    for (final c in _freeText.values) {
+      c.dispose();
+    }
+    _freeText.clear();
+    _selected.clear();
   }
 
-  void _onSingleSelect(String label) {
-    ZcodeChatStore.instance.respondToAskUser(widget.question.questionId, [label]);
+  void _toggle(int qi, AskUserQuestionItem q, String value) {
+    setState(() {
+      final set = _selected.putIfAbsent(qi, () => <String>{});
+      if (q.multiSelect) {
+        set.contains(value) ? set.remove(value) : set.add(value);
+      } else {
+        set
+          ..clear()
+          ..add(value);
+      }
+    });
+  }
+
+  /// 组装单题答案：自由文本优先，其次选中 value（多选 ", " 连接——官方
+  /// interaction-broker 归一化语义）。均无 → null（该题无作答）。
+  String? _answerFor(int qi, AskUserQuestionItem q) {
+    final free = _freeText[qi]?.text.trim();
+    if (free != null && free.isNotEmpty) return free;
+    final set = _selected[qi];
+    if (set == null || set.isEmpty) return null;
+    return set.join(', ');
+  }
+
+  void _submit() {
+    final answers = <String, String>{};
+    for (var i = 0; i < widget.question.questions.length; i++) {
+      final q = widget.question.questions[i];
+      final answer = _answerFor(i, q);
+      if (answer != null) answers[q.question] = answer;
+    }
+    ZcodeChatStore.instance
+        .respondToAskUser(widget.question.requestId, answers: answers);
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final q = widget.question;
-    // 来源标注（2026-09-19 评审 P1）：与权限条同规则——请求不属于当前
-    // 视口会话时，用户必须先看到它来自哪个会话再作答
-    final sourceLabel =
-        ZcodeChatStore.instance.reverseSourceLabel(q.sessionId);
-    final hasOptions = q.options.isNotEmpty;
+    // 来源标注（2026-09-19 评审 P1）：请求不属于当前视口会话时，用户必须
+    // 先看到它来自哪个会话再作答
+    final sourceLabel = ZcodeChatStore.instance.reverseSourceLabel(q.sessionId);
+    final multiQuestion = q.questions.length > 1;
 
     return Container(
       width: double.infinity,
@@ -86,27 +112,15 @@ class _AskUserBarState extends State<AskUserBar> {
             children: [
               Icon(Icons.help_outline, size: 16, color: colors.accent),
               const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '需要你的确认',
-                  style: TextStyle(
-                    color: colors.accent,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Text(
+                multiQuestion ? '需要你的回答（${q.questions.length} 题）' : '需要你的确认',
+                style: TextStyle(
+                  color: colors.accent,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              if (q.multiSelect)
-                Text(
-                  '可多选',
-                  style: TextStyle(color: colors.textMuted, fontSize: 12),
-                ),
             ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            q.question,
-            style: TextStyle(color: colors.textPrimary, fontSize: 13, height: 1.4),
           ),
           if (sourceLabel != null) ...[
             const SizedBox(height: 4),
@@ -115,86 +129,42 @@ class _AskUserBarState extends State<AskUserBar> {
               style: TextStyle(color: colors.textMuted, fontSize: 12),
             ),
           ],
-          if (hasOptions) ...[
-            const SizedBox(height: 10),
-            ...q.options.map((opt) {
-              final label = opt['label'] ?? '';
-              final description = opt['description'] ?? '';
-              final isSelected = _selected.contains(label);
-              if (q.multiSelect) {
-                return _buildMultiSelectOption(colors, label, description, isSelected);
-              } else {
-                return _buildSingleSelectOption(colors, label, description);
-              }
-            }),
-          ],
           const SizedBox(height: 8),
-          if (!_showOther)
-            GestureDetector(
-              onTap: () => setState(() => _showOther = true),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: colors.bgSecondary,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: colors.border),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, size: 14, color: colors.textMuted),
-                    const SizedBox(width: 8),
-                    Text(
-                      '补充回答...',
-                      style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
+          for (var i = 0; i < q.questions.length; i++) ...[
+            _QuestionEditor(
+              key: ValueKey('q$i'),
+              index: i,
+              item: q.questions[i],
+              selected: _selected,
+              freeText: _freeText,
+              onToggle: _toggle,
             ),
-          if (_showOther) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _otherController,
-                    autofocus: true,
-                    style: TextStyle(color: colors.textPrimary, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: '输入补充回答...',
-                      hintStyle: TextStyle(color: colors.textMuted),
-                      filled: true,
-                      fillColor: colors.bgInput,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(6),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                    onSubmitted: (_) => _submitOther(),
+            if (i < q.questions.length - 1) const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => ZcodeChatStore.instance.respondToAskUser(
+                  q.requestId,
+                  answers: const {},
+                  cancel: true,
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: colors.textMuted,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: colors.textMuted),
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _submitOther,
-                  icon: Icon(Icons.send, color: colors.accent, size: 20),
-                  tooltip: '提交回答',
-                ),
-                IconButton(
-                  onPressed: () => setState(() => _showOther = false),
-                  icon: Icon(Icons.close, color: colors.textMuted, size: 20),
-                  tooltip: '取消',
-                ),
-              ],
-            ),
-          ],
-          if (q.multiSelect && _selected.isNotEmpty && !_showOther) ...[
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _submitSelection,
+                child: const Text('取消', style: TextStyle(fontSize: 12)),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _submit,
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.white,
                   backgroundColor: colors.accent,
@@ -204,110 +174,163 @@ class _AskUserBarState extends State<AskUserBar> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: Text(
-                  '提交 (${_selected.length})',
-                  style: const TextStyle(fontSize: 12),
+                child: const Text('提交', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 单题编辑区：题干 + 选项（单选/多选）+ 可选自由文本。
+/// 无选项的题渲染为纯文本输入（官方 prompt 模式）。
+class _QuestionEditor extends StatelessWidget {
+  final int index;
+  final AskUserQuestionItem item;
+  final Map<int, Set<String>> selected;
+  final Map<int, TextEditingController> freeText;
+  final void Function(int, AskUserQuestionItem, String) onToggle;
+
+  const _QuestionEditor({
+    super.key,
+    required this.index,
+    required this.item,
+    required this.selected,
+    required this.freeText,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final set = selected[index];
+    final hasOptions = item.options.isNotEmpty;
+    if (!freeText.containsKey(index)) {
+      freeText[index] = TextEditingController();
+    }
+    final controller = freeText[index]!;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.bgSecondary,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (item.header.isNotEmpty)
+            Text(
+              item.header,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          if (item.header.isNotEmpty && item.question != item.header)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                item.question,
+                style: TextStyle(color: colors.textSecondary, fontSize: 12),
+              ),
+            ),
+          if (!hasOptions) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              minLines: 1,
+              maxLines: 3,
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '输入回答…',
+                hintStyle: TextStyle(color: colors.textMuted),
+                filled: true,
+                fillColor: colors.bgInput,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide.none,
                 ),
               ),
             ),
+          ] else ...[
+            const SizedBox(height: 8),
+            for (final option in item.options)
+              _OptionRow(
+                option: option,
+                multiSelect: item.multiSelect,
+                selected: set?.contains(option.value) ?? false,
+                onToggle: () => onToggle(index, item, option.value),
+              ),
           ],
         ],
       ),
     );
   }
+}
 
-  Widget _buildSingleSelectOption(AppColors colors, String label, String description) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        onTap: () => _onSingleSelect(label),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: colors.bgSecondary,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: colors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: colors.accent,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (description.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  description,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+class _OptionRow extends StatelessWidget {
+  final AskUserOption option;
+  final bool multiSelect;
+  final bool selected;
+  final VoidCallback onToggle;
 
-  Widget _buildMultiSelectOption(
-      AppColors colors, String label, String description, bool isSelected,) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            if (isSelected) {
-              _selected.remove(label);
-            } else {
-              _selected.add(label);
-            }
-          });
-        },
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? colors.accent.withValues(alpha: 0.15) : colors.bgSecondary,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: isSelected ? colors.accent : colors.border),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                isSelected ? Icons.check_box : Icons.check_box_outline_blank,
-                size: 18,
-                color: isSelected ? colors.accent : colors.textMuted,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: isSelected ? colors.accent : colors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+  const _OptionRow({
+    required this.option,
+    required this.multiSelect,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onToggle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 2),
+        child: Row(
+          children: [
+            Icon(
+              multiSelect
+                  ? (selected ? Icons.check_box : Icons.check_box_outline_blank)
+                  : (selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off),
+              size: 18,
+              color: selected ? colors.accent : colors.textMuted,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    option.label,
+                    style: TextStyle(
+                      color: selected ? colors.accent : colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                     ),
-                    if (description.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        description,
-                        style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                  if (option.description != null &&
+                      option.description!.isNotEmpty)
+                    Text(
+                      option.description!,
+                      style: TextStyle(color: colors.textMuted, fontSize: 11),
+                    ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

@@ -30,10 +30,48 @@ class SessionListTile extends StatelessWidget {
   /// 本地备注名（SharedPreferences，非引擎能力）；非空时替代引擎标题显示
   final String? alias;
 
+  /// 官方状态枚举（zcodeSessionStatusSchema）→ 列表前置指示点颜色；
+  /// null = 无该状态（等待本地 busy/resultDot 优先级更高的指示）。
+  Color? _statusDot(AppColors colors) {
+    switch (session.status) {
+      case 'running':
+        return colors.accent;
+      case 'waiting':
+        return colors.warning;
+      case 'error':
+      case 'app-server-dead':
+        return colors.error;
+      case 'completed':
+        return colors.success;
+      default:
+        return null; // idle/connecting/paused 不点亮
+    }
+  }
+
+  /// 非 interactive 会话的种类标签（官方 sessionKind 枚举）
+  String? get kindLabel {
+    switch (session.sessionKind) {
+      case 'subagent_child':
+        return '子智能体';
+      case 'workflow_parent':
+      case 'workflow_child':
+      case 'nested_workflow_child':
+        return '工作流';
+      case 'fork':
+        return '分叉';
+      case 'selection_side_chat':
+        return '侧聊';
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final running = session.status == 'running';
+    final statusDot = _statusDot(colors);
+    final kindTag = kindLabel;
     return InkWell(
       onTap: onTap,
       splashColor: colors.accent.withValues(alpha: 0.12),
@@ -57,6 +95,26 @@ class SessionListTile extends StatelessWidget {
                     children: [
                       // 状态提示（标题前）：处理中转圈 > 完成绿点 >
                       // 引擎 running 脉冲点
+                      if (kindTag != null) ...[
+                        Container(
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            kindTag,
+                            style: TextStyle(
+                              color: colors.accent,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ],
                       if (busy) ...[
                         SizedBox(
                           width: 12,
@@ -77,13 +135,23 @@ class SessionListTile extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 6),
-                      ] else if (running) ...[
-                        _RunningDot(color: colors.success),
-                        const SizedBox(width: 5),
+                      ] else if (statusDot != null) ...[
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: statusDot,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                       ],
                       if (pinned) ...[
-                        Icon(Icons.push_pin,
-                            size: 12, color: colors.textMuted,),
+                        Icon(
+                          Icons.push_pin,
+                          size: 12,
+                          color: colors.textMuted,
+                        ),
                         const SizedBox(width: 4),
                       ],
                       Expanded(
@@ -91,8 +159,9 @@ class SessionListTile extends StatelessWidget {
                           alias ?? session.title,
                           style: TextStyle(
                             fontSize: 14,
-                            color:
-                                isActive ? colors.textPrimary : colors.textSecondary,
+                            color: isActive
+                                ? colors.textPrimary
+                                : colors.textSecondary,
                             fontWeight:
                                 isActive ? FontWeight.w600 : FontWeight.normal,
                           ),

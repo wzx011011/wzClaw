@@ -90,8 +90,14 @@ class ZcodeSessionMeta {
   final String? workspaceKey;
   final String? workspacePath;
 
-  /// 会话运行状态徽标（session/list / state.updated 的 status）
+  /// 会话运行状态徽标（session/list / state.updated 的 status：
+  /// idle/running/waiting/paused/completed/error，官方枚举）
   final String? status;
+
+  /// 会话种类（session/list 的 sessionKind：interactive/fork/
+  /// selection_side_chat/workflow_parent/workflow_child/subagent_child/…）。
+  /// 非 interactive 时列表行展示种类标签。
+  final String? sessionKind;
 
   const ZcodeSessionMeta({
     required this.sessionId,
@@ -100,6 +106,7 @@ class ZcodeSessionMeta {
     this.workspaceKey,
     this.workspacePath,
     this.status,
+    this.sessionKind,
   });
 }
 
@@ -165,11 +172,13 @@ class ZcodeReverseRejectException implements Exception {
 /// [request] 保留解析后的 UI 模型（含 sessionId）：待处理请求不再随视口
 /// 切换被拒绝，展示条按 pending 队列轮转（应答/超时后自动顶上下一请求）。
 class _PendingReverse {
-  final dynamic frameId; // 反向请求帧 id（形如 "server-N"）
+  // 反向请求帧 id（形如 "server-N"）；同交互重宣告时会被更新为最新帧
+  dynamic frameId;
   final Completer<dynamic> completer;
 
-  /// 解析后的请求模型（PermissionRequest / AskUserQuestion）
-  final Object? request;
+  /// 解析后的请求模型（PermissionRequest / AskUserQuestion）；重宣告合并时
+  /// 会被替换为最新解析结果
+  Object? request;
 
   _PendingReverse({
     required this.frameId,
@@ -641,6 +650,7 @@ class ZcodeChatStore extends ChangeNotifier {
               workspaceKey: ws is Map ? _nonEmpty(ws['workspaceKey']) : null,
               workspacePath: ws is Map ? _nonEmpty(ws['workspacePath']) : null,
               status: _nonEmpty(e['status']),
+              sessionKind: _nonEmpty(e['sessionKind']),
             ),
           );
         }
@@ -1440,14 +1450,14 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 优先回放请求方给出的 option response 原文，无暂存时按同 schema 构造。
   /// remember=true 且批准 = allow_project 选项（携带 permissionUpdates）。
   void respondToPermission(
-    String toolCallId, {
+    String requestId, {
     required bool approved,
     bool remember = false,
   }) {
-    _clearReverseWatchdog(toolCallId);
-    final pending = _pendingReverse.remove(toolCallId);
+    _clearReverseWatchdog(requestId);
+    final pending = _pendingReverse.remove(requestId);
     if (pending == null) return; // 没有对应待处理请求（可能已应答/已断开）
-    final options = _permissionOptions.remove(toolCallId);
+    final options = _permissionOptions.remove(requestId);
     pending.completer.complete(
       _buildPermissionResult(
         options: options,
@@ -1486,23 +1496,32 @@ class ZcodeChatStore extends ChangeNotifier {
     };
   }
 
-  /// 应答 AskUser 问题：结果由客户端作为反向请求响应帧回传（带原请求 id）。
-  /// （AskUser 反向请求实测未触发，应答 payload 形状未实测——沿用旧猜测，
-  /// 待后续实测钉死后重写；参照权限请求的经验，畸形 result 大概率被服务端
-  /// 静默拒绝，届时应改为回放 option response 原文）
+  /// 应答 AskUser 请求（官方 schema：zcodeUserInputResponseSchema）：
+  /// `{action: "accept"|"decline"|"cancel", content?: {answers: {题目原文:
+  /// 答案}}, reason?}`。答案 key = 题目原文，value = 选项 value 或自由文本
+  /// （官方 interaction-broker 归一化：多选 ", " 连接、trim 后空项剔除）。
+  /// [answers] 为空 = 用户取消（action: cancel）。
   void respondToAskUser(
-    String questionId,
-    List<String> answers, {
-    String? customText,
+    String requestId, {
+    required Map<String, String> answers,
+    bool cancel = false,
   }) {
-    _clearReverseWatchdog(questionId);
-    final pending = _pendingReverse.remove(questionId);
+    _clearReverseWatchdog(requestId);
+    final pending = _pendingReverse.remove(requestId);
     if (pending == null) return;
-    pending.completer.complete({
-      'questionId': questionId,
-      'selectedLabels': answers,
-      if (customText != null && customText.isNotEmpty) 'customText': customText,
-    });
+    if (cancel) {
+      pending.completer.complete({
+        'action': 'cancel',
+        'reason': 'AskUser was cancelled',
+      });
+    } else {
+      pending.completer.complete({
+        'action': 'accept',
+        if (answers.isNotEmpty) 'content': {
+          'answers': answers,
+        },
+      });
+    }
     // 应答完成：展示条轮转到队列里下一个 AskUser 请求（如有）
     _refreshReverseUi();
   }
@@ -1530,7 +1549,7 @@ class ZcodeChatStore extends ChangeNotifier {
         throw Exception('无法解析权限请求: $method');
       }
       return _awaitReverseResponse(
-        key: request.toolCallId,
+        key: request.requestId,
         frameId: frame.id,
         request: request,
         onRegistered: () {
@@ -1541,12 +1560,7 @@ class ZcodeChatStore extends ChangeNotifier {
       );
     }
 
-    // UNVERIFIED：AskUser 反向请求从未实测触发，方法名未知——保留模糊网
-    // 兜底（interaction/askuser/ask_user），解析失败自然落入安全拒绝
-    final lower = method.toLowerCase();
-    if (lower.contains('interaction') ||
-        lower.contains('askuser') ||
-        lower.contains('ask_user')) {
+    if (method == 'interaction/requestUserInput') {
       final question = _parseAskUserQuestion(
         params,
         fallbackId: frame.id?.toString(),
@@ -1555,12 +1569,15 @@ class ZcodeChatStore extends ChangeNotifier {
         throw Exception('无法解析互动请求: $method');
       }
       return _awaitReverseResponse(
-        key: question.questionId,
+        key: question.requestId,
         frameId: frame.id,
         request: question,
         onRegistered: () {
           // 后台通知：任务挂起等人回答，不提醒会无声卡住
-          _notifier.showReverseRequest(isAskUser: true, summary: question.question);
+          _notifier.showReverseRequest(
+            isAskUser: true,
+            summary: question.questions.first.header,
+          );
           _refreshReverseUi();
         },
       );
@@ -1579,11 +1596,14 @@ class ZcodeChatStore extends ChangeNotifier {
   }) {
     final existing = _pendingReverse[key];
     if (existing != null && !existing.completer.isCompleted) {
-      // 同 key 重复请求（连接重建后 server-N id 从头复用等）：旧挂起者
-      // 让位——以拒绝完成，防 completer 泄漏悬挂（拒绝 = error 帧安全拒绝）
-      existing.completer.completeError(
-        const ZcodeReverseRejectException('同 id 的新请求到达，旧请求作废'),
-      );
+      // 官方引擎对同一交互（params.requestId）会周期性重宣告（新帧新 wire
+      // id、业务 requestId 不变）——同 key 重入时合并：保留原挂起 future
+      // （绝不 completeError 杀掉用户待答的请求），仅刷新帧 id 与 watchdog。
+      existing.frameId = frameId;
+      if (request != null) existing.request = request;
+      _armReverseWatchdog(key);
+      onRegistered();
+      return existing.completer.future;
     }
     final completer = Completer<dynamic>();
     _pendingReverse[key] = _PendingReverse(
@@ -1635,8 +1655,8 @@ class ZcodeChatStore extends ChangeNotifier {
       }
       _permissionOptions.remove(key);
       var cleared = false;
-      if (_activePermission?.toolCallId == key ||
-          _activeAskUser?.questionId == key) {
+      if (_activePermission?.requestId == key ||
+          _activeAskUser?.requestId == key) {
         cleared = true;
       }
       // 展示条轮转：超时请求出队，下一个同类请求（如有）顶上
@@ -1651,30 +1671,18 @@ class ZcodeChatStore extends ChangeNotifier {
     _reverseWatchdogs.remove(key)?.cancel();
   }
 
-  /// 解析权限请求（实测形状，APP-SERVER.md「工具回合实测」）：
+  /// 解析权限请求（官方 schema：zcodePermissionRequestParamsSchema，
+  /// third_party/zcode/packages/shared/src/zcode-protocol-legacy-types.ts）：
   ///
-  /// method = `interaction/requestPermission`，params = {
-  ///   input: {command/description/…}（工具入参，形状随工具而定）,
-  ///   reason: "High risk tools require explicit approval",
-  ///   requestId: "perm_<uuid>", riskLevel: "high",
-  ///   sessionId, turnId,
-  ///   toolCallId: "call_…", toolName: "Bash",
-  ///   options: [ {kind/optionId/name/response:{decision,reason,
-  ///              permissionUpdates?}} ×3 (allow_once/allow_project/deny) ] }
-  ///
-  /// 字段名变体（tool_call_id 等）仅作协议漂移兜底；options 原文按
-  /// toolCallId 暂存，供应答时回放所选 option 的 response。
+  /// requestId 必填（业务身份，同交互重宣告共用）；options[] = {optionId,
+  /// kind, name, description?, response}，应答时原样回放所选 option 的
+  /// response（暂存键 = requestId）。
   PermissionRequest? _parsePermissionRequest(Map params, {String? fallbackId}) {
-    final toolCallId = _firstNonEmpty(
-          params,
-          ['toolCallId', 'tool_call_id', 'callId', 'requestId'],
-        ) ??
-        fallbackId;
-    final toolName = _firstNonEmpty(
-      params,
-      ['toolName', 'tool_name', 'tool', 'name'],
-    );
-    if (toolCallId == null || toolCallId.isEmpty) return null;
+    final requestId = _firstNonEmpty(params, ['requestId']) ?? fallbackId;
+    final toolCallId = _firstNonEmpty(params, ['toolCallId', 'tool_call_id', 'callId']);
+    final toolName = _firstNonEmpty(params, ['toolName', 'tool_name', 'tool', 'name']);
+    if (requestId == null || requestId.isEmpty) return null;
+    // 官方 schema toolName 必填——缺失即畸形帧，安全拒绝（测试锚定）
     if (toolName == null || toolName.isEmpty) return null;
 
     dynamic input = params['input'];
@@ -1684,57 +1692,99 @@ class ZcodeChatStore extends ChangeNotifier {
     // 暂存原始 options（应答回放用；非 List 或缺失时走兜底构造）
     final rawOptions = params['options'];
     if (rawOptions is List) {
-      _permissionOptions[toolCallId] =
+      _permissionOptions[requestId] =
           rawOptions.whereType<Map>().toList(growable: false);
+    }
+    final optionObjects = <PermissionOption>[];
+    if (rawOptions is List) {
+      for (final o in rawOptions) {
+        if (o is! Map) continue;
+        optionObjects.add(
+          PermissionOption(
+            optionId: o['optionId']?.toString() ?? '',
+            kind: o['kind']?.toString() ?? '',
+            name: o['name']?.toString() ?? o['optionId']?.toString() ?? '',
+            description: o['description']?.toString(),
+            response: o['response'] is Map
+                ? Map<String, dynamic>.from(o['response'])
+                : const {},
+          ),
+        );
+      }
     }
 
     return PermissionRequest(
-      toolCallId: toolCallId,
+      requestId: requestId,
+      toolCallId: toolCallId ?? requestId,
       toolName: toolName,
+      reason: _firstNonEmpty(params, ['reason']),
+      riskLevel: _firstNonEmpty(params, ['riskLevel', 'risk_level']),
       input: input is Map ? Map<String, dynamic>.from(input) : {},
+      options: optionObjects,
       sessionId: _firstNonEmpty(params, ['sessionId', 'session_id']),
     );
   }
 
-  /// 解析 AskUser 问题（**实测未触发**——probe-toolturn 各轮均未出现
-  /// AskUser 类反向请求，方法名与字段形状仍未知；保留 wzxClaw 自家 ws
-  /// 形状的多字段名兜底，待后续实测钉死后重写）：
-  /// questionId/question_id/callId/id；question/text/prompt；
-  /// options/choices: [{label, description}]；multiSelect/multi_select
+  /// 解析 AskUser 请求（官方 schema：zcodeUserInputRequestParamsSchema）：
+  /// requestId 必填；questions[] = {question, header, options?: [{value,
+  /// label, description?, preview?}], multiSelect?}；无 questions 时 prompt
+  /// 即单道自由文本题。应答 = {action:"accept", content:{answers:{题目原文:
+  /// 答案}}}（官方 interaction-broker 归一化语义）。
   AskUserQuestion? _parseAskUserQuestion(Map params, {String? fallbackId}) {
-    final questionId =
-        _firstNonEmpty(params, ['questionId', 'question_id', 'callId', 'id']) ??
-            fallbackId;
-    final question = _firstNonEmpty(params, ['question', 'text', 'prompt']);
-    if (questionId == null || questionId.isEmpty) return null;
-    if (question == null || question.isEmpty) return null;
+    final requestId = _firstNonEmpty(params, ['requestId']) ?? fallbackId;
+    if (requestId == null || requestId.isEmpty) return null;
 
-    dynamic options = params['options'];
-    if (options is! List) options = params['choices'];
-    if (options is! List || options.isEmpty) return null;
-
-    final mapped = <Map<String, String>>[];
-    for (final o in options) {
-      if (o is Map) {
-        mapped.add({
-          'label': o['label']?.toString() ?? o['value']?.toString() ?? '',
-          'description': o['description']?.toString() ?? '',
-        });
-      } else if (o != null) {
-        mapped.add({'label': o.toString(), 'description': ''});
+    final questions = <AskUserQuestionItem>[];
+    final rawQuestions = params['questions'];
+    if (rawQuestions is List) {
+      for (final q in rawQuestions) {
+        if (q is! Map) continue;
+        final text = q['question']?.toString() ?? '';
+        if (text.isEmpty) continue;
+        final options = <AskUserOption>[];
+        final rawOptions = q['options'];
+        if (rawOptions is List) {
+          for (final o in rawOptions) {
+            if (o is! Map) continue;
+            final value = o['value']?.toString() ?? '';
+            if (value.isEmpty) continue;
+            options.add(
+              AskUserOption(
+                value: value,
+                label: o['label']?.toString() ?? value,
+                description: o['description']?.toString(),
+              ),
+            );
+          }
+        }
+        questions.add(
+          AskUserQuestionItem(
+            question: text,
+            header: q['header']?.toString() ?? text,
+            options: options,
+            multiSelect: q['multiSelect'] == true,
+          ),
+        );
       }
     }
-    if (mapped.isEmpty) return null;
+    if (questions.isEmpty) {
+      // 官方 prompt 模式：无选项单道自由文本题
+      final prompt = params['prompt']?.toString() ?? '';
+      if (prompt.isEmpty) return null;
+      questions.add(
+        AskUserQuestionItem(
+          question: prompt,
+          header: prompt,
+          options: const [],
+        ),
+      );
+    }
 
-    final multi = params['multiSelect'] ??
-        params['multi_select'] ??
-        params['multiselect'];
     return AskUserQuestion(
-      questionId: questionId,
-      question: question,
-      options: mapped,
-      multiSelect: multi == true || multi == 'true',
-      sessionId: _firstNonEmpty(params, ['sessionId', 'session_id']),
+      requestId: requestId,
+      questions: questions,
+      prompt: params['prompt']?.toString(),
+      sessionId: _nonEmpty(params['sessionId'] ?? params['session_id']),
     );
   }
 
@@ -3558,6 +3608,7 @@ class ZcodeChatStore extends ChangeNotifier {
       workspaceKey: s.workspaceKey,
       workspacePath: s.workspacePath,
       status: status,
+      sessionKind: s.sessionKind,
     );
     notifyListeners();
   }
@@ -3575,6 +3626,7 @@ class ZcodeChatStore extends ChangeNotifier {
       workspaceKey: s.workspaceKey,
       workspacePath: s.workspacePath,
       status: s.status,
+      sessionKind: s.sessionKind,
     );
     notifyListeners();
   }

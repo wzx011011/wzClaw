@@ -179,7 +179,7 @@ void main() {
       expect(store.activePermission?.toolCallId, 'call-a');
 
       // 回来仍可正常应答
-      store.respondToPermission('call-a', approved: true);
+      store.respondToPermission('server-1', approved: true);
       expect(await permission, {'decision': 'allow', 'reason': 'Approved once'});
       expect(store.activePermission, isNull);
     });
@@ -205,7 +205,7 @@ void main() {
       expect(settled, isFalse);
       expect(store.activePermission?.toolCallId, 'call-view');
 
-      store.respondToPermission('call-view', approved: false);
+      store.respondToPermission('server-2', approved: false);
       expect(await permission, {'decision': 'deny', 'reason': 'Denied'});
     });
 
@@ -230,10 +230,10 @@ void main() {
 
       // 展示条指向最早请求；后来的不覆盖
       expect(store.activePermission?.toolCallId, 'call-a');
-      store.respondToPermission('call-a', approved: true);
+      store.respondToPermission('server-3', approved: true);
       expect(await futureA, {'decision': 'allow', 'reason': 'Approved once'});
       expect(store.activePermission?.toolCallId, 'call-b');
-      store.respondToPermission('call-b', approved: false);
+      store.respondToPermission('server-4', approved: false);
       expect(await futureB, {'decision': 'deny', 'reason': 'Denied'});
       expect(store.activePermission, isNull);
     });
@@ -446,14 +446,19 @@ void main() {
       return store.ingestReverseRequest(
         ZcodeFrame(
           id: 'review-$id',
-          method: 'interaction/askUser',
+          method: 'interaction/requestUserInput',
           params: {
-            'questionId': id,
+            'requestId': id,
             'sessionId': sessionId,
-            'question': '$id question',
-            'multiSelect': true,
-            'options': [
-              {'label': option, 'description': ''},
+            'questions': [
+              {
+                'question': '$id question',
+                'header': '$id question',
+                'multiSelect': true,
+                'options': [
+                  {'value': option, 'label': option, 'description': ''},
+                ],
+              },
             ],
           },
         ),
@@ -495,18 +500,21 @@ void main() {
       expect(find.text('qa question'), findsOneWidget);
       await tester.tap(find.text('A-only'));
       await tester.pump();
-      await tester.tap(find.text('提交 (1)'));
+      await tester.tap(find.text('提交'));
       await tester.pump();
-      expect((await answerA as Map)['selectedLabels'], ['A-only']);
+      final a = await answerA as Map;
+      expect(a['action'], 'accept');
+      expect((a['content']['answers'])['qa question'], 'A-only');
       expect(find.text('qb question'), findsOneWidget);
 
       // B 未做任何选择：不得出现上一题遗留的「提交 (1)」
       expect(find.text('提交 (1)'), findsNothing,
         reason: 'B 初始未选择，A 的已选项不得遗留到 B',);
-      store.respondToAskUser('qb', []);
+      store.respondToAskUser('qb', answers: const {});
       await tester.pump();
       final b = await answerB as Map;
-      expect(b['selectedLabels'], isNot(contains('A-only')));
+      expect(b['action'], 'accept');
+      expect((b['content'] as Map?)?['answers'], isNull);
     });
 
     testWidgets('权限条标注非当前会话的来源，当前会话不标注', (tester) async {
@@ -537,9 +545,11 @@ void main() {
             home: Scaffold(
               body: PermissionBar(
                 request: PermissionRequest(
+                  requestId: 'perm-$sessionId',
                   toolCallId: 'call-$sessionId',
                   toolName: 'Bash',
                   input: {'command': 'echo hi'},
+                  options: const [],
                   sessionId: sessionId,
                 ),
               ),

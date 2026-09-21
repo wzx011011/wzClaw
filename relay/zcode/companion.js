@@ -22,7 +22,7 @@ const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
   isFastMethod } = require('./lib/protocol');
 const { resolveCompanionStatePaths } = require('./lib/state-path');
 const { resolveZcodeRuntime: resolveRuntime, publicRuntimeDescriptor } = require('./lib/runtime-resolver');
-const { ACCOUNT_PROVIDER_ID, ACCOUNT_PROVIDER_NAME, ACCOUNT_DISPLAY_MODEL_IDS,
+const { PLAN_PROVIDER_ID, PLAN_DISPLAY_MODEL_IDS, PLAN_DISPLAY_PROVIDER_NAME,
   buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay } = require('./lib/plan-overlay');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -510,7 +510,37 @@ function createCompanion(options = {}) {
   let nextReverseWireId = 0;
   // wireId → { timer, nativeId, gen }：反向请求超时看护 + 应答还原映射
   // （按 method 分档，见 handleAppServerFrame）
+  // wireId → { timer, nativeId, gen, requestId }：反向请求超时看护 + 应答
+  // 还原映射。requestId = 官方交互业务身份——同一交互的重宣告共享它，
+  // 应答/超时后兄弟 wireId 一并清理，防止幽灵 -32022 打到引擎已 settle
+  // 的请求上（pendingRequestGroups：requestId → wireId 集合）。
   const pending = new Map();
+  const pendingRequestGroups = new Map();
+
+  function dropRequestEntry(wireId) {
+    const entry = pending.get(wireId);
+    if (!entry) return;
+    pending.delete(wireId);
+    clearTimeout(entry.timer);
+    if (entry.requestId) {
+      const group = pendingRequestGroups.get(entry.requestId);
+      if (group) {
+        group.delete(wireId);
+        if (!group.size) pendingRequestGroups.delete(entry.requestId);
+      }
+    }
+  }
+
+  // 清除同一业务交互的兄弟 wireId（已应答/已超时后，其余宣告不再看护）
+  function dropSiblingWireIds(requestId, keepWireId) {
+    if (!requestId) return;
+    const group = pendingRequestGroups.get(requestId);
+    if (!group) return;
+    for (const wireId of [...group]) {
+      if (wireId === keepWireId) continue;
+      dropRequestEntry(wireId);
+    }
+  }
 
   // 分组显示名：个人配置里各 provider 的 providerName（Claude CLI/BigModel/
   // Codex/DeepSeek），目录透传给手机端做层级分组；缺失时手机端回退 providerId。
@@ -695,20 +725,19 @@ function createCompanion(options = {}) {
       try {
         const freshToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json'));
         let planEnv = null;
-        // 模型目录 overlay（2026-09-21 改版）：注入桌面同款「BigModel 个人」
-        // 账号 provider（组名/模型/顺序逐项一致，见 lib/plan-overlay.js 头注）。
-        // 构建只依赖本地 base 配置 + 登录态 token，无网络拉取——旧「先拉 API
-        // 再 spawn」的冷启动竞态（手机先到 → 引擎裸跑 → 目录缺套餐模型）
-        // 从根上消除。base 缺失/损坏只丢套餐组，不阻塞起桥。
+        // 模型目录 overlay（2026-09-21 改版）：注入与桌面「BigModel 个人」组
+        // 同名同款的三模型（见 lib/plan-overlay.js 头注）。构建只依赖本地
+        // base 配置 + 登录态 token，无网络拉取——旧「先拉 API 再 spawn」的
+        // 冷启动竞态（手机先到 → 引擎裸跑 → 目录缺套餐模型）从根上消除。
+        // base 缺失/损坏只丢套餐组，不阻塞起桥。
         try {
           const baseRaw = fs.readFileSync(defaultPersonalConfigPath(), 'utf8');
           planEnv = { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: writePlanOverlay({
             overlay: buildPlanOverlay({
               baseRaw,
-              modelIds: [...ACCOUNT_DISPLAY_MODEL_IDS],
+              modelIds: [...PLAN_DISPLAY_MODEL_IDS],
               token: freshToken,
-              providerId: ACCOUNT_PROVIDER_ID,
-              providerName: ACCOUNT_PROVIDER_NAME,
+              providerName: PLAN_DISPLAY_PROVIDER_NAME,
             }),
             stateDir: statePaths.stateDir,
           }) };
@@ -750,6 +779,7 @@ function createCompanion(options = {}) {
       bridgeGeneration++;
       for (const entry of pending.values()) clearTimeout(entry.timer);
       pending.clear();
+      pendingRequestGroups.clear();
       // 本地扩展请求同样作废（等价语义：旧进程的应答不会再有）
       for (const entry of localPending.values()) { clearTimeout(entry.timer); entry.resolve(null); }
       localPending.clear();
@@ -824,19 +854,28 @@ function createCompanion(options = {}) {
       }
       const nativeId = frame.id;
       const wireId = `srv-${++nextReverseWireId}@g${bridgeGeneration}`;
+      // 官方交互业务身份：同 requestId 的重宣告归入同组（应答/超时后兄弟清理）
+      const requestId = isObject(frame.params) && typeof frame.params.requestId === 'string'
+        ? frame.params.requestId : null;
       const timeoutMs = isFastMethod(frame.method) ? requestTimeoutMs : permissionRequestTimeoutMs;
       const timer = setTimeout(() => {
-        const entry = pending.get(wireId);
-        if (entry && pending.delete(wireId) && bridge) {
+        const timedOut = pending.get(wireId);
+        if (timedOut && pending.delete(wireId) && bridge) {
           emitActivity('clear', '');
-          bridge.write({ id: entry.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
+          dropSiblingWireIds(timedOut.requestId, wireId);
+          bridge.write({ id: timedOut.nativeId, error: { code: ERR_TIMEOUT, message: 'Client request timed out' } });
         }
       }, timeoutMs).unref();
       // 未决反向请求保存完整载荷与送达状态（审查 P2-6）：手机离席时
       // sendToPhone 被门禁丢弃，但条目留在 pending——手机回席统一补投，
       // 不再让「离席期间产生的权限」无声丢失到 120s 看护超时。
-      const entry = { timer, nativeId, gen: bridgeGeneration, delivered: false, frame: { ...frame, id: wireId } };
+      const entry = { timer, nativeId, gen: bridgeGeneration, delivered: false, requestId, frame: { ...frame, id: wireId } };
       pending.set(wireId, entry);
+      if (requestId) {
+        const group = pendingRequestGroups.get(requestId) ?? new Set();
+        group.add(wireId);
+        pendingRequestGroups.set(requestId, group);
+      }
       deliverReverse(entry);
       return;
     }
@@ -896,8 +935,10 @@ function createCompanion(options = {}) {
         return;
       }
       clearTimeout(entry.timer); pending.delete(frame.id);
-      // 已处理（批准/拒绝/回答都算）：宿主活动清除，气泡回落到连接状态
+      // 已处理（批准/拒绝/回答都算）：宿主活动清除，气泡回落到连接状态；
+      // 同一交互的兄弟 wireId（重宣告）一并撤看护，防幽灵 -32022
       emitActivity('clear', '');
+      dropSiblingWireIds(entry.requestId, frame.id);
       // 还原引擎原生 id 再转发（对外 wireId 只存在于手机↔companion 段）
       frame = { ...frame, id: entry.nativeId };
     }
@@ -1428,9 +1469,9 @@ function createCompanion(options = {}) {
               available: true,
               source: 'engine',
               // BigModel 个人组：置顶标记 + 组名兜底（引擎 providerLabel 缺失时）
-              ...(m.providerId === ACCOUNT_PROVIDER_ID ? {
+              ...(m.providerId === PLAN_PROVIDER_ID ? {
                 planGroup: true,
-                ...(m.providerLabel ? {} : { providerLabel: ACCOUNT_PROVIDER_NAME }),
+                ...(m.providerLabel ? {} : { providerLabel: PLAN_DISPLAY_PROVIDER_NAME }),
               } : {}),
             })),
             ...imported

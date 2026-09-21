@@ -36,13 +36,12 @@ const PLAN_API = {
   baseUrl: 'https://open.bigmodel.cn/api/anthropic',
 };
 
-// 桌面端「BigModel 个人」组的同款投影：providerId/组名/模型/顺序逐项对齐
-// （GLM-5.3 为当前选中默认，Flash/Flashx 带视觉标记；大小写敏感，端点
-// 实测服务大写 ID——2026-09-21 curl 1-token 实证）。计划模型变更时更新
-// 此列表即可。
-const ACCOUNT_PROVIDER_ID = 'account:bigmodel-individual-coding-plan';
-const ACCOUNT_PROVIDER_NAME = 'BigModel 个人';
-const ACCOUNT_DISPLAY_MODEL_IDS = ['GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-Flashx'];
+// 桌面端「BigModel 个人」组的同款投影：组名/模型/顺序对齐桌面选择器
+// （GLM-5.3 / GLM-5.3-Flash / GLM-5.3-Flashx，小写 ID 为套餐 API 空间，
+// 生产实测可服务；显示 label 由 builtin 正则规则自动补全为桌面同款大小写）。
+// 计划模型变更时更新此列表即可。
+const PLAN_DISPLAY_MODEL_IDS = ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx'];
+const PLAN_DISPLAY_PROVIDER_NAME = 'BigModel 个人';
 
 // 在基础个人配置（文本）上合入套餐条目，返回 overlay 对象。
 // baseRaw 缺失/损坏时从空骨架起步（此时导入 provider 会缺席——调用方应尽量
@@ -74,7 +73,11 @@ function buildPlanOverlay({ baseRaw, modelIds, token, providerId = PLAN_PROVIDER
       personalModelIds: [...modelIds],
       modelOrder: [...modelIds],
       api: { ...PLAN_API },
-      access: { type: 'api-key', apiKey: token },
+      // account:* 固定 provider 禁止携带 access（schema superRefine 硬约束：
+      // 「固定 Account Provider 的 Access 只能由 ZCode Built-in Config 声明」，
+      // 违规 = 整份个人配置被拒、目录归零——2026-09-21 实测踩坑）。账号认证
+      // 由引擎读用户 zhipu 登录态解析；非 account provider 保留 api-key 注入。
+      ...(providerId.startsWith('account:') ? {} : { access: { type: 'api-key', apiKey: token } }),
     },
   });
   const mcr = overlay.config.modelConfigRules = overlay.config.modelConfigRules
@@ -106,6 +109,6 @@ function writePlanOverlay({ overlay, stateDir }) {
 
 module.exports = {
   PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME, PLAN_API,
-  ACCOUNT_PROVIDER_ID, ACCOUNT_PROVIDER_NAME, ACCOUNT_DISPLAY_MODEL_IDS,
+  PLAN_DISPLAY_MODEL_IDS, PLAN_DISPLAY_PROVIDER_NAME,
   buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay,
 };

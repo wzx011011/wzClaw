@@ -6,15 +6,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay,
-  PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME, PLAN_API, ACCOUNT_PROVIDER_ID,
-  ACCOUNT_PROVIDER_NAME, ACCOUNT_DISPLAY_MODEL_IDS } = require('../lib/plan-overlay');
+  PLAN_PROVIDER_ID, PLAN_PROVIDER_NAME, PLAN_API, PLAN_DISPLAY_MODEL_IDS,
+  PLAN_DISPLAY_PROVIDER_NAME } = require('../lib/plan-overlay');
 
-test('buildPlanOverlay 账号 provider：组名/模型/顺序对齐桌面，旧套餐规则清除', () => {
+test('buildPlanOverlay 桌面对齐：组名/模型/顺序与桌面一致，旧规则清除', () => {
   const base = JSON.stringify({
     schemaVersion: 1,
     config: {
       providerConfigRules: { providerRules: [
-        // 桌面物化的账号规则（模型只剩 Flashx）+ 旧方案自建 provider 残留
+        // 桌面物化的账号规则残留 + 旧方案自建 provider 残留
         { providerId: 'account:bigmodel-individual-coding-plan',
           config: { personalModelIds: ['GLM-5.3-Flashx'],
             modelOrder: ['GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-Flashx'] } },
@@ -26,27 +26,20 @@ test('buildPlanOverlay 账号 provider：组名/模型/顺序对齐桌面，旧�
     },
   });
   const overlay = buildPlanOverlay({
-    baseRaw: base, modelIds: [...ACCOUNT_DISPLAY_MODEL_IDS], token: 'tok',
-    providerId: ACCOUNT_PROVIDER_ID, providerName: ACCOUNT_PROVIDER_NAME,
+    baseRaw: base, modelIds: [...PLAN_DISPLAY_MODEL_IDS], token: 'tok',
+    providerName: PLAN_DISPLAY_PROVIDER_NAME,
   });
   const rules = overlay.config.providerConfigRules.providerRules;
-  const account = rules.find((r) => r.providerId === ACCOUNT_PROVIDER_ID);
-  assert.ok(account, '账号条目存在');
-  assert.equal(account.providerName, ACCOUNT_PROVIDER_NAME, '组名与桌面一致');
-  // 桌面 modelOrder 三模型补齐（base 只持久化了 Flashx）
-  assert.deepEqual(account.config.personalModelIds, ['GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-Flashx']);
-  assert.deepEqual(account.config.modelOrder, ['GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-Flashx']);
-  assert.equal(account.config.access.type, 'api-key');
-  assert.equal(account.config.access.apiKey, 'tok');
-  assert.deepEqual(account.config.api, PLAN_API);
-  assert.equal(rules.some((r) => r.providerId === 'custom:zcode-bigmodel-plan'), false,
-    '旧自建 provider 规则清除，防双 BigModel 组并存');
-  const accountModelRules = overlay.config.modelConfigRules.providerModelRules
-    .filter((r) => r.providerId === ACCOUNT_PROVIDER_ID);
-  assert.deepEqual(accountModelRules.map((r) => r.modelId),
-    ['GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-Flashx']);
-  assert.equal(overlay.config.modelConfigRules.providerModelRules
-    .some((r) => r.providerId === 'custom:zcode-bigmodel-plan'), false, '旧模型规则清除');
+  const plan = rules.find((r) => r.providerId === PLAN_PROVIDER_ID);
+  assert.ok(plan, '套餐条目存在');
+  assert.equal(plan.providerName, PLAN_DISPLAY_PROVIDER_NAME, '组名与桌面一致');
+  assert.deepEqual(plan.config.personalModelIds, [...PLAN_DISPLAY_MODEL_IDS]);
+  assert.deepEqual(plan.config.modelOrder, [...PLAN_DISPLAY_MODEL_IDS]);
+  assert.equal(rules.filter((r) => r.providerId === 'account:bigmodel-individual-coding-plan').length, 1,
+    '桌面账号规则保留不受影响');
+  const pmr = overlay.config.modelConfigRules.providerModelRules;
+  assert.deepEqual(pmr.filter((r) => r.providerId === PLAN_PROVIDER_ID).map((r) => r.modelId),
+    [...PLAN_DISPLAY_MODEL_IDS], '旧模型规则被同 provider 新清单替换');
 });
 
 test('buildPlanOverlay：追加规则不改既有条目；不带 enabled；模型规则逐条；幂等', () => {

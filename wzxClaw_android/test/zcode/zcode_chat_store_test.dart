@@ -662,7 +662,7 @@ void main() {
 
       // 批准 + remember：回放 allow_project 选项的 response 原文
       // （含 permissionUpdates——只有请求方知道其内容）
-      store.respondToPermission('call_tc1', approved: true, remember: true);
+      store.respondToPermission('perm_04189f93-0000-0000-0000-000000000001', approved: true, remember: true);
       expect(await future, {
         'decision': 'allow',
         'permissionUpdates': [
@@ -704,7 +704,7 @@ void main() {
         ),
       );
       await Future<void>.delayed(Duration.zero);
-      store.respondToPermission('call_tc2', approved: true);
+      store.respondToPermission('server-2', approved: true);
       expect(
         await futureOnce,
         {'decision': 'allow', 'reason': 'Approved once'},
@@ -729,7 +729,7 @@ void main() {
         ),
       );
       await Future<void>.delayed(Duration.zero);
-      store.respondToPermission('call_tc3', approved: false);
+      store.respondToPermission('server-3', approved: false);
       expect(await futureDeny, {'decision': 'deny', 'reason': 'Denied'});
 
       // 无 options 暂存（协议漂移兜底）：按实测 schema 构造最小 result
@@ -745,11 +745,11 @@ void main() {
         ),
       );
       await Future<void>.delayed(Duration.zero);
-      store.respondToPermission('call_tc4', approved: false);
+      store.respondToPermission('server-4', approved: false);
       expect(await futureFallback, {'decision': 'deny', 'reason': 'Denied'});
 
       // 重复应答（已清除）静默忽略
-      store.respondToPermission('call_tc4', approved: true);
+      store.respondToPermission('server-4', approved: true);
       sub.cancel();
     });
 
@@ -767,11 +767,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(store.activePermission?.toolCallId, 'tc-2');
       expect(store.activePermission?.toolName, 'ShellExecute');
-      store.respondToPermission('tc-2', approved: false);
+      store.respondToPermission('server-5', approved: false);
       expect(await future, {'decision': 'deny', 'reason': 'Denied'});
     });
 
-    test('AskUser 反向请求 → 流事件 + 应答回传选项', () async {
+    test('AskUser 反向请求（官方 schema）→ 流事件 + 应答回传 accept/answers', () async {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);
 
@@ -781,35 +781,86 @@ void main() {
       final future = store.debugHandleReverseRequest(
         const ZcodeFrame(
           id: 'server-3',
-          method: 'interaction/askUser',
+          method: 'interaction/requestUserInput',
           params: {
-            'questionId': 'q-1',
-            'question': '选哪个？',
-            'options': [
-              {'label': 'A', 'description': '选项A'},
-              {'label': 'B', 'description': '选项B'},
+            'requestId': 'req-1',
+            'sessionId': 'sess-1',
+            'questions': [
+              {
+                'question': '选哪个？',
+                'header': '选哪个？',
+                'multiSelect': false,
+                'options': [
+                  {'value': 'A', 'label': 'A', 'description': '选项A'},
+                  {'value': 'B', 'label': 'B', 'description': '选项B'},
+                ],
+              },
             ],
-            'multiSelect': false,
           },
         ),
       );
       await Future<void>.delayed(Duration.zero);
-      expect(store.activeAskUser?.questionId, 'q-1');
-      expect(store.activeAskUser?.question, '选哪个？');
-      expect(store.activeAskUser!.options.length, 2);
-      expect(store.activeAskUser!.options.first['label'], 'A');
+      expect(store.activeAskUser?.requestId, 'req-1');
+      expect(store.activeAskUser!.questions.first.question, '选哪个？');
+      expect(store.activeAskUser!.questions.first.options.length, 2);
+      expect(store.activeAskUser!.questions.first.options.first.value, 'A');
       expect(events, hasLength(1));
 
-      store.respondToAskUser('q-1', ['A'], customText: '备注');
+      // 官方应答契约：{action:"accept", content:{answers:{题目原文: 选项 value}}}
+      store.respondToAskUser('req-1', answers: {'选哪个？': 'A'});
       expect(await future, {
-        'questionId': 'q-1',
-        'selectedLabels': ['A'],
-        'customText': '备注',
+        'action': 'accept',
+        'content': {
+          'answers': {'选哪个？': 'A'},
+        },
       });
       expect(store.activeAskUser, isNull);
       await Future<void>.delayed(Duration.zero);
       expect(events.last, isNull);
       sub.cancel();
+    });
+
+    test('同 requestId 重宣告 → 合并（旧 future 保留可应答，不误杀）', () async {
+      final fake = FakeZcodeRelayClient();
+      final store = pairedStore(fake);
+
+      // 官方引擎每秒重宣告同一交互：帧 id 变化、业务 requestId 不变
+      final first = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-9',
+          method: 'interaction/requestUserInput',
+          params: {
+            'requestId': 'req-9',
+            'questions': [
+              {'question': '选哪个？', 'header': '选哪个？'},
+            ],
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final reannounced = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-10',
+          method: 'interaction/requestUserInput',
+          params: {
+            'requestId': 'req-9',
+            'questions': [
+              {'question': '选哪个？', 'header': '选哪个？'},
+            ],
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // 重宣告不得产生第二个展示请求，也不得拒绝第一请求
+      expect(store.activeAskUser?.requestId, 'req-9');
+
+      store.respondToAskUser('req-9', answers: {'选哪个？': 'A'});
+      // 合并语义：两个 future 都由同一次应答完成（同一 completer）
+      expect(await first, isNotNull);
+      expect(await reannounced, isNotNull);
+      expect(store.activeAskUser, isNull);
     });
 
     test('解析失败 / 未知 method → 抛错（默认安全拒绝）', () async {
