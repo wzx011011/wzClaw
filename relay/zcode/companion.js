@@ -22,8 +22,8 @@ const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
   isFastMethod } = require('./lib/protocol');
 const { resolveCompanionStatePaths } = require('./lib/state-path');
 const { resolveZcodeRuntime: resolveRuntime, publicRuntimeDescriptor } = require('./lib/runtime-resolver');
-const { PLAN_PROVIDER_ID, PLAN_CACHE_TTL_MS, fetchPlanModelIds, buildPlanOverlay,
-  defaultPersonalConfigPath, writePlanOverlay } = require('./lib/plan-overlay');
+const { ACCOUNT_PROVIDER_ID, ACCOUNT_PROVIDER_NAME, ACCOUNT_DISPLAY_MODEL_IDS,
+  buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay } = require('./lib/plan-overlay');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const safeError = (code) => Object.assign(new Error(code), { code });
@@ -473,9 +473,6 @@ function createCompanion(options = {}) {
     // 桥重启预算参数（透传 AppServerBridge，可注入供测试）
     bridgeMaxRestarts = 5, bridgeRestartDelayMs = 1000, bridgeRestartWindowMs = 5 * 60 * 1000,
     bridgeStableAliveMs = 60 * 1000,
-    // 套餐模型拉取函数（lib/plan-overlay.fetchPlanModelIds）。默认关闭：
-    // 仅 GUI 壳与 CLI 入口显式传入启用；测试不传即零网络依赖。
-    planModelFetch = null,
     // 宿主活动钩子（可选，2026-09-21 桌面宠物集成）：把「值得通知的事」
     // 投给宿主 UI（需要确认/需要回答/回答摘要/已处理），内容逻辑与手机端
     // 通知一致。纯只读观测，回调异常被吞掉，绝不影响桥的转发与应答。
@@ -514,43 +511,6 @@ function createCompanion(options = {}) {
   // wireId → { timer, nativeId, gen }：反向请求超时看护 + 应答还原映射
   // （按 method 分档，见 handleAppServerFrame）
   const pending = new Map();
-
-  // ---- 套餐模型注入（2026-09-18 实测配方，见 lib/plan-overlay.js）----
-  // 启动即后台拉取套餐模型清单（1h 缓存）；就绪后起桥 spawn 引擎时经
-  // ZCODE_PERSONAL_PROVIDER_CONFIG_FILE 注入 overlay，使独立引擎原生可选
-  // glm-5.3-flash 等套餐模型。拉取失败不阻塞在线（降级为现状目录）。
-  let planModelIds = null;
-  let planModelIdsAt = 0;
-  let planFetchInFlight = null;
-  function refreshPlanModels() {
-    if (typeof planModelFetch !== 'function') return Promise.resolve(null);
-    if (planFetchInFlight) return planFetchInFlight;
-    if (planModelIds && Date.now() - planModelIdsAt < PLAN_CACHE_TTL_MS) {
-      return Promise.resolve(planModelIds);
-    }
-    // R08：single-flight 必须在 settle 后清空自身（finally），否则成功
-    // 路径的已完成 Promise 永久占据槽位——TTL 刷新与登录后恢复全部失效。
-    planFetchInFlight = (async () => {
-      let planToken;
-      try {
-        planToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json'));
-      } catch {
-        return null;
-      }
-      try {
-        planModelIds = await planModelFetch({ token: planToken });
-        planModelIdsAt = Date.now();
-        log('plan-models-refreshed', `count=${planModelIds.length}`);
-      } catch (error) {
-        log('plan-models-unavailable', error.code || '');
-        return null;
-      }
-      return planModelIds;
-    })().finally(() => { planFetchInFlight = null; });
-    return planFetchInFlight;
-  }
-  // 创建即后台拉取：手机配对起桥时清单通常已就绪，overlay 随首次 spawn 生效
-  void refreshPlanModels();
 
   // 分组显示名：个人配置里各 provider 的 providerName（Claude CLI/BigModel/
   // Codex/DeepSeek），目录透传给手机端做层级分组；缺失时手机端回退 providerId。
@@ -735,13 +695,25 @@ function createCompanion(options = {}) {
       try {
         const freshToken = readModelAuth(v2ConfigPath || path.join(os.homedir(), '.zcode/v2/config.json'));
         let planEnv = null;
-        if (planModelIds && planModelIds.length) {
-          try {
-            const baseRaw = fs.readFileSync(defaultPersonalConfigPath(), 'utf8');
-            planEnv = { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: writePlanOverlay({ overlay: buildPlanOverlay({ baseRaw, modelIds: planModelIds, token: freshToken }), stateDir: statePaths.stateDir }) };
-          } catch (error) {
-            log('plan-overlay-failed', error.code || '');
-          }
+        // 模型目录 overlay（2026-09-21 改版）：注入桌面同款「BigModel 个人」
+        // 账号 provider（组名/模型/顺序逐项一致，见 lib/plan-overlay.js 头注）。
+        // 构建只依赖本地 base 配置 + 登录态 token，无网络拉取——旧「先拉 API
+        // 再 spawn」的冷启动竞态（手机先到 → 引擎裸跑 → 目录缺套餐模型）
+        // 从根上消除。base 缺失/损坏只丢套餐组，不阻塞起桥。
+        try {
+          const baseRaw = fs.readFileSync(defaultPersonalConfigPath(), 'utf8');
+          planEnv = { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: writePlanOverlay({
+            overlay: buildPlanOverlay({
+              baseRaw,
+              modelIds: [...ACCOUNT_DISPLAY_MODEL_IDS],
+              token: freshToken,
+              providerId: ACCOUNT_PROVIDER_ID,
+              providerName: ACCOUNT_PROVIDER_NAME,
+            }),
+            stateDir: statePaths.stateDir,
+          }) };
+        } catch (error) {
+          log('plan-overlay-failed', error.code || '');
         }
         lastGoodBridgeEnv = runtimeProcessEnv(resolved, { ...process.env, ANTHROPIC_API_KEY: freshToken, ...planEnv });
       } catch (error) {
@@ -1440,10 +1412,7 @@ function createCompanion(options = {}) {
         case 'x/model/catalog': {
           // 可用目录：引擎实测（settings.model.available，唯一可信源）+
           // 导入快照补充（标记 imported，未经引擎证实可用性）。
-          // 条目透传层级弹层元数据；套餐条目带 planGroup 供手机端置顶。
-          // TTL 到期即后台刷新（refreshPlanModels 内部有 single-flight
-          // 与 TTL 判定），登录恢复后套餐目录能自动跟上
-          void refreshPlanModels();
+          // 条目透传层级弹层元数据；BigModel 个人组带 planGroup 供手机端置顶。
           let engine = [];
           let degraded = false;
           try {
@@ -1458,7 +1427,11 @@ function createCompanion(options = {}) {
               ...m,
               available: true,
               source: 'engine',
-              ...(m.providerId === PLAN_PROVIDER_ID ? { planGroup: true } : {}),
+              // BigModel 个人组：置顶标记 + 组名兜底（引擎 providerLabel 缺失时）
+              ...(m.providerId === ACCOUNT_PROVIDER_ID ? {
+                planGroup: true,
+                ...(m.providerLabel ? {} : { providerLabel: ACCOUNT_PROVIDER_NAME }),
+              } : {}),
             })),
             ...imported
               .filter((m) => !engineKeys.has(`${m.providerId}/${m.modelId}`))
@@ -1940,7 +1913,7 @@ function resolveRegistrationSecret({ explicit, env = process.env,
 
 module.exports = { createCompanion, AppServerBridge, readModelAuth, derivePairingUrl, defaultZcodeCommand,
   resolveZcodeRuntime, runtimeProcessEnv, runRuntimeCommand, probeAppServer, probeZcodeRuntime,
-  readRegistrationSecretFile, resolveRegistrationSecret, fetchPlanModelIds };
+  readRegistrationSecretFile, resolveRegistrationSecret };
 // 把配对二维码渲染成 PNG + 纯文本链接，写到固定位置（数据目录 + 可选额外路径）。
 // 口令/房间号均持久化且确定性派生：二维码内容几乎永不变化——
 // 用户永远去同一个固定路径取最新码，无需每次找。
@@ -1999,7 +1972,6 @@ if (require.main === module) {
     try {
       companion = createCompanion({
         relayUrl: args[relayIdx + 1],
-        planModelFetch: fetchPlanModelIds,
         ...(registrationSecret ? { registrationSecret } : {}),
         cwd: cwdIdx !== -1 && args[cwdIdx + 1] ? args[cwdIdx + 1] : process.cwd(),
         ...(midFileIdx !== -1 && args[midFileIdx + 1] ? { midFile: args[midFileIdx + 1] } : {}),
