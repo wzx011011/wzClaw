@@ -24,17 +24,9 @@ build/
 Thumbs.db
 .DS_Store
 
-wzxClaw_desktop/node_modules/
-wzxClaw_desktop/dist/
-wzxClaw_desktop/out/
-wzxClaw_desktop/.claude/
-wzxClaw_desktop/.eval-reports/
-wzxClaw_desktop/.eval-workspaces/
-wzxClaw_desktop/coverage/
-wzxClaw_desktop/CLAUDE.md
-wzxClaw_desktop/REVIEW.md
-wzxClaw_desktop/*.log
-wzxClaw_desktop/data/
+# 2026-09-21 退役组件的本地磁盘遗留（tracked 已删，目录待手动清理）
+wzxClaw_desktop/
+companion_app/
 
 wzxClaw_android/.dart_tool/
 wzxClaw_android/.claude/
@@ -66,4 +58,3 @@ pair-url*.txt
 
 # flutter test 运行产物（内含 QR 截图等，同理不进 git）
 /test-results/
-companion_app/runtime-bundle/
