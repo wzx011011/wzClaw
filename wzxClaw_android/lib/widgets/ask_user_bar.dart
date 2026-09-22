@@ -52,6 +52,19 @@ class _AskUserBarState extends State<AskUserBar> {
     _selected.clear();
   }
 
+  /// 登记自由文本 controller 并监听：打字必须触发重建，否则 build 里按
+  /// 「是否有作答」计算的提交按钮可用性永不刷新（自由文本题 = 官方
+  /// prompt 模式的唯一作答通道，二轮评审 P1 回归锚）
+  TextEditingController _controllerFor(int qi) {
+    return _freeText.putIfAbsent(qi, () {
+      final c = TextEditingController();
+      c.addListener(() {
+        if (mounted) setState(() {});
+      });
+      return c;
+    });
+  }
+
   void _toggle(int qi, AskUserQuestionItem q, String value) {
     setState(() {
       final set = _selected.putIfAbsent(qi, () => <String>{});
@@ -99,6 +112,12 @@ class _AskUserBarState extends State<AskUserBar> {
     final hasAnyAnswer = q.questions.asMap().entries.any(
           (e) => _answerFor(e.key, e.value) != null,
         );
+    // 自由文本 controller 先行登记（带监听触发重建——打字必须能刷新
+    // 「是否有作答」进而解锁提交按钮；自由文本题是官方 prompt 模式的
+    // 唯一作答通道，二轮评审 P1）
+    for (var i = 0; i < q.questions.length; i++) {
+      _controllerFor(i);
+    }
 
     return Container(
       width: double.infinity,
@@ -213,9 +232,7 @@ class _QuestionEditor extends StatelessWidget {
     final colors = AppColors.of(context);
     final set = selected[index];
     final hasOptions = item.options.isNotEmpty;
-    if (!freeText.containsKey(index)) {
-      freeText[index] = TextEditingController();
-    }
+    // controller 由父级 _controllerFor 登记并挂监听（build 循环先行执行）
     final controller = freeText[index]!;
 
     return Container(

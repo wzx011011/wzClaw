@@ -169,5 +169,38 @@ void main() {
       expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
       expect(find.byIcon(Icons.radio_button_off), findsOneWidget);
     });
+
+    testWidgets('零作答禁用提交；自由文本输入后解锁（二轮 P1 回归锚）',
+        (tester) async {
+      await tester.pumpWidget(wrapWithTheme(
+        buildQuestion(
+          requestId: 'req-7',
+          questions: const [
+            // 无选项 = 纯自由文本题（官方 prompt 模式的解析产物）
+            AskUserQuestionItem(
+              question: 'Describe:',
+              header: 'Describe:',
+              options: [],
+            ),
+          ],
+        ),
+      ),);
+
+      TextButton submitButton() => tester.widget<TextButton>(
+            find.ancestor(
+              of: find.text('提交'),
+              matching: find.byType(TextButton),
+            ),
+          );
+
+      // 未作答：提交禁用（onPressed 为 null）
+      expect(submitButton().onPressed, isNull);
+
+      // 输入自由文本：监听触发重建，提交解锁（旧实现打字不触发 setState，
+      // 按钮永久禁死——纯自由文本题无任何重建触发点）
+      await tester.enterText(find.byType(TextField), 'my answer');
+      await tester.pump();
+      expect(submitButton().onPressed, isNotNull);
+    });
   });
 }

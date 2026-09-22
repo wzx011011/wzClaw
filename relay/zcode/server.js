@@ -346,9 +346,10 @@ function createRelay(options = {}) {
           if (!isStale(incumbent)) return fail(state, 'PEER_EXISTS'); // 健康在位者受保护
         }
         for (const incumbent of incumbents) {
+          const slot = room.owner === incumbent ? 'owner' : 'device';
           if (room.owner === incumbent) room.owner = null; else room.device = null;
           incumbent.ws.terminate();
-          logger('peer-takeover', `role=device stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);
+          logger('peer-takeover', `role=device stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'} slot=${slot}`);
         }
         if (!findRoom(room.sid)) return fail(state, 'AUTH_FAILED');
         room.device = state;

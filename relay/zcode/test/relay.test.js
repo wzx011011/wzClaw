@@ -11,8 +11,7 @@ const { createRelay } = require('../server');
 const { MAX_PAYLOAD } = require('../lib/constants');
 const { deriveProof, deriveRegisterProof, verifyProof } = require('../lib/proof');
 const { classifyFrame, ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
-  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod,
-  isPermissionLikeMethod } = require('../lib/protocol');
+  ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, isFastMethod } = require('../lib/protocol');
 const { runProbe } = require('../probe');
 const { spawn } = require('node:child_process');
 const path = require('node:path');

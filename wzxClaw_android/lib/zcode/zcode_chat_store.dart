@@ -1494,6 +1494,8 @@ class ZcodeChatStore extends ChangeNotifier {
     required bool remember,
   }) {
     if (options != null) {
+      // 记忆语义的两个 kind 并存时取数组靠前者（实测每档仅一选项；
+      // 官方以 allow_project 为主，如未来出现双选项需要引擎侧裁定语义）
       final wantedKinds = approved
           ? (remember ? ['allow_project', 'allow_always'] : ['allow_once'])
           : ['deny'];
@@ -2577,7 +2579,7 @@ class ZcodeChatStore extends ChangeNotifier {
       case 'turn.started':
         state.isStreaming = true;
         state.noteTurnStart(turnId); // 回合代次：新回合开始即前进
-        final messageId = _nonEmpty(payload['messageId']) ?? _nonEmpty(payload['message_id']);
+        final messageId = _nonEmpty(payload['messageId']);
         final input = payload['input'];
         if (messageId != null && input is String && input.isNotEmpty) {
           state.ensureUserMessage(

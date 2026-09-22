@@ -1216,8 +1216,15 @@ function createCompanion(options = {}) {
     const reply = (payload) => {
       let json = null;
       try { json = JSON.stringify({ type: 'data', payload }); } catch { /* 不可序列化 */ }
-      if (json === null || Buffer.byteLength(json) > MAX_PAYLOAD) {
-        log('x-reply-too-large', `${frame.method} bytes=${json ? Buffer.byteLength(json) : 'unserializable'}`);
+      if (json === null) {
+        // 与超限分开报：排查时「序列化失败」与「体积超限」是两类问题
+        log('x-reply-unserializable', frame.method);
+        send({ type: 'data', payload: { id: frame.id, error: { code: ERR_X_FAILED,
+          message: 'x/* 应答不可序列化' } } });
+        return;
+      }
+      if (Buffer.byteLength(json) > MAX_PAYLOAD) {
+        log('x-reply-too-large', `${frame.method} bytes=${Buffer.byteLength(json)}`);
         send({ type: 'data', payload: { id: frame.id, error: { code: ERR_FRAME_TOO_LARGE,
           message: 'x/* 应答超出中继帧上限' } } });
         return;
