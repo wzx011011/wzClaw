@@ -92,6 +92,16 @@ process.stdin.on('data', (chunk) => {
         { payload: { kind: 'text_delta', delta: 'mock answer' } },
         { payload: { kind: 'turn.terminal', status: 'completed' } },
       ] } });
+    } else if (frame.method === 'fake/emit-notifications') {
+      // 观测命令：host 控制面通知（companion 必须吞掉不转发）与普通通知
+      // （必须照常转发）各发一条，供过滤行为断言。
+      send({ method: 'startup/storageState', params: { phase: 'ready' } });
+      send({ method: 'fake/normal-note', params: { n: 1 } });
+      send({ id: frame.id, result: { emitted: 2 } });
+    } else if (frame.method === 'session/fork') {
+      // 透传锚（评审 P3-1）：companion 对该族方法纯透传不改写——返回带
+      // 实测字段的响应，断言手机端收到的 result 与此处逐字一致。
+      send({ id: frame.id, result: { sessionId: 'fork-child-1', session: { sessionId: 'fork-child-1' } } });
     }
   }
 });

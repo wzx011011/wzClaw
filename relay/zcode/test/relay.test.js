@@ -747,6 +747,48 @@ test('unverified takeover attempts cause no side effects on room members', async
   p2.send(after); assert.deepEqual(await d3.next('data'), after);
 });
 
+// 认证通过后的 device 清场必须「先整体预检、再清场」：陈旧 owner + 健康 device
+// 的组合下，挑战端应被 PEER_EXISTS 整体拒绝，且陈旧 owner 不得已被清
+// （旧实现边清边查，会在撞上健康 device 前先清掉 owner——拒绝路径带了副作用）。
+test('device takeover precheck: stale owner is not cleared when a healthy device rejects the challenger', async (t) => {
+  const f = await fixture(t);
+  // 1. 仅注册的 owner（不完成 device 认证；mid 自备供后续幂等重注册），随后置为半开
+  const origMid = randomUUID();
+  const ownerHash = createHash('sha256').update(randomBytes(32)).digest('base64');
+  const owner = await client(t, `${f.url}?mid=${origMid}`, { headers: { 'X-Device-ID': origMid } });
+  owner.send({ type: 'device_register_init', device_mid: origMid, pass_hash: ownerHash, client_ts: Date.now() });
+  const sid = (await owner.next('device_register_ack')).device_sid;
+  // 服务端 state 定位：mid/role 过滤（客户端 ws 与服务端 state.ws 是两个对象，
+  // 不能按 ws 身份比对——既有用例同款做法）
+  const liveOwnerState = () => [...f.relay._sockets.values()]
+    .filter((s) => s.mid === origMid && s.ws.readyState === WebSocket.OPEN).pop();
+  liveOwnerState().lastPongAt = 0;
+  // 2. 正主持正确口令接管 device 槽（此路径按设计清掉半开 owner）
+  const b = await client(t, f.url);
+  assert.equal((await auth(b, sid, ownerHash, 'device')).ack.pair_status, 'waiting');
+  // 3. 同 mid+hash 幂等重注册：新 socket 接管 owner 槽，再置为半开
+  const c = await client(t, `${f.url}?mid=${origMid}`, { headers: { 'X-Device-ID': origMid } });
+  c.send({ type: 'device_register_init', device_mid: origMid, pass_hash: ownerHash, client_ts: Date.now() });
+  assert.equal((await c.next('device_register_ack')).device_sid, sid);
+  liveOwnerState().lastPongAt = 0;
+  // 4. 挑战端 init 时临时把健康 device 也置为半开以通过 init 预检，
+  //    应答前恢复——复现「init 通过后 device 已健康」的认证竞态窗口
+  const bState = [...f.relay._sockets.values()]
+    .find((s) => s.role === 'device' && s.room?.sid === sid);
+  const bPong = bState.lastPongAt;
+  bState.lastPongAt = 0;
+  const challenger = await client(t, f.url);
+  const nonce = await challenge(challenger, sid, 'device');
+  bState.lastPongAt = bPong;
+  challenger.send({ type: 'auth_response', device_sid: sid,
+    proof: proofFor(ownerHash, nonce, 'device', sid) });
+  assert.equal((await challenger.next('error')).code, 'PEER_EXISTS');
+  // 5. 拒绝必须零副作用：半开 owner 的 socket 仍 OPEN（旧实现此处已被 terminate）
+  await delay(50);
+  assert.equal(c.ws.readyState, WebSocket.OPEN);
+  assert.equal(b.ws.readyState, WebSocket.OPEN);
+});
+
 test('registration generates unique sid and forwarding cannot cross rooms', async (t) => {
   const f = await fixture(t);
   const a = await device(t, f.url);

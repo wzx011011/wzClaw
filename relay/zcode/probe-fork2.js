@@ -5,8 +5,8 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { WebSocket } = require('ws');
+const { deriveProof } = require('./lib/proof');
 
 const raw = fs.readFileSync(path.join(os.homedir(), '.wzxclaw', 'zcode-companion', 'pair-url.txt'), 'utf8').trim();
 const m = raw.match(/https?:\/\/\S*\/pair\?sid=[^&\s]+&hash=[^&\s]+/);
@@ -30,7 +30,7 @@ ws.on('message', async (rawMsg) => {
     return;
   }
   if (msg.type === 'auth_challenge') {
-    const proof = crypto.createHmac('sha256', hash).update(`${msg.nonce}|probe|${sid}`).digest('base64url');
+    const proof = deriveProof({ passHash: hash, nonce: msg.nonce, role: 'probe', sid });
     ws.send(JSON.stringify({ type: 'auth_response', device_sid: sid, proof })); return;
   }
   if ((msg.type === 'auth_ack' || msg.type === 'pair_status_ack') && msg.pair_status === 'matched') {

@@ -4,8 +4,9 @@
 //
 // 用法：
 //   node scripts/sync-companion-core.mjs [desktop 检出路径]
-// desktop 路径缺省取环境变量 WZXCLAW_DESKTOP，再缺省 ../ZCode（与本仓库
-// 并级放 ZCode fork clone 的约定布局）。目标不存在/缺 companion.js 时报错退出。
+// desktop 路径缺省取本仓库的 desktop submodule（<repoRoot>/desktop，2026-09-21
+// 起的唯一桌面形态）；可用环境变量 WZXCLAW_DESKTOP 覆盖。目标不存在/缺
+// companion.js 时报错退出。
 //
 // 同步后必须在 desktop 仓库提交，并与本仓库的 relay 核心变更同一变更集，
 // 保证「哪版 wzxClaw 配哪版桌面端」可追溯（协议契约耦合）。
@@ -18,10 +19,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const sourceRoot = path.join(repoRoot, 'relay', 'zcode');
 
 const argTarget = process.argv[2];
-const desktopRoot = path.resolve(
-  repoRoot,
-  argTarget || process.env.WZXCLAW_DESKTOP || '../ZCode',
-);
+const defaultTarget = process.env.WZXCLAW_DESKTOP || path.join(repoRoot, 'desktop');
+const desktopRoot = path.resolve(repoRoot, argTarget || defaultTarget);
 const targetRoot = path.join(desktopRoot, 'packages', 'desktop', 'companion-core');
 
 const files = [

@@ -275,10 +275,9 @@ async function probeZcodeRuntime({ cwd = process.cwd(), v2ConfigPath, env = proc
     : { category: probe.code === 'TIMEOUT' ? 'app-server-timeout' : 'app-server-failed',
         source: resolved.source, version: versionText, detailCode: probe.code,
         doctorWarning: doctor.ok ? null : doctor.code,
-        // 归因观测透传（2026-09-20）：此前 stderrTail/diag 在此被丢弃，
+        // 归因观测透传（2026-09-20）：此前 stderrTail 在此被丢弃，
         // GUI 日志只剩裸 EXIT_1，无法区分「秒退零输出」与「跑后自退」
-        ...(probe.stderrTail ? { stderrTail: probe.stderrTail } : {}),
-        ...(probe.diag ? { diag: probe.diag } : {}) };
+        ...(probe.stderrTail ? { stderrTail: probe.stderrTail } : {}) };
 }
 
 // 读取桌面端已登录的 coding-plan token（只返回，不打印）。
@@ -789,9 +788,10 @@ function createCompanion(options = {}) {
       sendToPhone({ method: 'x/engine/generation', params: { generation: bridgeGeneration } });
     };
     bridge.start();
-    bridgeGeneration++; // 新桥实例 = 新代次（子进程 id 空间全新）
+    // spawnChild 首发即触发 onRespawn（代次递增 + x/engine/generation 推送，
+    // 见桥构造处闭包），这里不再二次递增/二次推送——旧实现每桥发两帧，
+    // wireId 代次标记与 payload.generation 短暂不一致（评审 P3-5）。
     log('bridge-started', `generation=${bridgeGeneration}`);
-    sendToPhone({ method: 'x/engine/generation', params: { generation: bridgeGeneration } });
     onStateChange(currentState()); // 桥真实就绪才报 paired（评审 #18）
   }
 
@@ -832,7 +832,15 @@ function createCompanion(options = {}) {
   // 对外 id 一律改写为代次化 wireId（见 pending 声明处注释），应答时还原。
   function handleAppServerFrame(frame) {
     // 本地扩展请求的应答（x/model/* 等经桥请求）：不透传给手机
-    if (frame.id != null && !frame.method && feedLocalResponse(frame)) return;
+    if (frame.id != null && !frame.method) {
+      if (feedLocalResponse(frame)) return;
+      // 引擎 respawn 已作废 localPending（onRespawn 清空），旧进程迟到的
+      // x-* 应答若落到底部 sendToPhone 会以孤立响应发给手机——丢弃留观测。
+      if (typeof frame.id === 'string' && frame.id.startsWith('x-')) {
+        log('local-response-late', String(frame.id));
+        return;
+      }
+    }
     if (frame.method && frame.id != null) {
       if (Object.prototype.hasOwnProperty.call(LOCALLY_ANSWERED_REVERSE, frame.method)) {
         bridge.write({ id: frame.id, result: LOCALLY_ANSWERED_REVERSE[frame.method] });
@@ -882,6 +890,14 @@ function createCompanion(options = {}) {
     // 活动投影：session/event 通知流的回答摘要累计（转发不受影响）
     if (onActivity && frame.method === 'session/event' && frame.id == null) {
       trackSessionEventActivity(frame.params);
+    }
+    // host 控制面通知（官方 zcodeProtocolNotifications 词汇表）：引擎→宿主域
+    // 的进程级通知，手机端无从消费，不转发、留观测——与常量注释的承诺一致
+    // （0.16.9 实测这些以带 id 请求形态发、已被本地代答；这里是通知形态的防线）
+    if (frame.method != null && frame.id == null
+      && HOST_CONTROL_NOTIFICATIONS.has(frame.method)) {
+      log('host-control-notification', frame.method);
+      return;
     }
     sendToPhone(frame);
   }
@@ -975,8 +991,9 @@ function createCompanion(options = {}) {
   // ---- 模型目录/默认模型（x/model/*）----
   // 职责拆分：
   // - 可用模型来自引擎（session/list → 活跃会话 resume → settings.model.
-  //   available，实测唯一可信目录源）；导入快照（companion_app 的
-  //   import-snapshot.json）作为目录补充展示，标记 unavailable=false 待引擎证实。
+  //   available，实测唯一可信目录源）；导入快照（import-snapshot.json，
+  //   历史 companion_app 迁入数据，与 CLI companion 共用数据目录）作为目录
+  //   补充展示，标记 unavailable=false 待引擎证实。
   // - 默认模型是 companion 自己的配置（model-default.json，0600），绝不写
   //   ~/.zcode；语义对齐官方「选择即全局」：每次选择都更新默认，手机端
   //   建会后 setModel 应用（含 reasoningLevel，imported 模型必填）。
@@ -1001,8 +1018,8 @@ function createCompanion(options = {}) {
     fs.renameSync(tmp, modelDefaultFile);
   }
 
-  // 读 companion_app 导入快照里的模型目录（快照与 CLI companion 共用数据目录）。
-  // 结构见 zcode-importer.applyImport；缺失/损坏返回空（不算错误）。
+  // 读导入快照里的模型目录（历史 companion_app 迁入；快照与 CLI companion
+  // 共用数据目录）。结构见 zcode-importer.applyImport；缺失/损坏返回空（不算错误）。
   function readImportSnapshot() {
     try {
       const snapshot = JSON.parse(fs.readFileSync(statePaths.snapshotPath, 'utf8'));
@@ -1150,8 +1167,11 @@ function createCompanion(options = {}) {
         try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
         reject(Object.assign(new Error(`git timed out (${timeoutMs / 1000}s)`), { code: 'X_GIT_TIMEOUT' }));
       }, timeoutMs).unref();
-      child.stdout.on('data', (c) => { stdout += c; });
-      child.stderr.on('data', (c) => { stderr += c; });
+      // 累积上限：巨型 diff（数百 MB 生成物）不设限会吃尽常驻进程内存；
+      // 16MiB 远超全部消费方的实际用量（filediff 应答侧只取 128KB 头部）
+      const MAX_GIT_STREAM = 16 * 1024 * 1024;
+      child.stdout.on('data', (c) => { stdout = (stdout + c).slice(0, MAX_GIT_STREAM); });
+      child.stderr.on('data', (c) => { stderr = (stderr + c).slice(0, MAX_GIT_STREAM); });
       child.on('error', (err) => { clearTimeout(timer); reject(err); });
       child.on('exit', (code) => {
         clearTimeout(timer);
@@ -1189,7 +1209,21 @@ function createCompanion(options = {}) {
   }
 
   async function handleXMethod(frame) {
-    const reply = (payload) => send({ type: 'data', payload: payload });
+    // x/* 应答与 app-server 应答同受 relay 1MiB 帧上限约束（铁律 4：静默
+    // 丢弃=缺陷）。send 超限会静默 return false，手机端 RPC 只能干等自身
+    // 超时——这里先测体积，超限显式回 ERR_FRAME_TOO_LARGE 错误帧；其余
+    // 发送失败（链路已断/慢链 terminate）由断线重连流程统一善后。
+    const reply = (payload) => {
+      let json = null;
+      try { json = JSON.stringify({ type: 'data', payload }); } catch { /* 不可序列化 */ }
+      if (json === null || Buffer.byteLength(json) > MAX_PAYLOAD) {
+        log('x-reply-too-large', `${frame.method} bytes=${json ? Buffer.byteLength(json) : 'unserializable'}`);
+        send({ type: 'data', payload: { id: frame.id, error: { code: ERR_FRAME_TOO_LARGE,
+          message: 'x/* 应答超出中继帧上限' } } });
+        return;
+      }
+      send({ type: 'data', payload });
+    };
     log('x-method', frame.method);
     try {
       switch (frame.method) {
@@ -1968,7 +2002,12 @@ async function writePairingArtifacts(url, midFile, extraPngPath) {
   try { qrcodeLib = require('qrcode'); } catch { /* 未安装则只写文本 */ }
   if (qrcodeLib) {
     for (const target of pngTargets) {
-      try { await qrcodeLib.toFile(target, url, { width: 600, margin: 2 }); } catch { /* 尽力而为 */ }
+      try {
+        await qrcodeLib.toFile(target, url, { width: 600, margin: 2 });
+        // 与 pair-url.txt 同一纪律：QR PNG 载荷就是完整配对 URL（凭据），
+        // 统一 0600（Windows 下 no-op，POSIX 宿主上是实际防线）
+        try { fs.chmodSync(target, 0o600); } catch { /* 平台不支持时忽略 */ }
+      } catch { /* 尽力而为 */ }
     }
   }
   console.error(`[companion] 配对码已更新：${pngTargets[0]}（文本链接 ${dataDir}${path.sep}pair-url.txt）`);

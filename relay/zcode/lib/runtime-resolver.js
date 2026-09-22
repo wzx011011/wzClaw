@@ -43,11 +43,4 @@ function publicRuntimeDescriptor(resolved) {
   return Object.freeze({ command: resolved.command, args: [...resolved.args], source: resolved.source });
 }
 
-function installationSummary(resolved) {
-  if (!resolved || resolved.category !== 'resolved' || resolved.source === 'path') {
-    return { status: 'not-found', source: null };
-  }
-  return { status: 'found', source: resolved.source };
-}
-
-module.exports = { bundledRuntimePath, resolveZcodeRuntime, publicRuntimeDescriptor, installationSummary };
+module.exports = { bundledRuntimePath, resolveZcodeRuntime, publicRuntimeDescriptor };

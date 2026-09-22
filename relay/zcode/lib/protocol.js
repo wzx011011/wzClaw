@@ -37,11 +37,6 @@ function isFastMethod(method) {
   return typeof method === 'string' && FAST_METHODS.has(method);
 }
 
-// 兼容旧名：权限类显式归长档（如今长档是默认，此函数仅表达意图）
-function isPermissionLikeMethod(method) {
-  return !isFastMethod(method);
-}
-
 // 帧分类（规则以 APP-SERVER.md 帧格式节为准）：
 // - method + id：id 为字符串（如 "server-1"）是服务端反向请求，否则是普通请求；
 // - 仅 method（无 id）：通知；
@@ -60,4 +55,4 @@ function classifyFrame(frame) {
 module.exports = { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT,
   ERR_X_BAD_PARAMS, ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, ERR_X_NOT_FOUND,
   ERR_X_FAILED,
-  isFastMethod, isPermissionLikeMethod, classifyFrame };
+  isFastMethod, classifyFrame };

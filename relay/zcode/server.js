@@ -338,9 +338,14 @@ function createRelay(options = {}) {
         // 已验证持有 pass_hash 才允许清场：owner 与 device 槽的陈旧在位者
         // （半开）在验证通过后一并收回。典型场景：companion 断网留下半开连接
         // （owner/device 槽还挂着旧 socket），重连时立即收回房间，手机配对不失效。
-        for (const incumbent of [room.owner, room.device]) {
-          if (!incumbent || incumbent === state) continue;
+        // 先整体预检再清场：边清边查会在「陈旧 owner + 健康 device」组合下
+        // 清掉 owner 后才因 device 健康拒绝——留下部分生效的副作用（靠对端
+        // 重注册自愈，但拒绝路径应零副作用）。
+        const incumbents = [room.owner, room.device].filter((i) => i && i !== state);
+        for (const incumbent of incumbents) {
           if (!isStale(incumbent)) return fail(state, 'PEER_EXISTS'); // 健康在位者受保护
+        }
+        for (const incumbent of incumbents) {
           if (room.owner === incumbent) room.owner = null; else room.device = null;
           incumbent.ws.terminate();
           logger('peer-takeover', `role=device stale=${incumbent.ws.readyState !== WebSocket.OPEN ? 'closed' : 'missed-ping'}`);

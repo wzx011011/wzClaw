@@ -1043,9 +1043,12 @@ test('app-server 重启复用原生 id：旧 wireId 迟到应答被丢弃，新 
 
   // 引擎换代通知（审查 P1-1）：起桥与每次 respawn 都必须推送 x/engine/generation，
   // 手机端凭它作废全部会话的物化/订阅——「relay 连着」≠「会话还在同一引擎」。
+  // 恰一帧每代次（评审 P3-5：旧实现起桥时 onRespawn 与 startBridge 各发一帧，
+  // 手机收到 N、N+1 两帧，wireId 代次标记与 payload.generation 短暂不一致）。
+  // 本场景恰有一次起桥 + 一次 respawn → 恰两帧且递增。
   const gens = client.messages.filter(
     (m) => m.type === 'data' && m.payload.method === 'x/engine/generation');
-  assert.ok(gens.length >= 2, '起桥与 respawn 都必须有换代通知');
+  assert.equal(gens.length, 2, `起桥与 respawn 各恰一帧换代通知: ${gens.length}`);
   const genValues = gens.map((m) => m.payload.params.generation);
   assert.ok(genValues[0] < genValues[genValues.length - 1],
     `换代通知的 generation 必须递增: ${genValues}`);
@@ -2461,4 +2464,129 @@ test('同 requestId 重宣告：应答最新 wireId 后兄弟不再代答', asyn
     (m) => m.type === 'data' && m.payload.method === 'fake/answered'
       && m.payload.params.tag === 'srv-r1-a'), false,
     '兄弟 wireId 不得在应答后再代答 -32022');
+});
+
+// host 控制面通知（官方 zcodeProtocolNotifications 词汇表）不得转发到手机，
+// 但必须留观测；普通通知照常转发——过滤必须是选择性的而非一刀切。
+test('host 控制面通知被吞掉并留观测，普通通知照常转发', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-hostctl-'));
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  client.send({ type: 'data', payload: { id: 900, method: 'fake/emit-notifications', params: {} } });
+  const ack = await client.next((m) => m.type === 'data' && m.payload.id === 900);
+  assert.deepEqual(ack.payload.result, { emitted: 2 });
+  await delay(300);
+  // 控制面通知被吞：手机方向零到达，companion 日志留观测
+  assert.equal(client.messages.some(
+    (m) => m.type === 'data' && m.payload.method === 'startup/storageState'), false,
+    'startup/storageState 不得转发到手机');
+  assert.ok(logs.some((l) => l.startsWith('host-control-notification startup/storageState')),
+    '被吞的控制面通知必须留观测日志');
+  // 选择性：普通通知照常到达手机
+  const note = client.messages.find(
+    (m) => m.type === 'data' && m.payload.method === 'fake/normal-note');
+  assert.ok(note, '普通通知必须照常转发到手机');
+});
+
+// session/fork 等透传族：companion 不改写响应形状（评审 P3-1——c1fe974/8b8ceab
+// 钉下的 fork 契约目前只有一次性探针与文档锚，这里补一寸自动化锚：
+// 引擎给的 result 必须逐字到达手机端，只允许 id 层的看护改写）。
+test('session/fork 透传：引擎响应形状逐字还原到手机端', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-fork-passthrough-'));
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(dir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(dir, 'mid'),
+    logger: () => {},
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  client.send({ type: 'data', payload: { id: 901, method: 'session/fork', params: { sessionId: 'sess_mock' } } });
+  const resp = await client.next((m) => m.type === 'data' && m.payload.id === 901);
+  assert.deepEqual(resp.payload.result, {
+    sessionId: 'fork-child-1',
+    session: { sessionId: 'fork-child-1' },
+  }, 'fork 响应的 result 形状必须逐字透传（含嵌套 session 字段）');
+});
+
+// x/* 应答与 app-server 应答同受 relay 1MiB 帧上限约束：reply 超限必须显式回
+// ERR_FRAME_TOO_LARGE 错误帧并留观测，而不是静默 return false 让手机端 RPC
+// 干等自身超时（铁律 4）。
+test('x/* 应答超 1MiB：显式回 -32001 错误帧并留观测', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xbig-'));
+  const logs = [];
+  let pairingUrl = '';
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xbig-state-'));
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  // 造一个应答必然超 1MiB 的目录：4000 个 200 字符名子目录（每条目 ~500B JSON，
+  // 合计 ~2MB，跨机器路径长度差异下仍稳定超限）
+  const fatDir = path.join(dir, 'fat');
+  fs.mkdirSync(fatDir);
+  const longName = 'd'.repeat(200);
+  for (let i = 0; i < 4000; i++) fs.mkdirSync(path.join(fatDir, `${longName}${i}`));
+
+  client.send({ type: 'data', payload: { id: 902, method: 'x/fs/dirs', params: { path: fatDir } } });
+  const resp = await client.next((m) => m.type === 'data' && m.payload.id === 902, 15000);
+  assert.equal(resp.payload.error?.code, -32001, `超限应答必须是 -32001 错误帧: ${JSON.stringify(resp.payload).slice(0, 120)}`);
+  assert.ok(logs.some((l) => l.startsWith('x-reply-too-large x/fs/dirs')),
+    '超限丢弃必须留观测日志');
 });
