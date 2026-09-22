@@ -1,4 +1,6 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+
+import '../platform_io.dart';
 
 /// 连接事件（连接层可观测性的最小单元）
 class ConnectionEvent {
@@ -78,6 +80,15 @@ class ConnectionDiagnostics {
   Future<List<PathCheckResult>> runPathChecks(String host,
       {int port = 443,}) async {
     final results = <PathCheckResult>[];
+    // web 无原始套接字/DNS API（flutter web 支持，2026-09-22）：显式降级，
+    // 诊断面标注不可用而非崩溃
+    if (kIsWeb) {
+      results.add(const PathCheckResult('链路探测', false, 'web 端不支持 DNS/TLS 探测'));
+      for (final r in results) {
+        record('体检', '${r.label}: ${r.detail}');
+      }
+      return results;
+    }
     List<InternetAddress> addrs;
     try {
       addrs = await InternetAddress.lookup(host);

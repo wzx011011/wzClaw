@@ -7,6 +7,7 @@
 // ============================================================
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -97,6 +98,35 @@ class _QrScannerPageState extends State<QrScannerPage> {
       ),
       body: Stack(
         children: [
+          // 粘贴兜底（web 无相机；桌面/手机同样可用）：读取剪贴板中的
+          // 配对链接直接返回，与扫码同一处理管线
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 24,
+            child: Center(
+              child: FilledButton.tonalIcon(
+                onPressed: () async {
+                  // lint 穿不透异步间隙的 mounted 流分析：context 触达
+                  // 全部前置捕获
+                  final messenger = ScaffoldMessenger.of(context);
+                  final navigator = Navigator.of(context);
+                  final data = await Clipboard.getData(Clipboard.kTextPlain);
+                  final text = data?.text?.trim() ?? '';
+                  if (!mounted) return;
+                  if (text.isEmpty) {
+                    messenger.showSnackBar(const SnackBar(content: Text('剪贴板为空')));
+                    return;
+                  }
+                  _scanned = true;
+                  _controller.stop();
+                  navigator.pop(text);
+                },
+                icon: const Icon(Icons.content_paste, size: 18),
+                label: const Text('粘贴配对链接'),
+              ),
+            ),
+          ),
           MobileScanner(
             controller: _controller,
             onDetect: (capture) {

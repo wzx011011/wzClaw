@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +33,7 @@ import '../widgets/project_drawer.dart';
 
 import '../widgets/turn_block.dart';
 import '../widgets/workspace_switcher_sheet.dart';
+import '../widgets/local_image.dart';
 import '../widgets/markdown_path_link.dart';
 import '../widgets/markdown_table_export.dart';
 import '../zcode/zcode_chat_store.dart';
@@ -2070,11 +2070,12 @@ class _ChatPageState extends State<ChatPage> {
           child: SizedBox(
             width: 96,
             height: 96,
-            child: Image.file(
-              File(local),
+            child: buildLocalImage(
+              local,
               fit: BoxFit.cover,
-              cacheWidth: 192,
-              errorBuilder: (_, Object e, StackTrace? s) => _attachmentTileFallback(
+              width: 96,
+              height: 96,
+              errorWidget: _attachmentTileFallback(
                 colors,
                 name: name,
                 isImage: isImage,
@@ -4247,11 +4248,10 @@ class _AttachmentChip extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(9),
                 child: a.localPath != null
-                    ? Image.file(
-                        File(a.localPath!),
+                    ? buildLocalImage(
+                        a.localPath!,
                         fit: BoxFit.cover,
-                        cacheWidth: 128,
-                        errorBuilder: (_, Object e, StackTrace? s) => Icon(
+                        errorWidget: Icon(
                           Icons.insert_drive_file_outlined,
                           size: 22,
                           color: colors.textMuted,

@@ -70,6 +70,10 @@ flutter test           # 用例数随功能演进，不在文档写死
 # 3. （2026-09-17 教训）被取消过的构建产物不可信——gradle 会在损坏增量上
 #    "续"出截断 zip（报成功但手机报解析错误）。取消后必须 flutter clean
 #    重建；上架前先 apksigner verify + zip 完整性检查，再 scp + 哈希比对
+# Flutter web（浏览器端到端验证，2026-09-22 定）：
+# 同一份代码编 web；配对走设置页粘贴配对链接（web 无相机）；
+# SQLite 缓存/下载/通知等平台能力显式降级，核心链路（relay→store→UI）全量可用
+cd wzxClaw_android && flutter build web   # 产物 build/web，任意静态服务器可跑
 flutter build apk --release
 
 # companion（PC 常驻节点）

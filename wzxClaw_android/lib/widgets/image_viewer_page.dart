@@ -1,6 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
+
+import 'local_image.dart';
 
 /// 全屏图片预览：黑底 + 双指缩放/平移，双击在 1x/2.5x 间切换，
 /// 点背景或右上角关闭。数据源是手机本地文件路径（附件选图缓存/
@@ -64,11 +64,10 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                 maxScale: 8,
                 minScale: 1,
                 child: Center(
-                  child: Image.file(
-                    File(widget.filePath),
+                  child: buildLocalImage(
+                    widget.filePath,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, Object error, StackTrace? stackTrace) =>
-                        const Column(
+                    errorWidget: const Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(

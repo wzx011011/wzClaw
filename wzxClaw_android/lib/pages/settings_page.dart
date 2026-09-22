@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
+import '../platform_io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
@@ -41,6 +43,14 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _checkForUpdate() async {
     setState(() => _checkingUpdate = true);
     String message;
+    // web 无 HttpClient/dart:io（flutter web 支持）：显式提示而非崩溃
+    if (kIsWeb) {
+      setState(() => _checkingUpdate = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('web 端请直接刷新页面获取最新版本')),
+      );
+      return;
+    }
     try {
       final request = await HttpClient()
           .getUrl(Uri.parse('https://zcode.5945.top/zcode-releases/'));

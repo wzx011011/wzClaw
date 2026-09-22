@@ -60,6 +60,11 @@ class ZcodeSessionCache {
 
   Future<Database> _ensureDb() async {
     if (_db != null) return _db!;
+    // web 无 sqflite 实现（flutter web 支持，2026-09-22）：显式禁用缓存，
+    // 全部方法经调用方 try/catch 降级为空——纯网络拉取，绝不假装有缓存
+    if (kIsWeb) {
+      throw UnsupportedError('web 无本地 SQLite 缓存（缓存禁用）');
+    }
     // 旧 schema 文件作废：首次建库前尽力删除（失败不影响任何功能）。
     for (final legacy in _legacyDbNames) {
       try {
