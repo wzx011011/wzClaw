@@ -22,6 +22,13 @@ import '../models/chat_message.dart';
 /// 事件去重集合上限（超出裁剪最旧一半，防止长会话内存膨胀）
 const int _kMaxAppliedEventIds = 4000;
 
+/// 停止请求状态机（柱1）。语义词典（legacy 协议无官方 stopState 投影，
+/// 对照官方 v4 sessionControlSchema.stopState 的客户端等价实现）：
+/// idle ↔ 官方 idle/stoppable；stopping ↔ 官方 stopping；unconfirmed
+/// 为 legacy 链路特有——官方 stopping 由服务端投影权威驱动，这里只能
+/// 本地推断（应答丢失+链路中断），故显式命名「未确认」而非假装权威。
+enum ZcodeStopPhase { idle, stopping, unconfirmed }
+
 /// 单条会话消息条目。
 ///
 /// protoId 为 app-server 侧的消息标识（session/messages 的 info.id，
@@ -186,6 +193,13 @@ class ZcodeSessionState {
   /// 权威刷新收尾请求携带发起时的代次，完成时代次已前进 = 有更新回合
   /// 在跑，绝不能收尾新回合（旧回合迟到的 session/messages 只做数据合并）。
   int turnGeneration = 0;
+
+  /// 停止请求状态机（柱1，2026-09-22 真实故障驱动）：
+  /// idle=无停止在途；stopping=停止请求已发出、引擎终态未确认；
+  /// unconfirmed=停止应答丢失且链路中断——请求能到引擎才会丢应答，
+  /// 回合大概率已被引擎终止，本地释放 busy 但显式通告未知态，
+  /// 禁止自动冲队，重连后自动对账。
+  ZcodeStopPhase stopPhase = ZcodeStopPhase.idle;
 
   /// 最近一次 usage.delta 的 token 计数（回合收尾通知用）
   int lastInputTokens = 0;

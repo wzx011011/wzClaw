@@ -78,6 +78,9 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 悬浮状态面板开关（AppBar 心跳图标切换）
   bool _showStatusPanel = false;
+
+  /// 停止状态机上一采样（柱1）：unconfirmed 边沿触发一次性通告
+  ZcodeStopPhase _lastStopPhase = ZcodeStopPhase.idle;
   // Debounced connection state — avoids flicker during brief reconnects.
   WsConnectionState _visibleConnectionState = WsConnectionState.disconnected;
   Timer? _reconnectDebounceTimer;
@@ -764,10 +767,27 @@ class _ChatPageState extends State<ChatPage> {
     }
     // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）；
     // 会话恢复在途不冲（sessionRestoring）：权威运行状态未确认，
-    // 恢复窗口内按默认空闲误发队首（2026-09-19 评审 P2）
-    if (!_isStreaming && !_isWaiting && !_store.sessionRestoring) {
+    // 恢复窗口内按默认空闲误发队首（2026-09-19 评审 P2）；
+    // 停止未确认也不冲（柱1）：引擎是否真停未知，绝不自动放出下一条
+    if (!_isStreaming &&
+        !_isWaiting &&
+        !_store.sessionRestoring &&
+        _store.activeStopPhase == ZcodeStopPhase.idle) {
       _scheduleQueueFlush();
     }
+
+    // 柱1：停止未确认 → 显式通告（SnackBar 一次 + 常驻条可重试/解除）
+    if (_store.activeStopPhase == ZcodeStopPhase.unconfirmed &&
+        _lastStopPhase != ZcodeStopPhase.unconfirmed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('停止请求未确认：链路中断，回合可能已在桌面端停止'),
+          duration: Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+    _lastStopPhase = _store.activeStopPhase;
 
     // 发送失败等业务错误：store.error 上浮为 SnackBar（模型卡路径已退役，
     // 自愈失败也走这里）
@@ -2491,6 +2511,46 @@ class _ChatPageState extends State<ChatPage> {
               // 工作区/分支胶囊只出现在「新任务」欢迎页（会话中切换工作区
               // 语义未定，先不暴露——用户 2026-09-17 定）
               _buildSendQueueStrip(colors),
+              // 柱1：停止未确认常驻条——重试 / 知情解除（排队冲放在
+              // unconfirmed 期间被门禁挡住，用户必须先处理这个状态）
+              if (_store.activeStopPhase == ZcodeStopPhase.unconfirmed)
+                Material(
+                  color: colors.bgSecondary,
+                  child: InkWell(
+                    onTap: () => _store.acknowledgeStopUnconfirmed(),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            size: 15,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '停止未确认：链路中断，排队消息暂不发送',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _store.retryStop(),
+                            child: const Text('重试停止'),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                _store.acknowledgeStopUnconfirmed(),
+                            child: const Text('知道了'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               _buildComposerContainer(colors, isConnected),
             ],
           ),

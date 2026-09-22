@@ -584,6 +584,9 @@ class ZcodeChatStore extends ChangeNotifier {
         unawaited(refreshSessions());
       }
       unawaited(_resubscribeAll());
+      // 柱1：链路恢复即对账「停止未确认」的会话（引擎多半已停，读权威
+      // 收敛；仍在跑则补发停止）
+      unawaited(debugReconcileStopAfterReconnect());
     }
     if (!paired) {
       // 重置一次性自动拉取标记：重连 matched 后重新自动刷新会话列表
@@ -1287,6 +1290,10 @@ class ZcodeChatStore extends ChangeNotifier {
     _fail(attempted ? healError : '发送失败：$reason');
   }
 
+  /// 当前活动会话的停止状态机（柱1）。UI 据此渲染「停止中/停止未确认」
+  ZcodeStopPhase get activeStopPhase =>
+      _activeState?.stopPhase ?? ZcodeStopPhase.idle;
+
   /// 手动全量刷新（顶栏刷新按钮）：当前会话权威对账 + 会话列表徽标。
   /// 不主动收尾回合——引擎侧已空闲时权威投影会经 state idle 兜底落 busy，
   /// 流式中的回合只同步内容不动状态。返回是否发起了刷新。
@@ -1298,14 +1305,19 @@ class ZcodeChatStore extends ChangeNotifier {
     return true;
   }
 
-  /// 停止生成（session/stop + 增量权威刷新）。
-  /// R03：停止请求失败/超时时引擎可能仍在运行——绝不强制收尾（清
-  /// streaming/waiting 会标空闲并放出队列下一条），只做不收尾的权威
-  /// 对账并显式提示；真实终态由 turn.completed / 权威数据到达时收敛。
+  /// 停止生成（session/stop + 停止状态机，柱1）。
+  /// R03 修正版：停止请求失败/超时不再无限挂 busy，也不再裸放行队列——
+  /// 应答丢失且链路中断时落显式 unconfirmed 态（释放 busy + 显式通告 +
+  /// 禁止自动冲队），重连/turn.completed 到达时自动对账收敛。
   Future<void> stopGeneration() async {
     final client = _client;
     final state = _activeState;
     if (client == null || state == null) return;
+    if (!state.hasTurnInFlight && state.stopPhase == ZcodeStopPhase.idle) {
+      return;
+    }
+    state.stopPhase = ZcodeStopPhase.stopping;
+    _notifyIfActive(state);
     var stopped = true;
     try {
       await client.request('session/stop', {'sessionId': state.sessionId});
@@ -1316,10 +1328,88 @@ class ZcodeChatStore extends ChangeNotifier {
       await _refreshAuthoritative(state);
       return;
     }
-    await _pullIncremental(state);
-    _fail('停止请求未确认，回合可能仍在运行');
+    await _reconcileStop(state);
   }
 
+  /// 停止对账（柱1）：读权威状态裁决——
+  /// 读取成功且引擎 idle → 正常收尾（引擎其实已停，只是应答丢了）；
+  /// 读取成功且引擎仍在跑 → 重发一次停止（应答丢失可能是竞态），
+  ///   重发仍失败 → unconfirmed；
+  /// 读取也失败（链路死）→ unconfirmed：释放 busy 但禁止冲队。
+  Future<void> _reconcileStop(ZcodeSessionState state) async {
+    final client = _client;
+    Map? read;
+    if (client != null && client.paired) {
+      try {
+        read = await client.request('session/read', {
+          'sessionId': state.sessionId,
+        });
+      } catch (_) {
+        read = null;
+      }
+    }
+    final proj = read is Map ? read['projection'] : null;
+    final status = proj is Map ? proj['status']?.toString() : null;
+    if (read != null && status != 'running') {
+      // 引擎已停（只是应答丢了）：走正常收尾
+      state.stopPhase = ZcodeStopPhase.idle;
+      _notifyIfActive(state);
+      await _refreshAuthoritative(state);
+      return;
+    }
+    if (read != null && status == 'running' && client != null) {
+      // 引擎仍在跑：补发一次停止
+      var stopped = true;
+      try {
+        await client.request('session/stop', {'sessionId': state.sessionId});
+      } catch (_) {
+        stopped = false;
+      }
+      if (stopped) {
+        await _refreshAuthoritative(state);
+        return;
+      }
+    }
+    // 链路死（或补发仍失败）：显式未确认态
+    _enterStopUnconfirmed(state);
+  }
+
+  /// 落「停止未确认」态：释放 busy（回合大概率已被引擎终止——请求能到
+  /// 引擎才会丢应答），但队列冲放由 UI 侧以 stopPhase != idle 门禁挡住
+  /// （R03 语义保留：未知态绝不自动放出下一条）。
+  void _enterStopUnconfirmed(ZcodeSessionState state) {
+    state.stopPhase = ZcodeStopPhase.unconfirmed;
+    state.isStreaming = false;
+    state.isWaitingForResponse = false;
+    state.finalizeStreaming();
+    _stopFallbackPollingFor(state.sessionId);
+    _notifyIfActive(state);
+  }
+
+  /// 用户知情接受未知态（通告条「知道了」）：解除 unconfirmed。
+  /// 若引擎侧回合仍在跑，后续事件/轮询会重新置 busy，不会丢终态。
+  void acknowledgeStopUnconfirmed() {
+    final state = _activeState;
+    if (state == null || state.stopPhase != ZcodeStopPhase.unconfirmed) {
+      return;
+    }
+    state.stopPhase = ZcodeStopPhase.idle;
+    _notifyIfActive(state);
+  }
+
+  /// 重连后对账未确认的停止（_onRelayStateChange matched 时触发；
+  /// debug 前缀供测试直接驱动）。对所有处于 unconfirmed 的会话执行。
+  Future<void> debugReconcileStopAfterReconnect() async {
+    for (final state in _states.values) {
+      if (state.stopPhase != ZcodeStopPhase.unconfirmed) continue;
+      await _reconcileStop(state);
+    }
+  }
+
+  /// 重试停止（通告条按钮）：unconfirmed/stopping 下再次发起停止流程
+  Future<void> retryStop() => stopGeneration();
+
+  /// 停止生成（session/stop + 增量权威刷新）。
   /// 子智能体线程（session/subagents）。0.16.9 实测 schema：sessionId
   /// 必填（缺省 -32602 ZodError，probe-surface-report 已钉）——作用于
   /// 当前活动会话。响应逐行经 _mapProtocolMessage 映射后按 info.agent
@@ -2708,6 +2798,10 @@ class ZcodeChatStore extends ChangeNotifier {
   }) {
     if (turnId != null) {
       if (!state.endedTurnIds.add(turnId)) return; // 该回合已收尾
+      // 权威回合终态到达即解除停止流程（柱1）：无论本回合由停止、
+      // 引擎自停还是兜底收尾，stopPhase 都应回到 idle（含 unconfirmed
+      // 场景——turn.completed 迟到不经过 _finishTurnFlags 也要收敛）
+      state.stopPhase = ZcodeStopPhase.idle;
       // 回合已被其他通道收尾（如 state.updated idle 兜底先到）：不重复走
       // 收尾路径（避免双份通知），但 turn.completed 携带的权威全文/用量
       // 不能跟着丢——先前通道收尾时可能只有残缺流式文本，这里补一次
@@ -3194,6 +3288,9 @@ class ZcodeChatStore extends ChangeNotifier {
     _stopFallbackPollingFor(state.sessionId);
     state.isStreaming = false;
     state.isWaitingForResponse = false;
+    // 任何真实回合终态到达 = 停止流程已了结（柱1：turn.completed /
+    // 权威 idle 都是合法收敛路径）
+    state.stopPhase = ZcodeStopPhase.idle;
     state.finalizeStreaming();
     _notifyIfActive(state);
   }
