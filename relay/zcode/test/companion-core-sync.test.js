@@ -15,14 +15,28 @@ const companionSource = path.join(coreRoot, 'companion.js');
 const syncScript = path.join(repoRoot, 'scripts', 'sync-companion-core.mjs');
 const desktopCore = path.join(repoRoot, 'desktop', 'packages', 'desktop', 'companion-core');
 
-function readRelativeRequires(file) {
-  const source = fs.readFileSync(file, 'utf8');
-  const requires = [];
-  for (const match of source.matchAll(/require\('(\.[^']+)'\)/g)) {
-    requires.push(match[1]);
+// 从某源文件出发递归收集全部相对 require（含 lib/* 的传递依赖）：只查
+// companion.js 一层会漏掉「lib 文件新增相对 require」的漂移（复评 P3）。
+function readRelativeRequiresTransitive(entryFile) {
+  const seen = new Set(); // 规范化相对 coreRoot 的路径
+  const queue = [path.normalize(entryFile)];
+  while (queue.length) {
+    const file = queue.shift();
+    const source = fs.readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/require\('(\.[^']+)'\)/g)) {
+      // Node 的相对 require 省略扩展名：入队前补 .js 再读
+      const base = path.resolve(path.dirname(file), match[1]);
+      const resolved = /\.(js|cjs)$/.test(base) ? base : `${base}.js`;
+      if (seen.has(resolved)) continue;
+      seen.add(resolved);
+      if (resolved.startsWith(path.join(coreRoot, 'lib'))) queue.push(resolved);
+    }
   }
-  assert.ok(requires.length > 0, `${file} 应解析出相对 require`);
-  return requires;
+  assert.ok(seen.size > 1, '至少应解析出 companion.js + 一个 lib 依赖');
+  return [...seen]
+    .map((abs) => path.relative(coreRoot, abs).replaceAll('\\', '/'))
+    .map((rel) => (rel.endsWith('.js') || rel.endsWith('.cjs') ? rel : `${rel}.js`))
+    .sort();
 }
 
 function readSyncFileList() {
@@ -32,19 +46,16 @@ function readSyncFileList() {
   return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
 }
 
-test('sync 清单覆盖 companion.js 全部相对 require', () => {
-  const requires = readRelativeRequires(companionSource)
-    .map((rel) => path.normalize(rel).replaceAll('\\', '/'))
-    .map((rel) => (rel.endsWith('.js') || rel.endsWith('.cjs') ? rel : `${rel}.js`));
+test('sync 清单覆盖 companion.js 全部相对 require（含 lib 传递依赖）', () => {
+  const requires = readRelativeRequiresTransitive(companionSource);
   const listed = new Set(readSyncFileList());
-  const missing = [...new Set(requires)].filter((rel) => !listed.has(rel));
+  const missing = requires.filter((rel) => !listed.has(rel));
   assert.deepStrictEqual(missing, [], `sync 清单缺列: ${missing.join(', ')}`);
 });
 
 test('desktop 检出存在时，被 require 的文件必须真实存在', { skip: !fs.existsSync(path.join(desktopCore, 'companion.js')) }, () => {
-  const requires = readRelativeRequires(companionSource)
-    .map((rel) => (rel.endsWith('.js') || rel.endsWith('.cjs') ? rel : `${rel}.js`));
-  const missing = [...new Set(requires)]
+  const requires = readRelativeRequiresTransitive(companionSource);
+  const missing = requires
     .map((rel) => path.join(desktopCore, rel))
     .filter((target) => !fs.existsSync(target));
   assert.deepStrictEqual(
