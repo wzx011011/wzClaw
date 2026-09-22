@@ -527,6 +527,48 @@ void main() {
       expect(store.sessions.any((s) => s.sessionId == 's-new'), isTrue);
     });
 
+    test('柱3：内部会话（subagent/workflow/selection）过滤出主列表', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/list'] = (_) => {
+            'sessions': [
+              {'sessionId': 'main1', 'title': '主会话', 'updatedAt': 9},
+              {
+                'sessionId': 'sub1',
+                'title': '评审子代理',
+                'updatedAt': 8,
+                'sessionKind': 'subagent_child',
+              },
+              {
+                'sessionId': 'wf1',
+                'title': 'workflow 子会话',
+                'updatedAt': 7,
+                'sessionKind': 'workflow_child',
+              },
+              {
+                'sessionId': 'sel1',
+                'title': '选区旁聊',
+                'updatedAt': 6,
+                'sessionKind': 'selection_side_chat',
+              },
+              {
+                'sessionId': 'fork1',
+                'title': 'fork 会话',
+                'updatedAt': 5,
+                'sessionKind': 'fork',
+              },
+            ],
+          };
+      stubResumeEmpty(fake);
+      final store = pairedStore(fake);
+
+      await store.refreshSessions();
+      final ids = store.sessions.map((s) => s.sessionId).toList();
+      expect(ids, ['main1', 'fork1'], reason: 'interactive/fork 保留');
+      expect(ids, isNot(contains('sub1')));
+      expect(ids, isNot(contains('wf1')));
+      expect(ids, isNot(contains('sel1')));
+    });
+
     test('无可用工作区 → error 提示', () async {
       final fake = FakeZcodeRelayClient();
       fake.handlers['session/list'] = (_) => {

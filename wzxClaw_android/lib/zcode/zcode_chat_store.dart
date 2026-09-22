@@ -644,12 +644,28 @@ class ZcodeChatStore extends ChangeNotifier {
       final map = result is Map ? result : const {};
       final entries = map['sessions'];
       final metas = <ZcodeSessionMeta>[];
+      // 柱3（官方对齐）：子代理/工作流子会话与选区旁聊是引擎内部实体，
+      // 不是用户任务。官方在数据源头过滤（zcodeTaskIndexSyncer 对
+      // subagent_child 同款跳过；selection_side_chat 走独立侧栏）；
+      // legacy session/list 无过滤参数，在消费端过滤并留观测。
+      const hiddenKinds = {
+        'subagent_child',
+        'workflow_child',
+        'nested_workflow_child',
+        'selection_side_chat',
+      };
+      var hiddenCount = 0;
       if (entries is List) {
         for (final e in entries) {
           if (e is! Map) continue;
           final id = e['sessionId']?.toString() ?? '';
           if (id.isEmpty) continue;
           final ws = e['workspace'];
+          final kind = _nonEmpty(e['sessionKind']);
+          if (kind != null && hiddenKinds.contains(kind)) {
+            hiddenCount++;
+            continue;
+          }
           metas.add(
             ZcodeSessionMeta(
               sessionId: id,
@@ -658,10 +674,14 @@ class ZcodeChatStore extends ChangeNotifier {
               workspaceKey: ws is Map ? _nonEmpty(ws['workspaceKey']) : null,
               workspacePath: ws is Map ? _nonEmpty(ws['workspacePath']) : null,
               status: _nonEmpty(e['status']),
-              sessionKind: _nonEmpty(e['sessionKind']),
+              sessionKind: kind,
             ),
           );
         }
+      }
+      if (hiddenCount > 0) {
+        debugPrint('[zcode-store] 会话列表过滤内部会话 $hiddenCount 个'
+            '（subagent/workflow/selection，不进主列表）');
       }
       _sessions = metas;
       // 记住最近一个带完整 workspace 的会话（新建会话复用）

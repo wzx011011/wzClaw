@@ -322,6 +322,37 @@ void main() {
     expect(vm.countsLabel, contains('子智能体 1'));
   });
 
+  test('Agent 工具行不内联子代理报告全文（柱3，官方产品边界）', () {
+    final vm = buildTurnVM(
+      [
+        _assistant([
+          ChatProcessPart.tool(
+            _call(
+              'Agent',
+              input: '{"description":"评审代码"}',
+              output: '这是七千字的完整评审报告正文XYZ',
+              id: 'ag9',
+              subagentType: 'Explore',
+            ),
+          ),
+        ]),
+      ],
+      busy: false,
+    );
+    final agent = vm.parts.first.agent!;
+    expect(agent.toolCallId, 'ag9');
+    expect(
+      agent.details.any((d) => d.text.contains('完整评审报告正文XYZ')),
+      isFalse,
+      reason: 'tool output（可达 13KB×N）不进父转录，详情走子会话页',
+    );
+    expect(
+      agent.details.any((d) => d.text.contains('评审代码')),
+      isTrue,
+      reason: 'input 摘要保留（目标可读）',
+    );
+  });
+
   test('info.agent 子智能体消息内联为 Agent 行，不旁路不丢失', () {
     final vm = buildTurnVM(
       [

@@ -820,7 +820,7 @@ TurnVM buildTurnVM(
                 target: _toolTarget(tool.toolName, input),
                 running: tool.status == ToolCallStatus.running,
                 failed: tool.isError,
-                details: _toolDetails(view),
+                details: _agentRowDetails(view),
                 toolCallId: tool.toolCallId,
               ),
             ),
@@ -1117,6 +1117,21 @@ List<String> _textLines(String s) {
 
 /// 二级展开详情：输入（Bash 只展示命令本体；结构化输入美化 JSON）+
 /// 输出原文。超长在显示层截断并标注（全量数据仍在消息模型里）。
+/// Agent/Task 行详情（柱3，官方产品边界对齐）：只保留输入摘要行
+/// （任务描述），不内联 tool output——完整子代理报告可达 13KB×N，
+/// 官方在父对话只留单行摘要、完整 timeline 走子会话下钻
+/// （renderers/agent.tsx「产品边界」注释同款）。
+List<TurnDetailLine> _agentRowDetails(_ToolView v) {
+  final input = v.input?.trim();
+  if (input == null || input.isEmpty) return const [];
+  return [
+    TurnDetailLine(
+      _capBlock(_prettyInput(v.name, input)),
+      kind: DetailLineKind.cmd,
+    ),
+  ];
+}
+
 List<TurnDetailLine> _toolDetails(_ToolView v) {
   final lines = <TurnDetailLine>[];
   final input = v.input?.trim();
