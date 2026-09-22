@@ -627,8 +627,7 @@ void main() {
       expect(find.textContaining('全部通过'), findsNothing);
     });
 
-    testWidgets('查阅组默认收起；点开组后成员行仍收起，再点成员才看详情',
-        (tester) async {
+    testWidgets('查阅组默认收起；点开组后成员行仍收起，再点成员才看详情', (tester) async {
       final vm = buildTurnVM(
         [
           _assistant([
@@ -961,8 +960,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
-    test('官方 kind 标签：TodoWrite=待办、RespondToCoordinator=消息卡、未知=裸名',
-        () {
+    test('官方 kind 标签：TodoWrite=待办、RespondToCoordinator=消息卡、未知=裸名', () {
       final vm = buildTurnVM(
         [
           _assistant([
@@ -1097,8 +1095,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
-    testWidgets('消息卡：运行中「正在发送消息」渐变，展开见 dl 三行',
-        (tester) async {
+    testWidgets('消息卡：运行中「正在发送消息」渐变，展开见 dl 三行', (tester) async {
       const input = '{"to":"agent_8d4a","summary":"边界已确认",'
           '"message":"请输出最终清单"}';
       final vm = buildTurnVM(
@@ -1138,7 +1135,10 @@ void main() {
       // dl 行是 SelectableText.rich，需 findRichText 才能匹配 span
       expect(find.textContaining('目标子智能体', findRichText: true), findsOneWidget);
       // to/消息 同时出现在 dl 行与输入 JSON 详情里 → 至少一个即可
-      expect(find.textContaining('agent_8d4a', findRichText: true), findsWidgets);
+      expect(
+        find.textContaining('agent_8d4a', findRichText: true),
+        findsWidgets,
+      );
       expect(find.textContaining('请输出最终清单', findRichText: true), findsWidgets);
     });
   });
@@ -1203,8 +1203,7 @@ void main() {
       expect(row.target, '输入未捕获');
     });
 
-    testWidgets('输出流末尾有且仅有一个等待圈（官方同款，仅忙碌时）',
-        (tester) async {
+    testWidgets('输出流末尾有且仅有一个等待圈（官方同款，仅忙碌时）', (tester) async {
       Widget pump(TurnVM vm) => MaterialApp(
             theme: ThemeData(extensions: const [AppColors.dark]),
             home: Scaffold(
@@ -1216,15 +1215,18 @@ void main() {
 
       final busyVm = buildTurnVM(
         [
-          _assistant([
-            ChatProcessPart.tool(
-              _call(
-                'Bash',
-                input: '{"command":"npm test"}',
-                id: 'b1',
+          _assistant(
+            [
+              ChatProcessPart.tool(
+                _call(
+                  'Bash',
+                  input: '{"command":"npm test"}',
+                  id: 'b1',
+                ),
               ),
-            ),
-          ], isStreaming: true,),
+            ],
+            isStreaming: true,
+          ),
         ],
         busy: true,
       );
@@ -1250,6 +1252,120 @@ void main() {
       await tester.pumpWidget(pump(doneVm));
       await tester.pump();
       expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+  });
+
+  group('折叠策略状态驱动（柱2，官方对齐）', () {
+    ChatMessage assistantWithFinish(String? finish) => ChatMessage(
+          role: MessageRole.assistant,
+          processParts: const [
+            ChatProcessPart.text('工具前的旁白'),
+            ChatProcessPart.tool(
+              ToolCallInfo(
+                toolCallId: 't1',
+                toolName: 'Read',
+                status: ToolCallStatus.done,
+              ),
+            ),
+            ChatProcessPart.text('# 最终答案'),
+          ],
+          createdAt: DateTime(2026, 9, 22),
+          finish: finish,
+        );
+
+    test('完成回合（finish=stop）默认折叠', () {
+      expect(
+        defaultTurnFold(
+          busy: false,
+          messages: [assistantWithFinish('stop')],
+        ),
+        isTrue,
+      );
+    });
+
+    test('中断/异常终止回合（finish=null/tool-calls）强制展开', () {
+      expect(
+        defaultTurnFold(busy: false, messages: [assistantWithFinish(null)]),
+        isFalse,
+        reason: '被停止的回合要能一眼看到停在哪（官方 completedInterrupted 强开）',
+      );
+      expect(
+        defaultTurnFold(
+          busy: false,
+          messages: [assistantWithFinish('tool-calls')],
+        ),
+        isFalse,
+      );
+    });
+
+    test('运行中回合永远展开（流式与重开一致性的核心）', () {
+      expect(
+        defaultTurnFold(busy: true, messages: [assistantWithFinish(null)]),
+        isFalse,
+      );
+    });
+
+    testWidgets('折叠的完成回合：旁白隐藏、最终答案常显；展开后旁白可见', (
+      tester,
+    ) async {
+      final vm = buildTurnVM(
+        [assistantWithFinish('stop')],
+        busy: false,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: true),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('最终答案'),
+        findsOneWidget,
+        reason: '最终答案永不被折叠隐藏',
+      );
+      expect(
+        find.textContaining('旁白'),
+        findsNothing,
+        reason: '完成回合的旁白随工具一起折叠（碎片墙根治）',
+      );
+
+      await tester.tap(find.byType(InkWell).first);
+      await tester.pump();
+      expect(find.textContaining('旁白'), findsOneWidget, reason: '展开后按引擎原序可见');
+    });
+
+    testWidgets('流式中旁白保持可见（不参与折叠）', (tester) async {
+      final vm = buildTurnVM(
+        [
+          ChatMessage(
+            role: MessageRole.assistant,
+            processParts: const [
+              ChatProcessPart.text('正在处理的旁白'),
+              ChatProcessPart.text('# 尾部正文'),
+            ],
+            createdAt: DateTime(2026, 9, 22),
+            isStreaming: true,
+          ),
+        ],
+        busy: true,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AppColors.dark]),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TurnBlockView(vm: vm, defaultCollapsed: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('旁白'), findsOneWidget);
     });
   });
 }

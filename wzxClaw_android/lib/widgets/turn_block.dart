@@ -1240,6 +1240,27 @@ String _lastPathSegment(String s) {
 
 /// ── 渲染 ──────────────────────────────────────────────────────────
 
+/// 折叠默认值（柱2，官方「按状态不按位置」对齐）：
+/// 运行中回合展开；完成回合（末条 assistant 消息 finish='stop'）折叠；
+/// 中断/异常终止（finish=null/'tool-calls'，被停止/引擎崩溃）强制展开——
+/// 停掉的回合要能一眼看到停在哪。流式与重开同数据同策略，两视图一致。
+/// 位置驱动的旧策略（倒数第三及更早折叠）已废：同一回合换个位置就换
+/// 长相，是「流式 vs 重开不一样」与历史碎片墙的共同根因。
+bool defaultTurnFold({
+  required bool busy,
+  required List<ChatMessage> messages,
+}) {
+  if (busy) return false;
+  for (final message in messages.reversed) {
+    if (message.role == MessageRole.assistant) {
+      // 干净完成（finish='stop'）→ 折叠；中断/被停（null/'tool-calls'）
+      // → 强制展开
+      return message.finish == 'stop';
+    }
+  }
+  return false;
+}
+
 class TurnBlockView extends StatefulWidget {
   const TurnBlockView({
     super.key,
@@ -1371,18 +1392,22 @@ class _TurnBlockViewState extends State<TurnBlockView> {
               ),
             ),
           ),
-        // 引擎原序单遍渲染（运行时/历史一致性）：叙述正文永远可见（不参与
-        // 折叠），思考/工具/子智能体/消息行归折叠区。旧实现把全部正文提到
-        // 过程行之前、过程行整体放其后——reasoning→text→tool→text 会被
-        // 拆散重排，展开后的视觉顺序不再是引擎顺序。
+        // 引擎原序单遍渲染（运行时/历史一致性）：思考/工具/子智能体/消
+        // 息行归折叠区；旁白 text（柱2）完成态随工具一起折叠——折叠态
+        // 只露头部计数 + 最终答案（碎片墙根治），展开/流式中按引擎原序
+        // 可见。旧实现「叙述正文永远可见」让折叠后的长回合堆出 81 段
+        // 无上下文碎片（2026-09-22 /goal 会话实测）。
         for (final part in vm.parts)
           if (part.kind == TurnPartKind.text)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: widget.answerBuilder != null
-                  ? widget.answerBuilder!(part.text ?? '', vm.busy)
-                  : MarkdownBodyLite(markdown: part.text ?? ''),
-            )
+            if (vm.busy || !_collapsed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: widget.answerBuilder != null
+                    ? widget.answerBuilder!(part.text ?? '', vm.busy)
+                    : MarkdownBodyLite(markdown: part.text ?? ''),
+              )
+            else
+              const SizedBox.shrink()
           else if (!_collapsed)
             Padding(
               padding: const EdgeInsets.only(left: 4, bottom: 2),

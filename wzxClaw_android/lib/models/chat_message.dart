@@ -332,6 +332,12 @@ class ChatMessage {
   /// 自愈失败；UI 据此渲染「选择可用模型重试 / 新建会话」操作卡片。
   final String? errorKind;
 
+  /// 引擎 info.finish（'stop' = 干净完成；'tool-calls'/null = 中断或
+  /// 引擎被停）。折叠策略状态驱动（柱2）：完成折叠、中断强制展开——
+  /// 被停止的回合要能一眼看到停在哪。仅权威消息携带；流式消息为 null
+  /// （流式中回合必展开，不依赖该字段）。
+  final String? finish;
+
   ChatMessage({
     this.id,
     required this.role,
@@ -344,6 +350,7 @@ class ChatMessage {
     this.agent,
     this.durationMs,
     this.errorKind,
+    this.finish,
   });
 
   /// 正文 = 全部 text part 顺序拼接。user 消息恒为单个 text part。
@@ -396,6 +403,7 @@ class ChatMessage {
     String? agent,
     int? durationMs,
     String? errorKind,
+    String? finish,
   }) =>
       ChatMessage(
         id: id ?? this.id,
@@ -409,5 +417,6 @@ class ChatMessage {
         agent: agent ?? this.agent,
         durationMs: durationMs ?? this.durationMs,
         errorKind: errorKind ?? this.errorKind,
+        finish: finish ?? this.finish,
       );
 }

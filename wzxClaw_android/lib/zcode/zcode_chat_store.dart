@@ -3980,6 +3980,7 @@ class ZcodeChatStore extends ChangeNotifier {
       protoId: protoId,
       agent: _nonEmpty(info['agent']),
       durationMs: durationMs,
+      finish: _nonEmpty(info['finish']),
     );
   }
 

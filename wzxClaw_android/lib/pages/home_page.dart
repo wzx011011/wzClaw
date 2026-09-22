@@ -1784,11 +1784,12 @@ class _ChatPageState extends State<ChatPage> {
               busyElapsed: busy ? _store.streamElapsed : null,
             ),
             onOpenSubagent: _openSubagentSession,
-            // 折叠策略（实时/历史观感一致性）：仅倒数第三及更早的回合默认
-            // 折叠，最近两回合保持展开；用户手动改过的按块身份记忆——
-            // 滚动回收重建、加载更早前插都不丢
+            // 折叠策略（柱2，状态驱动非位置驱动）：运行中展开、完成折叠、
+            // 中断/被停强制展开；用户手动改过的按块身份记忆——滚动回收
+            // 重建、加载更早前插都不丢
             defaultCollapsed:
-                _turnFoldState[keyStr] ?? index < blocks.length - 2,
+                _turnFoldState[keyStr] ??
+                defaultTurnFold(busy: busy, messages: block.messages),
             onFoldChanged: (v) => _turnFoldState[keyStr] = v,
             // 流式中降级纯文本（防半截 markdown 裸露 + 逐 chunk 全量重解析）
             answerBuilder: (md, streaming) =>
