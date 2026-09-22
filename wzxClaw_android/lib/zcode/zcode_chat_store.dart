@@ -1287,6 +1287,17 @@ class ZcodeChatStore extends ChangeNotifier {
     _fail(attempted ? healError : '发送失败：$reason');
   }
 
+  /// 手动全量刷新（顶栏刷新按钮）：当前会话权威对账 + 会话列表徽标。
+  /// 不主动收尾回合——引擎侧已空闲时权威投影会经 state idle 兜底落 busy，
+  /// 流式中的回合只同步内容不动状态。返回是否发起了刷新。
+  Future<bool> refreshActiveSessionSnapshot() async {
+    final state = _activeState;
+    unawaited(refreshSessions());
+    if (state == null) return false;
+    await _refreshAuthoritative(state, finishTurn: false);
+    return true;
+  }
+
   /// 停止生成（session/stop + 增量权威刷新）。
   /// R03：停止请求失败/超时时引擎可能仍在运行——绝不强制收尾（清
   /// streaming/waiting 会标空闲并放出队列下一条），只做不收尾的权威

@@ -21,6 +21,7 @@ import '../services/file_download_service.dart';
 import '../services/node_catalog_service.dart';
 import '../services/git_service.dart';
 import '../services/chat_runtime_service.dart';
+import '../services/goal_store.dart';
 import '../zcode/zcode_session_state.dart';
 import '../widgets/animated_message_item.dart';
 import '../widgets/ask_user_bar.dart';
@@ -1300,12 +1301,31 @@ class _ChatPageState extends State<ChatPage> {
         title: _buildTitle(colors),
         iconTheme: IconThemeData(color: colors.textPrimary),
         actions: [
-          // 切换桌面：返回设备列表（LandingPage）重新选择/切换桌面
+          // 会话刷新：权威重同步当前会话内容 + 会话列表徽标（纠正卡死/
+          // 错误状态的兜底入口；切换桌面入口在抽屉底部保留）
           IconButton(
-            icon: const Icon(Icons.swap_horiz_outlined),
-            tooltip: '切换桌面端',
-            onPressed: () {
-              Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+            icon: const Icon(Icons.refresh),
+            tooltip: '刷新会话',
+            onPressed: () async {
+              // try/catch 会挡住 lint 对 mounted 守卫的流分析：先捕获
+              // messenger，异步间隙后不再触碰 context
+              final messenger = ScaffoldMessenger.of(context);
+              String message;
+              try {
+                final refreshed =
+                    await _store.refreshActiveSessionSnapshot();
+                await GoalStore.instance.refresh();
+                message = refreshed ? '已刷新会话快照' : '当前无活动会话，仅刷新列表';
+              } catch (e) {
+                message = '刷新失败：$e';
+              }
+              if (!mounted) return;
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(message),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
             },
           ),
           // 新对话：进入「新任务」欢迎态（引擎会话等首条消息发出时才创建）
