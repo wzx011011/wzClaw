@@ -11,6 +11,8 @@ import 'package:flutter/foundation.dart';
 
 import 'connection_manager.dart';
 
+/// 模型引用（providerId/modelId）：模型选择器与重试流共用的轻量值类型
+/// （home_page 构造与消费；读取入口已统一到 NodeCatalogService / store）。
 class SessionModelUse {
   final String providerId;
   final String modelId;
@@ -49,49 +51,6 @@ class ChatRuntimeService {
     final requester = debugRequester;
     if (requester != null) return requester(method, params);
     return ConnectionManager.instance.zcodeRequest(method, params);
-  }
-
-  /// 本会话历史用过的模型（最新在前，去重，不含空值）
-  Future<List<SessionModelUse>> sessionModels(String sessionId) async {
-    final r =
-        await _call('session/messages', {'sessionId': sessionId, 'limit': 40});
-    if (r is! Map) throw StateError('消息响应异常');
-    final messages = (r['messages'] as List? ?? []);
-    final seen = <String>[];
-    final result = <SessionModelUse>[];
-    // messages 按时间升序（实测契约）：倒序扫，最新模型排前
-    for (final m in messages.reversed) {
-      final info = (m is Map && m['info'] is Map) ? m['info'] as Map : const {};
-      final modelId = info['modelID']?.toString() ?? '';
-      final providerId = info['providerID']?.toString() ?? '';
-      if (modelId.isEmpty || providerId.isEmpty) continue;
-      final key = '$providerId/$modelId';
-      if (seen.contains(key)) continue;
-      seen.add(key);
-      result.add(SessionModelUse(providerId: providerId, modelId: modelId));
-    }
-    return result;
-  }
-
-  /// 可用模型目录：session/resume 响应的 settings.model.available（实测形状，
-  /// 模型自愈同源）。失败（-32004 会话未激活等）由调用方降级到 [sessionModels]。
-  Future<List<SessionModelUse>> availableModels(String sessionId) async {
-    final r = await _call('session/resume', {'sessionId': sessionId});
-    if (r is! Map) throw StateError('resume 响应异常');
-    final settings = r['settings'] is Map ? r['settings'] as Map : const {};
-    final modelCfg =
-        settings['model'] is Map ? settings['model'] as Map : const {};
-    final available = modelCfg['available'] as List? ?? const [];
-    final result = <SessionModelUse>[];
-    for (final item in available) {
-      final ref = item is Map && item['ref'] is Map ? item['ref'] as Map : null;
-      if (ref == null) continue;
-      final providerId = ref['providerId']?.toString() ?? '';
-      final modelId = ref['modelId']?.toString() ?? '';
-      if (providerId.isEmpty || modelId.isEmpty) continue;
-      result.add(SessionModelUse(providerId: providerId, modelId: modelId));
-    }
-    return result;
   }
 
   /// 会话 token 用量（session/usage 实测形状）

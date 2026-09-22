@@ -3,10 +3,16 @@
 //
 // R3 翻译壳退役：这两个函数与协议翻译无关（配对 URL 形状解析），
 // 被 pairing_store / settings / landing 依赖，故独立成模块存活。
+// hash 合法性校验收敛到 zcode_pairing 的单一实现（评审 P2-3）。
 // ============================================================
 
+import '../zcode/zcode_pairing.dart' show isValidPairingHash;
+
 /// 解析配对链接（宽容 scheme 版）：https/http/wss/ws 均可。
-/// 旧 UI 的地址校验只放行 wss://，因此 wss 形式的配对链接也必须可用。
+/// wss 形式服务于既有配对链接（现役绕行端口），scheme 原样保留；
+/// hash 必须是标准 base64 的 32 字节（43 字符 + '='）——畸形凭据在
+/// 连接入口即拒绝，不写入持久化配对（评审 P2-3：此前宽松版会让坏
+/// hash 每次自动重连都白跑到认证阶段才被拒）。
 /// 返回 relay 的 ws 地址（wss/ws 原样保留 scheme，http(s) 按升级规则转换）。
 ({String relayWsUrl, String sid, String hash})? parsePairingUrlAny(String url) {
   try {
@@ -17,7 +23,9 @@
     if (!isHttp && !isWs) return null;
     final sid = uri.queryParameters['sid'] ?? '';
     final hash = uri.queryParameters['hash'] ?? '';
-    if (sid.isEmpty || sid.length > 256 || hash.isEmpty) return null;
+    if (sid.isEmpty || sid.length > 256 || !isValidPairingHash(hash)) {
+      return null;
+    }
     final wsScheme = isHttp ? (scheme == 'https' ? 'wss' : 'ws') : scheme;
     return (
       relayWsUrl: '$wsScheme://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}/ws',

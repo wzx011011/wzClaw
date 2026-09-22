@@ -291,10 +291,15 @@ class ZcodeRelayClient {
     final dynamic msg;
     try {
       msg = jsonDecode(raw);
-    } catch (_) {
-      return; // 非 JSON 行直接忽略
+    } catch (e) {
+      // 非 JSON 行：链路排查时是坏帧疑点，必须留观测（评审 P1-4）
+      ConnectionDiagnostics.instance.record('坏帧', '非 JSON 行: $e');
+      return;
     }
-    if (msg is! Map) return;
+    if (msg is! Map) {
+      ConnectionDiagnostics.instance.record('坏帧', 'JSON 非 object');
+      return;
+    }
     // 任何入站信封都视为连接存活的证据（保活计时重置）
     _inboundWatch.reset();
     switch (msg['type']) {
@@ -343,6 +348,14 @@ class ZcodeRelayClient {
         final payload = msg['payload'];
         if (payload is Map) _handleZcodeFrame(payload);
         return;
+      default:
+        // 静默丢弃 = 缺陷：不可识别信封是「丢帧/正在连接」类故障的高频
+        // 嫌疑，记入连接诊断环形缓冲（评审 P1-4）
+        ConnectionDiagnostics.instance.record(
+          '未知帧',
+          'type=${msg['type']}',
+        );
+        return;
     }
   }
 
@@ -359,7 +372,12 @@ class ZcodeRelayClient {
     // 本端请求的响应：id 为 int，按 id 匹配完成 pending
     if (id is int) {
       final entry = _pending.remove(id);
-      if (entry == null) return;
+      if (entry == null) {
+        // 迟到响应（本端已超时/断线清空）：无声蒸发会变成「请求明明失败
+        // 了却收到结果」的无头案，记入连接诊断（评审 P1-4）
+        ConnectionDiagnostics.instance.record('迟到响应', 'id=$id');
+        return;
+      }
       entry.timer.cancel();
       final error = payload['error'];
       if (error is Map) {

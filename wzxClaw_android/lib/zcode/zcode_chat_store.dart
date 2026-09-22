@@ -117,9 +117,7 @@ class ZcodeModelInfo {
   final String providerId;
   final String modelId;
   final String? label;
-  final String? providerLabel;
   final int? contextWindow;
-  final int? maxOutputTokens;
 
   /// 推理档位（引擎快照 reasoning.levels 的 value，如 low/high/max）。
   /// 非空时 setModel 必须带 options.reasoningLevel（实测契约，imported
@@ -131,9 +129,7 @@ class ZcodeModelInfo {
     required this.providerId,
     required this.modelId,
     this.label,
-    this.providerLabel,
     this.contextWindow,
-    this.maxOutputTokens,
     this.reasoningLevels = const [],
     this.reasoningDefaultLevel,
   });
@@ -167,13 +163,14 @@ class ZcodeReverseRejectException implements Exception {
 
 /// 待应答的反向请求（权限 / AskUser）
 ///
-/// completer 的 future 由客户端持有：完成时客户端把结果作为响应帧回传
-/// （响应帧带原反向请求 id），因此这里缓存 frameId ↔ toolCallId/questionId。
+/// completer 的 future 由客户端持有：每个分发闭包在完成时把结果作为响应帧
+/// 回传，响应帧 id 是**分发时各自捕获的 wire id**（同交互重宣告 = 多个闭包
+/// 各答各的；companion 对已被取代/迟到的 wireId 幂等丢弃并留观测，见
+/// companion.js 的 phone-response-late）。这里不缓存帧 id——缓存了也没有
+/// 消费方（响应路由在客户端闭包里）。
 /// [request] 保留解析后的 UI 模型（含 sessionId）：待处理请求不再随视口
 /// 切换被拒绝，展示条按 pending 队列轮转（应答/超时后自动顶上下一请求）。
 class _PendingReverse {
-  // 反向请求帧 id（形如 "server-N"）；同交互重宣告时会被更新为最新帧
-  dynamic frameId;
   final Completer<dynamic> completer;
 
   /// 解析后的请求模型（PermissionRequest / AskUserQuestion）；重宣告合并时
@@ -181,7 +178,6 @@ class _PendingReverse {
   Object? request;
 
   _PendingReverse({
-    required this.frameId,
     required this.completer,
     this.request,
   });
@@ -297,7 +293,9 @@ class ZcodeChatStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 结构化模型目录（settings.model.available 全元数据；模型选择器数据源）
+  /// 结构化模型目录（settings.model.available 全元数据；内部供
+  /// _handleSendRejection 解析推理档位——UI 级目录走 NodeCatalogService，
+  /// 单一真相）
   final List<ZcodeModelInfo> _modelCatalog = [];
 
   /// 降级轮询（仅视口会话；推送不可用时启用）
@@ -351,7 +349,9 @@ class ZcodeChatStore extends ChangeNotifier {
 
   List<ZcodeSessionMeta> get sessions => _sessions;
 
-  /// 结构化模型目录（模型选择器数据源；快照播种，可能为空）
+  /// 仅测试使用：观测 _cacheModelCatalog 的解析行为（UI 级目录走
+  /// NodeCatalogService——单一真相，生产代码不得消费本 getter）
+  @visibleForTesting
   List<ZcodeModelInfo> get modelCatalog => List.unmodifiable(_modelCatalog);
 
   /// 当前会话选中模型（'providerId/modelId'；未知为 null）。
@@ -521,6 +521,10 @@ class ZcodeChatStore extends ChangeNotifier {
     _activeSessionId = null;
     _states.clear();
     _sessionRestoring = false;
+    // 引擎代次归属当前节点：切换桌面必须清空——A 节点 gen=5 切到 B 节点
+    // gen=2 时，残留旧值会把「节点切换」误判成「换代」（日志混叠），且两节点
+    // 代次恰好相等时 B 节点的首帧会被吞（评审 P3）
+    _engineGeneration = null;
     _error = null;
     notifyListeners();
   }
@@ -543,6 +547,7 @@ class ZcodeChatStore extends ChangeNotifier {
     _sessionRestoring = false;
     _availableModels.clear();
     _modelCatalog.clear();
+    _engineGeneration = null;
     // 工作区选择归属当前连接的桌面：切换/断开即失效，
     // 绝不把 A 节点选的工作区带给 B 节点的 newSession
     _selectedWorkspaceKey = null;
@@ -895,8 +900,9 @@ class ZcodeChatStore extends ChangeNotifier {
       }
       unawaited(_persistSession(state));
       if (_isActive(state) && state.epoch == epoch) notifyListeners();
-    } catch (_) {
-      // 补齐失败保留截断标记（下次打开重试）；不影响已展示内容
+    } catch (e) {
+      // 补齐失败保留截断标记（下次打开重试）；不影响已展示内容，但要留观测
+      debugPrint('[zcode-store] 截断缓存补齐失败 session=${state.sessionId}: $e');
     }
   }
 
@@ -914,8 +920,9 @@ class ZcodeChatStore extends ChangeNotifier {
         _activeSessionId = null;
         notifyListeners();
       }
-    } catch (_) {
-      // 确认失败：保留缓存视口
+    } catch (e) {
+      // 确认失败：保留缓存视口（留观测——这是「打开失败却卡在视口」的排查点）
+      debugPrint('[zcode-store] 会话存在性确认失败 session=$sessionId: $e');
     }
   }
 
@@ -998,7 +1005,8 @@ class ZcodeChatStore extends ChangeNotifier {
       final added = state.prependHistory(older.reversed.toList());
       if (added > 0) notifyListeners();
       return added;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[zcode-store] 缓存翻页失败 session=${state.sessionId}: $e');
       return 0; // 缓存尽力而为
     }
   }
@@ -1111,8 +1119,7 @@ class ZcodeChatStore extends ChangeNotifier {
       // 「模型已不可用」有两种送达形态（真机实测）：字符串 result 与
       // 错误帧 -32031（ZCODE_RUNTIME_MODEL_UNAVAILABLE）——两者都走
       // setModel 兜底
-      if (e is ZcodeRequestException &&
-          (e.code == -32031 || e.message.contains('模型'))) {
+      if (e is ZcodeRequestException && e.code == -32031) {
         if (staleTurn()) return;
         await _handleSendRejection(state, text, e.message, turnGen: turnGen);
         return;
@@ -1353,7 +1360,9 @@ class ZcodeChatStore extends ChangeNotifier {
           .toList()
         ..sort((a, b) => newest(b).compareTo(newest(a)));
       return threads;
-    } catch (_) {
+    } catch (e) {
+      // 面板数据尽力而为，但失败必须可见（无声空面板无从排查）
+      debugPrint('[zcode-store] 子智能体线程拉取失败: $e');
       return const [];
     }
   }
@@ -1391,7 +1400,8 @@ class ZcodeChatStore extends ChangeNotifier {
         }
       }
       return null;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[zcode-store] 子智能体详情拉取失败: $e');
       return null;
     }
   }
@@ -1471,22 +1481,38 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 构造权限应答 result：优先回放实测 option 的 response 原文
   /// （schema 必然合法——服务端自己生成的）；无暂存时按实测 schema 兜底。
+  ///
+  /// 目标 option 匹配优先按协议枚举 [PermissionOption.kind]
+  /// （allow_once / allow_project / deny / allow_always），kind 为空才回退
+  /// optionId 字面量——optionId 是观测样例值，不是协议承诺。
+  /// remember 批准但请求不带记忆选项（无 allow_project/allow_always）时：
+  /// 退化为一次性批准**必须**留通告（UI 已按「总是允许」承诺，静默削弱
+  /// 授权语义 = 假成功，见评审 P0-1）。
   Map<String, dynamic> _buildPermissionResult({
     required List<Map>? options,
     required bool approved,
     required bool remember,
   }) {
-    // 找目标 option：批准且 remember → allow_project（allow_always）；
-    // 否则批准 → allow_once；拒绝 → deny。
     if (options != null) {
-      final wanted =
-          approved ? (remember ? 'allow_project' : 'allow_once') : 'deny';
+      final wantedKinds = approved
+          ? (remember ? ['allow_project', 'allow_always'] : ['allow_once'])
+          : ['deny'];
+      bool matches(Map o) {
+        final kind = o['kind']?.toString();
+        if (kind != null && kind.isNotEmpty) return wantedKinds.contains(kind);
+        return wantedKinds.contains(o['optionId']?.toString());
+      }
+
       for (final o in options) {
-        if (o['optionId']?.toString() == wanted) {
+        if (matches(o)) {
           final response = o['response'];
           if (response is Map) return Map<String, dynamic>.from(response);
         }
       }
+    }
+    if (approved && remember) {
+      // 请求未提供记忆选项：显式通告降级，绝不无声把「总是允许」做成一次性
+      _uiNotices.add('该请求不支持「总是允许」，已按本次允许处理');
     }
     // 兜底构造（实测 schema：decision + reason；remember 需要
     // permissionUpdates，本地无法凭空构造——退化为一次性批准）
@@ -1550,7 +1576,6 @@ class ZcodeChatStore extends ChangeNotifier {
       }
       return _awaitReverseResponse(
         key: request.requestId,
-        frameId: frame.id,
         request: request,
         onRegistered: () {
           // 后台通知：任务挂起等人批准，不提醒会无声卡住
@@ -1570,7 +1595,6 @@ class ZcodeChatStore extends ChangeNotifier {
       }
       return _awaitReverseResponse(
         key: question.requestId,
-        frameId: frame.id,
         request: question,
         onRegistered: () {
           // 后台通知：任务挂起等人回答，不提醒会无声卡住
@@ -1590,7 +1614,6 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 注册待应答反向请求并返回挂起的 future（客户端持有，完成后回传响应帧）
   Future<dynamic> _awaitReverseResponse({
     required String key,
-    required dynamic frameId,
     required void Function() onRegistered,
     Object? request,
   }) {
@@ -1598,8 +1621,7 @@ class ZcodeChatStore extends ChangeNotifier {
     if (existing != null && !existing.completer.isCompleted) {
       // 官方引擎对同一交互（params.requestId）会周期性重宣告（新帧新 wire
       // id、业务 requestId 不变）——同 key 重入时合并：保留原挂起 future
-      // （绝不 completeError 杀掉用户待答的请求），仅刷新帧 id 与 watchdog。
-      existing.frameId = frameId;
+      // （绝不 completeError 杀掉用户待答的请求），仅刷新请求模型与 watchdog。
       if (request != null) existing.request = request;
       _armReverseWatchdog(key);
       onRegistered();
@@ -1607,7 +1629,6 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     final completer = Completer<dynamic>();
     _pendingReverse[key] = _PendingReverse(
-      frameId: frameId,
       completer: completer,
       request: request,
     );
@@ -1678,9 +1699,11 @@ class ZcodeChatStore extends ChangeNotifier {
   /// kind, name, description?, response}，应答时原样回放所选 option 的
   /// response（暂存键 = requestId）。
   PermissionRequest? _parsePermissionRequest(Map params, {String? fallbackId}) {
+    // 官方 schema（zcodePermissionRequestParamsSchema）钉死 camelCase 字段名：
+    // 精确匹配，不做 snake_case/旧名兜底（零兼容包袱；测试锚定）
     final requestId = _firstNonEmpty(params, ['requestId']) ?? fallbackId;
-    final toolCallId = _firstNonEmpty(params, ['toolCallId', 'tool_call_id', 'callId']);
-    final toolName = _firstNonEmpty(params, ['toolName', 'tool_name', 'tool', 'name']);
+    final toolCallId = _nonEmpty(params['toolCallId']);
+    final toolName = _nonEmpty(params['toolName']);
     if (requestId == null || requestId.isEmpty) return null;
     // 官方 schema toolName 必填——缺失即畸形帧，安全拒绝（测试锚定）
     if (toolName == null || toolName.isEmpty) return null;
@@ -1717,11 +1740,11 @@ class ZcodeChatStore extends ChangeNotifier {
       requestId: requestId,
       toolCallId: toolCallId ?? requestId,
       toolName: toolName,
-      reason: _firstNonEmpty(params, ['reason']),
-      riskLevel: _firstNonEmpty(params, ['riskLevel', 'risk_level']),
+      reason: _nonEmpty(params['reason']),
+      riskLevel: _nonEmpty(params['riskLevel']),
       input: input is Map ? Map<String, dynamic>.from(input) : {},
       options: optionObjects,
-      sessionId: _firstNonEmpty(params, ['sessionId', 'session_id']),
+      sessionId: _nonEmpty(params['sessionId']),
     );
   }
 
@@ -1783,8 +1806,7 @@ class ZcodeChatStore extends ChangeNotifier {
     return AskUserQuestion(
       requestId: requestId,
       questions: questions,
-      prompt: params['prompt']?.toString(),
-      sessionId: _nonEmpty(params['sessionId'] ?? params['session_id']),
+      sessionId: _nonEmpty(params['sessionId']),
     );
   }
 
@@ -1822,7 +1844,10 @@ class ZcodeChatStore extends ChangeNotifier {
   /// - v4/telemetry/event：usage.delta / turn.terminal / stream.chunk
   void _handleNotifyFrame(ZcodeFrame frame) {
     final params = frame.params;
-    if (params is! Map) return;
+    if (params is! Map) {
+      debugPrint('[zcode-store] 通知帧 params 非 Map method=${frame.method}');
+      return;
+    }
     switch (frame.method) {
       case 'session/event':
         final sid = _nonEmpty(params['sessionId']);
@@ -1841,6 +1866,12 @@ class ZcodeChatStore extends ChangeNotifier {
         return;
       case 'x/engine/generation':
         _handleEngineGeneration(params);
+        return;
+      default:
+        // 静默丢弃 = 缺陷：官方反向/通知族还有 computer-use/operation-event、
+        // plugins/operationProgress、process/mcpTelemetry 等——这里是发现
+        // 新通知面的唯一观测点
+        debugPrint('[zcode-store] 通知未处理 method=${frame.method}');
         return;
     }
   }
@@ -1924,11 +1955,13 @@ class ZcodeChatStore extends ChangeNotifier {
       _notifyIfActive(state);
     } else if (status == 'idle') {
       if (state.isStreaming) {
-        // 兜底回合收尾（可能错过 turn.completed / turn.terminal）
+        // 兜底回合收尾（可能错过 turn.completed / turn.terminal）：idle
+        // 补丁不携带终态，失败回合也会走到这里——通知必须走中性文案
         _handleTurnEnd(
           state,
           turnId: null,
           status: 'success',
+          statusIsAuthoritative: false,
           tokenCount: null,
           toolCallCount: null,
           authoritativeText: null,
@@ -2006,10 +2039,9 @@ class ZcodeChatStore extends ChangeNotifier {
     String? turnId,
   }) {
     final kind = _nonEmpty(payload['kind']) ?? 'text_delta';
-    final assistantId = _firstNonEmpty(
-      payload,
-      ['assistantMessageId', 'assistant_message_id', 'messageId'],
-    );
+    // 官方 schema 字段 assistantMessageId（camelCase，第三万类型钉死）：
+    // 精确匹配，不做 snake/旧名兜底
+    final assistantId = _nonEmpty(payload['assistantMessageId']);
     if (assistantId != null) {
       state.adoptStreamingProtoId(assistantId, turnId: turnId);
     }
@@ -2478,14 +2510,9 @@ class ZcodeChatStore extends ChangeNotifier {
           previous?.parallelGroupIndex,
       canRunParallel: canRunParallel,
       subagentType:
-          meta(['subagentType', 'subagent_type', 'agentType', 'agent_type']) ??
-              previous?.subagentType,
-      childSessionId: meta(['childSessionId', 'child_session_id']) ??
-          previous?.childSessionId,
-      parentToolCallId: meta(['parentToolCallId', 'parent_tool_call_id']) ??
-          previous?.parentToolCallId,
+          meta(['subagentType', 'agentType']) ?? previous?.subagentType,
+      childSessionId: meta(['childSessionId']) ?? previous?.childSessionId,
       source: meta(['source']) ?? previous?.source,
-      agentId: meta(['agentId', 'agent_id']) ?? previous?.agentId,
       background: background,
       description: meta(['description']) ?? previous?.description,
       outputTruncated: outputTruncated ?? previous?.outputTruncated ?? false,
@@ -2495,7 +2522,7 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   String? _toolName(Map payload) {
-    final direct = _firstNonEmpty(payload, ['toolName', 'tool_name', 'name']);
+    final direct = _firstNonEmpty(payload, ['toolName', 'name']);
     if (direct != null) return direct;
     final tool = payload['tool'];
     if (tool is String && tool.isNotEmpty) return tool;
@@ -2550,8 +2577,7 @@ class ZcodeChatStore extends ChangeNotifier {
       case 'turn.started':
         state.isStreaming = true;
         state.noteTurnStart(turnId); // 回合代次：新回合开始即前进
-        final messageId =
-            _nonEmpty(payload['messageId']) ?? _nonEmpty(payload['message_id']);
+        final messageId = _nonEmpty(payload['messageId']) ?? _nonEmpty(payload['message_id']);
         final input = payload['input'];
         if (messageId != null && input is String && input.isNotEmpty) {
           state.ensureUserMessage(
@@ -2653,7 +2679,10 @@ class ZcodeChatStore extends ChangeNotifier {
   /// - 本地 response 只用于避免结束瞬间文本闪空；
   /// - 每个完成回合都拉取 session/messages，以正文/思考/工具的权威 part
   ///   数组取代实时投影，确保跨重启的顺序一致；
-  /// - turnId 幂等去重（session/event 与 telemetry 双通道都会到达）。
+  /// - turnId 幂等去重（session/event 与 telemetry 双通道都会到达）；
+  /// - [statusIsAuthoritative]：state.updated idle 兜底路径不携带真实终态
+  ///   （断线窗口错过 turn.completed 的回合可能实际是失败的）——通知走
+  ///   中性文案，绝不把失败回合报成「任务完成」（评审 P2-4）。
   void _handleTurnEnd(
     ZcodeSessionState state, {
     required String? turnId,
@@ -2662,6 +2691,7 @@ class ZcodeChatStore extends ChangeNotifier {
     int? toolCallCount,
     String? authoritativeText,
     TokenUsage? usage,
+    bool statusIsAuthoritative = true,
   }) {
     if (turnId != null) {
       if (!state.endedTurnIds.add(turnId)) return; // 该回合已收尾
@@ -2713,6 +2743,7 @@ class ZcodeChatStore extends ChangeNotifier {
     // 无可用文本时 notifier 走状态行兜底
     _notifier.showTaskDone(
       status: status,
+      statusKnown: statusIsAuthoritative,
       tokens: tokenCount ?? (state.lastInputTokens + state.lastOutputTokens),
       sessionId: state.sessionId,
       desktopId: desktopId,
@@ -2773,8 +2804,10 @@ class ZcodeChatStore extends ChangeNotifier {
           if (ev is Map) _applySessionEvent(state, ev);
         }
       }
-    } catch (_) {
-      state.pushAvailable = false; // 降级轮询
+    } catch (e) {
+      // 降级轮询是可用路径，但订阅失败必须可见（推送/轮询双降级排查点）
+      debugPrint('[zcode-store] 订阅失败，降级轮询 session=${state.sessionId}: $e');
+      state.pushAvailable = false;
     }
   }
 
@@ -2879,8 +2912,9 @@ class ZcodeChatStore extends ChangeNotifier {
           if (ev is Map) _applySessionEvent(state, ev);
         }
       }
-    } catch (_) {
-      // 补放失败静默：订阅推送仍在，后续事件继续到达
+    } catch (e) {
+      // 补放失败订阅推送仍在，但水位缺口必须可见（断线窗口丢事件的高频嫌疑）
+      debugPrint('[zcode-store] 断线补放失败 session=${state.sessionId}: $e');
     }
   }
 
@@ -3214,12 +3248,8 @@ class ZcodeChatStore extends ChangeNotifier {
               providerId: providerId,
               modelId: modelId,
               label: _nonEmpty(m['label']),
-              providerLabel: _nonEmpty(m['providerLabel']),
               contextWindow: m['contextWindow'] is num
                   ? (m['contextWindow'] as num).toInt()
-                  : null,
-              maxOutputTokens: m['maxOutputTokens'] is num
-                  ? (m['maxOutputTokens'] as num).toInt()
                   : null,
               reasoningLevels: levels,
               reasoningDefaultLevel: levels.isEmpty
@@ -3372,36 +3402,6 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 会话用量统计（session/usage；实测响应含 8 项计数）。
-  /// 返回原始 Map 供 UI 渲染；失败抛出。
-  Future<Map<String, dynamic>> fetchUsage() async {
-    final client = _client;
-    final sessionId = _activeSessionId;
-    if (client == null || sessionId == null || !client.paired) {
-      throw Exception('未连接 ZCode 或未打开会话');
-    }
-    final result =
-        await client.request('session/usage', {'sessionId': sessionId});
-    return result is Map ? Map<String, dynamic>.from(result) : const {};
-  }
-
-  /// 手动压缩上下文（session/compact）。成功后刷新会话列表；
-  /// 返回原始响应（形状通用处理）。
-  Future<void> compactSession() async {
-    final client = _client;
-    final sessionId = _activeSessionId;
-    if (client == null || sessionId == null || !client.paired) {
-      _fail('未连接 ZCode 或未打开会话');
-      return;
-    }
-    try {
-      await client.request('session/compact', {'sessionId': sessionId});
-      unawaited(refreshSessions());
-    } catch (e) {
-      _fail('压缩上下文失败：$e');
-    }
-  }
-
   /// 调用轨迹（session/debug；引擎进程内快照——仅当前进程执行的模型请求
   /// 可见，引擎重启后历史轨迹不可回放）。返回 rounds 元素列表。
   Future<List<Map<String, dynamic>>> debugRounds(String sessionId) async {
@@ -3446,14 +3446,17 @@ class ZcodeChatStore extends ChangeNotifier {
       }
       _fail('分叉完成但未返回新会话，请在会话列表中查看');
       return false;
-    } catch (e) {
-      final message = e.toString();
-      if (message.contains('checkpoint') ||
-          message.contains('INVALID_STATE_TRANSITION')) {
+    } on ZcodeRequestException catch (e) {
+      // 无 checkpoint 的会话 fork 被引擎以 -32603 INVALID_STATE_TRANSITION 拒绝
+      // （APP-SERVER.md 实测）——按错误码分类，不对 message 做字符串嗅探
+      if (e.code == -32603) {
         _fail('该会话还没有可用的工作区检查点（需先产生过文件修改）');
       } else {
         _fail('分叉失败：$e');
       }
+      return false;
+    } catch (e) {
+      _fail('分叉失败：$e');
       return false;
     }
   }
@@ -3544,43 +3547,8 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 子代理列表（session/subagents；实测响应 {revision, childSessionIds[]}）
-  Future<List<String>> loadSubagents() async {
-    final client = _client;
-    final sessionId = _activeSessionId;
-    if (client == null || sessionId == null || !client.paired) {
-      throw Exception('未连接 ZCode 或未打开会话');
-    }
-    final result =
-        await client.request('session/subagents', {'sessionId': sessionId});
-    if (result is Map && result['childSessionIds'] is List) {
-      return (result['childSessionIds'] as List)
-          .map((e) => e?.toString() ?? '')
-          .where((e) => e.isNotEmpty)
-          .toList();
-    }
-    return const [];
-  }
-
-  /// 关闭会话运行时（session/close；桌面端释放该会话资源）。
-  /// 成功后回到会话列表并刷新。
-  Future<bool> closeSessionRemote() async {
-    final client = _client;
-    final sessionId = _activeSessionId;
-    if (client == null || sessionId == null || !client.paired) {
-      _fail('未连接 ZCode 或未打开会话');
-      return false;
-    }
-    try {
-      await client.request('session/close', {'sessionId': sessionId});
-      closeSessionView();
-      unawaited(refreshSessions());
-      return true;
-    } catch (e) {
-      _fail('关闭会话失败：$e');
-      return false;
-    }
-  }
+  /// 子代理列表（session/subagents）的旧读取入口已删——消费方走
+  /// [fetchSubagentThreads]（面板投影）。
 
   /// openSession 成功后把缺失的会话补进列表快照（新会话置顶）：
   /// newSession 的 refreshSessions 可能失败（内部吞错）或服务端列表
@@ -3803,7 +3771,7 @@ class ZcodeChatStore extends ChangeNotifier {
     return ZcodeSessionItem(
       message: message,
       protoId: messageId,
-      turnId: _firstNonEmpty(info, ['turnId', 'turn_id']),
+      turnId: _firstNonEmpty(info, ['turnId']),
       synced: messageId != null,
     );
   }
@@ -3906,11 +3874,11 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   String? _protocolMessageId(Map info) =>
-      _firstNonEmpty(info, ['id', 'messageId', 'message_id']);
+      _firstNonEmpty(info, ['id', 'messageId']);
 
   String? _joinModelRef(Map model) {
-    final providerId = _firstNonEmpty(model, ['providerId', 'provider_id']);
-    final modelId = _firstNonEmpty(model, ['modelId', 'model_id']);
+    final providerId = _nonEmpty(model['providerId']);
+    final modelId = _nonEmpty(model['modelId']);
     if (providerId == null || modelId == null) return null;
     return '$providerId/$modelId';
   }
@@ -3922,7 +3890,11 @@ class ZcodeChatStore extends ChangeNotifier {
     final name = _toolName(p) ?? 'Tool';
     final stateObj = p['state'];
     final state = stateObj is Map ? stateObj : const {};
-    final statusStr = _nonEmpty(state['status']) ?? _nonEmpty(stateObj) ?? '';
+    // state 缺失时不能拿整个 Map 的 toString 冒充状态串（畸形数据显式归未知）
+    final statusStr =
+        _nonEmpty(state['status']) ??
+            (stateObj is String ? _nonEmpty(stateObj) : null) ??
+            '';
     final input = stateObj is Map
         ? state['input']
         : p['input'] ?? (tool is Map ? tool['input'] : null);
@@ -3968,12 +3940,9 @@ class ZcodeChatStore extends ChangeNotifier {
       startedAt: startedAt,
       parallelGroupIndex: _toIntOrNull(p['parallelGroupIndex']),
       canRunParallel: p['canRunParallel'] == true,
-      subagentType:
-          meta(['subagentType', 'subagent_type', 'agentType', 'agent_type']),
-      childSessionId: meta(['childSessionId', 'child_session_id']),
-      parentToolCallId: meta(['parentToolCallId', 'parent_tool_call_id']),
+      subagentType: meta(['subagentType', 'agentType']),
+      childSessionId: meta(['childSessionId']),
       source: meta(['source']),
-      agentId: meta(['agentId', 'agent_id']),
       background: p['background'] == true,
       description: meta(['description']),
       outputTruncated: state['truncated'] == true || p['truncated'] == true,
@@ -4064,13 +4033,13 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 仅测试使用：模拟 relay 状态变化（重连/断线补放路径）
   @visibleForTesting
+  void debugSimulateRelayState(ZcodeRelayState state, bool paired) =>
+      _onRelayStateChange(state, paired);
+
   /// 仅测试使用：会话时间线条目（截断标记断言用）
   @visibleForTesting
   List<ZcodeSessionItem> debugItems(String sessionId) =>
       List.unmodifiable(_states[sessionId]?.items ?? const []);
-
-  void debugSimulateRelayState(ZcodeRelayState state, bool paired) =>
-      _onRelayStateChange(state, paired);
 
   @override
   void dispose() {

@@ -41,13 +41,11 @@ class ToolCallInfo {
   final int? parallelGroupIndex;
   final bool canRunParallel;
 
-  /// Agent/子智能体工具的关联元数据。childToolCallId 在父会话中已被
-  /// 引擎 namespaced 为 toolCallId，仍保留 parent/source 以便嵌套展示。
+  /// Agent/子智能体工具的关联元数据（嵌套展示用）。parentToolCallId /
+  /// agentId 已删——解析后全仓库零消费（评审 P2-2）。
   final String? subagentType;
   final String? childSessionId;
-  final String? parentToolCallId;
   final String? source;
-  final String? agentId;
   final bool background;
   final String? description;
 
@@ -74,9 +72,7 @@ class ToolCallInfo {
     this.canRunParallel = false,
     this.subagentType,
     this.childSessionId,
-    this.parentToolCallId,
     this.source,
-    this.agentId,
     this.background = false,
     this.description,
     this.outputTruncated = false,
@@ -98,9 +94,7 @@ class ToolCallInfo {
     bool? canRunParallel,
     String? subagentType,
     String? childSessionId,
-    String? parentToolCallId,
     String? source,
-    String? agentId,
     bool? background,
     String? description,
     bool? outputTruncated,
@@ -122,9 +116,7 @@ class ToolCallInfo {
         canRunParallel: canRunParallel ?? this.canRunParallel,
         subagentType: subagentType ?? this.subagentType,
         childSessionId: childSessionId ?? this.childSessionId,
-        parentToolCallId: parentToolCallId ?? this.parentToolCallId,
         source: source ?? this.source,
-        agentId: agentId ?? this.agentId,
         background: background ?? this.background,
         description: description ?? this.description,
         outputTruncated: outputTruncated ?? this.outputTruncated,
@@ -148,9 +140,7 @@ class ToolCallInfo {
         if (canRunParallel) 'canRunParallel': true,
         if (subagentType != null) 'subagentType': subagentType,
         if (childSessionId != null) 'childSessionId': childSessionId,
-        if (parentToolCallId != null) 'parentToolCallId': parentToolCallId,
         if (source != null) 'source': source,
-        if (agentId != null) 'agentId': agentId,
         if (background) 'background': true,
         if (description != null) 'description': description,
         if (outputTruncated) 'outputTruncated': true,
@@ -187,9 +177,7 @@ class ToolCallInfo {
       canRunParallel: json['canRunParallel'] == true,
       subagentType: json['subagentType'] as String?,
       childSessionId: json['childSessionId'] as String?,
-      parentToolCallId: json['parentToolCallId'] as String?,
       source: json['source'] as String?,
-      agentId: json['agentId'] as String?,
       background: json['background'] == true,
       description: json['description'] as String?,
       outputTruncated: json['outputTruncated'] == true,

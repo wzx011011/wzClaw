@@ -43,7 +43,11 @@ class ZcodePairingInfo {
 
 final RegExp _hashRe = RegExp(r'^[A-Za-z0-9+/]{43}=$');
 
-bool _isValidHash(String hash) => _hashRe.hasMatch(hash);
+/// 配对 hash 形状校验（标准 base64 的 32 字节）——配对 URL 双解析器
+/// （zcode_pairing / pairing_url）共用的单一真相（评审 P2-3）
+bool isValidPairingHash(String hash) => _hashRe.hasMatch(hash);
+
+bool _isValidHash(String hash) => isValidPairingHash(hash);
 
 /// 解析配对 URL；无效返回 null
 ZcodePairingInfo? parsePairingUrl(String url) {

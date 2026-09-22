@@ -94,6 +94,11 @@ class _AskUserBarState extends State<AskUserBar> {
     // 先看到它来自哪个会话再作答
     final sourceLabel = ZcodeChatStore.instance.reverseSourceLabel(q.sessionId);
     final multiQuestion = q.questions.length > 1;
+    // 全部题目均无作答时禁用提交：空 accept 会被引擎当「已回答」消费掉
+    // （多题场景某题漏答尤其无声）——多确认优于假成功（评审 P2-7）
+    final hasAnyAnswer = q.questions.asMap().entries.any(
+          (e) => _answerFor(e.key, e.value) != null,
+        );
 
     return Container(
       width: double.infinity,
@@ -164,10 +169,11 @@ class _AskUserBarState extends State<AskUserBar> {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: _submit,
+                onPressed: hasAnyAnswer ? _submit : null,
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.white,
-                  backgroundColor: colors.accent,
+                  backgroundColor:
+                      hasAnyAnswer ? colors.accent : colors.textMuted,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   shape: RoundedRectangleBorder(

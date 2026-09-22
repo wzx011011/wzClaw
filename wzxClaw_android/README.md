@@ -15,7 +15,7 @@ Android App
 
 ## 配对
 
-1. 在大脑节点启动 `companion_app`，或运行 `relay/zcode/companion.js`。
+1. 在大脑节点启动桌面端（`desktop` submodule，扫码配对二维码），或运行 CLI `relay/zcode/companion.js`。
 2. 确认 Companion 已连接 `wss://zcode.5945.top/ws`，并显示配对二维码。
 3. 在 Android 应用中扫描二维码或打开配对链接。
 4. 应用从链接读取 relay origin、`sid` 和 `hash`，完成质询认证后进入对应房间。
@@ -38,7 +38,7 @@ Android App
 
 ```bash
 flutter pub get
-flutter analyze --no-fatal-infos
+flutter analyze        # CI 门禁：info 也算失败，必须 0 issues
 flutter test
 ```
 

@@ -30,7 +30,7 @@ void main() {
       expect(find.textContaining('ls -la'), findsOneWidget);
     });
 
-    testWidgets('三键：拒绝 / 允许 / 总是允许（remember 语义暴露）', (tester) async {
+    testWidgets('三键：拒绝 / 允许 / 总是允许（请求带记忆选项时）', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
         const PermissionBar(
           request: PermissionRequest(
@@ -38,7 +38,26 @@ void main() {
             toolCallId: 'tc-2',
             toolName: 'FileWrite',
             input: {'path': '/tmp/test.txt'},
-            options: [],
+            options: [
+              PermissionOption(
+                optionId: 'allow_once',
+                kind: 'allow_once',
+                name: 'Allow once',
+                response: {},
+              ),
+              PermissionOption(
+                optionId: 'allow_project',
+                kind: 'allow_always',
+                name: 'Always allow',
+                response: {},
+              ),
+              PermissionOption(
+                optionId: 'deny',
+                kind: 'deny',
+                name: 'Deny',
+                response: {},
+              ),
+            ],
           ),
         ),
       ),);
@@ -46,6 +65,39 @@ void main() {
       expect(find.text('拒绝'), findsOneWidget);
       expect(find.text('允许'), findsOneWidget);
       expect(find.text('总是允许'), findsOneWidget);
+    });
+
+    testWidgets('请求无记忆选项：「总是允许」不渲染（UI 承诺 = 实际回放）',
+        (tester) async {
+      await tester.pumpWidget(wrapWithTheme(
+        const PermissionBar(
+          request: PermissionRequest(
+            requestId: 'perm-tc-2b',
+            toolCallId: 'tc-2b',
+            toolName: 'FileWrite',
+            input: {'path': '/tmp/test.txt'},
+            options: [
+              PermissionOption(
+                optionId: 'allow_once',
+                kind: 'allow_once',
+                name: 'Allow once',
+                response: {},
+              ),
+              PermissionOption(
+                optionId: 'deny',
+                kind: 'deny',
+                name: 'Deny',
+                response: {},
+              ),
+            ],
+          ),
+        ),
+      ),);
+
+      expect(find.text('拒绝'), findsOneWidget);
+      expect(find.text('允许'), findsOneWidget);
+      // 无 allow_project/allow_always 选项：绝不承诺「总是允许」
+      expect(find.text('总是允许'), findsNothing);
     });
 
     testWidgets('中文动作标签「想要执行」', (tester) async {

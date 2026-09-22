@@ -13,6 +13,21 @@ class PermissionBar extends StatelessWidget {
 
   const PermissionBar({super.key, required this.request});
 
+  /// 请求是否提供「记住」语义的选项（协议枚举 kind：allow_project /
+  /// allow_always；kind 缺失时回退 optionId 字面量）。无该选项时
+  /// 「总是允许」按钮不渲染——UI 承诺必须与 _buildPermissionResult 的
+  /// 实际回放一致，静默降级 = 授权语义被悄悄削弱（评审 P0-1）。
+  static bool offersRememberOption(PermissionRequest request) {
+    return request.options.any(
+      (o) =>
+          o.kind == 'allow_project' ||
+          o.kind == 'allow_always' ||
+          (o.kind.isEmpty &&
+              (o.optionId == 'allow_project' ||
+                  o.optionId == 'allow_always')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
@@ -137,30 +152,34 @@ class PermissionBar extends StatelessWidget {
                 ),
                 child: const Text('允许', style: TextStyle(fontSize: 12)),
               ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => ZcodeChatStore.instance.respondToPermission(
-                  request.requestId,
-                  approved: true,
-                  remember: true,
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.success,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: colors.success),
+              if (offersRememberOption(request)) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => ZcodeChatStore.instance.respondToPermission(
+                    request.requestId,
+                    approved: true,
+                    remember: true,
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colors.success,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: colors.success),
+                    ),
+                  ),
+                  child: const Text(
+                    '总是允许',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                child: const Text(
-                  '总是允许',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+              ],
             ],
           ),
         ],

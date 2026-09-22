@@ -1,46 +1,38 @@
 // ============================================================
-// zcodeSendWithHeal — command:send 全路径（发送 → 自愈 → 补订阅）
+// zcodeSetModelResend — 「模型已不可用」自愈尾段（setModel → close →
+// resume → send，顺序不可变）
 //
 // 钉住契约（APP-SERVER.md「session/send 字符串 result 业务拒绝」+
-// probe-modelheal4 时序）：
-// - 字符串 result 含「模型」/ 错误帧 -32031 → 自动自愈
-//   resume → setModel → close → resume → send（顺序不可变）
-// - 自愈成功必须补发订阅；失败必须回传带原因的文案 + kind
-// - 非模型类拒绝/异常不得触发自愈（不擅改桌面端会话配置）
+// probe-modelheal4 时序 RESULT: healed-by-setmodel-rematerialize）：
+// - 时序 setModel → close → resume → send，只 setModel 重发仍 -32031；
+// - imported 模型必填 reasoningLevel：传入时 setModel params 必带
+//   options.reasoningLevel，不传则不带 options；
+// - 自愈重发再被拒 / 任一步失败 → 带原始 reason 的指引文案。
+// （zcodeSendWithHeal / zcodeHealWithAvailableModel 已随换芯桥退役删除。）
 // ============================================================
 
 import 'dart:collection';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/zcode/zcode_model_heal.dart';
-import 'package:wzxclaw_android/zcode/zcode_relay_client.dart'
-    show ZcodeRequestException;
 
 void main() {
   const unavailable =
       '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。';
-  final availableResume = {
-    'settings': {
-      'model': {
-        'available': [
-          {
-            'ref': {'providerId': 'builtin:p', 'modelId': 'glm-x'},
-          },
-        ],
-      },
-    },
-  };
 
-  /// 按 [script]（method → 响应/抛出）回放；调用序列记录进 [calls]。
-  /// 同一 method 多次调用按 script 中该 key 的列表顺序出队。
-  (Future<dynamic> Function(String, [Map<String, dynamic>?]), List<String>)
-      scripted(Map<String, List<Object?>> script) {
+  /// 按 [script]（method → 响应/抛出）回放；调用序列记录进 [calls]，
+  /// 请求参数记录进 [paramsOf]。同一 method 多次调用按列表顺序出队。
+  (Future<dynamic> Function(String, [Map<String, dynamic>?]), List<String>,
+      Map<String, List<Map<String, dynamic>?>>)
+  scripted(Map<String, List<Object?>> script) {
     final calls = <String>[];
+    final paramsOf = <String, List<Map<String, dynamic>?>>{};
     final queues = {
       for (final e in script.entries) e.key: Queue<Object?>.from(e.value),
     };
     Future<dynamic> fn(String method, [Map<String, dynamic>? params]) {
       calls.add(method);
+      paramsOf.putIfAbsent(method, () => []).add(params);
       final q = queues[method];
       if (q == null || q.isEmpty) {
         throw StateError('script 缺少 $method 的响应');
@@ -51,121 +43,110 @@ void main() {
       return Future.value(next);
     }
 
-    return (fn, calls);
+    return (fn, calls, paramsOf);
   }
 
-  group('zcodeSendWithHeal', () {
-    test('直发成功：send → subscribe，无自愈', () async {
-      final (fn, calls) = scripted({
-        'session/send': [
-          {'accepted': true},
-        ],
-        'session/subscribe': [{}],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(error, isNull);
-      expect(kind, isNull);
-      expect(calls, ['session/send', 'session/subscribe']);
+  test('自愈时序固定：setModel → close → resume → send，成功返回 null', () async {
+    final (fn, calls, _) = scripted({
+      'session/setModel': [{}],
+      'session/close': [
+        {'closed': true},
+      ],
+      'session/resume': [
+        {'ok': true},
+      ],
+      'session/send': [
+        {'accepted': true},
+      ],
     });
+    final error = await zcodeSetModelResend(
+      request: fn,
+      sessionId: 's',
+      content: 'hi',
+      providerId: 'builtin:p',
+      modelId: 'glm-x',
+      reason: unavailable,
+    );
+    expect(error, isNull);
+    expect(calls, [
+      'session/setModel',
+      'session/close',
+      'session/resume',
+      'session/send',
+    ]);
+  });
 
-    test('字符串模型拒绝 → 自愈成功时序 send→resume→setModel→close→resume→send→subscribe',
-        () async {
-      final (fn, calls) = scripted({
-        'session/send': [unavailable, {'accepted': true}],
-        'session/resume': [availableResume, {}],
-        'session/setModel': [{}],
-        'session/close': [
-          {'closed': true},
-        ],
-        'session/subscribe': [{}],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(error, isNull);
-      expect(kind, isNull);
-      expect(calls, [
-        'session/send',
-        'session/resume',
-        'session/setModel',
-        'session/close',
-        'session/resume',
-        'session/send',
-        'session/subscribe',
-      ]);
+  test('reasoningLevel 传入时 setModel 带 options；不传则不带（imported 模型契约）',
+      () async {
+    final (fn, _, paramsOf) = scripted({
+      'session/setModel': [{}, {}],
+      'session/close': [{}, {}],
+      'session/resume': [{}, {}],
+      'session/send': [{}, {}],
     });
+    await zcodeSetModelResend(
+      request: fn,
+      sessionId: 's',
+      content: 'hi',
+      providerId: 'builtin:p',
+      modelId: 'glm-x',
+      reason: unavailable,
+      reasoningLevel: 'high',
+    );
+    await zcodeSetModelResend(
+      request: fn,
+      sessionId: 's',
+      content: 'hi',
+      providerId: 'builtin:p',
+      modelId: 'glm-x',
+      reason: unavailable,
+    );
+    final withLevel = paramsOf['session/setModel']![0]!;
+    expect(withLevel['model'], {
+      'providerId': 'builtin:p',
+      'modelId': 'glm-x',
+      'options': {'reasoningLevel': 'high'},
+    });
+    final withoutLevel = paramsOf['session/setModel']![1]!;
+    expect(withoutLevel['model'], {
+      'providerId': 'builtin:p',
+      'modelId': 'glm-x',
+    });
+  });
 
-    test('-32031 错误帧同样触发自愈', () async {
-      final (fn, calls) = scripted({
-        'session/send': [
-          const ZcodeRequestException(-32031, 'ZCODE_RUNTIME_MODEL_UNAVAILABLE'),
-          {'accepted': true},
-        ],
-        'session/resume': [availableResume, {}],
-        'session/setModel': [{}],
-        'session/close': [{}],
-        'session/subscribe': [{}],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(error, isNull);
-      expect(kind, isNull);
-      expect(calls, contains('session/setModel'));
+  test('重发仍被拒（字符串 result）→ 带指引文案', () async {
+    final (fn, _, _) = scripted({
+      'session/setModel': [{}],
+      'session/close': [{}],
+      'session/resume': [{}],
+      'session/send': [unavailable],
     });
+    final error = await zcodeSetModelResend(
+      request: fn,
+      sessionId: 's',
+      content: 'hi',
+      providerId: 'builtin:p',
+      modelId: 'glm-x',
+      reason: unavailable,
+    );
+    expect(error, contains('已自动切换可用模型仍被拒'));
+    expect(error, contains('请新建会话继续'));
+  });
 
-    test('自愈后重发仍被拒 → 带指引文案 + model-unavailable，不再补订阅', () async {
-      final (fn, calls) = scripted({
-        'session/send': [unavailable, unavailable],
-        'session/resume': [availableResume, {}],
-        'session/setModel': [{}],
-        'session/close': [{}],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(kind, 'model-unavailable');
-      expect(error, contains('请新建会话继续'));
-      expect(calls.last, isNot('session/subscribe'));
+  test('自愈链任一步失败 → 文案带原始 reason 与真实错误，不得冒充模型问题',
+      () async {
+    final (fn, _, _) = scripted({
+      'session/setModel': [Exception('network down')],
     });
-
-    test('无可用模型 → 明确文案 + model-unavailable', () async {
-      final (fn, _) = scripted({
-        'session/send': [unavailable],
-        'session/resume': [
-          {
-            'settings': {
-              'model': {'available': []},
-            },
-          },
-        ],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(kind, 'model-unavailable');
-      expect(error, contains('无可用模型'));
-    });
-
-    test('非模型类字符串拒绝：原文透传，不触发自愈', () async {
-      final (fn, calls) = scripted({
-        'session/send': ['会话已被桌面端锁定'],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(error, '会话已被桌面端锁定');
-      expect(kind, isNull);
-      expect(calls, ['session/send']);
-    });
-
-    test('非模型类异常：普通错误文案，errorKind 为空', () async {
-      final (fn, calls) = scripted({
-        'session/send': [
-          const ZcodeRequestException(-32004, 'session not readable'),
-        ],
-      });
-      final (error, kind) = await zcodeSendWithHeal(
-          request: fn, sessionId: 's', content: 'hi',);
-      expect(kind, isNull);
-      expect(error, contains('发送失败'));
-      expect(calls, ['session/send']);
-    });
+    final error = await zcodeSetModelResend(
+      request: fn,
+      sessionId: 's',
+      content: 'hi',
+      providerId: 'builtin:p',
+      modelId: 'glm-x',
+      reason: unavailable,
+    );
+    expect(error, contains(unavailable));
+    expect(error, contains('network down'));
   });
 }

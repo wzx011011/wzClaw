@@ -14,14 +14,12 @@ Widget wrapWithTheme(Widget child) {
 AskUserBar buildQuestion({
   required String requestId,
   required List<AskUserQuestionItem> questions,
-  String? prompt,
   String? sessionId,
 }) {
   return AskUserBar(
     question: AskUserQuestion(
       requestId: requestId,
       questions: questions,
-      prompt: prompt,
       sessionId: sessionId,
     ),
   );

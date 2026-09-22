@@ -753,22 +753,24 @@ void main() {
       sub.cancel();
     });
 
-    test('snake_case 字段兜底：旧形态仍可解析并按兜底 schema 应答', () async {
+    test('官方 schema 精确匹配：snake_case 字段不兜底，畸形帧安全拒绝', () async {
       final fake = FakeZcodeRelayClient();
       final store = pairedStore(fake);
 
-      final future = store.debugHandleReverseRequest(
-        const ZcodeFrame(
-          id: 'server-5',
-          method: 'interaction/requestPermission',
-          params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
-        ),
-      );
+      // toolName 缺失（仅 snake_case 旧键）= 畸形帧：解析失败 → error 帧安全
+      // 拒绝（官方 schema toolName 必填；零兼容包袱，不为旧形态留兜底路）
       await Future<void>.delayed(Duration.zero);
-      expect(store.activePermission?.toolCallId, 'tc-2');
-      expect(store.activePermission?.toolName, 'ShellExecute');
-      store.respondToPermission('server-5', approved: false);
-      expect(await future, {'decision': 'deny', 'reason': 'Denied'});
+      expect(store.activePermission, isNull);
+      expect(
+        () => store.debugHandleReverseRequest(
+          const ZcodeFrame(
+            id: 'server-5',
+            method: 'interaction/requestPermission',
+            params: {'tool_call_id': 'tc-2', 'tool_name': 'ShellExecute'},
+          ),
+        ),
+        throwsException,
+      );
     });
 
     test('AskUser 反向请求（官方 schema）→ 流事件 + 应答回传 accept/answers', () async {
@@ -2881,6 +2883,154 @@ void main() {
         greaterThan(0),
         reason: '纯 contextUsage 补丁不触发重建时，容量浮层停在旧读数',
       );
+      store.dispose();
+    });
+  });
+
+  group('评审修复锚（2026-09-22 全架构 review）', () {
+    test('权限选项按 kind 匹配：kind=allow_project/allow_always 优先于 optionId 字面量',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final store = pairedStore(fake);
+
+      // 官方语义枚举是协议承诺，optionId 只是观测样例值——kind 命中即回放
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-r1',
+          method: 'interaction/requestPermission',
+          params: {
+            'requestId': 'perm-r1',
+            'toolName': 'Bash',
+            'options': [
+              {
+                'kind': 'allow_once',
+                'optionId': 'opt-1',
+                'response': {'decision': 'allow', 'reason': 'Approved once'},
+              },
+              {
+                // optionId 是自定义值（不在观测样例词汇里），仅 kind 可匹配
+                'kind': 'allow_project',
+                'optionId': 'opt-custom-forever',
+                'response': {'decision': 'allow', 'reason': 'Project rule'},
+              },
+              {
+                'kind': 'deny',
+                'optionId': 'opt-3',
+                'response': {'decision': 'deny', 'reason': 'Denied'},
+              },
+            ],
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      store.respondToPermission('perm-r1', approved: true, remember: true);
+      expect(await future, {'decision': 'allow', 'reason': 'Project rule'});
+      store.dispose();
+    });
+
+    test('remember 批准但请求无记忆选项：退化为一次性批准 + uiNotice 通告',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final store = pairedStore(fake);
+      final notices = <String>[];
+      store.uiNotices.listen(notices.add);
+
+      final future = store.debugHandleReverseRequest(
+        const ZcodeFrame(
+          id: 'server-r2',
+          method: 'interaction/requestPermission',
+          params: {
+            'requestId': 'perm-r2',
+            'toolName': 'Bash',
+            'options': [
+              {
+                'kind': 'allow_once',
+                'optionId': 'allow_once',
+                'response': {'decision': 'allow', 'reason': 'Approved once'},
+              },
+            ],
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // 用户点「总是允许」：请求没带记忆选项，只能一次性批准——但必须通告
+      store.respondToPermission('perm-r2', approved: true, remember: true);
+      expect(await future, {'decision': 'allow', 'reason': 'Approved once'});
+      await Future<void>.delayed(Duration.zero);
+      expect(notices, contains('该请求不支持「总是允许」，已按本次允许处理'));
+      store.dispose();
+    });
+
+    test('forkSession：-32603 按错误码归类为「无检查点」，不做 message 嗅探',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      stubResumeEmpty(fake);
+      fake.handlers['session/read'] = (_) => {'projection': {'status': 'idle'}};
+      fake.handlers['session/fork'] = (_) => throw const ZcodeRequestException(
+            -32603,
+            'INVALID_STATE_TRANSITION: no checkpoint available',
+          );
+      final store = pairedStore(fake);
+      await store.openSession('sess-fork');
+
+      final ok = await store.forkSession();
+      expect(ok, isFalse);
+      expect(store.error, contains('还没有可用的工作区检查点'));
+      store.dispose();
+    });
+
+    test('sendMessage 错误帧分类只认 -32031：其他错误码的「模型」字样不触发自愈',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      stubResumeEmpty(fake);
+      fake.handlers['session/send'] = (_) =>
+          throw const ZcodeRequestException(-32000, '模型字样但非模型错误');
+      final store = pairedStore(fake);
+      await store.openSession('sess-send');
+
+      await store.sendMessage('hi');
+      // 不进自愈链（无 setModel 请求），按普通错误收尾
+      expect(fake.requests.any((e) => e.key == 'session/setModel'), isFalse);
+      expect(store.error, contains('发送失败'));
+      expect(store.isStreaming, isFalse);
+      store.dispose();
+    });
+
+    test('state.updated idle 兜底收尾：通知 statusKnown=false（中性文案）',
+        () async {
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      addTearDown(ZcodeNotifier.resetInstanceForTest);
+
+      final fake = FakeZcodeRelayClient();
+      // resume 报 running → 会话进入流式；随后 idle 补丁触发兜底收尾
+      fake.handlers['session/resume'] = (_) => {
+            'projection': {'status': 'running'},
+            'messages': [],
+          };
+      fake.handlers['session/events'] = (_) => {'events': []};
+      fake.handlers['session/messages'] = (_) => {'messages': []};
+      final store = pairedStore(fake);
+      await store.openSession('sess-idle');
+      expect(store.isStreaming, isTrue);
+
+      // 错过 turn.completed 的断线窗口：idle 补丁兜底收尾——终态未知，
+      // 通知绝不报「任务完成」
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-idle',
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
+      expect(store.isStreaming, isFalse);
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.single['statusKnown'], isFalse);
+      // 兜底收尾排了异步权威刷新：等它跑完再 dispose（used-after-dispose）
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
       store.dispose();
     });
   });

@@ -148,13 +148,6 @@ class GitService {
     });
   }
 
-  /// 批量目录存在性（工作区列表过滤已删除路径用）
-  Future<List<bool>> existingDirs(List<String> paths) async {
-    final r = await _call('x/fs/exists', {'paths': paths});
-    if (r is! Map) throw StateError('exists 响应异常');
-    return [for (final v in (r['exists'] as List? ?? [])) v == true];
-  }
-
   /// 仓库摘要（状态面板「Git 工具」板块数据源）。非 git 仓库 / git 不可用 /
   /// 离线一律抛错，由调用方决定隐藏板块——不做假数据。
   /// status 与 diffstat 两步绑定同一连接（审查 P1-2）：不得 A 节点 status

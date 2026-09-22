@@ -29,6 +29,10 @@ class GoalStore extends ChangeNotifier {
   GoalSnapshot _snapshot = const GoalSnapshot(todos: [], groups: []);
   bool _loading = false;
 
+  /// 刷新序号守卫：并发刷新（回合边界 + 下拉同时触发）时晚到的旧请求
+  /// 不得覆盖新快照（评审 P3）
+  int _refreshSeq = 0;
+
   GoalSnapshot get snapshot => _snapshot;
   bool get loading => _loading;
 
@@ -60,18 +64,24 @@ class GoalStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final seq = ++_refreshSeq;
     _loading = true;
     notifyListeners();
     try {
       final result = await _chat.goalShow();
+      final threads = await _chat.fetchSubagentThreads();
+      // 在途期间又发起了新刷新：本次结果作废（晚到者覆盖新快照 = 面板回跳）
+      if (seq != _refreshSeq) return;
       _snapshot = parseGoalSnapshot(result);
-      _threads = await _chat.fetchSubagentThreads();
+      _threads = threads;
     } catch (e) {
       // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
       debugPrint('[goal-store] goal snapshot failed: $e');
     } finally {
-      _loading = false;
-      notifyListeners();
+      if (seq == _refreshSeq) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 

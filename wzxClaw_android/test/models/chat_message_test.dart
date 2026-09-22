@@ -31,9 +31,7 @@ void main() {
         canRunParallel: true,
         subagentType: 'Explore',
         childSessionId: 'child-1',
-        parentToolCallId: 'call_parent',
         source: 'subagent',
-        agentId: 'agent-9',
         background: true,
         description: '大范围搜索',
         outputTruncated: true,
@@ -46,9 +44,7 @@ void main() {
       expect(json['canRunParallel'], true);
       expect(json['subagentType'], 'Explore');
       expect(json['childSessionId'], 'child-1');
-      expect(json['parentToolCallId'], 'call_parent');
       expect(json['source'], 'subagent');
-      expect(json['agentId'], 'agent-9');
       expect(json['background'], true);
       expect(json['description'], '大范围搜索');
       expect(json['outputTruncated'], true);

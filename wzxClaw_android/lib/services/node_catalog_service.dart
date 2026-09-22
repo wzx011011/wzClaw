@@ -135,8 +135,7 @@ class NodeModelCatalog {
 
 class ConfigureResult {
   final bool ok;
-  final bool appliedToActive;
-  const ConfigureResult({required this.ok, required this.appliedToActive});
+  const ConfigureResult({required this.ok});
 }
 
 class NodeCatalogService {
@@ -255,9 +254,6 @@ class NodeCatalogService {
         'reasoningLevel': reasoningLevel,
     });
     if (r is! Map || r['ok'] != true) throw StateError('设置默认模型失败');
-    return ConfigureResult(
-      ok: true,
-      appliedToActive: r['appliedToActive'] == true,
-    );
+    return const ConfigureResult(ok: true);
   }
 }

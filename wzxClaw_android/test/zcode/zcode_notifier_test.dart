@@ -65,6 +65,20 @@ void main() {
     expect(notifier.shown.first['payload'], 's1');
   });
 
+  test('statusKnown=false（idle 兜底收尾）：中性标题，不冒充完成/失败', () {
+    notifier.handleLifecycleState(AppLifecycleState.paused);
+    notifier.showTaskDone(
+      status: 'success',
+      statusKnown: false,
+      tokens: null,
+      sessionId: 's1',
+    );
+    expect(notifier.shown, hasLength(1));
+    expect(notifier.shown.first['title'], 'ZCode 回合已结束');
+    // 无摘要时兜底状态行显式说明终态未知
+    expect(notifier.shown.first['body'], contains('终态未知'));
+  });
+
   test('inactive/hidden（失焦/最小化）时照常弹通知', () {
     notifier.handleLifecycleState(AppLifecycleState.hidden);
     notifier.showTaskDone(status: 'success', tokens: 1, sessionId: null);

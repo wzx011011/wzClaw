@@ -189,22 +189,6 @@ class ZcodeSessionCache {
 
   // ---- 清理 ----
 
-  Future<void> deleteSession(String sessionId) async {
-    final db = await _ensureDb();
-    await db.transaction((txn) async {
-      await txn.delete(
-        'zcode_messages',
-        where: 'session_id = ?',
-        whereArgs: [sessionId],
-      );
-      await txn.delete(
-        'zcode_cursors',
-        where: 'session_id = ?',
-        whereArgs: [sessionId],
-      );
-    });
-  }
-
   Future<void> clearAll() async {
     final db = await _ensureDb();
     await db.delete('zcode_messages');

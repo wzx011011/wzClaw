@@ -119,6 +119,9 @@ class ZcodeNotifier {
   /// 状态未知（保守按后台）时照常弹出。
   ///
   /// [status] turn.terminal 的 status（success → 完成，其他 → 失败）
+  /// [statusKnown] 终态是否权威（state.updated idle 兜底收尾的回合不携带
+  /// 真实终态）：false 时标题走中性「回合已结束」，绝不把未知终态报成
+  /// 「任务完成/失败」
   /// [summary] 回合回答摘要（≤80 字符；通知正文的主力——用户关心的是
   /// 「回答了什么」，不是内部状态行）。为空时回退状态行兜底。
   /// [tokens] 本回合 token 数（仅兜底状态行展示）
@@ -127,6 +130,7 @@ class ZcodeNotifier {
   /// 切换），标题带桌面名区分来源
   void showTaskDone({
     required String status,
+    bool statusKnown = true,
     int? tokens,
     String? sessionId,
     String? desktopId,
@@ -136,9 +140,15 @@ class ZcodeNotifier {
     if (!_enabled || _lifecycleState == AppLifecycleState.resumed) return;
 
     final ok = status == 'success';
+    final String verb;
+    if (!statusKnown) {
+      verb = '回合已结束';
+    } else {
+      verb = ok ? '任务完成' : '任务失败';
+    }
     final title = desktopName == null || desktopName.isEmpty
-        ? (ok ? 'ZCode 任务完成' : 'ZCode 任务失败')
-        : (ok ? '$desktopName · 任务完成' : '$desktopName · 任务失败');
+        ? 'ZCode $verb'
+        : '$desktopName · $verb';
     final summaryText = summary?.trim();
     final body = (summaryText != null && summaryText.isNotEmpty)
         ? (summaryText.length <= 80
@@ -146,7 +156,9 @@ class ZcodeNotifier {
             : '${summaryText.substring(0, 80)}…')
         : () {
             // 无可用摘要（如失败回合无文本）：状态行兜底
-            final fallback = StringBuffer('状态: $status');
+            final fallback = StringBuffer(
+              statusKnown ? '状态: $status' : '回合终态未知（连接中断窗口）',
+            );
             if (tokens != null) fallback.write(' · $tokens tokens');
             return fallback.toString();
           }();

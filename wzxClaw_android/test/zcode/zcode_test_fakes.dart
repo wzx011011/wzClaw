@@ -74,6 +74,7 @@ class FakeZcodeNotifier extends ZcodeNotifier {
   @override
   void showTaskDone({
     required String status,
+    bool statusKnown = true,
     int? tokens,
     String? sessionId,
     String? desktopId,
@@ -82,6 +83,7 @@ class FakeZcodeNotifier extends ZcodeNotifier {
   }) {
     shown.add({
       'status': status,
+      'statusKnown': statusKnown,
       'tokens': tokens,
       'sessionId': sessionId,
       'summary': summary,
@@ -279,12 +281,6 @@ class FakeZcodeSessionCache extends ZcodeSessionCache {
   }) async {
     cursors[sessionId] =
         ZcodeSessionCursor(lastSeq: lastSeq, watermark: watermark);
-  }
-
-  @override
-  Future<void> deleteSession(String sessionId) async {
-    messages.remove(sessionId);
-    cursors.remove(sessionId);
   }
 
   @override

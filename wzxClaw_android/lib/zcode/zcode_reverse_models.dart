@@ -105,10 +105,9 @@ class AskUserQuestion {
   /// 官方业务身份：同交互的重宣告共用同一 requestId（去重/应答键）。
   final String requestId;
 
-  /// 无 questions 时的自由文本提示（官方 prompt 模式）
-  final String? prompt;
-
-  /// 题目列表（官方支持一次多题，按序展示、一次提交）
+  /// 题目列表（官方支持一次多题，按序展示、一次提交）。
+  /// 无 questions 时的官方 prompt 模式在解析期已折成单道自由文本题，
+  /// 不再冗余保留 prompt 字段（评审 P2-2：只写不读）。
   final List<AskUserQuestionItem> questions;
 
   /// 请求所属会话（同 PermissionRequest.sessionId，归属用）
@@ -117,7 +116,6 @@ class AskUserQuestion {
   const AskUserQuestion({
     required this.requestId,
     required this.questions,
-    this.prompt,
     this.sessionId,
   });
 }
