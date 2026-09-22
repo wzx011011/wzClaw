@@ -26,6 +26,7 @@ const targetRoot = path.join(desktopRoot, 'packages', 'desktop', 'companion-core
 const files = [
   'companion.js',
   'lib/constants.js',
+  'lib/engine-history.js',
   'lib/plan-overlay.js',
   'lib/proof.js',
   'lib/protocol.js',
