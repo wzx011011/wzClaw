@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wzxclaw_android/services/goal_store.dart';
+import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
 import '../zcode/zcode_test_fakes.dart';
 
@@ -39,6 +40,12 @@ void main() {
         },
       };
     };
+    // 柱5：刷新周期包含 session/subagents（all-or-nothing），缺处理器
+    // 会让整个周期判失败、快照不落地
+    fake.handlers['session/subagents'] = (_) => {
+          'running': [],
+          'ended': {'total': 0, 'items': []},
+        };
 
     final goalStore = GoalStore(chatStore: chat);
     addTearDown(goalStore.dispose);
@@ -107,5 +114,96 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(goalStore.snapshot.isEmpty, isTrue);
     expect(goalStore.loading, isFalse);
+  });
+
+
+  group('柱5 数据三态与触发扩容', () {
+    test('刷新失败保留旧快照并显式 failed（不静默清空）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final chat = pairedStore(fake);
+      await chat.openSession('sess-goal');
+      var fail = false;
+      fake.handlers['session/goal'] = (params) {
+        if (fail) throw Exception('rpc dead');
+        return {
+          'snapshot': {
+            'todos': [
+              {'content': '旧目标', 'status': 'in_progress', 'priority': 'high'},
+            ],
+            'todoGroups': [],
+          },
+        };
+      };
+      fake.handlers['session/subagents'] = (_) => {
+            'running': [],
+            'ended': {
+              'total': 1,
+              'items': [
+                {
+                  'childSessionId': 'c1',
+                  'subagentType': 'Explore',
+                  'status': 'success',
+                  'summary': '旧结论',
+                },
+              ],
+            },
+          };
+
+      final goalStore = GoalStore(chatStore: chat);
+      addTearDown(goalStore.dispose);
+      await goalStore.refresh();
+      expect(goalStore.phase, GoalLoadPhase.ready);
+      expect(goalStore.snapshot.todos.single.content, '旧目标');
+      expect(goalStore.threads.single.messages.single['content'], '旧结论');
+
+      fail = true;
+      await goalStore.refresh();
+
+      expect(goalStore.phase, GoalLoadPhase.failed, reason: '失败必须显式可见');
+      expect(goalStore.lastError, isNotNull);
+      expect(
+        goalStore.snapshot.todos.single.content,
+        '旧目标',
+        reason: '失败保留旧数据（stale-but-labeled），绝不静默清空',
+      );
+      expect(goalStore.threads, hasLength(1), reason: '子代理线程同样保留');
+      expect(goalStore.lastSuccessAt, isNotNull);
+    });
+
+    test('重连恢复（connState matched 边沿）触发刷新', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final chat = pairedStore(fake);
+      await chat.openSession('sess-goal');
+      var goalCalls = 0;
+      fake.handlers['session/goal'] = (params) {
+        goalCalls++;
+        return {
+          'snapshot': {'todos': [], 'todoGroups': []},
+        };
+      };
+      fake.handlers['session/subagents'] = (_) => {
+            'running': [],
+            'ended': {'total': 0, 'items': []},
+          };
+
+      final goalStore = GoalStore(chatStore: chat);
+      addTearDown(goalStore.dispose);
+      await Future<void>.delayed(Duration.zero);
+
+      // 隧道断（connState 离开 matched）再恢复：恢复边沿必须刷新面板
+      chat.ingestRelayState(ZcodeRelayState.closed, false);
+      await Future<void>.delayed(Duration.zero);
+      final callsWhileDown = goalCalls;
+      chat.ingestRelayState(ZcodeRelayState.matched, true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        goalCalls,
+        greaterThan(callsWhileDown),
+        reason: '链路恢复即对账面板数据（frpc 僵死恢复场景）',
+      );
+    });
   });
 }

@@ -1505,7 +1505,8 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 子智能体线程（session/subagents）。0.16.9 实测 schema：sessionId
   /// 必填（缺省 -32602 ZodError，probe-surface-report 已钉）——作用于
   /// 当前活动会话。响应逐行经 _mapProtocolMessage 映射后按 info.agent
-  /// 分组，最新线程在前。失败返回空列表（尽力而为）。
+  /// 分组，最新线程在前。失败向上抛（柱5）：调用方区分「真空」与
+  /// 「拉取失败」，失败不冒充空态。
   Future<List<SubagentThread>> fetchSubagentThreads() async {
     final client = _client;
     final sessionId = _activeSessionId;
@@ -1554,9 +1555,10 @@ class ZcodeChatStore extends ChangeNotifier {
         ..sort((a, b) => newest(b).compareTo(newest(a)));
       return threads;
     } catch (e) {
-      // 面板数据尽力而为，但失败必须可见（无声空面板无从排查）
+      // 柱5：失败向上抛（GoalStore 置 failed 态并保留旧数据），不再
+      // 返回空列表冒充「真没有子代理」——失败空与真空必须可区分
       debugPrint('[zcode-store] 子智能体线程拉取失败: $e');
-      return const [];
+      rethrow;
     }
   }
 

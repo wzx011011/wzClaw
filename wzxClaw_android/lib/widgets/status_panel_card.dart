@@ -188,6 +188,32 @@ class StatusPanelCard extends StatelessWidget {
                       ),
                     _divider(colors),
                     _goalRow(colors),
+                    // 柱5：刷新失败显式提示（旧数据保留展示但标注新鲜度，
+                    // 绝不冒充实时的——官方 SubagentDirectorySidePane
+                    // 「失败显示错误并保留旧数据」同款）
+                    if (GoalStore.instance.phase == GoalLoadPhase.failed)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.sync_problem_outlined,
+                              size: 13,
+                              color: colors.textMuted,
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                _panelStaleLabel(GoalStore.instance),
+                                style: TextStyle(
+                                  color: colors.textMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     _divider(colors),
                     _TodoSection(goal: data.goal),
                     if (data.threads.isNotEmpty) ...[
@@ -324,6 +350,15 @@ class StatusPanelCard extends StatelessWidget {
   }
 
   // ── 目标：① 目标文本 n/m + 计时（官方行形态）────────────────────
+  /// 失败态提示文案（柱5）：有旧数据时标注其时间，无数据直说失败
+  String _panelStaleLabel(GoalStore store) {
+    final t = store.lastSuccessAt;
+    if (t == null) return '数据拉取失败，下拉重试';
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    return '数据更新失败，显示 $hh:$mm 的旧数据 · 下拉重试';
+  }
+
   Widget _goalRow(AppColors colors) {
     final goal = data.goal;
     final active = goal.activeGroup;

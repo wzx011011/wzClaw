@@ -15,6 +15,12 @@ import 'package:flutter/foundation.dart';
 import '../models/goal_snapshot.dart';
 import '../zcode/zcode_chat_store.dart';
 
+/// 面板数据三态（柱5，2026-09-22）：legacy 协议拿不到官方的同订阅
+/// state 补丁，面板靠拉取刷新——「真空」「有数据」「刷新失败（保留
+/// 旧数据）」必须可区分，否则链路断时面板显示的旧数据会被当成实时
+/// （官方 SubagentDirectorySidePane 同款：失败显示错误并保留旧数据）。
+enum GoalLoadPhase { idle, ready, failed }
+
 class GoalStore extends ChangeNotifier {
   /// 测试注入替身；默认挂全局聊天容器单例
   GoalStore({ZcodeChatStore? chatStore})
@@ -29,12 +35,21 @@ class GoalStore extends ChangeNotifier {
   GoalSnapshot _snapshot = const GoalSnapshot(todos: [], groups: []);
   bool _loading = false;
 
+  GoalLoadPhase _phase = GoalLoadPhase.idle;
+  DateTime? _lastSuccessAt;
+  String? _lastError;
+
   /// 刷新序号守卫：并发刷新（回合边界 + 下拉同时触发）时晚到的旧请求
   /// 不得覆盖新快照（评审 P3）
   int _refreshSeq = 0;
 
   GoalSnapshot get snapshot => _snapshot;
   bool get loading => _loading;
+  GoalLoadPhase get phase => _phase;
+
+  /// 最近一次成功刷新时间（failed 态下面板标注数据的新鲜度）
+  DateTime? get lastSuccessAt => _lastSuccessAt;
+  String? get lastError => _lastError;
 
   List<SubagentThread> _threads = const [];
 
@@ -44,23 +59,35 @@ class GoalStore extends ChangeNotifier {
   /// 上一采样的回合在途态（翻转 = 回合边界）
   bool _lastTurnBusy = false;
 
-  /// 聊天容器通知 → 回合边界检测。流式中的逐增量通知在这里被
-  /// 挡掉，只有 false→true（回合开始）与 true→false（回合结束）
-  /// 两个边界各触发一次刷新。
+  /// 上一采样的连接态（matched 边沿 = 链路恢复，恢复即对账）
+  ZcodeConnState _lastConn = ZcodeConnState.idle;
+
+  /// 聊天容器通知 → 刷新触发：
+  /// - 回合边界（busy 翻转）：面板「运行中自动更新」承诺（原有）；
+  /// - 连接恢复（connState → matched 边沿）：frpc 隧道僵死恢复后面板
+  ///   自动对账，不再依赖手动下拉（2026-09-22 实测缺口）。
+  /// 流式中的逐增量通知在这里被挡掉。
   void _onChatStoreChanged() {
-    final busy =
-        _chat.isStreaming || _chat.isWaitingForResponse;
-    if (busy == _lastTurnBusy) return;
+    final busy = _chat.isStreaming || _chat.isWaitingForResponse;
+    final conn = _chat.connState;
+    final connRestored =
+        conn == ZcodeConnState.matched && _lastConn != ZcodeConnState.matched;
+    final busyFlipped = busy != _lastTurnBusy;
+    _lastConn = conn;
+    if (!busyFlipped && !connRestored) return;
     _lastTurnBusy = busy;
     unawaited(refresh());
   }
 
-  /// 主动刷新（面板进入/下拉/回合边界）：session/goal → 快照 → notify。
-  /// 无活动会话或未连接时清空（面板显示空态，不阻断）。
+  /// 主动刷新（面板进入/下拉/回合边界/链路恢复）：session/goal +
+  /// session/subagents → 快照 → notify。无活动会话时清空（真空态）；
+  /// 拉取失败保留旧快照并置 failed（stale-but-labeled，绝不静默清空）。
   Future<void> refresh() async {
     final sid = _chat.activeSessionId;
     if (sid == null || sid.isEmpty) {
       _snapshot = const GoalSnapshot(todos: [], groups: []);
+      _threads = const [];
+      _phase = GoalLoadPhase.idle;
       notifyListeners();
       return;
     }
@@ -74,9 +101,15 @@ class GoalStore extends ChangeNotifier {
       if (seq != _refreshSeq) return;
       _snapshot = parseGoalSnapshot(result);
       _threads = threads;
+      _phase = GoalLoadPhase.ready;
+      _lastSuccessAt = DateTime.now();
+      _lastError = null;
     } catch (e) {
-      // 会话未在本进程 materialize 等场景返回错误：静默（面板显示空态）
       debugPrint('[goal-store] goal snapshot failed: $e');
+      // 有更新的刷新在途：失败态由它裁决，这里不覆盖
+      if (seq != _refreshSeq) return;
+      _phase = GoalLoadPhase.failed;
+      _lastError = e.toString();
     } finally {
       if (seq == _refreshSeq) {
         _loading = false;
