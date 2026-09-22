@@ -329,6 +329,11 @@ class ChatMessage {
   final TokenUsage? usage;
   final String? model;
 
+  /// 协议消息 id（app-server info.id / 流式 assistantMessageId）。
+  /// 视图身份镜像：权威合并前后同 id → 同一块身份（item.protoId 是同步层
+  /// 权威，这里只是渲染层的镜像，二者由同步层写入时保持一致）。
+  final String? protoId;
+
   /// 产出该消息的 agent（引擎 info.agent；null / 'zcode-agent' = 主时间线）
   final String? agent;
 
@@ -347,6 +352,7 @@ class ChatMessage {
     this.isStreaming = false,
     this.usage,
     this.model,
+    this.protoId,
     this.agent,
     this.durationMs,
     this.errorKind,
@@ -398,6 +404,7 @@ class ChatMessage {
     bool? isStreaming,
     TokenUsage? usage,
     String? model,
+    String? protoId,
     String? agent,
     int? durationMs,
     String? errorKind,
@@ -410,6 +417,7 @@ class ChatMessage {
         isStreaming: isStreaming ?? this.isStreaming,
         usage: usage ?? this.usage,
         model: model ?? this.model,
+        protoId: protoId ?? this.protoId,
         agent: agent ?? this.agent,
         durationMs: durationMs ?? this.durationMs,
         errorKind: errorKind ?? this.errorKind,

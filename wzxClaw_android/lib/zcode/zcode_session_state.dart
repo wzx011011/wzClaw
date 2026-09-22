@@ -384,7 +384,13 @@ class ZcodeSessionState {
           current.protoId == null ||
           current.protoId == assistantMessageId) {
         current.turnId ??= turnId;
-        if (assistantMessageId != null) current.protoId = assistantMessageId;
+        if (assistantMessageId != null && current.protoId == null) {
+          current.protoId = assistantMessageId;
+          // 视图身份镜像：块身份键用 protoId（权威替换前后不变）
+          current.message =
+              current.message.copyWith(protoId: assistantMessageId);
+          current.dirty = true;
+        }
         streamingProtoId = assistantMessageId ?? streamingProtoId;
         return streamingIndex;
       }
@@ -395,6 +401,7 @@ class ZcodeSessionState {
           role: MessageRole.assistant,
           createdAt: _clock(),
           isStreaming: true,
+          protoId: assistantMessageId ?? streamingProtoId,
         ),
         protoId: assistantMessageId ?? streamingProtoId,
         turnId: turnId ?? streamingTurnId,
@@ -415,6 +422,7 @@ class ZcodeSessionState {
     );
     items[index].protoId = protoId;
     items[index].turnId ??= turnId;
+    items[index].message = items[index].message.copyWith(protoId: protoId);
   }
 
   /// 追加正文增量（text_delta）。同类连续增量只更新尾部文本过程行；
@@ -782,6 +790,8 @@ class ZcodeSessionState {
             it.message.text == content) {
           it.protoId = protoId;
           it.turnId ??= turnId;
+          // 视图身份镜像：本地乐观 user 消息采纳协议 id 后块身份随之稳定
+          it.message = it.message.copyWith(protoId: protoId);
           it.dirty = true;
           return true;
         }
@@ -793,6 +803,7 @@ class ZcodeSessionState {
           role: MessageRole.user,
           processParts: [ChatProcessPart.text(content)],
           createdAt: _clock(),
+          protoId: protoId,
         ),
         protoId: protoId,
         turnId: turnId,
@@ -860,7 +871,18 @@ class ZcodeSessionState {
   /// - 同 protoId 必须原位整体替换，确保实时 parts 被权威 parts 原子取代；
   /// - 未带 id 的本地 user、或尚未获得 assistantMessageId 的占位，才允许
   ///   受限的尾部消解；不能按任意 assistant 文本做模糊匹配；
+  /// - assistant 消解按回合身份匹配（incoming 有 turnId 时必须相同），
+  ///   且在尾部未确认段中从最旧找起——占位按时间创建、权威消息按时间
+  ///   送达，顺序对应才不会把旧回合的迟到消息顶掉新回合的活动占位
+  ///   （newest-first 会偷走 live 占位并遗弃真正的旧占位 → 永久重复）；
   /// - 其他权威消息按服务端返回顺序追加。
+  ///
+  /// 流式游标（streamingIndex）在合并中保持不动：被替换的若正是当前
+  /// 流式占位（同 id 消息被服务端版本原位升级），游标必须继续指向权威
+  /// 条目——置 -1 会让同消息的下一个增量/工具更新重建幽灵占位，同 id
+  /// 消息出现两行，且在下一次权威合并（byProto 命中较新的幽灵行）后，
+  /// 早前那份权威行永久滞留成重复气泡。finalizeStreaming 对 synced
+  /// 条目本就整体跳过，游标留着不会被实时投影覆写。
   void mergeAuthoritative(List<ZcodeSessionItem> incoming) {
     if (incoming.isEmpty) return;
     final byProto = <String, int>{};
@@ -878,13 +900,18 @@ class ZcodeSessionState {
       if (existingIdx != null) {
         items[existingIdx] = _healToolInputs(items[existingIdx], inc);
         if (id != null) byProto[id] = existingIdx;
-        _consumeStreamingAt(existingIdx);
         continue;
       }
 
       var reconciled = false;
       final role = inc.message.role;
-      for (var i = items.length - 1; i >= localRunStart; i--) {
+      // user 从最新往回找（同文本歧义时新消息更可能属于新回合）；
+      // assistant 从最旧往前找（与权威消息的时间顺序对应，见方法注释）
+      for (var i = role == MessageRole.user
+              ? items.length - 1
+              : localRunStart;
+          role == MessageRole.user ? i >= localRunStart : i < items.length;
+          role == MessageRole.user ? i-- : i++) {
         final local = items[i];
         if (local.synced || local.message.role != role) continue;
         final canReconcile = switch (role) {
@@ -896,13 +923,18 @@ class ZcodeSessionState {
                     local.turnId == null &&
                     local.message.text == inc.message.text),
           // assistant 有 server id 却没有 exact hit 时，只能消解还没获得任何
-          // assistantMessageId 的空占位；已有不同 id 绝不猜测同一消息。
-          MessageRole.assistant => local.protoId == null,
+          // assistantMessageId 的占位；已有不同 id 绝不猜测同一消息。
+          // incoming 带回合身份时必须相同——否则旧回合的迟到权威消息会
+          // 偷走新回合的活动占位（流式游标被消费、真占位被遗弃）。
+          MessageRole.assistant =>
+            local.protoId == null &&
+                (inc.turnId == null ||
+                    local.turnId == null ||
+                    local.turnId == inc.turnId),
         };
         if (!canReconcile) continue;
         items[i] = inc;
         if (id != null) byProto[id] = i;
-        _consumeStreamingAt(i);
         reconciled = true;
         break;
       }
@@ -957,12 +989,6 @@ class ZcodeSessionState {
       dirty: inc.dirty,
       message: inc.message.copyWith(processParts: List.unmodifiable(healed)),
     );
-  }
-
-  /// 权威数据替换了流式占位所在下标时消费占位游标：
-  /// 占位已被服务端版本取代，后续 finalizeStreaming 不得再覆写该条目
-  void _consumeStreamingAt(int index) {
-    if (index == streamingIndex) streamingIndex = -1;
   }
 
   /// 头部插入截断提示（降级路径使用 resume 的 messages 数组且被

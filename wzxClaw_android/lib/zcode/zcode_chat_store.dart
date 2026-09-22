@@ -1896,14 +1896,20 @@ class ZcodeChatStore extends ChangeNotifier {
     // 快照顶层两种取值路径，schema 见 APP-SERVER.md OQ1 定论）
     final contextUsageRaw = patch['contextUsage'] ?? params['contextUsage'];
     final contextUsage = ZcodeContextUsage.fromEngineJson(contextUsageRaw);
-    if (contextUsage != null && state != null) state.contextUsage = contextUsage;
-    // 后台任务投影（0.16.9）：整体替换，元素形状见 state 字段注释
+    if (contextUsage != null && state != null) {
+      state.contextUsage = contextUsage;
+      _notifyIfActive(state); // 专用补丁：status 等其他分支不触发时也要刷新
+    }
+    // 后台任务投影（0.16.9）：整体替换，元素形状见 state 字段注释。
+    // 后台任务常在主回合已结束（status 无变化）时完成/失败——必须显式
+    // 通知，否则任务 sheet/徽标在空闲期永远停留在旧投影
     final bgJobs = patch['backgroundJobs'];
     if (bgJobs is List && state != null) {
       state.backgroundJobs = bgJobs
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList(growable: false);
+      _notifyIfActive(state);
     }
     final status = _nonEmpty(patch['status']);
 
@@ -3788,9 +3794,9 @@ class ZcodeChatStore extends ChangeNotifier {
   ZcodeSessionItem? _mapProtocolItem(Map raw) {
     final info = raw['info'];
     if (info is! Map) return null;
-    final message = _mapProtocolMessage(raw);
-    if (message == null) return null;
     final messageId = _protocolMessageId(info);
+    final message = _mapProtocolMessage(raw, protoId: messageId);
+    if (message == null) return null;
     if (messageId == null) {
       debugPrint('[zcode-store] session/messages 消息缺少 message id，保留但不缓存');
     }
@@ -3805,7 +3811,7 @@ class ZcodeChatStore extends ChangeNotifier {
   /// app-server 消息（info + parts）→ canonical ChatMessage。
   /// parts 数组顺序是唯一权威顺序；text/reasoning/tool 直接映射，
   /// step-start/step-finish 及未知类型保留 marker，绝不丢弃或重排。
-  ChatMessage? _mapProtocolMessage(Map m) {
+  ChatMessage? _mapProtocolMessage(Map m, {String? protoId}) {
     final info = m['info'];
     if (info is! Map) return null;
     final rawParts = m['parts'];
@@ -3892,6 +3898,8 @@ class ZcodeChatStore extends ChangeNotifier {
       createdAt: created ?? DateTime.now(),
       usage: usage,
       model: _nonEmpty(info['modelID']) ?? nestedModel,
+      // 视图身份镜像：权威替换前后同 id → 块身份不变（折叠/展开状态跟块走）
+      protoId: protoId,
       agent: _nonEmpty(info['agent']),
       durationMs: durationMs,
     );

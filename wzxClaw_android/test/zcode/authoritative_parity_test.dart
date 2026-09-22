@@ -233,4 +233,117 @@ void main() {
       expect(healed.inputFull, 'fresh');
     });
   });
+
+  group('权威合并与流式游标（幽灵占位/占位被偷根治）', () {
+    test('回合中权威替换流式占位后，同消息增量继续落权威行，不重建幽灵占位', () {
+      final state = ZcodeSessionState('sess-phantom');
+      state.appendTextDelta('你好', assistantMessageId: 'msg-a', turnId: 'turn-1');
+      expect(state.streamingIndex, greaterThanOrEqualTo(0));
+
+      // 回合中途权威刷新：服务端返回同 id 消息（0.16.9 实测在途替换形状，
+      // 不含在途工具——见 _toolInputBuffers / _healToolInputs 注释）
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-a',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            processParts: [const ChatProcessPart.text('你好')],
+          ),
+        ),
+      ]);
+
+      // 同一条消息的后续增量到达：必须落在权威条目上，绝不能另起一行——
+      // 否则同 id 消息出现两行，下次权威合并后早前那份永久滞留成重复气泡
+      state.appendTextDelta('，世界', assistantMessageId: 'msg-a', turnId: 'turn-1');
+
+      expect(state.items, hasLength(1), reason: '同 id 消息只允许一行');
+      expect(state.items.single.message.text, '你好，世界');
+    });
+
+    test('回合中权威替换后，同消息的工具更新也落权威行', () {
+      final state = ZcodeSessionState('sess-phantom-tool');
+      state.upsertStreamingTool(
+        const ToolCallInfo(toolCallId: 'call-1', toolName: 'Bash'),
+        assistantMessageId: 'msg-a',
+        turnId: 'turn-1',
+      );
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-a',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            // 服务端版本丢掉在途工具（实测形状）
+            processParts: const [],
+          ),
+        ),
+      ]);
+
+      // 工具结果晚到：必须回到权威行，不能重建占位
+      state.upsertStreamingTool(
+        const ToolCallInfo(
+          toolCallId: 'call-1',
+          toolName: 'Bash',
+          status: ToolCallStatus.done,
+          outputSummary: 'ok',
+        ),
+      );
+
+      expect(state.items, hasLength(1), reason: '工具更新不得重建幽灵占位行');
+      expect(
+        state.items.single.message.processParts.map((p) => p.kind),
+        contains(ChatProcessPartKind.tool),
+      );
+    });
+
+    test('旧回合权威消息回填按回合身份消解，不得偷走新回合流式占位', () {
+      final state = ZcodeSessionState('sess-steal');
+      // 上一回合残留：未确认 assistant 占位（其权威刷新仍在路上）
+      state.appendTextDelta('上一回合的部分回答', turnId: 'turn-1');
+      // 用户发出新回合（sendMessage 同序：终结→重置→本地回合→乐观消息→占位）
+      state.finalizeStreaming();
+      state.resetTurnState();
+      state.beginLocalTurn();
+      state.appendLocalUserMessage('继续');
+      state.ensureStreamingPlaceholder();
+      state.appendTextDelta('新回答开头', turnId: 'turn-2');
+      final liveIndex = state.streamingIndex;
+      expect(liveIndex, greaterThanOrEqualTo(0));
+
+      // 上一回合的权威刷新迟到落地（含 T1 的 assistant 消息）
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-t1',
+          turnId: 'turn-1',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(900),
+            processParts: [const ChatProcessPart.text('上一回合的完整回答')],
+          ),
+        ),
+      ]);
+
+      // T1 权威消息必须消解 T1 自己的占位；T2 活动占位原地不动
+      expect(
+        state.streamingIndex,
+        liveIndex,
+        reason: '新回合流式游标不得被旧回合权威消息消费',
+      );
+      expect(state.items.first.message.text, '上一回合的完整回答');
+      expect(state.items.last.message.text, '新回答开头');
+      expect(state.items, hasLength(3));
+    });
+  });
+
+  group('块身份稳定（权威替换前后同键）', () {
+    test('adoptStreamingProtoId 把协议 id 镜像进消息；权威映射同样携带', () {
+      final state = ZcodeSessionState('sess-key');
+      state.appendTextDelta('内容', assistantMessageId: 'msg-a');
+      expect(state.items.single.message.protoId, 'msg-a');
+    });
+  });
 }

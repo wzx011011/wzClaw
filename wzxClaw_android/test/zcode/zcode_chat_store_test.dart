@@ -2807,4 +2807,81 @@ void main() {
       store.dispose();
     });
   });
+
+  group('state.updated 无状态位补丁的通知（任务面板新鲜度）', () {
+    test('仅带 backgroundJobs 的补丁也通知视口（空闲期后台任务完成不吞）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-bg');
+
+      var notifications = 0;
+      store.addListener(() => notifications++);
+
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-bg',
+            'patch': {
+              'backgroundJobs': [
+                {
+                  'taskId': 't1',
+                  'kind': 'bash',
+                  'status': 'completed',
+                  'cancellable': false,
+                },
+              ],
+            },
+          },
+        ),
+      );
+
+      expect(store.activeBackgroundJobs, hasLength(1));
+      expect(
+        notifications,
+        greaterThan(0),
+        reason: '纯 backgroundJobs 补丁不触发重建时，后台任务 sheet/徽标'
+            '在空闲期永远停留在旧投影',
+      );
+      store.dispose();
+    });
+
+    test('仅带 contextUsage 的补丁也通知视口（上下文容量浮层不冻结）', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-ctx');
+
+      var notifications = 0;
+      store.addListener(() => notifications++);
+
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-ctx',
+            'patch': {
+              'contextUsage': {
+                'used': 12000,
+                'size': 100000,
+                'cache': {'hitRate': 0.8},
+                'breakdown': [
+                  {'source': 'messages', 'chars': 6000},
+                ],
+              },
+            },
+          },
+        ),
+      );
+
+      expect(store.activeContextUsage?.used, 12000);
+      expect(
+        notifications,
+        greaterThan(0),
+        reason: '纯 contextUsage 补丁不触发重建时，容量浮层停在旧读数',
+      );
+      store.dispose();
+    });
+  });
 }

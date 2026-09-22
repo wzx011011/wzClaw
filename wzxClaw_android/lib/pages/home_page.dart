@@ -1787,15 +1787,14 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 块身份键：同一 (kind, role, 毫秒) 重复出现时追加出现序，键确定性
-  /// 且跨重建稳定（绝不使用列表下标——下标随前插漂移）
+  /// 块身份键：同一 base 重复出现时追加出现序，键确定性且跨重建稳定
+  ///（绝不使用列表下标——下标随前插漂移）。base 构造见 [chatBlockBaseKey]。
   ValueKey<String> _blockKey(
     String kind,
     ChatMessage first,
     Map<String, int> seen,
   ) {
-    final base =
-        '$kind:${first.role.name}:${first.createdAt.millisecondsSinceEpoch}';
+    final base = chatBlockBaseKey(kind, first);
     final n = seen.putIfAbsent(base, () => -1) + 1;
     seen[base] = n;
     return ValueKey(n == 0 ? base : '$base#$n');
@@ -4212,11 +4211,22 @@ class _AttachmentChip extends StatelessWidget {
   }
 }
 
-/// 排队中的待发消息（见 _sendQueue）
 /// 回合块条目：一个回合内的有序消息切片（工具 + 助手文本，不含用户消息）
 class _TurnEntry {
   const _TurnEntry(this.messages);
   final List<ChatMessage> messages;
+}
+
+/// 块身份基础串（顶层函数，供回归测试直接钉契约）：优先协议 id
+/// protoId——权威合并前后同 id → 同键，折叠/展开状态跟块走；无协议 id
+/// 的本地乐观消息回退创建毫秒（turn.started 采纳/首个增量采纳后会切换
+/// 到 protoId 键，此转换发生在流式最初期，用户尚未产生折叠状态）。
+String chatBlockBaseKey(String kind, ChatMessage first) {
+  final protoId = first.protoId;
+  final identity = (protoId != null && protoId.isNotEmpty)
+      ? protoId
+      : first.createdAt.millisecondsSinceEpoch.toString();
+  return '$kind:${first.role.name}:$identity';
 }
 
 class _QueuedSend {

@@ -361,35 +361,35 @@ class TurnAgentData {
 
 /// 过程部件
 class TurnPart {
-  const TurnPart.think(TurnThinkData data, {this.key})
+  const TurnPart.think(TurnThinkData data)
       : kind = TurnPartKind.thinking,
         think = data,
         tool = null,
         agent = null,
         text = null,
         message = null;
-  const TurnPart.tool(TurnToolRow data, {this.key})
+  const TurnPart.tool(TurnToolRow data)
       : kind = TurnPartKind.tool,
         think = null,
         tool = data,
         agent = null,
         text = null,
         message = null;
-  const TurnPart.text(String content, {this.key})
+  const TurnPart.text(String content)
       : kind = TurnPartKind.text,
         think = null,
         tool = null,
         agent = null,
         text = content,
         message = null;
-  const TurnPart.agent(TurnAgentData data, {this.key})
+  const TurnPart.agent(TurnAgentData data)
       : kind = TurnPartKind.agent,
         think = null,
         tool = null,
         agent = data,
         text = null,
         message = null;
-  const TurnPart.message(TurnMessageData data, {this.key})
+  const TurnPart.message(TurnMessageData data)
       : kind = TurnPartKind.message,
         think = null,
         tool = null,
@@ -398,7 +398,6 @@ class TurnPart {
         message = data;
 
   final TurnPartKind kind;
-  final String? key;
   final TurnThinkData? think;
   final TurnToolRow? tool;
   final TurnAgentData? agent;
@@ -633,7 +632,6 @@ TurnVM buildTurnVM(
           lifecycle: view.lifecycle,
           statusNote: _taskOutputNote(view),
         ),
-        key: view.callId.isEmpty ? null : view.callId,
       ),
     );
     var countKey = _familyLabel(cls, view.name, running: false);
@@ -655,12 +653,10 @@ TurnVM buildTurnVM(
         return;
       }
       runMembers.add(view);
-      final row = parts.last.tool!;
       parts[parts.length - 1] = TurnPart.tool(
         isExploreMember
             ? exploreGroupRow(runMembers)
             : terminalGroupRow(runMembers),
-        key: row.target,
       );
       if (runMembers.length == 2 && isExploreMember) {
         // 首成员此前按种类标签计数过：成组后并入「查阅」。
@@ -728,7 +724,6 @@ TurnVM buildTurnVM(
                 .any((part) => part.toolCall?.isError ?? false),
             details: detailLines,
           ),
-          key: message.agent,
         ),
       );
       counts['子智能体'] = (counts['子智能体'] ?? 0) + 1;
@@ -752,7 +747,7 @@ TurnVM buildTurnVM(
           answer = body;
         } else {
           parts.add(
-            TurnPart.text(body, key: process.id),
+            TurnPart.text(body),
           );
         }
         breakAggregate();
@@ -778,7 +773,6 @@ TurnVM buildTurnVM(
                 running: isLiveTail,
                 duration: duration,
               ),
-              key: process.id,
             ),
           );
         }
@@ -808,7 +802,6 @@ TurnVM buildTurnVM(
                 failed: tool.isError,
                 details: _toolDetails(toolViewOf(process, source.createdAt!)),
               ),
-              key: process.id ?? tool.toolCallId,
             ),
           );
           counts['消息'] = (counts['消息'] ?? 0) + 1;
@@ -830,7 +823,6 @@ TurnVM buildTurnVM(
                 details: _toolDetails(view),
                 toolCallId: tool.toolCallId,
               ),
-              key: process.id ?? tool.toolCallId,
             ),
           );
           counts['子智能体'] = (counts['子智能体'] ?? 0) + 1;
@@ -1170,7 +1162,6 @@ List<TurnDetailLine> _toolDetails(_ToolView v) {
             running: running,
             failed: failed,
           ),
-          key: tool.toolCallId.isEmpty ? null : tool.toolCallId,
         ),
         '待办',
       );
@@ -1194,7 +1185,6 @@ List<TurnDetailLine> _toolDetails(_ToolView v) {
             failed: failed,
             details: details,
           ),
-          key: tool.toolCallId.isEmpty ? null : tool.toolCallId,
         ),
         '技能',
       );
@@ -2106,8 +2096,9 @@ class _ToolRowViewState extends State<_ToolRowView> {
   }
 }
 
-/// 正文 Markdown 轻渲染（复用 home_page 的 MarkdownBody 配置较重；
-/// 此处先以纯文本+代码样式渲染占位，T3 接线时换 flutter_markdown 实例）
+/// 正文 Markdown 兜底渲染（纯文本直出）。生产路径由宿主传入
+/// [TurnBlockView.answerBuilder]（流式中降级纯文本、完成后富渲染）；
+/// 本类仅作缺省兜底与测试替身，保证无宿主时正文仍然可见。
 class MarkdownBodyLite extends StatelessWidget {
   const MarkdownBodyLite({super.key, required this.markdown});
   final String markdown;

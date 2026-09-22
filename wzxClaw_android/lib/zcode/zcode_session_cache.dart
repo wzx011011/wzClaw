@@ -348,6 +348,8 @@ class ZcodeSessionCache {
             ? TokenUsage(inputTokens: input, outputTokens: output)
             : null,
         model: row['model'] as String?,
+        // 视图身份镜像：块身份键用 protoId，重启恢复后身份不变
+        protoId: row['proto_id'] as String?,
         agent: row['agent'] as String?,
         durationMs: row['duration_ms'] as int?,
       ),

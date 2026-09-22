@@ -875,6 +875,16 @@ class _FloatingStatusPanelState extends State<FloatingStatusPanel> {
 
   @override
   Widget build(BuildContext context) {
+    // 订阅 GoalStore：goal/threads 刷新完成（含回合边界自动刷新）立即
+    // 重建——此前只在宿主偶发重建时顺带读取，空闲期面板/胶囊会停留在
+    // 上一次的旧快照
+    return ListenableBuilder(
+      listenable: GoalStore.instance,
+      builder: (context, _) => _buildPanel(context),
+    );
+  }
+
+  Widget _buildPanel(BuildContext context) {
     final screen = MediaQuery.of(context).size;
 
     if (_capsule) {
