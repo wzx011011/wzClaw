@@ -885,3 +885,52 @@ contextUsed/contextWindow 数字。移动端实现：基础条用
 本文件开篇已否决的「v4/conversation/frame 随版本漂移」那条路，写通道
 不在 app-server 70 方法面内。结论：手机端的置顶/未读/整理做**本地元数据
 （SQLite）**，不与官方桌面互操作；「复制会话 ID」等只读功能不受影响。
+
+## session/fork 与 setThoughtLevel 实测（2026-09-22，probe-fork*.js / probe-thought.js）
+
+批量编排 skill（对标 Claude Code /batch）与手机端旁路提问选型前置探针。
+全部结论跑真实链路（relay → companion → app-server），scratch 会话自建自清。
+
+### session/fork
+
+- **参数**：仅 `{sessionId:string}`（空参 -32602 ZodError）。
+- **成功返回**：
+
+```json
+{
+  "forkedSessionId": "sess_…",
+  "parentSessionId": "sess_…",
+  "targetMessageId": "msg_…",
+  "targetCheckpointId": "checkpoint_…",
+  "response": "Forked session sess_… from checkpoint checkpoint_…: copied N messages and restored M file.",
+  "snapshot": { "messages": [ <完整消息 envelope> ] }
+}
+```
+
+- **语义（三条硬结论）**：
+  1. **checkpoint 绑定工作区文件变更**，不绑定回合：纯文本回合后 fork 仍报错；
+     有文件写入的回合后才可 fork（`forkWorkspaceFromCheckpoint`）。
+  2. **只对活跃会话有效**：历史/未加载会话报 `-32004 Session is not active`
+     （本会话被桌面持有也同此错，与运行时单归属一致）。
+  3. **副本与父会话共享同一 workspacePath**（session/read 实证）："restored M file"
+     是把 checkpoint 版本文件写回同一目录，**没有 worktree 隔离**。父会话继续
+     工作时 fork 会互相踩文件——活会话上的旁路提问不能用 fork，走子代理。
+- 错误口径：无 checkpoint → `-32603 INVALID_STATE_TRANSITION
+  "No workspace checkpoint is available yet."`；非活跃 → `-32004`。
+- 副本消息 `info.metadata.forkOrigin = {sessionId, messageId}` 回链父会话。
+- `session/close` 对非活跃会话同样报 `-32004`（close 只作用于已加载会话）。
+
+### session/setThoughtLevel
+
+- **参数**：`{sessionId, thoughtLevel:string}`（`{level}` 形态不必要）。
+- 非法值 → `-32603 "Unsupported reasoning effort: <v>"`（内部
+  `requireRegistryThoughtLevel`，合法值=模型注册表里的 reasoning effort 档位）。
+- 成功返回完整会话 envelope（同 create 形状）；**projection 与 session.model
+  均无读回投影**，实际生效值在下一回合消息的 `info.model.options.reasoningLevel`。
+
+### 附带勘误
+
+- **`session/status` 方法不存在**（-32601 Method not found）：会话状态唯一读法是
+  `session/read` → `projection.status`（idle/running/…，create 返回同形状）。
+  probe-runtime2.js 时代的 `session/status` 调用实为未验证项，以此为准修正。
+- `session/setMode {mode:'yolo'}` 实测 "ok"（此前仅 schema）。
