@@ -3076,4 +3076,102 @@ void main() {
       store.dispose();
     });
   });
+
+
+group('柱4 x/history 反向分页', () {
+  test('缓存耗尽后经 x/history 拉更早页并头部合并', () async {
+    final fake = FakeZcodeRelayClient();
+    var xHistoryCalls = 0;
+    fake.handlers['session/resume'] = (_) => {
+          'projection': {'status': 'idle'},
+          'messages': [],
+        };
+    fake.handlers['session/messages'] = (_) => {
+          'messages': [
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '问题B'},
+              ],
+              id: 'b0',
+              created: 2,
+            ),
+            fakeMsg(
+              'assistant',
+              [
+                {'type': 'text', 'text': '回答B'},
+              ],
+              id: 'b1',
+              created: 3,
+            ),
+          ],
+        };
+    fake.handlers['x/history'] = (params) {
+      xHistoryCalls++;
+      expect(params!['sessionId'], 'sess-h');
+      expect(params['beforeMessageId'], 'b0', reason: '游标=视口最早已确认消息');
+      return {
+        'messages': [
+          {
+            'info': {
+              'role': 'user',
+              'id': 'a0',
+              'time': {'created': 1},
+            },
+            'parts': [
+              {'type': 'text', 'text': '更早的问题A'},
+            ],
+          },
+        ],
+        'hasMore': false,
+      };
+    };
+    final store = pairedStore(fake);
+    await store.openSession('sess-h');
+    expect(store.messages.length, 2);
+
+    final added = await store.loadOlderMessages();
+
+    expect(added, 1);
+    expect(store.messages.first.text, '更早的问题A');
+    expect(store.messages.length, 3);
+    expect(xHistoryCalls, 1);
+
+    // hasMore=false → 已耗尽：再次上滑不再发 x/history
+    final added2 = await store.loadOlderMessages();
+    expect(added2, 0);
+    expect(xHistoryCalls, 1);
+  });
+
+  test('x/history 失败不误标耗尽（链路恢复后可重试）', () async {
+    final fake = FakeZcodeRelayClient();
+    var xHistoryCalls = 0;
+    fake.handlers['session/resume'] = (_) => {
+          'projection': {'status': 'idle'},
+          'messages': [],
+        };
+    fake.handlers['session/messages'] = (_) => {
+          'messages': [
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '问题B'},
+              ],
+              id: 'b0',
+              created: 2,
+            ),
+          ],
+        };
+    fake.handlers['x/history'] = (params) {
+      xHistoryCalls++;
+      throw Exception('link dead');
+    };
+    final store = pairedStore(fake);
+    await store.openSession('sess-h2');
+
+    expect(await store.loadOlderMessages(), 0);
+    expect(await store.loadOlderMessages(), 0);
+    expect(xHistoryCalls, 2, reason: '失败 ≠ 耗尽：不缓存穷标记');
+  });
+});
 }

@@ -21,6 +21,7 @@ const { ERR_UNHANDLED, ERR_FRAME_TOO_LARGE, ERR_TIMEOUT, ERR_X_BAD_PARAMS,
   ERR_X_GIT_TIMEOUT, ERR_X_GIT_FAILED, ERR_X_NOT_FOUND, ERR_X_FAILED,
   isFastMethod } = require('./lib/protocol');
 const { resolveCompanionStatePaths } = require('./lib/state-path');
+const { queryEngineHistory, defaultEngineDbPath } = require('./lib/engine-history');
 const { resolveZcodeRuntime: resolveRuntime, publicRuntimeDescriptor } = require('./lib/runtime-resolver');
 const { PLAN_PROVIDER_ID, PLAN_DISPLAY_MODEL_IDS, PLAN_DISPLAY_PROVIDER_NAME,
   buildPlanOverlay, defaultPersonalConfigPath, writePlanOverlay } = require('./lib/plan-overlay');
@@ -1599,6 +1600,31 @@ function createCompanion(options = {}) {
             mcpCount: summary && typeof summary.mcpCount === 'number' ? summary.mcpCount : 0,
             importedAt: snap?.importedAt || null,
           } });
+          return;
+        }
+        case 'x/history': {
+          // 引擎会话历史反向分页（柱4 2026-09-22）：session/messages 只能
+          // 向新翻页，更早历史由 companion 只读直查引擎 sqlite 补齐。
+          // dbPath 仅测试注入口覆盖，生产固定 ~/.zcode/cli/db/db.sqlite。
+          const hp = isObject(frame.params) ? frame.params : {};
+          const hSessionId = typeof hp.sessionId === 'string' ? hp.sessionId.trim() : '';
+          if (!hSessionId) throw safeError(ERR_X_BAD_PARAMS);
+          const hBefore = typeof hp.beforeMessageId === 'string' && hp.beforeMessageId
+            ? hp.beforeMessageId : null;
+          let dbPath = defaultEngineDbPath(os.homedir());
+          if (typeof hp.dbPath === 'string' && hp.dbPath) dbPath = hp.dbPath;
+          let result;
+          try {
+            result = queryEngineHistory({
+              dbPath, sessionId: hSessionId, beforeId: hBefore, limit: hp.limit,
+            });
+          } catch (e) {
+            // 库不可达（路径不存在/被锁/node:sqlite 不可用）：显式错误帧，
+            // 手机端降级回纯缓存翻页——绝不返回假空页冒充「没有更早」
+            log('x-history-db-unreachable', String(e && e.code || e && e.message || e));
+            throw safeError(ERR_X_FAILED);
+          }
+          reply({ id: frame.id, result });
           return;
         }
         case 'x/file/begin': {

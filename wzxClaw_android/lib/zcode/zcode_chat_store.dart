@@ -1005,6 +1005,7 @@ class ZcodeChatStore extends ChangeNotifier {
   Future<int> loadOlderMessages({int limit = 40}) async {
     final state = _activeState;
     if (state == null) return 0;
+    var added = 0;
     try {
       final cached = await _cache.loadTail(
         state.sessionId,
@@ -1025,13 +1026,84 @@ class ZcodeChatStore extends ChangeNotifier {
         known.add(pid);
         older.add(it);
       }
-      final added = state.prependHistory(older.reversed.toList());
+      added = state.prependHistory(older.reversed.toList());
       if (added > 0) notifyListeners();
-      return added;
     } catch (e) {
       debugPrint('[zcode-store] 缓存翻页失败 session=${state.sessionId}: $e');
-      return 0; // 缓存尽力而为
+      // 缓存尽力而为
     }
+    // 柱4：缓存耗尽（本轮 0 新增）→ companion x/history 反向分页直查
+    // 引擎 sqlite（session/messages 只能向新翻页，冷缓存历史缺口根治）
+    if (added == 0 && !_xHistoryExhausted.contains(state.sessionId)) {
+      added = await _pullXHistoryOlder(state, limit: limit);
+      if (added > 0) notifyListeners();
+    }
+    return added;
+  }
+
+  /// x/history 已探明的耗尽会话（hasMore=false）：不再重复请求
+  final Set<String> _xHistoryExhausted = {};
+
+  /// 经 companion x/history 拉一页更早历史（柱4）。游标 = 视口最早已
+  /// 确认消息 id；响应与 session/messages 消息形状同源（companion 从
+  /// 引擎自身持久层读出），走同一 _mapProtocolItem 映射，按 protoId 与
+  /// 视口去重后头部插入，并尽力落缓存供下次冷启动秒开。失败只记观测
+  /// 不标耗尽——链路恢复后可重试（失败 ≠ 没有更早）。
+  Future<int> _pullXHistoryOlder(ZcodeSessionState state, {int limit = 40}) async {
+    final client = _client;
+    if (client == null || !client.paired) return 0;
+    String? beforeId;
+    for (final it in state.items) {
+      if (it.synced && it.protoId != null) {
+        beforeId = it.protoId;
+        break;
+      }
+    }
+    if (beforeId == null) return 0;
+    final page = <ZcodeSessionItem>[];
+    var hasMore = false;
+    try {
+      final result = await client.request('x/history', {
+        'sessionId': state.sessionId,
+        'beforeMessageId': beforeId,
+        'limit': limit,
+      });
+      if (result is! Map) return 0;
+      hasMore = result['hasMore'] == true;
+      final list = result['messages'];
+      if (list is! List) return 0;
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final item = _mapProtocolItem(raw);
+        if (item != null) page.add(item);
+      }
+    } catch (e) {
+      debugPrint('[zcode-store] x/history 翻页失败 '
+          'session=${state.sessionId}: $e');
+      return 0;
+    }
+    if (!hasMore) _xHistoryExhausted.add(state.sessionId);
+    if (page.isEmpty) return 0;
+    final known = state.items
+        .where((e) => e.protoId != null)
+        .map((e) => e.protoId!)
+        .toSet();
+    final fresh = <ZcodeSessionItem>[];
+    for (final item in page) {
+      // 页升序（旧→新），顺序去重合并
+      final pid = item.protoId;
+      if (pid == null || known.contains(pid)) continue;
+      known.add(pid);
+      fresh.add(item);
+    }
+    if (fresh.isEmpty) return 0;
+    try {
+      await _cache.upsertMessages(state.sessionId, fresh);
+    } catch (e) {
+      debugPrint('[zcode-store] x/history 落缓存失败 '
+          'session=${state.sessionId}: $e');
+    }
+    return state.prependHistory(fresh);
   }
 
   /// 清除全局错误横幅（UI 关闭按钮用）
