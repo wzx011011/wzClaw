@@ -188,5 +188,22 @@ void main() {
       store.acknowledgeStopUnconfirmed();
       expect(store.activeStopPhase, ZcodeStopPhase.idle);
     });
+
+    test('对账遇畸形 read（缺 projection/status）→ 保持 unconfirmed 不放行', () async {
+      final env = await busySessionWithStopHandler(
+        (_) => throw Exception('timeout: no response'),
+      );
+      final store = env.store;
+      env.fake.handlers['session/read'] = (_) => throw Exception('link dead');
+      await store.stopGeneration();
+      expect(store.activeStopPhase, ZcodeStopPhase.unconfirmed);
+
+      // 链路恢复但应答畸形：无法确认引擎态时绝不裁决「已停」（评审 P2
+      // 2026-09-22：此前 null status 被当已停，队列会在未知态放出下一条）
+      env.fake.handlers['session/read'] = (_) => {'unexpected': 'shape'};
+      await store.debugReconcileStopAfterReconnect();
+
+      expect(store.activeStopPhase, ZcodeStopPhase.unconfirmed);
+    });
   });
 }

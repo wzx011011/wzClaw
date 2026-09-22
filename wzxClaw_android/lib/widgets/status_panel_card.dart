@@ -204,7 +204,7 @@ class StatusPanelCard extends StatelessWidget {
                             const SizedBox(width: 5),
                             Expanded(
                               child: Text(
-                                _panelStaleLabel(GoalStore.instance),
+                                GoalStore.instance.staleLabel,
                                 style: TextStyle(
                                   color: colors.textMuted,
                                   fontSize: 11,
@@ -350,14 +350,6 @@ class StatusPanelCard extends StatelessWidget {
   }
 
   // ── 目标：① 目标文本 n/m + 计时（官方行形态）────────────────────
-  /// 失败态提示文案（柱5）：有旧数据时标注其时间，无数据直说失败
-  String _panelStaleLabel(GoalStore store) {
-    final t = store.lastSuccessAt;
-    if (t == null) return '数据拉取失败，下拉重试';
-    final hh = t.hour.toString().padLeft(2, '0');
-    final mm = t.minute.toString().padLeft(2, '0');
-    return '数据更新失败，显示 $hh:$mm 的旧数据 · 下拉重试';
-  }
 
   Widget _goalRow(AppColors colors) {
     final goal = data.goal;

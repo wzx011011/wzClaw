@@ -337,6 +337,77 @@ void main() {
       expect(state.items.last.message.text, '新回答开头');
       expect(state.items, hasLength(3));
     });
+
+    test('权威中段插入平移流式游标：无 id 增量仍落当前占位', () {
+      final state = ZcodeSessionState('sess-cursor-insert');
+      state.items.addAll([
+        ZcodeSessionItem(
+          protoId: 'm45',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ),
+      ]);
+      state.ensureStreamingPlaceholder(turnId: 'turn-2');
+      final liveIndex = state.streamingIndex;
+      expect(liveIndex, 1);
+
+      // Q1 缺口补拉的权威消息（旧回合身份、更早时间）插在活动占位之前
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'm48',
+          turnId: 'turn-1',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1500),
+            processParts: [const ChatProcessPart.text('补拉的历史回答')],
+          ),
+        ),
+      ]);
+
+      // 插入使占位及其后条目整体后移：游标必须同步平移（镜像 prependHistory），
+      // 否则后续无 assistantMessageId 的增量（工具事件常不带 id）按旧下标
+      // 会把正文写进位移后指向的条目
+      expect(state.streamingIndex, liveIndex + 1, reason: '中段插入后流式游标必须同步平移');
+      state.appendTextDelta('流式续写', turnId: 'turn-2');
+      expect(state.items[liveIndex].message.text, '补拉的历史回答');
+      expect(state.items[liveIndex + 1].message.text, '流式续写');
+    });
+
+    test('游标失准（指向已同步条目）时无 id 增量新开占位，不写进别人的行', () {
+      final state = ZcodeSessionState('sess-cursor-guard');
+      state.appendTextDelta('T2 开头', turnId: 'turn-2');
+      final liveIndex = state.streamingIndex;
+
+      // 模拟游标被外部位移到已同步历史行（中段插入缺陷的历史现场）
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'm-old',
+          turnId: 'turn-1',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(500),
+          ),
+        ),
+      ]);
+
+      state.appendTextDelta('T2 续写', turnId: 'turn-2');
+      // 增量必须落在未确认的 assistant 占位上；已同步权威行文本不得被改写
+      final target = state.items[state.streamingIndex];
+      expect(target.synced, isFalse);
+      expect(target.message.role, MessageRole.assistant);
+      expect(target.message.text, contains('T2'));
+      expect(
+        state.items.first.message.text,
+        isNot(contains('T2 续写')),
+        reason: '已同步权威行绝不能被无 id 增量改写',
+      );
+      expect(liveIndex, isNonNegative);
+    });
   });
 
   group('块身份稳定（权威替换前后同键）', () {

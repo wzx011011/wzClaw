@@ -71,6 +71,11 @@ class FileDownloadService {
     throw UnsupportedError('web 端暂不支持保存到设备');
   }
 
-  static String _fallbackName(String nodePath) =>
-      nodePath.replaceAll(r'', '/').split('/').where((e) => e.isNotEmpty).last;
+  // 与 io 版同一实现（此前误写空模式 replaceAll：文件名退化为路径末字符，
+  // 空路径直接抛 StateError）
+  static String _fallbackName(String nodePath) => nodePath
+      .replaceAll('\\', '/')
+      .split('/')
+      .where((s) => s.isNotEmpty)
+      .lastOrNull ?? 'file';
 }

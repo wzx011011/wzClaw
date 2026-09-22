@@ -394,19 +394,44 @@ class ZcodeSessionState {
     }
     if (streamingIndex >= 0 && streamingIndex < items.length) {
       final current = items[streamingIndex];
-      if (assistantMessageId == null ||
-          current.protoId == null ||
-          current.protoId == assistantMessageId) {
-        current.turnId ??= turnId;
-        if (assistantMessageId != null && current.protoId == null) {
-          current.protoId = assistantMessageId;
-          // 视图身份镜像：块身份键用 protoId（权威替换前后不变）
-          current.message =
-              current.message.copyWith(protoId: assistantMessageId);
-          current.dirty = true;
+      // 游标必须指向 assistant 行，且身份可延续：带 id 的增量认 id（权威
+      // 替换后的同 id 行继续收增量）；无 id 增量只认新占位或 streamingProtoId
+      // 同身份行。角色不符（如乐观 user）或身份断裂（权威插入位移后的别的
+      // 条目）时按稳定身份重定位，定位不到就新开占位——绝不把增量写进
+      // 别人的行（对齐 reconcileStreamingText 的守卫）。
+      final cursorUsable = current.message.role == MessageRole.assistant &&
+          (assistantMessageId != null
+              ? (current.protoId == null ||
+                  current.protoId == assistantMessageId)
+              : (current.protoId == null ||
+                  current.protoId == streamingProtoId));
+      if (!cursorUsable) {
+        final pid = streamingProtoId;
+        final relocated = pid == null
+            ? -1
+            : items.indexWhere(
+                (e) =>
+                    e.message.role == MessageRole.assistant &&
+                    e.protoId == pid,
+              );
+        streamingIndex = relocated; // -1 = 走下方新占位分支
+      }
+      if (streamingIndex >= 0 && streamingIndex < items.length) {
+        final pointed = items[streamingIndex];
+        if (assistantMessageId == null ||
+            pointed.protoId == null ||
+            pointed.protoId == assistantMessageId) {
+          pointed.turnId ??= turnId;
+          if (assistantMessageId != null && pointed.protoId == null) {
+            pointed.protoId = assistantMessageId;
+            // 视图身份镜像：块身份键用 protoId（权威替换前后不变）
+            pointed.message =
+                pointed.message.copyWith(protoId: assistantMessageId);
+            pointed.dirty = true;
+          }
+          streamingProtoId = assistantMessageId ?? streamingProtoId;
+          return streamingIndex;
         }
-        streamingProtoId = assistantMessageId ?? streamingProtoId;
-        return streamingIndex;
       }
     }
     items.add(
@@ -976,8 +1001,11 @@ class ZcodeSessionState {
           }
         }
         items.insert(insertAt, inc);
-        // 插入使后续下标整体位移：重建 protoId 索引与尾部未确认游标
+        // 插入使后续下标整体位移：流式占位游标同步平移（镜像 prependHistory，
+        // 与 P1-4 同族缺陷），否则后续无 id 增量按旧下标会写进位移后的条目；
+        // 同时重建 protoId 索引与尾部未确认游标
         //（本批次内后续条目的 exact-hit 与 reconcile 扫描都依赖它们）
+        if (streamingIndex >= insertAt) streamingIndex++;
         byProto.clear();
         for (var i = 0; i < items.length; i++) {
           final id = items[i].protoId;

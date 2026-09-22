@@ -1445,7 +1445,10 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     final proj = read is Map ? read['projection'] : null;
     final status = proj is Map ? proj['status']?.toString() : null;
-    if (read != null && status != 'running') {
+    // 只有实测确认的 idle 才裁决「已停」（APP-SERVER.md:934）。畸形应答
+    // （缺 projection/status）或未知枚举一律落 unconfirmed——失败模式偏
+    // 「多确认」，绝不在未知引擎态下放出队列下一条（评审 P2 2026-09-22）。
+    if (read != null && status == 'idle') {
       // 引擎已停（只是应答丢了）：走正常收尾
       state.stopPhase = ZcodeStopPhase.idle;
       _notifyIfActive(state);
@@ -3698,42 +3701,14 @@ class ZcodeChatStore extends ChangeNotifier {
     return result is Map ? Map<String, dynamic>.from(result) : const {};
   }
 
-  /// 设置/替换会话目标（session/goal action=set|replace；字段 objective，
-  /// 可选 expectedRevision 乐观锁）。action=set 追加、replace 整体替换。
-  Future<bool> setGoal(String objective, {required bool replace}) async {
-    final client = _client;
-    final sessionId = _activeSessionId;
-    if (client == null || sessionId == null || !client.paired) {
-      _fail('未连接 ZCode 或未打开会话');
-      return false;
-    }
-    if (objective.trim().isEmpty) {
-      _fail('目标内容为空');
-      return false;
-    }
-    try {
-      await client.request('session/goal', {
-        'sessionId': sessionId,
-        'action': replace ? 'replace' : 'set',
-        'objective': objective.trim(),
-      });
-      return true;
-    } catch (e) {
-      if (e is ZcodeRequestException && e.code == -32001) {
-        _fail('目标数据过大，请在桌面端处理该会话目标');
-      } else {
-        _fail('设置目标失败：$e');
-      }
-      return false;
-    }
-  }
-
-  /// goal 快捷动作（官方 action 枚举实测：show/set/replace/pause/resume/
-  /// clear）。状态面板 ▶/暂停按钮走 pause/resume；失败置 error 横幅。
   /// 设置会话目标（session/goal action:'set'，0.16.9 实测契约：
   /// action 枚举 show/set/replace/pause/resume/clear，set 携带 objective）。
   /// /goal 斜杠命令的真正接线——此前该前缀被当普通文本直发，模型当
   /// 聊天处理、引擎侧目标永远为空（2026-09-22 /goal 会话实测缺陷）。
+  /// 空目标拒绝、-32001 映射友好文案（原 setGoal 的校验语义并入，单一
+  /// 真相：同一 RPC 只保留一套错误处理；replace 动作当前无调用方，需要
+  /// 时随调用方一起落）。notifyListeners 只服务聊天 UI——面板快照刷新
+  /// 由 _handleGoalCommand 显式触发，GoalStore 并不监听本容器通知。
   Future<bool> goalSet(String objective) async {
     final client = _client;
     final sessionId = _activeSessionId;
@@ -3741,17 +3716,25 @@ class ZcodeChatStore extends ChangeNotifier {
       _fail('未连接 ZCode 或未打开会话');
       return false;
     }
+    final trimmed = objective.trim();
+    if (trimmed.isEmpty) {
+      _fail('目标内容为空');
+      return false;
+    }
     try {
       await client.request('session/goal', {
         'sessionId': sessionId,
         'action': 'set',
-        'objective': objective,
+        'objective': trimmed,
       });
-      // 面板经 GoalStore 监听本容器通知刷新；此处通知促使其拉新快照
       notifyListeners();
       return true;
     } catch (e) {
-      _fail('设置目标失败：$e');
+      if (e is ZcodeRequestException && e.code == -32001) {
+        _fail('目标数据过大，请在桌面端处理该会话目标');
+      } else {
+        _fail('设置目标失败：$e');
+      }
       return false;
     }
   }

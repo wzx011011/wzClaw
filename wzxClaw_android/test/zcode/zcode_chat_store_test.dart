@@ -3274,5 +3274,23 @@ group('柱4 x/history 反向分页', () {
       expect(ok, isFalse);
       expect(store.error, contains('设置目标失败'));
     });
+
+    test('空目标本地拒绝：不发 RPC、显式报错（原 setGoal 校验语义并入）', () async {
+      final fake = FakeZcodeRelayClient();
+      stubResumeEmpty(fake);
+      var goalCalls = 0;
+      fake.handlers['session/goal'] = (params) {
+        goalCalls++;
+        return {'snapshot': {'todos': [], 'todoGroups': []}};
+      };
+      final store = pairedStore(fake);
+      await store.openSession('sess-g');
+
+      final ok = await store.goalSet('   ');
+
+      expect(ok, isFalse);
+      expect(store.error, contains('目标内容为空'));
+      expect(goalCalls, 0, reason: '空目标不得发到引擎');
+    });
   });
 }

@@ -42,11 +42,14 @@ class ZcodeSessionCache {
   // 直接换新文件名 → 旧 schema 文件永远打不开；旧文件顺手删除
   // （尽力而为）。数据库不做迁移、不做降级、不跑 onUpgrade。
   // ============================================================
-  static const _dbName = 'wzxclaw_zcode_cache_canonical_v2.db';
+  static const _dbName = 'wzxclaw_zcode_cache_canonical_v3.db';
 
   /// 被硬切换作废的旧文件名（启动首次建库时删掉，避免残留）。
   /// v2：zcode_messages 增加 truncated 列（审查 P2-10 截断标记持久化）。
+  /// v3：zcode_messages 增加 finish 列（柱2 折叠依据 info.finish 进缓存，
+  /// 重启后历史回合折叠长相不回退——评审 P2 2026-09-22）。
   static const _legacyDbNames = [
+    'wzxclaw_zcode_cache_canonical_v2.db',
     'wzxclaw_zcode_cache_canonical.db',
     'wzxclaw_zcode_cache.db',
   ];
@@ -94,7 +97,8 @@ class ZcodeSessionCache {
         truncated INTEGER NOT NULL DEFAULT 0,
         input_tokens INTEGER,
         output_tokens INTEGER,
-        duration_ms INTEGER
+        duration_ms INTEGER,
+        finish TEXT
       )
     ''');
     await db.execute(
@@ -218,6 +222,7 @@ class ZcodeSessionCache {
       'input_tokens': m.usage?.inputTokens,
       'output_tokens': m.usage?.outputTokens,
       'duration_ms': m.durationMs,
+      'finish': m.finish,
     };
   }
 
@@ -341,6 +346,8 @@ class ZcodeSessionCache {
         protoId: row['proto_id'] as String?,
         agent: row['agent'] as String?,
         durationMs: row['duration_ms'] as int?,
+        // 折叠依据（柱2）：finish 不进缓存则重启后历史回合全部展开
+        finish: row['finish'] as String?,
       ),
     );
   }

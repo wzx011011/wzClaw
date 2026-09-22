@@ -38,6 +38,7 @@ class _GoalPanelPageState extends State<GoalPanelPage> {
           final threads = store.threads;
 
           if (snapshot.isEmpty && threads.isEmpty) {
+            final failed = store.phase == GoalLoadPhase.failed;
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -46,12 +47,16 @@ class _GoalPanelPageState extends State<GoalPanelPage> {
                       size: 40,
                       color: AppColors.of(context).textMuted,),
                   const SizedBox(height: 12),
-                  Text('暂无任务数据',
+                  // 失败且无旧数据：直说失败，绝不把「拉不到」冒充「没有」
+                  Text(failed ? '数据拉取失败' : '暂无任务数据',
                       style: TextStyle(
                           color: AppColors.of(context).textMuted,
                           fontSize: 14,),),
                   const SizedBox(height: 4),
-                  Text('会话运行中会自动更新，或下拉重新拉取',
+                  Text(
+                      failed
+                          ? store.staleLabel
+                          : '会话运行中会自动更新，或下拉重新拉取',
                       style: TextStyle(
                           color: AppColors.of(context).textMuted,
                           fontSize: 12,),),
@@ -65,6 +70,26 @@ class _GoalPanelPageState extends State<GoalPanelPage> {
             child: ListView(
               padding: const EdgeInsets.all(12),
               children: [
+                // 柱5 stale-but-labeled：旧数据保留展示但标注新鲜度，
+                // 绝不冒充实时的（与悬浮卡同一份 GoalStore.staleLabel）
+                if (store.phase == GoalLoadPhase.failed)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.sync_problem_outlined,
+                            size: 13,
+                            color: AppColors.of(context).textMuted,),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(store.staleLabel,
+                              style: TextStyle(
+                                  color: AppColors.of(context).textMuted,
+                                  fontSize: 11,),),
+                        ),
+                      ],
+                    ),
+                  ),
                 _sectionHeader(context, Icons.flag_outlined, '目标',
                     count: snapshot.groups.length,),
                 if (snapshot.groups.isEmpty)

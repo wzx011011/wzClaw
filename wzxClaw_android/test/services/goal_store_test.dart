@@ -205,5 +205,49 @@ void main() {
         reason: '链路恢复即对账面板数据（frpc 僵死恢复场景）',
       );
     });
+
+    test('会话切换竞态：旧会话在途刷新结果不得贴到新会话视图', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final chat = pairedStore(fake);
+      await chat.openSession('sess-a');
+
+      // 快照内容带会话指纹：能区分「A 的数据」与「B 的数据」
+      fake.handlers['session/goal'] = (params) => {
+            'snapshot': {
+              'todos': [
+                {
+                  'content': '目标-${params?['sessionId']}',
+                  'status': 'in_progress',
+                  'priority': 'high',
+                },
+              ],
+              'todoGroups': [],
+            },
+          };
+      fake.handlers['session/subagents'] = (_) => {
+            'running': [],
+            'ended': {'total': 0, 'items': []},
+          };
+
+      final goalStore = GoalStore(chatStore: chat);
+      addTearDown(goalStore.dispose);
+      await Future<void>.delayed(Duration.zero);
+
+      // A 会话发起刷新但不等它完成；openSession 在首个 await 点之前同步
+      // 切换 _activeSessionId——A 的在途结果应用前视口已属于 B
+      final inFlight = goalStore.refresh();
+      await chat.openSession('sess-b');
+      await inFlight;
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final contents = goalStore.snapshot.todos.map((t) => t.content);
+      expect(
+        contents.any((c) => c == '目标-sess-a'),
+        isFalse,
+        reason: '旧会话 A 的快照绝不能出现在已切到 B 的面板上',
+      );
+    });
   });
 }

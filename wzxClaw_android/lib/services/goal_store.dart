@@ -51,6 +51,16 @@ class GoalStore extends ChangeNotifier {
   DateTime? get lastSuccessAt => _lastSuccessAt;
   String? get lastError => _lastError;
 
+  /// 失败态提示文案（柱5 单一真相：悬浮卡与全屏面板共用同一份措辞——
+  /// 有旧数据时标注其时间，无数据直说失败）
+  String get staleLabel {
+    final t = _lastSuccessAt;
+    if (t == null) return '数据拉取失败，下拉重试';
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    return '数据更新失败，显示 $hh:$mm 的旧数据 · 下拉重试';
+  }
+
   List<SubagentThread> _threads = const [];
 
   /// 子智能体线程（session/subagents，经 ZcodeChatStore 映射聚合）
@@ -99,6 +109,10 @@ class GoalStore extends ChangeNotifier {
       final threads = await _chat.fetchSubagentThreads();
       // 在途期间又发起了新刷新：本次结果作废（晚到者覆盖新快照 = 面板回跳）
       if (seq != _refreshSeq) return;
+      // 会话已切走：旧会话的结果不得贴到新会话视图（seq 只防并发不防换靶，
+      // 两个空闲会话间切换无 busy 翻转，S1 的在途结果会冒充 S2 的面板）。
+      // 视口已不属于发起时的会话 → 直接作废，等新会话自己的刷新。
+      if (_chat.activeSessionId != sid) return;
       _snapshot = parseGoalSnapshot(result);
       _threads = threads;
       _phase = GoalLoadPhase.ready;
@@ -108,6 +122,8 @@ class GoalStore extends ChangeNotifier {
       debugPrint('[goal-store] goal snapshot failed: $e');
       // 有更新的刷新在途：失败态由它裁决，这里不覆盖
       if (seq != _refreshSeq) return;
+      // 同上：会话已切走时失败态也不得标到新会话头上
+      if (_chat.activeSessionId != sid) return;
       _phase = GoalLoadPhase.failed;
       _lastError = e.toString();
     } finally {

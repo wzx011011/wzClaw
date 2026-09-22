@@ -32,6 +32,8 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
   shelf: ^1.4.0
   shelf_web_socket: ^2.0.0
+  # 缓存往返测试用真 sqlite（宿主跑 sqflite 需 ffi 初始化）
+  sqflite_common_ffi: ^2.3.0
 
   stream_channel: any
 flutter:
