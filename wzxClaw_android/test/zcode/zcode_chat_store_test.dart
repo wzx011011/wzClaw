@@ -3174,4 +3174,43 @@ group('柱4 x/history 反向分页', () {
     expect(xHistoryCalls, 2, reason: '失败 ≠ 耗尽：不缓存穷标记');
   });
 });
+
+  group('goalSet（/goal 接线）', () {
+    test('action=set + objective 载荷契约（0.16.9 实测 schema）', () async {
+      final fake = FakeZcodeRelayClient();
+      stubResumeEmpty(fake);
+      Map<String, dynamic>? captured;
+      fake.handlers['session/goal'] = (params) {
+        captured = params;
+        return {
+          'response': 'ok',
+          'snapshot': {'todos': [], 'todoGroups': []},
+        };
+      };
+      final store = pairedStore(fake);
+      await store.openSession('sess-g');
+
+      final ok = await store.goalSet('评审并修复直到无问题');
+
+      expect(ok, isTrue);
+      final sent = captured!;
+      expect(sent['sessionId'], 'sess-g');
+      expect(sent['action'], 'set');
+      expect(sent['objective'], '评审并修复直到无问题');
+    });
+
+    test('失败显式报错不假成功', () async {
+      final fake = FakeZcodeRelayClient();
+      stubResumeEmpty(fake);
+      fake.handlers['session/goal'] =
+          (params) => throw Exception('-32602 bad objective');
+      final store = pairedStore(fake);
+      await store.openSession('sess-g');
+
+      final ok = await store.goalSet('x');
+
+      expect(ok, isFalse);
+      expect(store.error, contains('设置目标失败'));
+    });
+  });
 }

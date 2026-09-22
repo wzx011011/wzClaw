@@ -595,6 +595,7 @@ class _ChatPageState extends State<ChatPage> {
     _SlashCommand('/clear', '新建会话'),
     _SlashCommand('/commit', 'AI辅助Git提交'),
     _SlashCommand('/review', 'AI代码审查'),
+    _SlashCommand('/goal', '设定会话目标（/goal <目标>）'),
     _SlashCommand('/insights', '生成开发洞察报告'),
   ];
 
@@ -893,6 +894,43 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  /// /goal 斜杠命令处理（异步分支抽离：_sendMessage 保持同步签名）
+  Future<void> _handleGoalCommand(String objective) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (objective.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('用法：/goal <目标描述>'),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    if (_store.activeSessionId == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('没有活动会话，先开始一个任务再设目标'),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final ok = await _store.goalSet(objective);
+    if (!ok) return; // 失败细节经 store.error 上浮
+    await GoalStore.instance.refresh();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('目标已设置：$objective'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    _inputController.clear();
+    _consumeDraft();
+  }
+
   void _sendMessage() {
     if (ConnectionManager.instance.state != WsConnectionState.connected) {
       // 不静默丢弃：提示并保留输入（用户打完字点发送必须有下文）
@@ -908,6 +946,16 @@ class _ChatPageState extends State<ChatPage> {
     final inputText = _inputController.text.trim();
     final readyAttachments = _attachments.where((a) => a.done).toList();
     if (inputText.isEmpty && readyAttachments.isEmpty) return;
+    // /goal 斜杠命令本地拦截：接线 session/goal set（引擎不拦截该前缀，
+    // 直发会当聊天文本——2026-09-22 /goal 会话实测缺陷）。其余斜杠命令
+    // 保持原样发送。
+    if (inputText == '/goal' || inputText.startsWith('/goal ')) {
+      final objective = inputText.length > 6
+          ? inputText.substring(6).trim()
+          : '';
+      unawaited(_handleGoalCommand(objective));
+      return;
+    }
     final text = _composeOutgoing(inputText, readyAttachments);
     // 流式进行中：改为排队（对齐官方 ZCode「继续输入以排队后续修改」）
     if (_isStreaming || _isWaiting) {

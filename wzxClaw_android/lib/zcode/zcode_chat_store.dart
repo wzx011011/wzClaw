@@ -3727,6 +3727,32 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// goal 快捷动作（官方 action 枚举实测：show/set/replace/pause/resume/
   /// clear）。状态面板 ▶/暂停按钮走 pause/resume；失败置 error 横幅。
+  /// 设置会话目标（session/goal action:'set'，0.16.9 实测契约：
+  /// action 枚举 show/set/replace/pause/resume/clear，set 携带 objective）。
+  /// /goal 斜杠命令的真正接线——此前该前缀被当普通文本直发，模型当
+  /// 聊天处理、引擎侧目标永远为空（2026-09-22 /goal 会话实测缺陷）。
+  Future<bool> goalSet(String objective) async {
+    final client = _client;
+    final sessionId = _activeSessionId;
+    if (client == null || sessionId == null || !client.paired) {
+      _fail('未连接 ZCode 或未打开会话');
+      return false;
+    }
+    try {
+      await client.request('session/goal', {
+        'sessionId': sessionId,
+        'action': 'set',
+        'objective': objective,
+      });
+      // 面板经 GoalStore 监听本容器通知刷新；此处通知促使其拉新快照
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _fail('设置目标失败：$e');
+      return false;
+    }
+  }
+
   Future<bool> goalAction(String action) async {
     const allowed = ['pause', 'resume', 'clear'];
     if (!allowed.contains(action)) {
