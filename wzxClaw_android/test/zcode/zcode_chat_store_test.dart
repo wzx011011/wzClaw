@@ -569,6 +569,68 @@ void main() {
       expect(ids, isNot(contains('sel1')));
     });
 
+    test('newSession：create 后先进入会话页（resume）再刷列表（页面切换优先）',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      // 有状态列表：create 后引擎列表即含新会话（与真实引擎一致，
+      // 收尾的权威刷新不该把新会话刷没）
+      final serverSessions = <Map<String, dynamic>>[
+        {
+          'sessionId': 's1',
+          'title': '最近的会话',
+          'updatedAt': 5,
+          'workspace': {
+            'workspaceKey': 'wk1',
+            'workspacePath': 'E:/ai/wzxClaw',
+          },
+        },
+      ];
+      fake.handlers['session/list'] = (_) => {'sessions': List.of(serverSessions)};
+      fake.handlers['session/create'] = (params) {
+        serverSessions.add({
+          'sessionId': 's-new',
+          'title': '',
+          'updatedAt': 9,
+          'workspace': {
+            'workspaceKey': 'wk1',
+            'workspacePath': 'E:/ai/wzxClaw',
+          },
+        });
+        return {
+          'session': {'sessionId': 's-new'},
+        };
+      };
+      stubResumeEmpty(fake);
+      fake.handlers['session/messages'] = (_) => {'messages': []};
+      fake.handlers['session/read'] = (_) => {
+            'projection': {'status': 'idle'},
+          };
+      final store = pairedStore(fake);
+      await store.refreshSessions(); // 预置默认工作区（真实流程同款）
+
+      await store.newSession();
+
+      final keys = fake.requests.map((e) => e.key).toList();
+      final createIdx = keys.indexOf('session/create');
+      final resumeIdx = keys.indexOf('session/resume');
+      final lastListIdx = keys.lastIndexOf('session/list');
+      expect(createIdx, greaterThanOrEqualTo(0));
+      // 2026-09-22 用户实测回归锚：create 后若先 await 刷列表再
+      // openSession，「进入会话页」会被拖慢一拍——顺序必须反转
+      expect(
+        resumeIdx,
+        greaterThan(createIdx),
+        reason: '先进入会话页（resume）再刷权威列表',
+      );
+      expect(
+        lastListIdx,
+        greaterThan(resumeIdx),
+        reason: '列表权威刷新在页面切换之后',
+      );
+      // 列表已含新会话（openSession 即时 upsert + 收尾刷新双保险）
+      expect(store.sessions.any((s) => s.sessionId == 's-new'), isTrue);
+    });
+
     test('无可用工作区 → error 提示', () async {
       final fake = FakeZcodeRelayClient();
       fake.handlers['session/list'] = (_) => {
