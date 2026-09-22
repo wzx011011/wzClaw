@@ -908,12 +908,19 @@ class ZcodeSessionState {
     while (localRunStart > 0 && !items[localRunStart - 1].synced) {
       localRunStart--;
     }
+    // 批次链式锚点（2026-09-22 复盘会话实测缺陷修复）：incoming 是引擎
+    // 权威升序，未匹配的新消息插在上一条批次消息落点之后——补拉回来
+    // 的答案落回自己回合的位置，绝不追加到列表尾（那会让它掉进后面
+    // 的回合块，「刷新了答案也不出现」）。不比较 createdAt：引擎时间
+    // 与本地乐观消息的设备墙钟是两个时钟域，跨域比较会被时钟偏差带偏。
+    int? batchAnchor;
     for (final inc in incoming) {
       final id = inc.protoId;
       final existingIdx = id == null ? null : byProto[id];
       if (existingIdx != null) {
         items[existingIdx] = _healToolInputs(items[existingIdx], inc);
         if (id != null) byProto[id] = existingIdx;
+        batchAnchor = existingIdx;
         continue;
       }
 
@@ -950,11 +957,37 @@ class ZcodeSessionState {
         items[i] = inc;
         if (id != null) byProto[id] = i;
         reconciled = true;
+        batchAnchor = i;
         break;
       }
       if (!reconciled) {
-        items.add(inc);
-        if (id != null) byProto[id] = items.length - 1;
+        // 有锚点：紧随上一条批次消息之后（批次升序 = 引擎顺序）；
+        // 无锚点（批次首条就未匹配）：按 createdAt 找首个更晚条目插入，
+        // 无更晚则 append（尽力而为，后续批次条目会以本条为锚链接）。
+        var insertAt = items.length;
+        if (batchAnchor != null) {
+          insertAt = (batchAnchor + 1).clamp(0, items.length);
+        } else {
+          for (var i = 0; i < items.length; i++) {
+            if (items[i].message.createdAt.isAfter(inc.message.createdAt)) {
+              insertAt = i;
+              break;
+            }
+          }
+        }
+        items.insert(insertAt, inc);
+        // 插入使后续下标整体位移：重建 protoId 索引与尾部未确认游标
+        //（本批次内后续条目的 exact-hit 与 reconcile 扫描都依赖它们）
+        byProto.clear();
+        for (var i = 0; i < items.length; i++) {
+          final id = items[i].protoId;
+          if (id != null) byProto[id] = i;
+        }
+        localRunStart = items.length;
+        while (localRunStart > 0 && !items[localRunStart - 1].synced) {
+          localRunStart--;
+        }
+        batchAnchor = insertAt;
       }
     }
   }

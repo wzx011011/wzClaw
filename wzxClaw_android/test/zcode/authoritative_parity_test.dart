@@ -346,4 +346,122 @@ void main() {
       expect(state.items.single.message.protoId, 'msg-a');
     });
   });
+
+  group('合并时序插入（柱2 后发现，2026-09-22 复盘会话实测缺陷）', () {
+    // 场景：Q1 回合流式中推送中断，#48/#49 两条从未到达（无占位）；
+    // Q2 回合正常（乐观 user + 流式占位 #51）。之后权威补拉一次性返回
+    // #46..#52——#48/#49 必须插回时序位置（#47 与 user#50 之间），
+    // 而不是 items.add() 追加到列表尾（会掉进 Q2 的回合块，答案回错家）。
+    test('推送中断后补拉：缺位消息插回时序位置，不追加到列表尾', () {
+      final state = ZcodeSessionState('sess-gap');
+      ZcodeSessionItem auth(
+        String id,
+        MessageRole role,
+        int createdMs, {
+        List<ChatProcessPart> parts = const [],
+        String? turnId,
+      }) =>
+          ZcodeSessionItem(
+            protoId: id,
+            synced: true,
+            turnId: turnId,
+            message: ChatMessage(
+              role: role,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(createdMs),
+              processParts: parts,
+            ),
+          );
+
+      // 本地视口：#45 已确认、#47 流式占位（有 protoId 未确认）、
+      // user#50 乐观回显、#51 流式占位
+      state.items.addAll([
+        auth('m45', MessageRole.assistant, 1000),
+        // Q1 的乐观 user 回显（截图里气泡已渲染，权威批次会按 turnId 归位）
+        ZcodeSessionItem(
+          synced: false,
+          turnId: 'turn-q1',
+          message: ChatMessage(
+            role: MessageRole.user,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1500),
+            processParts: const [ChatProcessPart.text('项目没有AGENTS.md 这个？')],
+          ),
+        ),
+        ZcodeSessionItem(
+          protoId: 'm47',
+          synced: false,
+          turnId: 'turn-q1',
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(2000),
+            processParts: const [
+              ChatProcessPart.tool(
+                ToolCallInfo(
+                  toolCallId: 'c1',
+                  toolName: 'Bash',
+                  status: ToolCallStatus.done,
+                ),
+              ),
+            ],
+          ),
+        ),
+        ZcodeSessionItem(
+          synced: false,
+          turnId: 'turn-q2',
+          message: ChatMessage(
+            role: MessageRole.user,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(5000),
+            processParts: const [ChatProcessPart.text('这个怎么没有看到最终的输出呢')],
+          ),
+        ),
+        ZcodeSessionItem(
+          protoId: 'm51',
+          synced: false,
+          turnId: 'turn-q2',
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(6000),
+          ),
+        ),
+      ]);
+
+      // 权威补拉批次（引擎升序）：#46 user、#47、#48、#49、#50、#51、#52
+      state.mergeAuthoritative([
+        auth('m46', MessageRole.user, 1500, turnId: 'turn-q1'),
+        auth('m47', MessageRole.assistant, 2000, turnId: 'turn-q1'),
+        auth(
+          'm48',
+          MessageRole.assistant,
+          2500,
+          turnId: 'turn-q1',
+          parts: const [ChatProcessPart.text('过渡句')],
+        ),
+        auth(
+          'm49',
+          MessageRole.assistant,
+          3000,
+          turnId: 'turn-q1',
+          parts: const [ChatProcessPart.text('Q1 的最终回答')],
+        ),
+        auth('m50', MessageRole.user, 5000, turnId: 'turn-q2'),
+        auth('m51', MessageRole.assistant, 6000, turnId: 'turn-q2'),
+        auth(
+          'm52',
+          MessageRole.assistant,
+          7000,
+          turnId: 'turn-q2',
+          parts: const [ChatProcessPart.text('Q2 的最终回答')],
+        ),
+      ]);
+
+      final ids = state.items.map((e) => e.protoId).toList();
+      expect(
+        ids,
+        ['m45', 'm46', 'm47', 'm48', 'm49', 'm50', 'm51', 'm52'],
+        reason: '补拉的消息必须插回时序位置；追加到列表尾会让答案掉进'
+            '后面的回合块（2026-09-22 复盘会话「刷新了也不出现」根因）',
+      );
+    });
+  });
+
 }
+
