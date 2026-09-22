@@ -1,0 +1,91 @@
+.wzxclaw/
+.zcode/
+.claude/
+.planning/
+REVIEW.md
+CLAUDE.md
+IMPLEMENTATION-PLAN.md
+
+node_modules/
+dist/
+out/
+build/
+
+*.log
+*.tsbuildinfo
+
+# Junk files from template literal / path expansion bugs
+[$][{]*
+.playwright-results/
+
+.env
+.env.local
+
+Thumbs.db
+.DS_Store
+
+# 2026-09-21 退役组件的本地磁盘遗留（tracked 已删，目录待手动清理）
+wzxClaw_desktop/
+companion_app/
+
+wzxClaw_android/.dart_tool/
+wzxClaw_android/.claude/
+wzxClaw_android/.flutter-plugins
+wzxClaw_android/.flutter-plugins-dependencies
+wzxClaw_android/build/
+wzxClaw_android/android/.gradle/
+wzxClaw_android/android/.kotlin/
+wzxClaw_android/android/local.properties
+wzxClaw_android/.idea/
+wzxClaw_android/.vscode/
+wzxClaw_android/*.log
+wzxClaw_android/fcm-service-account.json
+wzxClaw_android/google-services.json
+wzxClaw_android/android/app/google-services.json
+wzxClaw_android/CLAUDE.md
+wzxClaw_android/REVIEW.md
+
+relay/fcm-service-account.json
+relay/data/
+relay/*.log
+
+# Review / planning documents (private)
+*-REVIEW*.md
+
+# 配对凭据产物：QR 内含 sid+hash（持有者凭据，不进 git）
+pair-qr*.png
+pair-url*.txt
+
+# flutter test 运行产物（内含 QR 截图等，同理不进 git）
+/test-results/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+__pycache__/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
