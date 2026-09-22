@@ -2,8 +2,10 @@
 '
 ' Launches node with relay/zcode/companion.js in a hidden console and appends
 ' stdout/stderr to %USERPROFILE%\.wzxclaw\zcode-companion\autostart.log.
-' NOTE: the log contains the one-time pairing URL -- it is a holder
-' credential, do not share it or commit it anywhere.
+' NOTE: the log itself is NOT a credential store -- the script passes --no-qr,
+' so the pairing URL never appears in it; the URL is written to the 0600
+' pair-url.txt next to the log, which IS a holder credential (do not share
+' or commit that file).
 '
 ' Registered by install-autostart.bat as scheduled task "wzxClawZcodeCompanion".
 ' All file paths are resolved relative to this script's own location, so the

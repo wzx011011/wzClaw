@@ -207,14 +207,23 @@ function createRelay(options = {}) {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return fail(state); }
       if (!isObject(msg)) return fail(state);
-      const dataFrame = state.authenticated && msg.type === 'data' && state.room && matched(state.room);
+      // 认证后的 data 帧一律走独立 data 配额——matched 与否只影响超额处置：
+      // matched 超额明确拒绝（DATA_RATE_LIMITED）；未配对（手机离席窗口设备
+      // 照常推流）超额只丢弃不踢线，按控制帧配额踢会把瞬间空窗打成重连风暴
+      //（失败模式偏「多等」，与 data-dropped-unmatched 同一立场）。
+      const dataFrame = state.authenticated && msg.type === 'data' && state.room;
       if (dataFrame) {
         if (Date.now() - state.dataRateStart >= config.rateWindowMs) {
           state.dataRateStart = Date.now(); state.dataRateCount = 0; state.dataRateBytes = 0;
         }
         state.dataRateCount += 1; state.dataRateBytes += raw.length;
-        if (state.dataRateCount > config.dataRateLimit || state.dataRateBytes > config.dataRateBytes) {
+        const overData = state.dataRateCount > config.dataRateLimit || state.dataRateBytes > config.dataRateBytes;
+        if (overData && matched(state.room)) {
           return fail(state, 'DATA_RATE_LIMITED');
+        }
+        if (overData) {
+          logger('data-dropped-unmatched', `role=${state.role} reason=data-rate`);
+          return;
         }
       } else if (++state.rateCount > config.rateLimit) return fail(state, 'RATE_LIMITED');
       handleMessage(state, msg);
@@ -369,7 +378,8 @@ function createRelay(options = {}) {
     } else if (msg.type === 'data') {
       if (!isObject(msg.payload)) return fail(state);
       // 未配对时外发数据静默丢弃：认证设备（companion）常在手机离开后仍有
-      // app-server 尾流数据，踢掉会迫使其重注册轮换 sid/hash，手机端配对全部失效。
+      // app-server 尾流数据。重注册会恢复同一房间（确定性 sid），但重连握手
+      // 仍要多花一个往返——只丢弃不踢线，失败模式偏「多等」而非打断。
       if (!matched(state.room)) {
         // 重连窗口（device 槽短暂为空）的下行帧静默丢弃是既有语义，
         // 但零观测会让「手机发了却没生效」变成无头案——留计数日志

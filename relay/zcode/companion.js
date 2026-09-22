@@ -1605,10 +1605,13 @@ function createCompanion(options = {}) {
         case 'x/history': {
           // 引擎会话历史反向分页（柱4 2026-09-22）：session/messages 只能
           // 向新翻页，更早历史由 companion 只读直查引擎 sqlite 补齐。
-          // dbPath 仅测试注入口覆盖，生产固定 ~/.zcode/cli/db/db.sqlite。
+          // dbPath 可由配对端覆盖：与 x/* 通道同一安全模型（配对凭据门禁，
+          // 持有者可信，见 handlePhoneFrame 的 x/* 前言），不做路径白名单。
+          // 抛错必须用字符串 reason（外层 catch 按它映射错误码，数值常量
+          // 会全部落 ERR_X_FAILED 兜底——手机端拿到错误语义双错）。
           const hp = isObject(frame.params) ? frame.params : {};
           const hSessionId = typeof hp.sessionId === 'string' ? hp.sessionId.trim() : '';
-          if (!hSessionId) throw safeError(ERR_X_BAD_PARAMS);
+          if (!hSessionId) throw safeError('X_BAD_PARAMS');
           const hBefore = typeof hp.beforeMessageId === 'string' && hp.beforeMessageId
             ? hp.beforeMessageId : null;
           let dbPath = defaultEngineDbPath(os.homedir());
@@ -1622,7 +1625,7 @@ function createCompanion(options = {}) {
             // 库不可达（路径不存在/被锁/node:sqlite 不可用）：显式错误帧，
             // 手机端降级回纯缓存翻页——绝不返回假空页冒充「没有更早」
             log('x-history-db-unreachable', String(e && e.code || e && e.message || e));
-            throw safeError(ERR_X_FAILED);
+            throw safeError('X_FAILED');
           }
           reply({ id: frame.id, result });
           return;

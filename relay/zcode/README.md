@@ -100,13 +100,15 @@ companion 可以注册为 Windows 计划任务，登录后隐藏窗口后台运�
   相对 VBS 自身解析，仓库移动无需改脚本。需要指定 app-server 工作目录时，编辑
   VBS 启动参数追加 `--cwd <目录>`。
 - 卸载：运行 `scripts\uninstall-autostart.bat`（仅移除自启，不停已在运行的进程）。
-- **安全**：`autostart.log` 含配对 URL（sid + hash，持有者凭据），勿外传、勿进
+- **安全**：自启带 `--no-qr`，`autostart.log` **不含**配对 URL；配对 URL 只落
+  同目录 0600 的 `pair-url.txt`（sid + hash，持有者凭据），勿外传、勿进
   聊天/日志截图/git，参见上文安全边界。
 
-## 手机端（wzxClaw_android / Flutter，进行中）
+## 手机端（wzxClaw_android / Flutter）
 
-手机端集成在 **Flutter 原版 App**（master 主分支 `wzxClaw_android/`）中，作为与
-现有"桌面 wzxClaw IDE 控制"并存的第二个模式：
+手机端集成在 **Flutter 原版 App**（master 主分支 `wzxClaw_android/`）中；
+桌面形态自 2026-09-21 起为开源 ZCode 桌面端（`desktop` submodule，companion-core
+内嵌），历史上的「桌面 wzxClaw IDE」已退役：
 
 - 协议层（Dart）：`lib/zcode/zcode_pairing.dart`（配对 URL 解析）+
   `lib/zcode/zcode_relay_client.dart`（probe 角色认证 + ZCode Protocol v1 RPC，

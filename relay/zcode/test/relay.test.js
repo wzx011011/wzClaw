@@ -95,6 +95,25 @@ test('unmatched data from an authenticated peer is dropped without kicking', asy
   assert.deepEqual(await p.next('data'), msg);
 });
 
+test('unmatched data flood counts into the data budget and drops without kicking the line', async (t) => {
+  const f = await fixture(t, { rateLimit: 20, dataRateLimit: 55, dataRateBytes: 1024 * 1024, rateWindowMs: 500 });
+  const d = await device(t, f.url);
+  // 手机离席窗口设备照常推流（matched=false）：未配对 data 必须走独立 data
+  // 配额、超额只丢弃——按控制帧配额踢 RATE_LIMITED 会把瞬间空窗打成重连风暴，
+  // 与「unmatched 不踢线」语义自相矛盾（评审 P2 2026-09-22）。
+  for (let i = 0; i < 80; i += 1) d.send({ type: 'data', payload: { stray: i } });
+  await delay(150);
+  assert.equal(d.messages.some((m) => m.type === 'error'), false);
+  assert.equal(d.ws.readyState, WebSocket.OPEN);
+  // 等 data 配额窗口翻新后再配对：配对后正常帧不应被上一窗口的洪峰余量拒绝
+  await delay(600);
+  const p = await client(t, f.url);
+  assert.equal((await auth(p, d.sid, d.hash)).ack.pair_status, 'matched');
+  const msg = { type: 'data', payload: { after: 1 } };
+  d.send(msg);
+  assert.deepEqual(await p.next('data'), msg);
+});
+
 test('path and browser origins rejected before upgrade', async (t) => {
   const f = await fixture(t);
   for (const [url, options] of [[f.url.replace('/ws', '/other'), {}],

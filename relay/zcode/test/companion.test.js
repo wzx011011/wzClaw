@@ -2590,3 +2590,89 @@ test('x/* 应答超 1MiB：显式回 -32001 错误帧并留观测', async (t) =>
   assert.ok(logs.some((l) => l.startsWith('x-reply-too-large x/fs/dirs')),
     '超限丢弃必须留观测日志');
 });
+
+test('companion x/history：帧级契约（正常页/缺参/库不可达，柱4 链路中间环节）', async (t) => {
+  const { relay, url: relayUrl } = await withRelay(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xh-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-xh-state-'));
+  // 真实引擎库夹具：与 engine-history.test.js 同构（lib 层形状已锚，此处
+  // 只锚 companion 帧级环节——参数校验、错误码、应答形状与观测日志）
+  const { DatabaseSync } = require('node:sqlite');
+  const dbPath = path.join(dir, 'db.sqlite');
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE message (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+      time_created INTEGER, time_updated INTEGER,
+      data TEXT, sequence INTEGER NOT NULL
+    );
+    CREATE TABLE part (
+      id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT,
+      time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER
+    );
+  `);
+  for (let i = 0; i < 3; i++) {
+    db.prepare(
+      'INSERT INTO message (id, session_id, time_created, data, sequence) VALUES (?, ?, ?, ?, ?)',
+    ).run(`m${i}`, 's1', i, JSON.stringify({ role: i % 2 ? 'assistant' : 'user' }), i);
+    db.prepare(
+      'INSERT INTO part (id, message_id, session_id, data, sequence) VALUES (?, ?, ?, ?, ?)',
+    ).run(`m${i}-p0`, `m${i}`, 's1', JSON.stringify({ type: 'text', text: `body-${i}` }), 0);
+  }
+  db.close();
+
+  const logs = [];
+  let pairingUrl = '';
+  const companion = createCompanion({
+    relayUrl,
+    cwd: dir,
+    zcodeCommand: { command: process.execPath, args: [FAKE_APP_SERVER] },
+    v2ConfigPath: writeV2Config(stateDir, 'dummy-token-0123456789abcdef'),
+    midFile: path.join(stateDir, 'mid'),
+    logger: (event, detail) => logs.push(`${event}${detail ? ` ${detail}` : ''}`),
+    onPairing: (url) => { pairingUrl = url; },
+  });
+  const client = phone(relayUrl);
+  cleanup(t, [
+    () => companion.stop(),
+    () => { client.close(); },
+    () => relay.close(),
+    () => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+    () => { fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
+  ]);
+  companion.start();
+  await waitFor(() => pairingUrl);
+  const parsed = new URL(pairingUrl);
+  await client.pair(parsed.searchParams.get('sid'), parsed.searchParams.get('hash'));
+
+  const ask = (id, method, params) =>
+    client.send({ type: 'data', payload: { id, method, params } });
+
+  // 正常页：升序 + hasMore，形状与 session/messages 对齐（info/parts）
+  ask(60, 'x/history', { sessionId: 's1', limit: 2, dbPath });
+  const page = await client.next((m) => m.type === 'data' && m.payload.id === 60);
+  assert.equal(page.payload.error, undefined);
+  assert.deepEqual(page.payload.result.messages.map((m) => m.info.id), ['m1', 'm2']);
+  assert.equal(page.payload.result.hasMore, true);
+  assert.equal(page.payload.result.messages[0].parts[0].text, 'body-1');
+
+  // 游标页：beforeMessageId 透传给 lib 层
+  ask(61, 'x/history', { sessionId: 's1', limit: 2, beforeMessageId: 'm1', dbPath });
+  const page2 = await client.next((m) => m.type === 'data' && m.payload.id === 61);
+  assert.deepEqual(page2.payload.result.messages.map((m) => m.info.id), ['m0']);
+  assert.equal(page2.payload.result.hasMore, false);
+
+  // 缺 sessionId → 参数错误帧（数值码 + 可读 reason）
+  ask(62, 'x/history', { dbPath });
+  const bad = await client.next((m) => m.type === 'data' && m.payload.id === 62);
+  assert.equal(bad.payload.error.code, -32100);
+  assert.equal(bad.payload.error.data.reason, 'X_BAD_PARAMS');
+
+  // 库不可达 → 显式错误帧（绝不返回假空页冒充「没有更早」）+ 观测日志
+  ask(63, 'x/history', { sessionId: 's1', dbPath: path.join(dir, 'nope.sqlite') });
+  const fail = await client.next((m) => m.type === 'data' && m.payload.id === 63);
+  assert.equal(fail.payload.error.code, -32104);
+  assert.equal(fail.payload.error.data.reason, 'X_FAILED');
+  assert.ok(logs.some((l) => l.startsWith('x-history-db-unreachable')),
+    '库不可达必须留观测日志（静默丢弃=缺陷）');
+});
