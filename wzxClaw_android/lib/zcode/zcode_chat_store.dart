@@ -983,8 +983,11 @@ class ZcodeChatStore extends ChangeNotifier {
       if (newId == null || newId.isEmpty) {
         throw const ZcodeRequestException(-32602, '响应缺少 sessionId');
       }
-      await refreshSessions();
+      // 页面切换优先（2026-09-22 用户实测：create 后串行刷列表把
+      // 「进入会话页」拖慢一拍）——openSession 的 _upsertOpenedListing
+      // 已即时补列表条目，权威刷新放到页面切换之后
       await openSession(newId);
+      await refreshSessions();
     } catch (e) {
       _fail('新建会话失败：$e');
     }

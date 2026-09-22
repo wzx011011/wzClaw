@@ -1013,7 +1013,32 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  /// 新建会话全程（create→恢复→首发前置→首条发送）在途标记：
+  /// 发送键转圈 + 空态显示「正在同步」，替代无反馈等待（2026-09-22）
+  bool _creatingSession = false;
+
   Future<void> _startNewConversation(
+    String text, {
+    _QueuedSend? requeueOnFailure,
+    List<AttachmentUpload> attachments = const [],
+    String? retryText,
+  }) async {
+    _creatingSession = true;
+    if (mounted) setState(() {});
+    try {
+      await _startNewConversationInner(
+        text,
+        requeueOnFailure: requeueOnFailure,
+        attachments: attachments,
+        retryText: retryText,
+      );
+    } finally {
+      _creatingSession = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _startNewConversationInner(
     String text, {
     _QueuedSend? requeueOnFailure,
     List<AttachmentUpload> attachments = const [],
@@ -1743,7 +1768,7 @@ class _ChatPageState extends State<ChatPage> {
     final colors = AppColors.of(context);
     if (_displayMessages.isEmpty && !_isWaiting) {
       // 正在切换会话、等待桌面端回传数据时显示骨架屏
-      if (_isSessionLoading) {
+      if (_isSessionLoading || _creatingSession) {
         return _buildSessionLoadingSkeleton(colors);
       }
       // Option A：已连接且无活动会话 → 「新任务」欢迎页
@@ -2814,7 +2839,7 @@ class _ChatPageState extends State<ChatPage> {
           child: IconButton(
             onPressed: busy
                 ? () => unawaited(_store.stopGeneration())
-                : (isConnected ? _sendMessage : null),
+                : (isConnected && !_creatingSession ? _sendMessage : null),
             style: IconButton.styleFrom(
               backgroundColor:
                   isConnected ? const Color(0xFFE8E8E8) : colors.bgTertiary,
@@ -2823,12 +2848,19 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
             padding: EdgeInsets.zero,
-            tooltip: busy ? '停止生成' : '发送',
-            icon: Icon(
-              busy ? Icons.stop : Icons.arrow_upward,
-              size: 18,
-              color: isConnected ? const Color(0xFF17181A) : colors.textMuted,
-            ),
+            tooltip: busy ? '停止生成' : (_creatingSession ? '正在创建会话' : '发送'),
+            icon: _creatingSession && !busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    busy ? Icons.stop : Icons.arrow_upward,
+                    size: 18,
+                    color:
+                        isConnected ? const Color(0xFF17181A) : colors.textMuted,
+                  ),
           ),
         ),
       ],
