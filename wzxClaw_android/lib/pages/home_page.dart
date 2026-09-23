@@ -2644,6 +2644,9 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
+        // 左对齐：附件行随内容收缩，默认 center 会让单个缩略图孤零零
+        // 居中（2026-09-24 用户反馈）；其余子项本就撑满整行不受影响
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 待发附件 chip 行（官方布局）：在输入框上方（会话框内），横向
           // 滚动；官方块状样式：缩略图 + 环形进度 + 角标移除，点击预览
