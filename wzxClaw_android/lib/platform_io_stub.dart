@@ -17,7 +17,10 @@ class InternetAddress {
   /// 与 dart:io 对齐的实例字段（诊断面比较 addr.type 用）
   String get type => InternetAddressType.any;
 
-  static Future<List<InternetAddress>> lookup(String host) async {
+  static Future<List<InternetAddress>> lookup(
+    String host, {
+    String type = InternetAddressType.any,
+  }) async {
     throw UnsupportedError('InternetAddress.lookup 在 web 上不可用');
   }
 }

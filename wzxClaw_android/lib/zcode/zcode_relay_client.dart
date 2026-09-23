@@ -46,6 +46,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'zcode_pairing.dart';
 import 'connection_diagnostics.dart';
+import 'relay_connect_factory.dart';
 
 /// 重连延迟上限（指数退避封顶）
 const int _kMaxReconnectMs = 60 * 1000;
@@ -252,7 +253,9 @@ class ZcodeRelayClient {
   // ---------- 内部实现 ----------
 
   /// 默认连接工厂（生产环境）
-  static WebSocketChannel _defaultConnect(Uri url) => WebSocketChannel.connect(url);
+  // 默认工厂走双栈建连（relay_connect_factory）：显式 IPv6 优先 + IPv4 回退，
+  // 修复聚合解析在部分移动网络下丢失 AAAA 导致只走被拦截 IPv4 入口的缺陷
+  static WebSocketChannel _defaultConnect(Uri url) => connectRelay(url);
 
   /// 建连就绪后发送 auth_init
   Future<void> _authInitWhenReady(WebSocketChannel socket) async {

@@ -110,6 +110,10 @@ class ConnectionDiagnostics {
         const PathCheckResult('IPv6', false, '解析结果无 IPv6 地址（当前网络未提供）'),
       );
     }
+    // 显式按 family 查 AAAA（2026-09-23 修复配套观测）：聚合解析无 IPv6 时，
+    // 区分「DNS 里有 AAAA 但系统聚合不下发（App 双栈工厂仍可走 v6）」与
+    // 「DNS 真无记录」，给用户可复制的判断依据
+    results.add(await _forcedV6LookupRow(host));
     for (final addr in [...v4.take(1), ...v6.take(1)]) {
       final label = addr.type == InternetAddressType.IPv4 ? 'IPv4' : 'IPv6';
       final watch = Stopwatch()..start();
@@ -138,5 +142,27 @@ class ConnectionDiagnostics {
       record('体检', '${r.label}: ${r.detail}');
     }
     return results;
+  }
+
+  /// 显式 AF_INET6 查询：与聚合解析（DNS 行）对照，暴露「有 AAAA 但被
+  /// 系统聚合过滤」的场景——这正是 relay_connect_factory 显式双栈建连
+  /// 仍能走 v6 的前提
+  Future<PathCheckResult> _forcedV6LookupRow(String host) async {
+    try {
+      final forced = await InternetAddress.lookup(
+        host,
+        type: InternetAddressType.IPv6,
+      ).timeout(const Duration(seconds: 3), onTimeout: () => const []);
+      if (forced.isEmpty) {
+        return const PathCheckResult('IPv6(DNS)', false, '显式 AAAA 查询无结果');
+      }
+      return PathCheckResult(
+        'IPv6(DNS)',
+        true,
+        '显式 AAAA 查询到 ${forced.length} 条（${forced.first.address}）',
+      );
+    } catch (e) {
+      return PathCheckResult('IPv6(DNS)', false, '显式 AAAA 查询失败: $e');
+    }
   }
 }

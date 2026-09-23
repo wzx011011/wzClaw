@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/zcode/connection_diagnostics.dart';
 
@@ -40,5 +42,22 @@ void main() {
     d.noteTarget(Uri.parse('wss://other.example.com:8443/ws'));
     expect(d.targetHost, 'other.example.com');
     expect(d.targetPort, 8443);
+  });
+
+  test('路径体检：显式 AAAA 行区分「聚合过滤掉 AAAA」与「真无记录」', () async {
+    // 绑定后立即释放端口：后续 TLS 建连快速被拒，体检不拖时
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = server.port;
+    await server.close();
+    addTearDown(ConnectionDiagnostics.instance.clear);
+
+    final results =
+        await ConnectionDiagnostics.instance.runPathChecks('localhost', port: port);
+    final rows = results.where((r) => r.label == 'IPv6(DNS)').toList();
+    // 行必须存在（2026-09-23 双栈工厂配套观测：聚合解析与显式族查询对照）
+    expect(rows, hasLength(1));
+    // 本机 hosts 下 localhost 必有 AAAA（::1）：显式族查询应给出命中详情
+    expect(rows.single.ok, isTrue);
+    expect(rows.single.detail, contains('显式 AAAA 查询到'));
   });
 }
