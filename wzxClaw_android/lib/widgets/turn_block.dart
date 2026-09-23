@@ -1348,7 +1348,7 @@ class _TurnBlockViewState extends State<TurnBlockView> {
               widget.onFoldChanged?.call(next);
             },
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(2, 4, 2, 4),
+              padding: const EdgeInsets.fromLTRB(0, 4, 0, 4),
               child: Row(
                 children: [
                   Icon(
@@ -1425,7 +1425,9 @@ class _TurnBlockViewState extends State<TurnBlockView> {
               const SizedBox.shrink()
           else if (!_collapsed)
             Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 2),
+              // 左边距统一 0：与正文/最终回答同一左基线（图标行同列起点，
+              // 2026-09-24 用户反馈行/文错位难看）
+              padding: const EdgeInsets.only(bottom: 2),
               child: switch (part.kind) {
                 TurnPartKind.thinking => _ThinkRow(data: part.think!),
                 TurnPartKind.tool => _ToolRowView(
@@ -1443,7 +1445,7 @@ class _TurnBlockViewState extends State<TurnBlockView> {
         // 流式存活指示（官方对齐）：输出流末尾一个小等待圈
         if (vm.busy)
           const Padding(
-            padding: EdgeInsets.only(top: 6, left: 4),
+            padding: EdgeInsets.only(top: 6),
             child: SizedBox(
               width: 13,
               height: 13,

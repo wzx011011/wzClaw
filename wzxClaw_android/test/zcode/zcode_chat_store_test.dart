@@ -1458,11 +1458,14 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-p');
 
-      // 订阅在 materialize 时建立（web-remote-replayable）
+      // 订阅在 materialize 时建立（web-remote-replayable）。
+      // afterSeq 必带：引擎把回放闸在这个参数上，缺省恒回空 events
+      //（2026-09-23 探针+引擎源码钉死，缺它断线事件永远补不上）
       final sub = fake.requests.firstWhere((e) => e.key == 'session/subscribe');
       expect(sub.value, {
         'sessionId': 'sess-p',
         'deliveryKind': 'web-remote-replayable',
+        'afterSeq': 0,
       });
       expect(server.session('sess-p').subscribeCalls, 1);
 

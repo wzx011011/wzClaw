@@ -3038,6 +3038,12 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 建立推送订阅（幂等）：web-remote-replayable 可回放事件流。
   /// 响应快照 events 走统一应用路径（eventId 去重）。
   /// 失败（旧版 app-server 无此方法等）→ pushAvailable=false，降级轮询。
+  ///
+  /// 必须带 afterSeq（引擎源码 server-operations.ts subscribeSession 钉死）：
+  /// afterSeq 缺省时引擎直接返回空 events——回放闸在这个参数上，
+  /// includeSnapshot 只是状态快照不带事件。不带 afterSeq 的订阅使断线
+  /// 期间已落日志的事件（含 turn.completed）永远补不上，「输入未捕获」
+  /// 停滞视图即此根因（2026-09-23 探针 probe-replay-toolinput 实证）。
   Future<void> _ensureSubscribed(ZcodeSessionState state) async {
     if (state.subscribed || !state.pushAvailable) return;
     final client = _client;
@@ -3046,6 +3052,7 @@ class ZcodeChatStore extends ChangeNotifier {
       final result = await client.request('session/subscribe', {
         'sessionId': state.sessionId,
         'deliveryKind': 'web-remote-replayable',
+        'afterSeq': state.lastSeq,
       });
       state.subscribed = true;
       if (result is Map && result['events'] is List) {
@@ -3062,32 +3069,39 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 重连成功后：为所有已物化会话重订阅 + 按 lastSeq 补放断线期间事件
   /// （replayable 语义；eventId 去重使重复补放无害）。
-  /// 补放后仍流式但无任何新事件的会话：seq 不变≠回合已结束（模型思考/
-  /// 工具执行期间可能长时间无事件），必须用 session/read 的权威状态确认，
-  /// 不得直接推断空闲。
+  /// 补放后仍流式的会话必须用 session/read 的权威状态确认回合是否真的
+  /// 已结束——模型思考/工具执行期间可能长时间无事件，seq 没动≠回合没完；
+  /// 反过来 seq 动了（补放只回边界帧）也不代表回合还活着（2026-09-23
+  /// 实测：回合进行中 eventStore 基本为空，补放拿不到工具/终态事件），
+  /// 所以确认不看水位、一律执行。已空闲的会话做一轮合并式权威刷新，
+  /// 救回「turn.completed 在断线窗口内、收尾刷新随之丢失」的滞留行
+  /// （「输入未捕获」根因，见 probe-replay-toolinput）。
   Future<void> _resubscribeAll() async {
     final client = _client;
     if (client == null || !client.paired) return;
     for (final state in List.of(_states.values)) {
       if (!state.materialized) continue;
-      final seqBefore = state.lastSeq;
       state.subscribed = false;
       state.pushAvailable = true; // 重连后重试推送
       await _ensureSubscribed(state);
       await _replayMissedEvents(state);
-      if (state.isStreaming && state.lastSeq == seqBefore) {
-        // 断线期间没有任何事件：读权威状态确认回合是否真的已结束
+      if (state.isStreaming) {
         unawaited(_confirmTurnAfterReconnect(state));
-      } else if (state.isStreaming &&
-          !state.pushAvailable &&
-          _isActive(state) &&
-          _fallbackPollTimer == null) {
-        _startFallbackPollingFor(state.sessionId);
+        if (!state.pushAvailable &&
+            _isActive(state) &&
+            _fallbackPollTimer == null) {
+          _startFallbackPollingFor(state.sessionId);
+        }
+      } else {
+        // 空闲会话只做合并式刷新（finishTurn:false 不动回合状态）：
+        // 收尾刷新本身随断线丢失的场景，靠这一轮把滞留行拉平
+        unawaited(_refreshAuthoritative(state, finishTurn: false));
       }
     }
   }
 
-  /// 重连后确认在途回合（seq 无新事件路径）：running → 保留流式并恢复
+  /// 重连后确认在途回合（重订阅补放后一律执行，不以水位变化为前提）：
+  /// running → 保留流式并恢复
   /// 看门狗/轮询；明确 idle → 权威刷新收尾；读取失败 → 按失败模式方向
   /// 「多等」：保留流式并武装看门狗，由轮询/后续事件继续兜底。
   Future<void> _confirmTurnAfterReconnect(ZcodeSessionState state) async {

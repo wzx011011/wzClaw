@@ -268,7 +268,24 @@ state.updated          patch.status="idle"
 
 - `eventId` 为 UUID（构造性全局唯一）——跨会话统一去重安全。
 - 每会话另有单调递增整数 `seq`（session/event）/`eventSeq`（telemetry）——
-  排序与断线补放游标用。重连后从 last-seq 重新 subscribe 即可补放（replayable 语义）。
+  排序与断线补放游标用。
+- **断线补放契约（2026-09-24 修正，probe-toolinput-stream / probe-replay-toolinput
+  + 引擎源码 server-operations.ts 双证）**：
+  - **回放闸在 `afterSeq` 参数**：subscribe 源码 `afterSeq === undefined ? [] : read...`
+    ——不带 afterSeq 的订阅**永远回空 events**（`includeSnapshot` 只是状态快照，
+    不含事件）。手机端订阅必须带 `afterSeq: lastSeq`。
+  - **回合进行中 eventStore 基本为空**：工具/流式事件不落可回放日志，
+    拉取/回放只回边界帧（titleUpdated/turn.started/session.updated）；
+    旧表述「重连后从 last-seq 重新 subscribe 即可补放」在此窗口不成立。
+  - **回合结束才整批落盘**：turn 终态后 eventStore 一次性可见全量事件
+    （含全部 tool_input_start/delta/end + tool_call）；按 turn-window 保留策略
+    管理（in-memory-session-event-store.ts：被下一回合取代的桶即从内存淘汰），
+    **回放窗口是短暂的，权威消息才是持久兜底**。
+  - `session/events {afterSeq, limit}` 切片 = `slice(-limit)` **最新 N 条**；
+    缺口大于 limit 时最早的事件补不到（上游补一次游标向前收，可拉平）。
+  - `tool.updated scheduled` 一律 `inputOmitted:true, inputRef:"model_stream"`
+    （input 只在活流 delta 里）；权威 part `state.input` 永远完整——
+    客户端断档恢复的最终事实源是 `session/messages`，不是事件日志。
 
 ### Q4 非 active 会话可达性
 
