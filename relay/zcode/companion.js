@@ -1602,6 +1602,13 @@ function createCompanion(options = {}) {
           } });
           return;
         }
+        case 'x/engine/generation': {
+          // 代次查询（2026-09-23 引擎崩溃事故）：respawn 瞬间的推送在手机
+          // 断链时会永久丢失——重连后的手机开 会话 时主动查询，代次变了
+          // 即作废旧物化（补上「离线错过推送」的洞）
+          reply({ id: frame.id, result: { generation: bridgeGeneration } });
+          return;
+        }
         case 'x/history': {
           // 引擎会话历史反向分页（柱4 2026-09-22）：session/messages 只能
           // 向新翻页，更早历史由 companion 只读直查引擎 sqlite 补齐。

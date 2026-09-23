@@ -784,6 +784,21 @@ class ZcodeChatStore extends ChangeNotifier {
       } catch (e) {
         if (!_viewportValid(sessionId, epoch)) return;
         if (e is ZcodeRequestException && e.code == -32004) {
+          // 引擎 respawn 后内存会话清空：resume 回「not found」≠ 桌面占用
+          //（2026-09-23 引擎崩溃事故实测）——残留视图必须显式报错退回列表，
+          // 不许把缓存残影当现状
+          final emsg = e.message;
+          if (emsg.contains('not found')) {
+            state.remoteActiveElsewhere = false;
+            state.isStreaming = false;
+            state.isWaitingForResponse = false;
+            state.items.clear();
+            state.finalizeStreaming();
+            _activeSessionId = null;
+            _fail('引擎已重启：此会话未随引擎持久化，无法继续。'
+                '请在桌面端重新发起（原内容可在桌面端历史中查看）');
+            return;
+          }
           state.remoteActiveElsewhere = true;
           state.isStreaming = false;
           state.isWaitingForResponse = false;
@@ -804,11 +819,38 @@ class ZcodeChatStore extends ChangeNotifier {
         resumeResult = result is Map ? result : null;
         _applyResumeMeta(state, resumeResult ?? const {});
         state.remoteActiveElsewhere = false; // 成功激活：清除桌面占用标记
+        // 代次补查（2026-09-23 引擎崩溃事故）：respawn 推送在手机断链时
+        // 会永久丢失——resume 后主动查询，代次有变即作废旧物化并插
+        // 「引擎已重启」通告（companion x/engine/generation 可应答）
+        try {
+          final gen = await client.request('x/engine/generation');
+          final g = gen is Map ? gen['generation'] : null;
+          if (g != null && state.epoch == epoch) {
+            _handleEngineGeneration({'generation': g});
+          }
+        } catch (_) {
+          // 查询失败不阻塞打开（旧 companion 无此应答，下轮换代推送兜底）
+        }
       } catch (e) {
         if (!_viewportValid(sessionId, epoch)) return; // 已切走：不惊动视口
         // 桌面端正在运行该会话（-32004，运行时单归属）：保留空视口 +
         // 明确状态条，而不是报错回列表
         if (e is ZcodeRequestException && e.code == -32004) {
+          // 引擎 respawn 后内存会话清空：resume 回「not found」≠ 桌面占用
+          //（2026-09-23 引擎崩溃事故实测）——残留视图必须显式报错退回列表，
+          // 不许把缓存残影当现状
+          final emsg = e.message;
+          if (emsg.contains('not found')) {
+            state.remoteActiveElsewhere = false;
+            state.isStreaming = false;
+            state.isWaitingForResponse = false;
+            state.items.clear();
+            state.finalizeStreaming();
+            _activeSessionId = null;
+            _fail('引擎已重启：此会话未随引擎持久化，无法继续。'
+                '请在桌面端重新发起（原内容可在桌面端历史中查看）');
+            return;
+          }
           state.remoteActiveElsewhere = true;
           state.isStreaming = false;
           state.isWaitingForResponse = false;
