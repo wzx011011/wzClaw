@@ -44,6 +44,16 @@ void main() {
     expect(d.targetPort, 8443);
   });
 
+  test('端口归一化：wss/ws 无显式端口时 Uri.port 为 0，必须归到默认端口', () {
+    // 1.2.54 回归锚点：Uri.port 对无显式端口的 wss/ws 返回 0，直接建连
+    // 就是「连 0 端口」必败（2026-09-23 手机实证：v6 秒拒、v4 超时）
+    expect(effectivePort(Uri.parse('wss://zcode.5945.top/ws')), 443);
+    expect(effectivePort(Uri.parse('ws://zcode.5945.top/ws')), 80);
+    expect(effectivePort(Uri.parse('wss://zcode.5945.top:8443/ws')), 8443);
+    expect(effectivePort(Uri.parse('https://example.com')), 443);
+    expect(effectivePort(Uri.parse('http://example.com')), 80);
+  });
+
   test('路径体检：显式 AAAA 行区分「聚合过滤掉 AAAA」与「真无记录」', () async {
     // 绑定后立即释放端口：后续 TLS 建连快速被拒，体检不拖时
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);

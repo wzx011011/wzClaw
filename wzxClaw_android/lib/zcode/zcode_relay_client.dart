@@ -164,7 +164,9 @@ class ZcodeRelayClient {
     try {
       final uri = Uri.parse(_pairing.relayWsUrl);
       ConnectionDiagnostics.instance.noteTarget(uri);
-      ConnectionDiagnostics.instance.record('尝试', '连接 ${uri.host}:${uri.port}');
+      // 展示端口走归一化（wss 无显式端口时 Uri.port 为 0），与实际建连一致
+      ConnectionDiagnostics.instance
+          .record('尝试', '连接 ${uri.host}:${effectivePort(uri)}');
       socket = factory(uri);
     } catch (e) {
       // 工厂同步抛错视作建连失败，走重连

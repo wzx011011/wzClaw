@@ -44,6 +44,9 @@ WebSocketChannel connectRelay(Uri url) {
 @visibleForTesting
 Future<ConnectionTask<Socket>> connectDualStack(Uri uri) async {
   final useTls = uri.scheme == 'wss' || uri.scheme == 'https';
+  // Dart 的 Uri.port 对未写显式端口的 wss/ws 返回 0（不回落默认值），
+  // 直接建连即「连 0 端口」必败（2026-09-23 手机 1.2.54 实证）——统一归一化
+  final port = effectivePort(uri);
   final candidates = await resolveCandidates(uri.host);
   if (candidates.isEmpty) {
     ConnectionDiagnostics.instance
@@ -57,8 +60,8 @@ Future<ConnectionTask<Socket>> connectDualStack(Uri uri) async {
     final ConnectionTask<Socket> task;
     try {
       task = await (useTls
-          ? SecureSocket.startConnect(addr, uri.port)
-          : Socket.startConnect(addr, uri.port));
+          ? SecureSocket.startConnect(addr, port)
+          : Socket.startConnect(addr, port));
     } catch (e) {
       ConnectionDiagnostics.instance
           .record('建连失败', '$family ${addr.address}: startConnect 异常: $e');
@@ -70,7 +73,7 @@ Future<ConnectionTask<Socket>> connectDualStack(Uri uri) async {
       watch.stop();
       ConnectionDiagnostics.instance.record(
         '已连接',
-        '$family ${addr.address}:${uri.port} (${watch.elapsedMilliseconds}ms)',
+        '$family ${addr.address}:$port (${watch.elapsedMilliseconds}ms)',
       );
       return task;
     } catch (e) {
@@ -78,13 +81,13 @@ Future<ConnectionTask<Socket>> connectDualStack(Uri uri) async {
       watch.stop();
       ConnectionDiagnostics.instance.record(
         '建连失败',
-        '$family ${addr.address}:${uri.port} (${watch.elapsedMilliseconds}ms): $e',
+        '$family ${addr.address}:$port (${watch.elapsedMilliseconds}ms): $e',
       );
       lastError = e;
     }
   }
   throw SocketException(
-    'relay 建连失败：全部候选地址失败 (${uri.host}:${uri.port}) lastError=$lastError',
+    'relay 建连失败：全部候选地址失败 (${uri.host}:$port) lastError=$lastError',
   );
 }
 

@@ -2,6 +2,16 @@ import 'package:flutter/foundation.dart';
 
 import '../platform_io.dart';
 
+/// 建连目标端口的单一真相：Dart 的 Uri.port 对 wss/ws 等非 http 系 scheme
+/// 且未写显式端口时返回 0（不会回落 scheme 默认值），直接拿去建连就是
+/// 「连 0 端口」的必败尝试。按约定归一化：ws/http→80，其余（wss/https）→443。
+/// 体检展示、连接尝试记录与 relay_connect_factory 实际建连共用本函数。
+int effectivePort(Uri url) {
+  final p = url.port;
+  if (p != 0) return p;
+  return (url.scheme == 'ws' || url.scheme == 'http') ? 80 : 443;
+}
+
 /// 连接事件（连接层可观测性的最小单元）
 class ConnectionEvent {
   ConnectionEvent(this.tag, this.detail) : time = DateTime.now();
@@ -40,12 +50,7 @@ class ConnectionDiagnostics {
 
   void noteTarget(Uri url) {
     _targetHost = url.host;
-    // Dart 的 Uri.port 对 wss/ws 等非 http 系 scheme 且未写显式端口时返回 0，
-    // 按约定归一化（体检与展示都用真实端口）
-    final p = url.port;
-    _targetPort = p != 0
-        ? p
-        : ((url.scheme == 'ws' || url.scheme == 'http') ? 80 : 443);
+    _targetPort = effectivePort(url);
   }
 
   /// 记录一条事件（新事件插队首，超出容量裁掉最旧的）
