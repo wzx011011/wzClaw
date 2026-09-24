@@ -58,3 +58,4 @@ pair-url*.txt
 
 # flutter test 运行产物（内含 QR 截图等，同理不进 git）
 /test-results/
+.worktrees/
