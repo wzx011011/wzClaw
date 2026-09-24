@@ -176,6 +176,27 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
    options:{reasoningLevel}}}`（model 是对象不是字符串；reasoningLevel
    必须取目录 reasoning.levels 的 value，如 high/max）。
 
+**account: 固定 provider 在独立引擎不可服务（2026-09-24，probe-account-plan.js
+实测定稿）**——「把套餐注入从 custom:+access 内联换成 account:（凭据走引擎
+登录态、overlay 不落 token）」此路不通，证据链：
+
+- 个人配置里的 `account:bigmodel-individual-coding-plan` 规则（带/不带
+  `group`+`api`、模型 ID 大写 `GLM-5.3*` 或小写 `glm-5.3*`）引擎**接受不拒**
+  （同文件 `custom:` 对照 provider 照常物化），但 `settings.model.available`
+  里 account: 条目**恒为 0**；
+- `session/setModel` 直指 `account:…/{GLM-5.3,glm-5.3}` 均 -32603
+  「Provider Registry 中不存在 Model」——引擎没把 account: provider 注册进
+  registry，与「provider/updateAccountConfig 对独立引擎不物化（桌面专用
+  路径，2026-09-18 实测）」互证；
+- env 直指真机桌面 `provider_config.json`（含桌面物化的 account: 规则）做
+  恒等测试同样 0 条 account 模型——排除 overlay 形状因素。
+- 夹具坑：个人配置副本 `modelConfigRules` 缺 `manualProviderModelRules`
+  字段 → **目录整体归零**（provisioning schema `.strict()`，连合法 custom:
+  provider 也不物化）。手工构造最小 fixture 必须带全该字段。
+- 推论：companion 套餐注入的 custom:+access 内联路径是唯一可用路径；
+  「token 不落盘」目标不能靠换 providerId 达成，需另行方案（见
+  5f87f79 无声回退 custom: 的历史疑点，本次探针补齐动机证据）。
+
 ### 新会话的初始模型（2026-09-20，probe-modeldefault.js 实测）
 
 - `session/create` 的初始模型 = **引擎全局持久化的「当前模型」**
