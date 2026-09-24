@@ -63,6 +63,12 @@ QR 由 companion 自己生成（mid/password/hash 自管），**不动正在运�
 - `-32601` Method not found
 - `-32602` Invalid params（data.name=ZodError，message 含完整 schema 差异提示）
 - `-32004` Session is not active（需先 resume/create）
+  - **双形态判别**（2026-09-23 引擎 respawn 事故实测，commit 312f5a6）：
+    引擎子进程崩溃 respawn 后内存会话清空，`session/resume` 与
+    `session/read` 对该会话报含 `"not found"` 片段的 -32004（全形未采集，
+    事故记录记为 "Session not found"）；桌面端占用/非活跃会话的实测文案
+    是 `"Session is not active"`（不含该片段）。前者须清残留视图退回列表
+    （缓存残影不是现状），后者按运行时单归属保留视口。
 - `-32022` Client request timed out（未应答服务端反向请求）
 
 ## 模型配置与认证（已解决，关键结论）

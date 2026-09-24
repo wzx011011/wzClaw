@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wzxclaw_android/models/chat_message.dart';
+import 'package:wzxclaw_android/zcode/zcode_model_heal.dart';
 import 'package:wzxclaw_android/zcode/zcode_reverse_models.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
@@ -1317,6 +1318,54 @@ void main() {
     });
   });
 
+  group('-32004 双形态：会话消失 vs 桌面端占用（2026-09-23 respawn 事故）', () {
+    // 判别口径（APP-SERVER.md -32004 双形态记录）：引擎 respawn 清内存后
+    // resume/read 回含 "not found" 片段的 -32004（全形未采集，commit
+    // 312f5a6 记录为 "Session not found"）；桌面占用/非活跃的实测文案是
+    // "Session is not active"。消失须清残留视图退回列表，占用保留视口。
+    test('resume 回会话消失文案：清残留视图退回列表 + 显式报错', () async {
+      final fake = FakeZcodeRelayClient();
+      fake.handlers['session/resume'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'Session not found');
+      final store = pairedStore(fake);
+
+      await store.openSession('sess-gone');
+      expect(store.activeSessionId, isNull); // 退回列表
+      expect(store.remoteActiveElsewhere, isFalse); // 不是桌面占用
+      expect(store.error, contains('引擎已重启'));
+      expect(store.isStreaming, isFalse);
+    });
+
+    test('session/read 探针回会话消失文案：同样清残留视图退回列表', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      // 第一次打开成功 → materialized=true，重开走 read 探测存活路径
+      await store.openSession('sess-gone2');
+      fake.handlers['session/read'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'Session not found');
+
+      await store.openSession('sess-gone2');
+      expect(store.activeSessionId, isNull); // 退回列表
+      expect(store.remoteActiveElsewhere, isFalse);
+      expect(store.error, contains('引擎已重启'));
+    });
+
+    test('session/read 探针回占用文案：保留视口按桌面占用呈现', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-busy2');
+      fake.handlers['session/read'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'Session is not active');
+
+      await store.openSession('sess-busy2');
+      expect(store.activeSessionId, 'sess-busy2'); // 视口保留
+      expect(store.remoteActiveElsewhere, isTrue);
+      expect(store.error, contains('桌面端运行'));
+    });
+  });
+
   group('同步层重构（P1.2）', () {
     test('单例：生产无参构造固定返回 app 作用域实例', () {
       final a = ZcodeChatStore();
@@ -2319,18 +2368,79 @@ void main() {
       expect(store.messages.last.isStreaming, isFalse); // 占位已终结
     });
 
-    test('模型兜底：无可用模型 → 提示原文拒绝', () async {
+    test('模型兜底：字符串 result 业务拒绝以实测常量全文进自愈链', () async {
+      // APP-SERVER.md「session/send 字符串 result 业务拒绝」实测唯一形态
+      // （kModelUnavailableRejection，与 zcode_model_heal_test 同源常量）：
+      // 全文等值匹配命中才进 setModel 自愈链；旧的宽松 contains('模型')
+      // 已删——会把未知含「模型」字样的拒绝误进自愈链
       final fake = FakeZcodeRelayClient();
       FakeSessionServer().bind(fake);
       final store = pairedStore(fake);
       await store.openSession('sess-m2');
-      fake.handlers['session/send'] = (_) => '历史任务使用的模型已不可用，请重新选择模型';
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-m2',
+            'patch': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {'providerId': 'p', 'modelId': 'm'},
+                  },
+                ],
+              },
+            },
+          },
+        ),
+      );
+      var sendCalls = 0;
+      fake.handlers['session/send'] = (_) {
+        sendCalls++;
+        return sendCalls == 1 ? kModelUnavailableRejection : {'accepted': true};
+      };
+      fake.handlers['session/setModel'] = (_) => {'ok': true};
 
       await store.sendMessage('hi');
-      expect(store.error, contains('模型已不可用'));
+      // 常量形态走兜底链：setModel 被请求 + 自愈重发被接受
+      expect(fake.requests.any((e) => e.key == 'session/setModel'), isTrue);
+      expect(sendCalls, 2);
+      expect(store.error, isNull);
+      expect(store.isStreaming, isTrue); // 重发被接受，回合在途（占位续用）
+    });
+
+    test('模型兜底：含「模型」字样但非常量的字符串拒绝不进自愈链', () async {
+      // 反向锚：只有实测常量全文才触发 setModel；其它字符串拒绝（哪怕
+      // 带「模型」字样）一律原文透传，不擅改桌面端会话配置
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      await store.openSession('sess-m2b');
+      store.debugHandleNotify(
+        const ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'sess-m2b',
+            'patch': {
+              'model': {
+                'available': [
+                  {
+                    'ref': {'providerId': 'p', 'modelId': 'm'},
+                  },
+                ],
+              },
+            },
+          },
+        ),
+      );
+      fake.handlers['session/send'] = (_) => '当前模型暂不支持该功能';
+      fake.handlers['session/setModel'] = (_) => {};
+
+      await store.sendMessage('hi');
+      expect(fake.requests.any((e) => e.key == 'session/setModel'), isFalse);
+      expect(store.error, contains('当前模型暂不支持该功能'));
       expect(store.isStreaming, isFalse);
       expect(store.messages.last.isStreaming, isFalse); // 占位已终结
-      expect(fake.requests.any((e) => e.key == 'session/setModel'), isFalse);
     });
 
     test('模型兜底：非模型类字符串拒绝不触发 setModel（避免擅改会话配置）', () async {
