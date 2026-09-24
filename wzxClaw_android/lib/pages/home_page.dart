@@ -4107,7 +4107,10 @@ class _ChatPageState extends State<ChatPage> {
       ('高', 'high', '平衡速度与推理深度，日常开发推荐'),
       ('最高', 'max', '最深入的推理，复杂任务适用、耗时更长'),
     ];
-    final current = _store.thoughtLevel;
+    // 回显数据源 = 选择数据源：新任务态档位暂存在页面 _pendingThoughtLevel
+    // （store 的 setter 在该态下 _activeState 为 null，是纯 no-op），
+    // 弹层回显必须读 pending——同权限模式弹层的既有范式
+    final current = _pendingThoughtLevel ?? _store.thoughtLevel;
     final chosen = await _showComposerSheet<String>(
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
@@ -4142,10 +4145,10 @@ class _ChatPageState extends State<ChatPage> {
     );
     if (chosen == null) return;
     if (sessionId == null) {
-      // 新任务态暂存：直接落到 store 状态，弹层勾选立即回显；
+      // 新任务态暂存在页面（同权限模式范式），弹层回显读 pending；
+      // 此分支下 store 的 thoughtLevel setter 必为 no-op，不写；
       // 会话创建后由 _startNewConversation 补发引擎
       setState(() => _pendingThoughtLevel = chosen);
-      _store.thoughtLevel = chosen;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
