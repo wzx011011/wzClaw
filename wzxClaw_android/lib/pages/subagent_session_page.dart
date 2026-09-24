@@ -61,37 +61,71 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
 
   bool get _isRunning => _detail?['phase'] == 'running';
 
+  /// 切节点守卫：debugRequester 注入（测试）时返回 null 跳过守卫；
+  /// 真路径返回当前连接代次快照
+  int? get _generationSnapshot => SubagentSessionPage.debugRequester != null
+      ? null
+      : ConnectionManager.instance.connectionGeneration;
+
+  /// await 返回后代次比对：漂移 = 在途期间已切节点，本次结果必须作废
+  bool _generationDrifted(int? generation) =>
+      generation != null &&
+      ConnectionManager.instance.connectionGeneration != generation;
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
   Future<void> _load() async {
-    final detail = await _fetchDetail();
+    final generation = _generationSnapshot;
+    final (detail, error) = await _fetchDetail();
     if (!mounted) return;
+    if (_generationDrifted(generation)) {
+      // 在途期间已切节点：旧节点的详情/错误不得写进新节点下的页面；
+      // 轮询同废（该会话归属旧节点，继续拉只会打在新节点上报错）
+      _stopPolling();
+      return;
+    }
     setState(() {
       _detail = detail;
       _loading = false;
-      _error = detail == null ? '未在 session/subagents 中找到该子任务' : null;
+      _error = error;
     });
     if (_isRunning) {
       _pollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) async {
         if (!mounted) return;
+        final gen = _generationSnapshot;
+        final (detail, error) = await _fetchDetail();
+        if (!mounted) return;
+        if (_generationDrifted(gen)) {
+          _stopPolling();
+          return;
+        }
         // 运行状态与时间线同拍刷新：任务结束必须收敛到终态并停表，
         // 不能永远显示「正在工作」（旧实现只重拉消息、不重拉状态）
-        final detail = await _fetchDetail();
-        if (!mounted) return;
-        if (detail != null) setState(() => _detail = detail);
-        if (_isRunning) {
-            } else {
-          _pollTimer?.cancel();
-          _pollTimer = null;
+        if (detail != null || error != null) {
+          setState(() {
+            if (detail != null) _detail = detail;
+            if (error != null) _error = error;
+          });
         }
+        if (!_isRunning) _stopPolling();
       });
     }
   }
 
-  Future<Map<String, dynamic>?> _fetchDetail() async {
+  /// 拉取子任务详情，返回 (详情, 错误文案)。详情为 null 时错误文案非 null
+  /// ——错误不再在 catch 里裸写状态：那会绕过 mounted/代次守卫，切节点后
+  /// 旧节点的错误会串号进新节点下的页面；改为交调用方在守卫内落盘。
+  Future<(Map<String, dynamic>?, String?)> _fetchDetail() async {
     try {
       final result = await _request('session/subagents', {
         'sessionId': widget.parentSessionId,
       });
-      if (result is! Map) return null;
+      if (result is! Map) {
+        return (null, '未在 session/subagents 中找到该子任务');
+      }
       for (final entry in {
         'running': result['running'],
         'ended': (result['ended'] is Map) ? (result['ended'] as Map)['items'] : null,
@@ -100,14 +134,13 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
         if (items is! List) continue;
         for (final item in items) {
           if (item is Map && item['toolCallId'] == widget.toolCallId) {
-            return {...item.cast<String, dynamic>(), 'phase': entry.key};
+            return ({...item.cast<String, dynamic>(), 'phase': entry.key}, null);
           }
         }
       }
-      return null;
+      return (null, '未在 session/subagents 中找到该子任务');
     } catch (e) {
-      _error = '加载失败：$e';
-      return null;
+      return (null, '加载失败：$e');
     }
   }
 

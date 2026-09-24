@@ -55,10 +55,19 @@ class NodeFsService {
     Map<String, dynamic>? params,
   ])? debugRequester;
 
-  Future<dynamic> _call(String method, [Map<String, dynamic>? params]) {
+  Future<dynamic> _call(String method, [Map<String, dynamic>? params]) async {
     final requester = debugRequester;
     if (requester != null) return requester(method, params);
-    return ConnectionManager.instance.zcodeRequest(method, params);
+    // 切节点守卫：zcodeRequest 只在调起瞬间校验连接，切节点后旧节点的
+    // 迟到响应若不拦截，会被当成新节点的结果串号写进 UI（目录树甚至
+    // 会指向另一台机器的文件系统）。发起前快照连接代次，await 返回后
+    // 比对，漂移即整体丢弃（同 GitService 范式）。
+    final generation = ConnectionManager.instance.connectionGeneration;
+    final r = await ConnectionManager.instance.zcodeRequest(method, params);
+    if (ConnectionManager.instance.connectionGeneration != generation) {
+      throw StateError('节点已切换，旧节点响应已丢弃');
+    }
+    return r;
   }
 
   /// 列举 [path] 的直接子目录；null/空 = 根模式（盘符 + 主目录）
