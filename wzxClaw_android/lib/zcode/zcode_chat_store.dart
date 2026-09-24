@@ -25,7 +25,8 @@
 // - 增量权威刷新：turn 结束后 session/messages {afterMessageId:
 //   水位} 只拉新增合并，替代每次重建 200 条；
 // - 模型兜底：session/send 的「模型已不可用」拒绝有两种送达形态
-//   （真机实测）——字符串 result 与错误帧 -32031；可用模型缓存来自
+//   （真机实测）——字符串 result（实测唯一形态，kModelUnavailableRejection
+//   全文等值匹配）与错误帧 -32031；可用模型缓存来自
 //   state.updated 补丁 + resume/read 的 settings.model.available；
 //   setModel 实测只接受对象 {providerId, modelId}（字符串被 -32602
 //   拒绝）；历史模型下线的旧会话 setModel 救不回（重发仍 -32031），
@@ -753,6 +754,43 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// -32004「会话消失」文案片段（2026-09-23 引擎 respawn 事故，commit
+  /// 312f5a6：resume 回 "Session not found"）。**全形未采集**（无原始帧
+  /// 记录），只钉经证实的片段；占用/非活跃场景的实测文案是
+  /// "Session is not active"（APP-SERVER.md 错误码节），不含该片段——
+  /// 双形态据此判别。
+  static const String _sessionGoneMessagePart = 'not found';
+
+  /// -32004 双形态判别：引擎 respawn 清内存后会话「消失」（须清残留视图
+  /// 退回列表）≠「桌面端占用」（运行时单归属，保留视口）。判别口径见
+  /// APP-SERVER.md -32004 双形态记录。
+  bool _isSessionGone(ZcodeRequestException e) =>
+      e.code == -32004 && e.message.contains(_sessionGoneMessagePart);
+
+  /// 会话消失的统一收尾（read 探针与 resume 主链共用）：缓存残影不是
+  /// 现状——清残留视图、退回列表、显式报错（312f5a6）。
+  void _failSessionGone(ZcodeSessionState state) {
+    state.remoteActiveElsewhere = false;
+    state.isStreaming = false;
+    state.isWaitingForResponse = false;
+    state.items.clear();
+    state.finalizeStreaming();
+    _activeSessionId = null;
+    _fail('引擎已重启：此会话未随引擎持久化，无法继续。'
+        '请在桌面端重新发起（原内容可在桌面端历史中查看）');
+  }
+
+  /// -32004 桌面端占用（运行时单归属）的统一呈现：保留视口 + 明确状态条，
+  /// 不报错回列表（read 探针与 resume 主链共用）。
+  void _markSessionOccupiedByDesktop(ZcodeSessionState state) {
+    state.remoteActiveElsewhere = true;
+    state.isStreaming = false;
+    state.isWaitingForResponse = false;
+    _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
+        '桌面端回合结束后点"刷新"查看结果';
+    notifyListeners();
+  }
+
   /// openSession 的恢复正文：缓存秒开 → resume → 订阅 → meta → 尾窗。
   /// 恢复中旗标与纪元由 openSession 统一管理，本方法只做数据与状态。
   Future<void> _openSessionRestoring(
@@ -784,27 +822,12 @@ class ZcodeChatStore extends ChangeNotifier {
       } catch (e) {
         if (!_viewportValid(sessionId, epoch)) return;
         if (e is ZcodeRequestException && e.code == -32004) {
-          // 引擎 respawn 后内存会话清空：resume 回「not found」≠ 桌面占用
-          //（2026-09-23 引擎崩溃事故实测）——残留视图必须显式报错退回列表，
-          // 不许把缓存残影当现状
-          final emsg = e.message;
-          if (emsg.contains('not found')) {
-            state.remoteActiveElsewhere = false;
-            state.isStreaming = false;
-            state.isWaitingForResponse = false;
-            state.items.clear();
-            state.finalizeStreaming();
-            _activeSessionId = null;
-            _fail('引擎已重启：此会话未随引擎持久化，无法继续。'
-                '请在桌面端重新发起（原内容可在桌面端历史中查看）');
+          // 双形态判别（2026-09-23 引擎崩溃事故）：会话消失 ≠ 桌面占用
+          if (_isSessionGone(e)) {
+            _failSessionGone(state);
             return;
           }
-          state.remoteActiveElsewhere = true;
-          state.isStreaming = false;
-          state.isWaitingForResponse = false;
-          _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
-              '桌面端回合结束后点"刷新"查看结果';
-          notifyListeners();
+          _markSessionOccupiedByDesktop(state);
           return;
         }
         state.materialized = false;
@@ -834,29 +857,14 @@ class ZcodeChatStore extends ChangeNotifier {
       } catch (e) {
         if (!_viewportValid(sessionId, epoch)) return; // 已切走：不惊动视口
         // 桌面端正在运行该会话（-32004，运行时单归属）：保留空视口 +
-        // 明确状态条，而不是报错回列表
+        // 明确状态条，而不是报错回列表；引擎 respawn 的会话消失形态
+        // 例外（_isSessionGone，清残留视图退回列表）
         if (e is ZcodeRequestException && e.code == -32004) {
-          // 引擎 respawn 后内存会话清空：resume 回「not found」≠ 桌面占用
-          //（2026-09-23 引擎崩溃事故实测）——残留视图必须显式报错退回列表，
-          // 不许把缓存残影当现状
-          final emsg = e.message;
-          if (emsg.contains('not found')) {
-            state.remoteActiveElsewhere = false;
-            state.isStreaming = false;
-            state.isWaitingForResponse = false;
-            state.items.clear();
-            state.finalizeStreaming();
-            _activeSessionId = null;
-            _fail('引擎已重启：此会话未随引擎持久化，无法继续。'
-                '请在桌面端重新发起（原内容可在桌面端历史中查看）');
+          if (_isSessionGone(e)) {
+            _failSessionGone(state);
             return;
           }
-          state.remoteActiveElsewhere = true;
-          state.isStreaming = false;
-          state.isWaitingForResponse = false;
-          _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
-              '桌面端回合结束后点"刷新"查看结果';
-          notifyListeners();
+          _markSessionOccupiedByDesktop(state);
           return;
         }
         if (state.items.isEmpty) {
@@ -1240,11 +1248,12 @@ class ZcodeChatStore extends ChangeNotifier {
         {'sessionId': sessionId, 'content': text},
       );
       if (result is String) {
-        // 业务拒绝（字符串 result，非 error 帧）。仅"模型不可用"类拒绝
-        // （APP-SERVER.md 实测记录的唯一形态）走 setModel 自动兜底；
-        // 其他字符串拒绝按原文提示，不擅自改桌面端会话配置
+        // 业务拒绝（字符串 result，非 error 帧）。仅实测常量全文
+        // （APP-SERVER.md 实测记录的唯一形态，kModelUnavailableRejection）
+        // 走 setModel 自动兜底——全文等值匹配，不做宽松 contains('模型')：
+        // 其它含「模型」字样的字符串拒绝按原文提示，不擅自改桌面端会话配置
         if (staleTurn()) return; // T2 已接管状态：丢弃本次迟到的拒绝
-        if (result.contains('模型')) {
+        if (result == kModelUnavailableRejection) {
           await _handleSendRejection(state, text, result, turnGen: turnGen);
         } else {
           state.isStreaming = false;

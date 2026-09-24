@@ -22,6 +22,14 @@ typedef ZcodeRequestFn = Future<dynamic> Function(
   Map<String, dynamic>? params,
 ]);
 
+/// session/send 字符串 result 业务拒绝的实测唯一形态（APP-SERVER.md
+/// 「session/send 字符串 result 业务拒绝」：新进程 resume 老会话、其存储
+/// 模型解析失败时出现）。全文等值匹配是进自愈链的唯一判据——宽松的
+/// contains('模型') 会把其它含「模型」字样的字符串拒绝误进自愈链
+/// （2026-09-24 协议嗅探清理；误分类方向安全：未知拒绝落原文透传）。
+const String kModelUnavailableRejection =
+    '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。';
+
 /// setModel + 重新物化 + 重发一次。
 ///
 /// [reasoningLevel]：imported 模型（Codex/DeepSeek 导入）setModel 必填

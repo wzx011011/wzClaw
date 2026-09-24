@@ -17,8 +17,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/zcode/zcode_model_heal.dart';
 
 void main() {
-  const unavailable =
-      '历史任务使用的模型已不可用，请从当前模型列表中选择一个可用模型后继续。';
+  // 实测常量唯一来源：zcode_model_heal.dart（ZcodeChatStore 同源引用）
+  const unavailable = kModelUnavailableRejection;
 
   /// 按 [script]（method → 响应/抛出）回放；调用序列记录进 [calls]，
   /// 请求参数记录进 [paramsOf]。同一 method 多次调用按列表顺序出队。
