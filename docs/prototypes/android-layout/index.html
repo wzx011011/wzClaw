@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wzxClaw Android · 底部输入区还原原型 V3（容器式 + 展开态）</title>
+<style>
+  :root {
+    --bg: #161616; --container: #232323; --container-border: #2e2e2e;
+    --text: #e6e6e6; --hint: #7d7d7d; --icon: #c2c2c2; --muted: #8a8a8a;
+    --shield: #e8a33d; --accent: #22c55e; --btn-light: #e8e8e8;
+    --pill-bg: #2a2a2a; --pill-border: #383838;
+    --pop-bg: #262626; --pop-border: #3a3a3a;
+    --blue: #4c8dff; --green: #22c55e; --purple: #a855f7; --orange: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d0d; font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif; color: #ddd; padding: 28px 16px 60px; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: #888; margin-bottom: 28px; line-height: 1.7; }
+  .gallery { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+
+  .phone { width: 360px; flex: 0 0 auto; background: var(--bg); border-radius: 24px; border: 1px solid #333; box-shadow: 0 8px 24px rgba(0,0,0,.5); overflow: hidden; }
+  .phone .caption { padding: 10px 14px; font-size: 13px; color: #aaa; background: #191919; border-bottom: 1px solid #2c2c2c; font-weight: 600; }
+  .screen { height: 420px; display: flex; flex-direction: column; position: relative; }
+  .msg-area { flex: 1; padding: 12px 14px; overflow: hidden; }
+
+  .bubble { max-width: 80%; padding: 8px 12px; border-radius: 14px; font-size: 13px; line-height: 1.55; margin-bottom: 8px; }
+  .bubble.user { background: #173627; color: #b9ecd3; margin-left: auto; border-bottom-right-radius: 4px; }
+  .bubble.bot  { background: #212121; border: 1px solid #2e2e2e; border-bottom-left-radius: 4px; color: #d6d6d6; }
+  .typing { display: inline-flex; gap: 4px; padding: 3px 0; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: #666; animation: blink 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,80%,100% { opacity: .25; } 40% { opacity: 1; } }
+
+  .err-card { margin: 2px 14px 8px; background: #2a1b1b; border: 1px solid #5a2e2e; border-radius: 12px; padding: 10px 12px; font-size: 12.5px; color: #e8c9c9; }
+  .err-card .t { color: #ff9d9d; font-weight: 600; margin-bottom: 3px; }
+  .err-card .row { display: flex; gap: 8px; margin-top: 9px; }
+  .err-card button { flex: 1; border: 0; border-radius: 8px; padding: 8px 0; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .err-card .primary { background: var(--accent); color: #06281a; }
+  .err-card .ghost   { background: #333; color: #ddd; }
+
+  .picker-row { display: flex; gap: 8px; padding: 8px 14px 6px; }
+  .picker-row.hidden { display: none; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; background: var(--pill-bg); border: 1px solid var(--pill-border); border-radius: 999px; padding: 7px 13px; font-size: 13px; color: #c9c9c9; font-weight: 500; white-space: nowrap; cursor: pointer; min-width: 0; }
+  .pill svg { flex: 0 0 auto; }
+  .pill .label { overflow: hidden; text-overflow: ellipsis; }
+  .pill.workspace { max-width: 175px; } .pill.branch { max-width: 120px; }
+
+  /* ===== 容器式输入区 ===== */
+  .composer { margin: 4px 12px 14px; background: var(--container); border: 1px solid var(--container-border); border-radius: 18px; padding: 13px 14px 10px; position: relative; }
+  .input-area { min-height: 22px; font-size: 14.5px; line-height: 1.5; color: var(--text); word-break: break-word; }
+  .input-area .hint { color: var(--hint); }
+  .toolbar { display: flex; align-items: center; margin-top: 14px; }
+  .tb { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; }
+  .spacer { flex: 1 1 auto; }
+  .icon-btn { width: 28px; height: 28px; border: 0; background: transparent; display: inline-flex; align-items: center; justify-content: center; color: var(--icon); cursor: pointer; border-radius: 8px; padding: 0; }
+  .icon-btn:active { background: rgba(255,255,255,.07); }
+  /* 权限模式：盾牌 + 模式名 + ⌄（激活橙色） */
+  .mode-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--shield); font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 2px; }
+  .mode-btn svg { flex: 0 0 auto; }
+  .mode-btn .chev { color: var(--shield); opacity: .8; }
+  /* 文字按钮（模型 / 档位） */
+  .txt-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: #d6d6d6; font-size: 13.5px; font-weight: 500; cursor: pointer; padding: 4px 2px; }
+  .txt-btn .chev { color: var(--muted); }
+  .txt-btn.sm { font-size: 13px; }
+  /* 发送 / 停止：浅色圆角方块 */
+  .send-btn { width: 30px; height: 30px; border: 0; border-radius: 9px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--btn-light); color: #1c1c1c; cursor: pointer; }
+  .send-btn svg { display: block; }
+  .meter { display: inline-flex; align-items: flex-end; gap: 3px; }
+  .meter .bar { width: 4px; height: 16px; border-radius: 2px; background: #3a3a3a; }
+  .meter .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-bottom: 1px; }
+
+  /* ===== 向上弹出的菜单 ===== */
+  .pop { position: absolute; bottom: calc(100% + 6px); background: var(--pop-bg); border: 1px solid var(--pop-border); border-radius: 14px; box-shadow: 0 14px 36px rgba(0,0,0,.55); padding: 6px; z-index: 40; }
+  .pop.left-plus { left: -6px; min-width: 230px; }
+  .pop.left-mode { left: 22px; min-width: 230px; }
+  .pop.right-model { right: -4px; min-width: 220px; }
+  .pop.right-effort { right: 30px; min-width: 130px; }
+  .pop.right-usage { right: -4px; width: 300px; padding: 0; }
+  .mi { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; font-size: 13px; color: #ddd; cursor: pointer; white-space: nowrap; }
+  .mi:hover, .mi.sel { background: #333; }
+  .mi svg { flex: 0 0 auto; color: var(--icon); }
+  .mi.sel svg { color: var(--shield); }
+  .mi .col { display: flex; flex-direction: column; white-space: normal; }
+  .mi .sub { font-size: 11px; color: #888; margin-top: 2px; }
+  .mi .check { margin-left: auto; color: var(--accent); }
+  .mi .kbd { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; border: 1px solid #4a4a4a; border-radius: 4px; font-size: 10.5px; color: #bbb; background: #1f1f1f; }
+  .msep { height: 1px; background: #3a3a3a; margin: 5px 8px; }
+  .mhead { padding: 8px 10px 4px; font-size: 12px; color: #888; display: flex; align-items: center; gap: 6px; }
+  .tag { font-size: 10px; color: #999; border: 1px solid #4a4a4a; border-radius: 4px; padding: 0 4px; }
+  .badge { font-size: 10px; color: #999; background: #333; border-radius: 4px; padding: 1px 4px; }
+  .mi .arrow { margin-left: auto; color: #777; }
+
+  /* ===== 用量面板 ===== */
+  .usec { padding: 12px 14px; }
+  .usec + .usec { border-top: 1px solid #333; }
+  .uhead { display: flex; justify-content: space-between; font-size: 12.5px; color: #ccc; margin-bottom: 8px; }
+  .uhead .v { color: #888; }
+  .ubar { height: 5px; border-radius: 3px; background: #3a3a3a; overflow: hidden; }
+  .ubar i { display: block; height: 100%; border-radius: 3px; }
+  .ulist { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .urow { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #bbb; }
+  .urow .d { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .urow .pct { margin-left: auto; color: #888; }
+  .quota { display: flex; gap: 14px; margin-top: 10px; }
+  .q { flex: 1; }
+  .q .n { font-size: 12px; color: #ccc; }
+  .q .v { font-size: 11px; color: #888; margin: 3px 0 5px; }
+  .q .v b { color: #ccc; font-weight: 600; }
+  .okrow { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: #ccc; }
+  .okrow .check { color: var(--accent); }
+
+  /* ---- 规格标注 ---- */
+  .spec { margin-top: 40px; background: #191919; border: 1px solid #2e2e2e; border-radius: 14px; padding: 20px 24px; max-width: 1150px; }
+  .spec h2 { font-size: 16px; margin-bottom: 12px; color: #eee; }
+  .spec table { border-collapse: collapse; width: 100%; font-size: 13px; color: #ccc; }
+  .spec th, .spec td { border: 1px solid #2e2e2e; padding: 7px 10px; text-align: left; vertical-align: top; }
+  .spec th { background: #202020; color: #eee; }
+  .spec code { background: #262626; padding: 1px 5px; border-radius: 4px; font-size: 12px; color: #b9ecd3; }
+</style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:0 auto 20px;padding:12px 16px;border:2px solid #ef4444;background:#2a1719;color:#fca5a5;font-weight:700;">HISTORICAL PROTOTYPE：此 Android 布局页面已归档，不代表当前实现或产品路线图。</div>
+
+<h1>wzxClaw Android · 底部输入区还原原型 V3（容器式 + 展开态）</h1>
+<p class="sub">
+  工具栏定稿：左「+ · 🛡完全访问 ⌄（激活橙）」；右「用量环 · GLM-5.3-Flash ⌄ · 🧠最高 ⌄ · 浅色方块 ↑」。生成中：提示「继续输入以排队后续修改」，↑ 变实心方块（停止），出现运行指示。<br>
+  D–H 为五个功能展开态：附加菜单、权限模式菜单、用量面板、模型菜单、思考档位菜单 —— 全部自工具栏向上弹出。工作区/分支胶囊为本 App 保留项（A/C 可见，生成与弹层态收起）。<br>
+  <b>窄屏收纳规则</b>：宽度不足时文字标签按「模型名 → 档位名 → 模式名」顺序收起为纯图标（模型→立方体、档位→大脑、盾牌不带文字），运行指示同时让位；图标与发送/停止永不移除（见 I/J）。
+</p>
+
+<div class="gallery">
+
+  <!-- A · 默认待输入 -->
+  <div class="phone">
+    <div class="caption">A · 默认待输入（空闲）</div>
+    <div class="screen">
+      <div class="msg-area">
+        <div class="bubble bot">已连接 NAS relay，工作区 E:\ai\wzxClaw。</div>
+      </div>
+      <div class="picker-row">
+        <span class="pill workspace">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="label">选择工作区</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+        <span class="pill branch">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4c0 4-6 3-9.5 5"/></svg>
+          <span class="label">分支</span>
+        </span>
+      </div>
+      <div class="composer">
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn" title="附加"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn" title="权限模式">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn" title="上下文用量">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg>
+            </button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm" title="思考档位">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn" title="发送">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B · 生成中 -->
+  <div class="phone">
+    <div class="caption">B · 生成中 · 排队输入</div>
+    <div class="screen">
+      <div class="msg-area">
+        <div class="bubble user">总结一下这条链路的失败模式</div>
+        <div class="bubble bot">失败模式方向：默认值的选择必须偏向「多等 / 多确认」……</div>
+      </div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="input-area"><span class="hint">继续输入以排队后续修改</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <span class="meter" title="运行中"><span class="bar"></span><span class="dot"></span></span>
+            <button class="send-btn" title="停止">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- C · 模型不可用 -->
+  <div class="phone">
+    <div class="caption">C · 历史会话模型不可用 → 可见报错 + 一键恢复</div>
+    <div class="screen">
+      <div class="msg-area">
+        <div class="bubble user">继续上次的任务</div>
+      </div>
+      <div class="err-card">
+        <div class="t">历史任务使用的模型已不可用</div>
+        已自动尝试恢复（resume → setModel → 重试）但未成功；你的消息已保留，不会丢失。
+        <div class="row">
+          <button class="primary">切换可用模型并重试</button>
+          <button class="ghost">新建会话</button>
+        </div>
+      </div>
+      <div class="picker-row">
+        <span class="pill workspace">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="label">wzxClaw</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+        <span class="pill branch">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4c0 4-6 3-9.5 5"/></svg>
+          <span class="label">分支</span>
+        </span>
+      </div>
+      <div class="composer">
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn" style="color:#ff9d9d">模型不可用
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- D · 附加菜单 -->
+  <div class="phone">
+    <div class="caption">D · 「+」附加菜单（向上弹出）</div>
+    <div class="screen">
+      <div class="msg-area" style="opacity:.35"><div class="bubble user">继续上次的任务</div></div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="pop left-plus">
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.5l-8.5 8.5a5.7 5.7 0 0 1-8-8L13 4.5a3.8 3.8 0 0 1 5.4 5.4L10 18.3a1.9 1.9 0 0 1-2.7-2.7l7.8-7.8"/></svg>
+            添加附件
+          </div>
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-4-4 4-4"/><path d="M5 10h8a5 5 0 0 1 5 5v1"/></svg>
+            使用 <span class="kbd">@</span> 添加上下文
+          </div>
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 15l6-6"/></svg>
+            使用 <span class="kbd">/</span> 选择能力
+          </div>
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M15 8.8c-.5-.8-1.6-1.3-3-1.3-1.7 0-2.8.8-2.8 1.9 0 2.6 6 1.3 6 4 0 1.2-1.2 2-3 2-1.5 0-2.7-.6-3.2-1.5M12 6v2.5M12 15.5V18"/></svg>
+            使用 <span class="kbd">$</span> 选择技能
+          </div>
+        </div>
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn" style="background:rgba(255,255,255,.1)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E · 权限模式菜单 -->
+  <div class="phone">
+    <div class="caption">E · 权限模式菜单（图标 + 名称 + 说明）</div>
+    <div class="screen">
+      <div class="msg-area" style="opacity:.35"><div class="bubble user">继续上次的任务</div></div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="pop left-mode">
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12m0-6.5v-1a1.5 1.5 0 0 1 3 0V12m0-5.5a1.5 1.5 0 0 1 3 0V12m0-3.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1c-2.5 0-4-1.2-5.4-3.2L4 15c-.8-1.2.9-2.8 2.2-1.8L8 14.5"/></svg>
+            <span class="col"><span>变更前确认</span><span class="sub">改文件前先问我。</span></span>
+          </div>
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4.5" stroke-linecap="round"/></svg>
+            <span class="col"><span>自动编辑</span><span class="sub">自动编辑文件。</span></span>
+          </div>
+          <div class="mi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="3"/><path d="M9 4.5V3h6v1.5"/><path d="M9 11h6M9 15h4"/></svg>
+            <span class="col"><span>计划模式</span><span class="sub">先输出计划。</span></span>
+          </div>
+          <div class="mi sel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+            <span class="col"><span>完全访问</span><span class="sub">减少确认次数。</span></span>
+            <span class="check">✓</span>
+          </div>
+        </div>
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn" style="background:rgba(232,163,61,.12); border-radius:8px; padding:4px 6px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- F · 用量面板 -->
+  <div class="phone">
+    <div class="caption">F · 用量面板（上下文 + 缓存 + 剩余额度）</div>
+    <div class="screen">
+      <div class="msg-area" style="opacity:.35"><div class="bubble user">继续上次的任务</div></div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="pop right-usage">
+          <div class="usec">
+            <div class="uhead"><span>上下文容量</span><span class="v">5万/100万（5%）</span></div>
+            <div class="ubar"><i style="width:5%;background:var(--blue)"></i></div>
+            <div class="ulist">
+              <div class="urow"><span class="d" style="background:var(--blue)"></span>MCP 工具<span class="pct">34.3%</span></div>
+              <div class="urow"><span class="d" style="background:#38bdf8"></span>系统工具<span class="pct">33.7%</span></div>
+              <div class="urow"><span class="d" style="background:#22d3ee"></span>消息<span class="pct">26.1%</span></div>
+              <div class="urow"><span class="d" style="background:#818cf8"></span>系统提示词<span class="pct">3.1%</span></div>
+              <div class="urow"><span class="d" style="background:#60a5fa"></span>技能<span class="pct">2.8%</span></div>
+              <div class="urow"><span class="d" style="background:#64748b"></span>其他<span class="pct">0%</span></div>
+            </div>
+          </div>
+          <div class="usec">
+            <div class="uhead"><span>平均缓存命中率</span><span class="v">89.8%</span></div>
+          </div>
+          <div class="usec">
+            <div class="okrow"><span>剩余额度</span><span class="check">✓</span></div>
+            <div class="quota">
+              <div class="q"><div class="n">5 小时</div><div class="v"><b>94%</b> · 19:10</div><div class="ubar"><i style="width:94%;background:var(--blue)"></i></div></div>
+              <div class="q"><div class="n">每周</div><div class="v"><b>61%</b> · 9月21日</div><div class="ubar"><i style="width:61%;background:var(--green)"></i></div></div>
+              <div class="q"><div class="n">工具调用</div><div class="v"><b>92%</b> · 9月21日</div><div class="ubar"><i style="width:92%;background:var(--purple)"></i></div></div>
+            </div>
+            <div class="uhead" style="margin:12px 0 6px"><span>ZCode MCP ⓘ</span><span class="v">100% · 9月17日</span></div>
+            <div class="ubar"><i style="width:100%;background:var(--orange)"></i></div>
+          </div>
+        </div>
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn" style="background:rgba(255,255,255,.1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- G · 模型菜单 -->
+  <div class="phone">
+    <div class="caption">G · 模型菜单（Provider 分组 + 管理入口）</div>
+    <div class="screen">
+      <div class="msg-area" style="opacity:.35"><div class="bubble user">继续上次的任务</div></div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="pop right-model">
+          <div class="mhead">BigModel <span class="tag">个人</span></div>
+          <div class="mi sel" style="color:#eee">GLM-5.3-Flash <span class="badge">默认</span><span class="check">✓</span></div>
+          <div class="mi">GLM-5.3</div>
+          <div class="mi">glm-5.3-highspeed</div>
+          <div class="msep"></div>
+          <div class="mi">DeepSeek <span class="arrow">›</span></div>
+          <div class="mi">Codex <span class="arrow">›</span></div>
+          <div class="mi">OpenRouter <span class="arrow">›</span></div>
+          <div class="msep"></div>
+          <div class="mi">管理模型</div>
+        </div>
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn" style="background:rgba(255,255,255,.08); border-radius:8px; padding:4px 6px;">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- H · 思考档位菜单 -->
+  <div class="phone">
+    <div class="caption">H · 思考档位菜单（低 / 高 / 最高）</div>
+    <div class="screen">
+      <div class="msg-area" style="opacity:.35"><div class="bubble user">继续上次的任务</div></div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="pop right-effort">
+          <div class="mi">低</div>
+          <div class="mi">高</div>
+          <div class="mi sel">最高<span class="check">✓</span></div>
+        </div>
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="mode-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg>
+              完全访问
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="txt-btn">GLM-5.3-Flash
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="txt-btn sm" style="background:rgba(255,255,255,.08); border-radius:8px; padding:4px 6px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+              最高
+              <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button class="send-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- I · 窄屏收纳 · 生成中（对齐截图：纯图标） -->
+  <div class="phone">
+    <div class="caption">I · 窄屏收纳 · 生成中（图标化，对齐截图）</div>
+    <div class="screen">
+      <div class="msg-area">
+        <div class="bubble user">总结一下这条链路的失败模式</div>
+        <div class="bubble bot">失败模式方向：默认值的选择必须偏向「多等 / 多确认」……</div>
+      </div>
+      <div class="picker-row hidden"></div>
+      <div class="composer">
+        <div class="input-area"><span class="hint">继续输入以排队后续修改</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn" title="附加"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn" title="权限模式：完全访问" style="color:var(--shield)">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M12 3v18" stroke-width="1.3" opacity=".55"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn" title="上下文用量"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="icon-btn" title="模型：GLM-5.3-Flash">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg>
+            </button>
+            <button class="icon-btn" title="思考档位：最高">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+            </button>
+            <button class="send-btn" title="停止">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- J · 窄屏收纳 · 空闲 -->
+  <div class="phone">
+    <div class="caption">J · 窄屏收纳 · 空闲（纯图标 + ↑发送）</div>
+    <div class="screen">
+      <div class="msg-area">
+        <div class="bubble bot">已连接 NAS relay，工作区 E:\ai\wzxClaw。</div>
+      </div>
+      <div class="picker-row">
+        <span class="pill workspace">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="label">选择工作区</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+        <span class="pill branch">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4c0 4-6 3-9.5 5"/></svg>
+          <span class="label">分支</span>
+        </span>
+      </div>
+      <div class="composer">
+        <div class="input-area"><span class="hint">提出后续修改要求</span></div>
+        <div class="toolbar">
+          <span class="tb">
+            <button class="icon-btn" title="附加"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn" title="权限模式：完全访问" style="color:var(--shield)">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M12 3v18" stroke-width="1.3" opacity=".55"/></svg>
+            </button>
+          </span>
+          <span class="spacer"></span>
+          <span class="tb">
+            <button class="icon-btn" title="上下文用量"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 5.5"><circle cx="12" cy="12" r="8"/></svg></button>
+            <button class="icon-btn" title="模型：GLM-5.3-Flash">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg>
+            </button>
+            <button class="icon-btn" title="思考档位：最高">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.2a6.4 6.4 0 0 0-6.3 6.4c0 1.5-.6 2.5-1.4 3.5-.5.7 0 1.5.8 1.5H8v2.2a1.8 1.8 0 0 0 1.8 1.8H10v3h6.4v-4.1c2.1-1.2 3.6-3.4 3.6-6.2a7.4 7.4 0 0 0-6.5-8.1z"/></svg>
+            </button>
+            <button class="send-btn" title="发送">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="spec">
+  <h2>还原规格 V3（Flutter 落地依据）</h2>
+  <table>
+    <tr><th>区域</th><th>规格</th><th>说明</th></tr>
+    <tr><td>容器</td><td><code>margin 12 · radius 18 · padding 14/14/10 · bg #232323 · border #2E2E2E</code></td><td>单容器包住输入与工具栏。</td></tr>
+    <tr><td>工具栏左组</td><td><code>+ 20dp</code>；盾牌为「图标 + 模式名 + ⌄」文字按钮，激活 <code>#E8A33D</code></td><td>点开权限菜单：变更前确认 / 自动编辑 / 计划模式 / 完全访问，各带说明，当前项 ✓。</td></tr>
+    <tr><td>工具栏右组</td><td>用量环 16dp（虚线圆）· 模型文字 13.5 · 「🧠 档位 ⌄」13 · 发送 <code>30×30 r9 浅色方块</code></td><td>空闲 ↑ 箭头；生成中 ↑→实心方块（停止）并出现「▎●」运行指示；不再放麦克风。</td></tr>
+    <tr><td>「+」菜单</td><td>向上弹出；添加附件 / 使用 <code>@</code> 添加上下文 / 使用 <code>/</code> 选择能力 / 使用 <code>$</code> 选择技能</td><td>@、/、$ 以 kbd 小徽章呈现。</td></tr>
+    <tr><td>用量面板</td><td><code>宽 300 · 右对齐</code>；上下文容量（总量+分项占比）、平均缓存命中率、剩余额度（5 小时/每周/工具调用/ZCode MCP 彩条）</td><td>数据来源：app-server 实测上下文与计费接口；无数据项如实显示「暂不可用」。</td></tr>
+    <tr><td>模型菜单</td><td>Provider 分组（BigModel 个人 + 徽章）→ 模型列表（当前 ✓ + 默认徽章）→ 其他 Provider「›」→ 管理模型</td><td>仅列 <code>settings.model.available</code> 实测可用项；历史失效模型只读标注，不可选中。</td></tr>
+    <tr><td>档位菜单</td><td>低 / 高 / 最高，当前项 ✓</td><td>映射 app-server 支持的 reasoning 档位；未支持的档位不显示。</td></tr>
+    <tr><td>模型不可用</td><td>会话内错误卡片 + 模型按钮变红「模型不可用 ⌄」</td><td>自动恢复失败必现卡片：「切换可用模型并重试 / 新建会话」。</td></tr>
+    <tr><td>窄屏收纳</td><td>宽度不足时按「模型名 → 档位名 → 模式名」顺序收起为纯图标（模型→立方体、档位→大脑、盾牌→纯盾），运行指示同时让位</td><td>图标组与发送/停止永不移除，输入区最小宽度优先；Flutter 用 <code>LayoutBuilder</code> 断点切换文字/图标两态。</td></tr>
+    <tr><td>工作区/分支</td><td>容器上方胶囊行；生成中与弹层态收起</td><td>本 App 保留项；工作区 <code>maxWidth 175</code>、分支 <code>maxWidth 120</code> 超长省略。</td></tr>
+  </table>
+</div>
+
+</body>
+</html>

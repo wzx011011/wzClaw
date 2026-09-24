@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wzxclaw_android/config/app_colors.dart';
-import 'package:wzxclaw_android/services/chat_store.dart';
+import 'package:wzxclaw_android/zcode/zcode_reverse_models.dart';
 import 'package:wzxclaw_android/widgets/ask_user_bar.dart';
 
 Widget wrapWithTheme(Widget child) {
@@ -11,35 +11,66 @@ Widget wrapWithTheme(Widget child) {
   );
 }
 
+AskUserBar buildQuestion({
+  required String requestId,
+  required List<AskUserQuestionItem> questions,
+  String? sessionId,
+}) {
+  return AskUserBar(
+    question: AskUserQuestion(
+      requestId: requestId,
+      questions: questions,
+      sessionId: sessionId,
+    ),
+  );
+}
+
 void main() {
   group('AskUserBar', () {
-    testWidgets('renders question text', (tester) async {
+    testWidgets('单题：渲染题干与提交/取消按钮', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-1',
-            question: 'Which approach do you prefer?',
-            options: [],
-          ),
+        buildQuestion(
+          requestId: 'req-1',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Which approach do you prefer?',
+              header: 'Which approach do you prefer?',
+              options: [],
+            ),
+          ],
         ),
-      ));
+      ),);
 
       expect(find.text('Which approach do you prefer?'), findsOneWidget);
+      expect(find.text('需要你的确认'), findsOneWidget);
+      expect(find.text('提交'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
     });
 
-    testWidgets('renders option cards for single select', (tester) async {
+    testWidgets('单选：渲染选项 label 与 description', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-2',
-            question: 'Pick one:',
-            options: [
-              {'label': 'Option A', 'description': 'First choice'},
-              {'label': 'Option B', 'description': 'Second choice'},
-            ],
-          ),
+        buildQuestion(
+          requestId: 'req-2',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Pick one:',
+              header: 'Pick one:',
+              options: [
+                AskUserOption(
+                  value: 'a',
+                  label: 'Option A',
+                  description: 'First choice',
+                ),
+                AskUserOption(
+                  value: 'b',
+                  label: 'Option B',
+                  description: 'Second choice',
+                ),
+              ],
+            ),
+          ],
         ),
-      ));
+      ),);
 
       expect(find.text('Option A'), findsOneWidget);
       expect(find.text('Option B'), findsOneWidget);
@@ -47,71 +78,129 @@ void main() {
       expect(find.text('Second choice'), findsOneWidget);
     });
 
-    testWidgets('renders multi-select with checkbox icons', (tester) async {
+    testWidgets('多选：勾选框图标渲染', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-3',
-            question: 'Select all:',
-            options: [
-              {'label': 'Feature 1', 'description': ''},
-              {'label': 'Feature 2', 'description': ''},
-            ],
-            multiSelect: true,
-          ),
+        buildQuestion(
+          requestId: 'req-3',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Select all:',
+              header: 'Select all:',
+              multiSelect: true,
+              options: [
+                AskUserOption(value: 'f1', label: 'Feature 1'),
+                AskUserOption(value: 'f2', label: 'Feature 2'),
+              ],
+            ),
+          ],
         ),
-      ));
+      ),);
 
       expect(find.text('Feature 1'), findsOneWidget);
       expect(find.text('Feature 2'), findsOneWidget);
-      // Multi-select uses Icons.check_box_outline_blank (unchecked)
+      // 多选 = 勾选框；未勾选状态为 outline
       expect(find.byIcon(Icons.check_box_outline_blank), findsNWidgets(2));
-      expect(find.text('可多选'), findsOneWidget);
     });
 
-    testWidgets('renders Other option', (tester) async {
+    testWidgets('无选项题：渲染自由文本输入框', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-4',
-            question: 'Choose:',
-            options: [
-              {'label': 'Yes', 'description': ''},
-            ],
-          ),
+        buildQuestion(
+          requestId: 'req-4',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Describe the change:',
+              header: 'Describe the change:',
+              options: [],
+            ),
+          ],
         ),
-      ));
+      ),);
 
-      expect(find.text('补充回答...'), findsOneWidget);
+      expect(find.text('Describe the change:'), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text('输入回答…'), findsOneWidget);
     });
 
-    testWidgets('renders with empty options list', (tester) async {
+    testWidgets('多题：全部题目按序渲染，标题带题数', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-5',
-            question: 'Enter your answer:',
-            options: [],
-          ),
+        buildQuestion(
+          requestId: 'req-5',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Q1 text',
+              header: 'Q1 header',
+              options: [AskUserOption(value: 'x', label: 'X')],
+            ),
+            AskUserQuestionItem(
+              question: 'Q2 text',
+              header: 'Q2 header',
+              options: [AskUserOption(value: 'y', label: 'Y')],
+            ),
+          ],
         ),
-      ));
+      ),);
 
-      expect(find.text('Enter your answer:'), findsOneWidget);
-      expect(find.text('补充回答...'), findsOneWidget);
+      expect(find.text('需要你的回答（2 题）'), findsOneWidget);
+      expect(find.text('Q1 header'), findsOneWidget);
+      expect(find.text('Q2 header'), findsOneWidget);
     });
 
-    testWidgets('renders Question header', (tester) async {
+    testWidgets('单选点选：切换选中态', (tester) async {
       await tester.pumpWidget(wrapWithTheme(
-        AskUserBar(
-          question: AskUserQuestion(
-            questionId: 'q-6',
-            question: 'Test?',
-            options: [],
-          ),
+        buildQuestion(
+          requestId: 'req-6',
+          questions: const [
+            AskUserQuestionItem(
+              question: 'Pick:',
+              header: 'Pick:',
+              options: [
+                AskUserOption(value: 'a', label: 'A'),
+                AskUserOption(value: 'b', label: 'B'),
+              ],
+            ),
+          ],
         ),
-      ));
+      ),);
 
-      expect(find.text('需要你的确认'), findsOneWidget);
+      // 未选：radio_button_off；点选 A 后变 radio_button_checked
+      expect(find.byIcon(Icons.radio_button_off), findsNWidgets(2));
+      await tester.tap(find.text('A'));
+      await tester.pump();
+      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+      expect(find.byIcon(Icons.radio_button_off), findsOneWidget);
+    });
+
+    testWidgets('零作答禁用提交；自由文本输入后解锁（二轮 P1 回归锚）',
+        (tester) async {
+      await tester.pumpWidget(wrapWithTheme(
+        buildQuestion(
+          requestId: 'req-7',
+          questions: const [
+            // 无选项 = 纯自由文本题（官方 prompt 模式的解析产物）
+            AskUserQuestionItem(
+              question: 'Describe:',
+              header: 'Describe:',
+              options: [],
+            ),
+          ],
+        ),
+      ),);
+
+      TextButton submitButton() => tester.widget<TextButton>(
+            find.ancestor(
+              of: find.text('提交'),
+              matching: find.byType(TextButton),
+            ),
+          );
+
+      // 未作答：提交禁用（onPressed 为 null）
+      expect(submitButton().onPressed, isNull);
+
+      // 输入自由文本：监听触发重建，提交解锁（旧实现打字不触发 setState，
+      // 按钮永久禁死——纯自由文本题无任何重建触发点）
+      await tester.enterText(find.byType(TextField), 'my answer');
+      await tester.pump();
+      expect(submitButton().onPressed, isNotNull);
     });
   });
 }

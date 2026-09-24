@@ -1,0 +1,551 @@
+{
+  "tmpCwd": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-yad0N5",
+  "mode": "edit",
+  "create": {
+    "ok": true,
+    "session": {
+      "createdAt": 1789349073483,
+      "mode": "build",
+      "model": {
+        "modelId": "glm-5.3",
+        "providerId": "builtin:bigmodel-coding-plan"
+      },
+      "traceId": "08ef3ba5-eb56-4073-af85-7de7e8614455",
+      "sessionId": "sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e",
+      "sessionKind": "interactive",
+      "status": "idle",
+      "target": null,
+      "title": "",
+      "updatedAt": 1789349073483,
+      "workspace": {
+        "workspacePath": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-yad0N5",
+        "workspaceKey": "C:_Users_67376_AppData_Local_Temp_zcode-probe-toolturn-yad0N5"
+      }
+    }
+  },
+  "subscribe": {
+    "ok": true,
+    "eventSeq": 0
+  },
+  "setMode": {
+    "ok": true,
+    "resp": {
+      "messages": [],
+      "projection": {
+        "activeToolCalls": [],
+        "backgroundJobs": [],
+        "contextUsed": 0,
+        "contextWindow": 1000000,
+        "mode": "build",
+        "pendingPermissions": [],
+        "sessionId": "unknown",
+        "status": "idle",
+        "target": null,
+        "totalTokenCount": 0,
+        "turnCount": 0
+      },
+      "protocol": {
+        "name": "ZCode Protocol",
+        "version": 1
+      },
+      "runtime": {
+        "deliveryKind": "web-remote-replayable",
+        "eventSeq": 0,
+        "pendingRequestIds": [],
+        "goalVerifications": [],
+        "goalVerificationTimeline": [],
+        "stateRevision": 1
+      },
+      "session": {
+        "createdAt": 1789349073483,
+        "mode": "build",
+        "model": {
+          "modelId": "glm-5.3",
+          "providerId": "builtin:bigmodel-coding-plan"
+        },
+        "traceId": "08ef3ba5-eb56-4073-af85-7de7e8614455",
+        "sessionId": "sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e",
+        "sessionKind": "interactive",
+        "status": "idle",
+        "target": null,
+        "title": "",
+        "updatedAt": 1789349073483,
+        "workspace": {
+          "workspacePath": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-yad0N5",
+          "workspaceKey": "C:_Users_67376_AppData_Local_Temp_zcode-probe-toolturn-yad0N5"
+        }
+      },
+      "settings": {
+        "mode": {
+          "current": "edit"
+        },
+        "model": {
+          "available": [
+            {
+              "contextWindow": 1000000,
+              "label": "glm-5.3",
+              "providerLabel": "BigModel",
+              "ref": {
+                "modelId": "glm-5.3",
+                "providerId": "builtin:bigmodel-coding-plan"
+              }
+            }
+          ],
+          "current": {
+            "modelId": "glm-5.3",
+            "providerId": "builtin:bigmodel-coding-plan"
+          },
+          "lastUsed": {
+            "modelId": "glm-5.3",
+            "providerId": "builtin:bigmodel-coding-plan"
+          }
+        },
+        "permission": {
+          "mode": "edit"
+        },
+        "thoughtLevel": {
+          "available": [
+            {
+              "label": "low",
+              "value": "low"
+            },
+            {
+              "label": "high",
+              "value": "high"
+            },
+            {
+              "label": "max",
+              "value": "max"
+            }
+          ],
+          "current": "high",
+          "defaultLevel": "max",
+          "enabled": true
+        }
+      },
+      "slashCommands": [
+        {
+          "description": "Show or set the current session goal.",
+          "inputHint": "/goal [pause|resume|clear|replace <objective>|<objective>]",
+          "name": "goal",
+          "source": "builtin"
+        },
+        {
+          "description": "Compact the current conversation with optional instructions.",
+          "inputHint": "/compact [instructions]",
+          "name": "compact",
+          "source": "builtin"
+        },
+        {
+          "description": "Create or update workspace AGENTS.md instructions.",
+          "inputHint": "/init [notes]",
+          "name": "init",
+          "source": "builtin"
+        },
+        {
+          "description": "Switch to Plan mode and optionally send a task.",
+          "inputHint": "/plan [task]",
+          "name": "plan",
+          "source": "builtin"
+        }
+      ],
+      "todos": [],
+      "todoGroups": []
+    }
+  },
+  "experiments": [
+    {
+      "label": "result-empty-object",
+      "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1",
+      "done": true,
+      "stoppedForSafety": false,
+      "sendResp": true,
+      "sawReverseRequest": true,
+      "permissionEvents": [
+        "{\"requestId\":\"perm_a88117e4-ea8b-48e6-96ab-30064ec1a58e\",\"toolCallId\":\"call_a452374bf0eb48a097076406\",\"toolName\":\"Bash\",\"riskLevel\":\"high\",\"reason\":\"High risk tools require explicit approval\",\"input\":{\"command\":\"printf 'B' > probe-b.txt\",\"description\":\"Write B to probe-b.txt\"},\"suggestedPermissionUpdates\":[{\"behavior\":\"allow\",\"rules\":[{\"ruleContent\":\"printf 'B' > probe-b.txt\",\"toolName\":\"Bash\"}],\"type\":\"addRules\"}],\"options\":[{\"kind\":\"allow_once\",\"name\":\"Allow once\",\"optionId\":\"allow_once\",\"response\":{\"decision\":\"allow\",\"reason\":\"Approved once\"}},{\"description\":\"Do not ask again for matching requests in this project\",\"kind\":\"allow_always\",\"name\":\"Always allow in this project\",\"optionId\":\"all",
+        "{\"requestId\":\"perm_a88117e4-ea8b-48e6-96ab-30064ec1a58e\",\"toolCallId\":\"call_a452374bf0eb48a097076406\",\"decision\":\"deny\",\"reason\":\"Permission request failed\"}"
+      ],
+      "turnCompletedPayload": "{\"response\":\"执行被拒绝了：`printf 'B' > probe-b.txt` 这条命令的权限请求失败（我重试了一次，同样被拒），所以文件没有创建。如果这是误拒，请调整权限模式或手动执行该命令。\",\"tokenCount\":41653,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":3,\"inputTokens\":41532,\"outputTokens\":121,\"totalTokens\":41653,\"cacheReadTokens\":39296,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":2,\"historyRoundCount\":3,\"duration\":13643",
+      "stderrNew": [],
+      "eventsThisTurn": [
+        "session.titleUpdated",
+        "turn.started",
+        "session.updated",
+        "model.streaming",
+        "tool.updated",
+        "permission.requested",
+        "permission.resolved",
+        "streamRecovery.updated",
+        "turn.completed"
+      ]
+    }
+  ],
+  "reverseRequests": [
+    {
+      "at": 1789349084399,
+      "id": "server-3",
+      "method": "interaction/requestPermission",
+      "params": {
+        "input": {
+          "command": "printf 'B' > probe-b.txt",
+          "description": "Write B to probe-b.txt"
+        },
+        "reason": "High risk tools require explicit approval",
+        "requestId": "perm_3b5ce0f3-5a30-4285-a328-2baadd6494c2",
+        "riskLevel": "high",
+        "sessionId": "sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e",
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once",
+            "response": {
+              "decision": "allow",
+              "reason": "Approved once"
+            }
+          },
+          {
+            "description": "Do not ask again for matching requests in this project",
+            "kind": "allow_always",
+            "name": "Always allow in this project",
+            "optionId": "allow_project",
+            "response": {
+              "decision": "allow",
+              "permissionUpdates": [
+                {
+                  "behavior": "allow",
+                  "rules": [
+                    {
+                      "ruleContent": "printf 'B' > probe-b.txt",
+                      "toolName": "Bash"
+                    }
+                  ],
+                  "type": "addRules"
+                }
+              ],
+              "reason": "Approved for this project"
+            }
+          },
+          {
+            "kind": "deny",
+            "name": "Deny",
+            "optionId": "deny",
+            "response": {
+              "decision": "deny",
+              "reason": "Denied"
+            }
+          }
+        ],
+        "toolCallId": "call_f125cc38080a4df6b0506c94",
+        "toolName": "Bash",
+        "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1"
+      },
+      "replied": {
+        "result": {}
+      },
+      "followups": [],
+      "phase": "exp-result-empty-object"
+    },
+    {
+      "at": 1789349086184,
+      "id": "server-4",
+      "method": "interaction/requestPermission",
+      "params": {
+        "input": {
+          "command": "printf 'B' > probe-b.txt",
+          "description": "Write B to probe-b.txt"
+        },
+        "reason": "High risk tools require explicit approval",
+        "requestId": "perm_a88117e4-ea8b-48e6-96ab-30064ec1a58e",
+        "riskLevel": "high",
+        "sessionId": "sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e",
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once",
+            "response": {
+              "decision": "allow",
+              "reason": "Approved once"
+            }
+          },
+          {
+            "description": "Do not ask again for matching requests in this project",
+            "kind": "allow_always",
+            "name": "Always allow in this project",
+            "optionId": "allow_project",
+            "response": {
+              "decision": "allow",
+              "permissionUpdates": [
+                {
+                  "behavior": "allow",
+                  "rules": [
+                    {
+                      "ruleContent": "printf 'B' > probe-b.txt",
+                      "toolName": "Bash"
+                    }
+                  ],
+                  "type": "addRules"
+                }
+              ],
+              "reason": "Approved for this project"
+            }
+          },
+          {
+            "kind": "deny",
+            "name": "Deny",
+            "optionId": "deny",
+            "response": {
+              "decision": "deny",
+              "reason": "Denied"
+            }
+          }
+        ],
+        "toolCallId": "call_a452374bf0eb48a097076406",
+        "toolName": "Bash",
+        "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1"
+      },
+      "replied": {
+        "result": {}
+      },
+      "followups": [
+        "{\"id\":\"server-4\",\"method\":\"interaction/requestPermission\",\"params\":{\"input\":{\"command\":\"printf 'B' > probe-b.txt\",\"description\":\"Write B to probe-b.txt\"},\"reason\":\"High risk tools require explicit approval\",\"requestId\":\"perm_a88117e4-ea8b-48e6-96ab-30064ec1a58e\",\"riskLevel\":\"high\",\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"options\":[{\"kind\":\"allow_once\",\"name\":\"Allow once\",\"optionId\":\"allow_once\",\"response\":{\"decision\":\"allow\",\"reason\":\"Approved once\"}},{\"description\":\"Do not ask a"
+      ],
+      "phase": "exp-result-empty-object"
+    }
+  ],
+  "eventByType": {
+    "session.titleUpdated": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"2b1e1d17-5471-44a9-b364-eca6b90d40fd\",\"payload\":{\"previousTitle\":\"\",\"source\":\"first_input\",\"title\":\"用 Bash 工具执行命令：printf 'B' > probe-b.txt（必须调用工具）。\"},\"seq\":1,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349075472,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"session.titleUpdated\"}}"
+    },
+    "turn.started": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"6798b94a-4bea-4e47-ad62-b33d74c0740f\",\"payload\":{\"turnNumber\":0,\"input\":\"用 Bash 工具执行命令：printf 'B' > probe-b.txt（必须调用工具）。\",\"messageId\":\"msg_mu0k8n0o_c18314f6-4726-40ca-bd1e-6bbad4280d37\",\"foregroundExecutionId\":\"runtime_command_1\",\"queryId\":\"query_3889f2f1-cb97-4e65-ad1d-bc628b81af0b\"},\"seq\":2,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349075592,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"turn.started\"}}"
+    },
+    "session.updated": {
+      "count": 12,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"468aeea3-0399-4eef-8094-60022d13002a\",\"payload\":{\"messageCount\":6,\"model\":\"builtin:bigmodel-coding-plan/glm-5.3\",\"modelRef\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\"},\"toolCount\":24,\"iteration\":0},\"seq\":3,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349076736,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"session.updated\"}}"
+    },
+    "model.streaming": {
+      "count": 14,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"65099246-ee58-4fd8-a41c-9433d3be2284\",\"payload\":{\"assistantMessageId\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f\",\"delta\":\"\",\"done\":false,\"kind\":\"tool_input_start\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"toolName\":\"Bash\"},\"seq\":6,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349084305,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"model.streaming\"}}"
+    },
+    "tool.updated": {
+      "count": 4,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"1c83f560-3b03-48d6-8b46-2ff9ef0cb04c\",\"payload\":{\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"assistantMessageId\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f\",\"toolName\":\"Bash\",\"dependencies\":[],\"parallelGroupIndex\":0,\"canRunParallel\":false,\"schedule\":{\"parallelGroups\":[[\"call_f125cc38080a4df6b0506c94\"]],\"executionOrder\":[\"call_f125cc38080a4df6b0506c94\"]},\"kind\":\"scheduled\",\"inputByteLength\":77,\"inputOmitted\":true,\"inputRef\":\"model_stream\"},\"seq\":12,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349084375,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"tool.updated\"}}"
+    },
+    "permission.requested": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"a942e76b-5733-4787-9fc0-aac10f06dc60\",\"payload\":{\"requestId\":\"perm_3b5ce0f3-5a30-4285-a328-2baadd6494c2\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"toolName\":\"Bash\",\"riskLevel\":\"high\",\"reason\":\"High risk tools require explicit approval\",\"input\":{\"command\":\"printf 'B' > probe-b.txt\",\"description\":\"Write B to probe-b.txt\"},\"suggestedPermissionUpdates\":[{\"behavior\":\"allow\",\"rules\":[{\"ruleContent\":\"printf 'B' > probe-b.txt\",\"toolName\":\"Bash\"}],\"type\":\"addRules\"}],\"options\":[{\"kind\":\"allow_once\",\"name\":\"Allow once\",\"optionId\":\"allow_once\",\"response\":{\"decision\":\"allow\",\"reason\":\"Approved once\"}},{\"description\":\"Do not ask again for matching requests in this project\",\"kind\":\"allow_always\",\"name\":\"Always allow in this project\",\"optionId\":\"allow_project\",\"response\":{\"decision\":\"allow\",\"permissionUpdates\":[{\""
+    },
+    "permission.resolved": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"63382379-6994-4d6e-9514-4c3b5214f1de\",\"payload\":{\"requestId\":\"perm_3b5ce0f3-5a30-4285-a328-2baadd6494c2\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"decision\":\"deny\",\"reason\":\"Permission request failed\"},\"seq\":14,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349084404,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"permission.resolved\"}}"
+    },
+    "streamRecovery.updated": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"10e169b5-dadf-4c0f-9c9a-d97d52069bc3\",\"payload\":{\"anchorId\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f:call_f125cc38080a4df6b0506c94:tool-result\",\"attemptId\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f:end-of-stream\",\"kind\":\"tool_error\",\"assistantMessageId\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"toolName\":\"Bash\",\"resultPartId\":\"part_mu0k8tse_4bc61162-b5a4-4d90-b553-96d31d23945a\",\"committedToolCallIds\":[\"call_f125cc38080a4df6b0506c94\"],\"committedAt\":\"2026-09-14T01:24:44.408Z\"},\"seq\":16,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349084418,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"streamRecovery.updated\"}}"
+    },
+    "turn.completed": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"4119515e-eebc-4167-83a1-a9b845d1d0d2\",\"payload\":{\"response\":\"执行被拒绝了：`printf 'B' > probe-b.txt` 这条命令的权限请求失败（我重试了一次，同样被拒），所以文件没有创建。如果这是误拒，请调整权限模式或手动执行该命令。\",\"tokenCount\":41653,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":3,\"inputTokens\":41532,\"outputTokens\":121,\"totalTokens\":41653,\"cacheReadTokens\":39296,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":2,\"historyRoundCount\":3,\"duration\":13643,\"resultType\":\"success\",\"cacheStats\":{\"totalMessages\":11,\"cachedMessages\":10,\"lastCacheHit\":true,\"cacheReadTokens\":13824}},\"seq\":40,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"timestamp\":1789349088693,\"traceId\":\"08ef3ba5-eb56-4073-af85-7de7e8614455\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"type\":\"turn.completed\"}}"
+    }
+  },
+  "telemetryByKind": {
+    "turn.started": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"6798b94a-4bea-4e47-ad62-b33d74c0740f\",\"eventSeq\":2,\"occurredAt\":1789349075592,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"turn.started\"}}"
+    },
+    "model.request.status": {
+      "count": 8,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"4bc241a1-dc26-4c10-b1b3-8eb4f730962a\",\"eventSeq\":4,\"occurredAt\":1789349075723,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"model.request.status\",\"requestId\":\"4f81eb59-9ad7-4ece-8430-7a79f4a692d2\",\"status\":\"model_request_started\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"transport\":\"http\",\"querySource\":\"session_title\",\"queryId\":\"query_3889f2f1-cb97-4e65-ad1d-bc628b81af0b\",\"a"
+    },
+    "usage.delta": {
+      "count": 3,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"85b17776-c838-4af6-8d19-b7cac1ee1ea1\",\"eventSeq\":17,\"occurredAt\":1789349084359,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"usage.delta\",\"requestId\":\"8cff4103-7203-42d9-9796-d6a01a9908d0\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"inputTokens\":13807,\"outputTokens\":30,\"totalTokens\":13837,\"reasoningTokens\":0,\"cacheReadTokens\":11712,\"cacheWriteTokens\":0}}"
+    },
+    "tool.lifecycle": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"1c83f560-3b03-48d6-8b46-2ff9ef0cb04c\",\"eventSeq\":19,\"occurredAt\":1789349084375,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"tool.lifecycle\",\"phase\":\"scheduled\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"toolName\":\"Bash\"}}"
+    },
+    "permission.lifecycle": {
+      "count": 4,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"a942e76b-5733-4787-9fc0-aac10f06dc60\",\"eventSeq\":22,\"occurredAt\":1789349084394,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"permission.lifecycle\",\"phase\":\"requested\",\"requestId\":\"perm_3b5ce0f3-5a30-4285-a328-2baadd6494c2\",\"toolCallId\":\"call_f125cc38080a4df6b0506c94\",\"toolName\":\"Bash\"}}"
+    },
+    "stream.chunk": {
+      "count": 58,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"2206545c-e761-4727-94ee-c71fee82e2d9\",\"eventSeq\":50,\"occurredAt\":1789349087715,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"stream.chunk\",\"channel\":\"thought\",\"chunkLength\":10,\"firstChunk\":true,\"assistantMessageId\":\"msg_mu0k8v7n_6df886bd-b97a-4aef-b846-f5bd3699a0b7\"}}"
+    },
+    "turn.terminal": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"4119515e-eebc-4167-83a1-a9b845d1d0d2\",\"eventSeq\":114,\"occurredAt\":1789349088693,\"sessionId\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"turnId\":\"turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1\",\"kind\":\"turn.terminal\",\"status\":\"success\",\"resultType\":\"success\",\"durationMs\":13643,\"tokenCount\":41653,\"toolCallCount\":2}}"
+    }
+  },
+  "statePatches": [
+    {
+      "reason": "mode_changed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "modeRaw": "{\"current\":\"edit\"}",
+      "permissionRaw": "{\"mode\":\"edit\"}",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_started",
+      "patchKeys": [
+        "status"
+      ],
+      "status": "running",
+      "modeRaw": null,
+      "permissionRaw": null,
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_completed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "modeRaw": "{\"current\":\"edit\"}",
+      "permissionRaw": "{\"mode\":\"edit\"}",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    }
+  ],
+  "toolUpdatedAll": [
+    {
+      "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1",
+      "payload": {
+        "toolCallId": "call_f125cc38080a4df6b0506c94",
+        "assistantMessageId": "msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f",
+        "toolName": "Bash",
+        "dependencies": [],
+        "parallelGroupIndex": 0,
+        "canRunParallel": false,
+        "schedule": {
+          "parallelGroups": [
+            [
+              "call_f125cc38080a4df6b0506c94"
+            ]
+          ],
+          "executionOrder": [
+            "call_f125cc38080a4df6b0506c94"
+          ]
+        },
+        "kind": "scheduled",
+        "inputByteLength": 77,
+        "inputOmitted": true,
+        "inputRef": "model_stream"
+      }
+    },
+    {
+      "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1",
+      "payload": {
+        "toolCallIds": [
+          "call_f125cc38080a4df6b0506c94"
+        ],
+        "successCount": 0,
+        "errorCount": 1,
+        "kind": "batch"
+      }
+    },
+    {
+      "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1",
+      "payload": {
+        "toolCallId": "call_a452374bf0eb48a097076406",
+        "assistantMessageId": "msg_mu0k8tu7_0a1e2442-74dc-46ec-9a8d-48b49fb8e48b",
+        "toolName": "Bash",
+        "dependencies": [],
+        "parallelGroupIndex": 0,
+        "canRunParallel": false,
+        "schedule": {
+          "parallelGroups": [
+            [
+              "call_a452374bf0eb48a097076406"
+            ]
+          ],
+          "executionOrder": [
+            "call_a452374bf0eb48a097076406"
+          ]
+        },
+        "kind": "scheduled",
+        "inputByteLength": 77,
+        "inputOmitted": true,
+        "inputRef": "model_stream"
+      }
+    },
+    {
+      "turnId": "turn_4d09bd4e-270d-4cd4-9e2b-64de18d4cbf1",
+      "payload": {
+        "toolCallIds": [
+          "call_a452374bf0eb48a097076406"
+        ],
+        "successCount": 0,
+        "errorCount": 1,
+        "kind": "batch"
+      }
+    }
+  ],
+  "stderrZodHints": [],
+  "authoritativeMessages": [
+    {
+      "role": "user",
+      "id": "msg_mu0k8n0o_c18314f6-4726-40ca-bd1e-6bbad4280d37",
+      "partTypes": [
+        "text"
+      ],
+      "toolPartRaw": [],
+      "textHead": "用 Bash 工具执行命令：printf 'B' > probe-b.txt（必须调用工具）。"
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f",
+      "partTypes": [
+        "step-start",
+        "tool",
+        "step-finish"
+      ],
+      "toolPartRaw": [
+        "{\"type\":\"tool\",\"callID\":\"call_f125cc38080a4df6b0506c94\",\"tool\":\"Bash\",\"state\":{\"status\":\"error\",\"input\":{\"command\":\"printf 'B' > probe-b.txt\",\"description\":\"Write B to probe-b.txt\"},\"error\":\"Permission request failed\",\"metadata\":{},\"time\":{\"start\":1789349084408,\"end\":1789349084408}},\"id\":\"part_mu0k8tse_4bc61162-b5a4-4d90-b553-96d31d23945a\",\"sessionID\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"messageID\":\"msg_mu0k8nw3_a2ba5bc5-3285-4f89-8f9c-9268c38efd1f\"}"
+      ],
+      "textHead": ""
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0k8tu7_0a1e2442-74dc-46ec-9a8d-48b49fb8e48b",
+      "partTypes": [
+        "step-start",
+        "tool",
+        "step-finish"
+      ],
+      "toolPartRaw": [
+        "{\"type\":\"tool\",\"callID\":\"call_a452374bf0eb48a097076406\",\"tool\":\"Bash\",\"state\":{\"status\":\"error\",\"input\":{\"command\":\"printf 'B' > probe-b.txt\",\"description\":\"Write B to probe-b.txt\"},\"error\":\"Permission request failed\",\"metadata\":{},\"time\":{\"start\":1789349086189,\"end\":1789349086189}},\"id\":\"part_mu0k8v69_0396340f-0fb5-48fd-807c-dea3dbcd243b\",\"sessionID\":\"sess_f44a08fb-3ce6-4b04-b74f-66a400a7592e\",\"messageID\":\"msg_mu0k8tu7_0a1e2442-74dc-46ec-9a8d-48b49fb8e48b\"}"
+      ],
+      "textHead": ""
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0k8v7n_6df886bd-b97a-4aef-b846-f5bd3699a0b7",
+      "partTypes": [
+        "step-start",
+        "reasoning",
+        "text",
+        "step-finish"
+      ],
+      "toolPartRaw": [],
+      "textHead": "执行被拒绝了：`printf 'B' > probe-b.txt` 这条命令的权限请求失败（我重试了一次，同样被拒），所以文件没有创建。如果这是误拒，请调整权限"
+    }
+  ],
+  "tmpDirLeftovers": []
+}

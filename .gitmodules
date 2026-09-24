@@ -1,0 +1,7 @@
+[submodule "third_party/zcode"]
+	path = third_party/zcode
+	url = https://github.com/wzx011011/ZCode
+[submodule "desktop"]
+	path = desktop
+	url = git@github.com:wzx011011/ZCode.git
+	branch = feat/wzxcompanion-integration

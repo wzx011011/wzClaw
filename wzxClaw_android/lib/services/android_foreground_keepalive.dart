@@ -1,5 +1,6 @@
-import 'dart:io';
+import '../platform_io.dart';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 class AndroidForegroundKeepAlive {
@@ -13,7 +14,7 @@ class AndroidForegroundKeepAlive {
   bool _running = false;
 
   Future<void> start() async {
-    if (!Platform.isAndroid || _running) return;
+    if (kIsWeb || !Platform.isAndroid || _running) return;
 
     try {
       await _channel.invokeMethod<void>('startForegroundKeepAlive');
@@ -24,7 +25,7 @@ class AndroidForegroundKeepAlive {
   }
 
   Future<void> stop() async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
 
     try {
       await _channel.invokeMethod<void>('stopForegroundKeepAlive');

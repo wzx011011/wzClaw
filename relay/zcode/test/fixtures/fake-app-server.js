@@ -1,0 +1,107 @@
+'use strict';
+
+// 假 app-server：companion 测试的可控替身（NDJSON stdio，同真实协议帧格式）。
+let buf = '';
+const send = (frame) => process.stdout.write(`${JSON.stringify(frame)}\n`);
+
+// runtime 预检也复用本替身：模拟独立 CLI 的 version/doctor 两个无副作用命令。
+if (process.argv.includes('--version')) {
+  // 官方 Windows CLI 实测将版本写到 stderr；预检必须能解析又不得泄漏日志。
+  process.stderr.write('zcode 0.16.5\n');
+  process.exit(0);
+}
+if (process.argv.includes('doctor')) {
+  process.stdout.write('zcode doctor\nversion: 0.16.5\n');
+  process.exit(0);
+}
+
+// 启动即报告 env 注入情况（只报有无，绝不输出 token 值）。
+send({ method: 'fake/env', params: { tokenPresent: typeof process.env.ANTHROPIC_API_KEY === 'string' && process.env.ANTHROPIC_API_KEY.length > 0 } });
+// 反向请求 1：runtime preferences —— 期待 companion 代答。
+send({ id: 'server-1', method: 'session/requestRuntimePreferences', params: { scope: 'runtime-materialization' } });
+// 反向请求 2：未知反向请求 —— 期待转发给手机端应答。
+send({ id: 'server-2', method: 'interaction/test', params: {} });
+
+process.stdin.on('data', (chunk) => {
+  buf += chunk.toString();
+  let index;
+  while ((index = buf.indexOf('\n')) !== -1) {
+    const line = buf.slice(0, index).trim();
+    buf = buf.slice(index + 1);
+    if (!line) continue;
+    let frame; try { frame = JSON.parse(line); } catch { continue; }
+    if (frame.id === 'server-1') {
+      send({ method: 'fake/runtime-prefs', params: { answered: frame.result != null && frame.result.nativeSearchEnhancementsEnabled === false } });
+    } else if (frame.id === 'server-2') {
+      send({ method: 'fake/interaction-relay', params: { ok: frame.result !== undefined || frame.error !== undefined } });
+    } else if (String(frame.id).startsWith('x-')) {
+      // companion 本地扩展（x/model/*）经桥发起的请求：直接回 result，
+      // 不落 x/ 泄漏哨兵（方法名不带 x/ 前缀，但 id 带 x- 前缀）
+      if (frame.method === 'session/resume') {
+        send({ id: frame.id, result: { messages: [], session: {},
+          settings: { model: { available: [
+            { ref: { providerId: 'builtin:p1', modelId: 'glm-x' },
+              label: 'GLM-X', providerLabel: 'P1 Name',
+              contextWindow: 200000, maxOutputTokens: 32000,
+              properties: { inputFormat: { supportsText: true, supportsImage: true } },
+              reasoning: { levels: [{ value: 'high', label: 'high' }], defaultLevel: 'high' } },
+            { ref: { providerId: 'builtin:p1', modelId: 'glm-mini' } },
+          ] } } } });
+      } else if (frame.method === 'session/list') {
+        send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
+      } else if (frame.method === 'session/setModel') {
+        // 观测（P2-9 语义拆分断言用）：追加记录被 setModel 的会话到文件；
+        // FULL 探针记完整 params（reasoningLevel options 断言用）
+        try {
+          const fs = require('fs');
+          const f = process.env.SETMODEL_PROBE;
+          if (f) fs.appendFileSync(f, `${frame.params && frame.params.sessionId}
+`);
+          const full = process.env.SETMODEL_PROBE_FULL;
+          if (full) fs.appendFileSync(full, `${JSON.stringify(frame.params)}
+`);
+        } catch { /* 观测失败不影响应答 */ }
+        send({ id: frame.id, result: { ok: true } });
+      } else {
+        send({ id: frame.id, result: { ok: true } });
+      }
+    } else if (frame.method === 'session/resume') {
+      // 截断测试：返回超 1MiB 的消息历史（40 条 × ~40KB）
+      const big = Array.from({ length: 40 }, (_, i) => ({
+        info: { role: 'assistant', id: `m${i}` },
+        parts: [{ type: 'text', text: 'x'.repeat(40000) }],
+      }));
+      send({ id: frame.id, result: { messages: big, session: {} } });
+    } else if (String(frame.method || '').startsWith('x/')) {
+      // 泄漏哨兵：x/* 是 companion 本地扩展，绝不允许到达 app-server；
+      // 一旦到达即回特定标记帧供测试断言
+      send({ method: 'fake/x-leak', params: { id: frame.id } });
+    } else if (frame.method === 'session/list') {
+      send({ id: frame.id, result: { sessions: [{ sessionId: 'sess_mock', title: 'mock' }] } });
+    } else if (frame.method === 'session/subscribe') {
+      send({ id: frame.id, result: { ok: true } });
+    } else if (frame.method === 'session/messages') {
+      send({
+        id: frame.id,
+        result: { messages: [{ info: { role: 'assistant', id: 'm1', time: { created: 123 } }, parts: [{ type: 'text', text: 'mock answer' }] }] },
+      });
+    } else if (frame.method === 'session/send') {
+      send({ id: frame.id, result: { accepted: true, sessionId: 'sess_mock', stateRevision: 1 } });
+      send({ method: 'v4/telemetry/event', params: { kind: 'stream.chunk', channel: 'text', chunkLength: 2 } });
+      send({ method: 'session/event', params: { sessionId: 'sess_mock', events: [
+        { payload: { kind: 'text_delta', delta: 'mock answer' } },
+        { payload: { kind: 'turn.terminal', status: 'completed' } },
+      ] } });
+    } else if (frame.method === 'fake/emit-notifications') {
+      // 观测命令：host 控制面通知（companion 必须吞掉不转发）与普通通知
+      // （必须照常转发）各发一条，供过滤行为断言。
+      send({ method: 'startup/storageState', params: { phase: 'ready' } });
+      send({ method: 'fake/normal-note', params: { n: 1 } });
+      send({ id: frame.id, result: { emitted: 2 } });
+    } else if (frame.method === 'session/fork') {
+      // 透传锚（评审 P3-1）：companion 对该族方法纯透传不改写——返回带
+      // 实测字段的响应，断言手机端收到的 result 与此处逐字一致。
+      send({ id: frame.id, result: { sessionId: 'fork-child-1', session: { sessionId: 'fork-child-1' } } });
+    }
+  }
+});
