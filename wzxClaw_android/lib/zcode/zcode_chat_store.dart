@@ -303,14 +303,20 @@ class ZcodeChatStore extends ChangeNotifier {
   Timer? _fallbackPollTimer;
   String? _fallbackPollSessionId;
 
-  /// 推送看门狗（一次性）：订阅成功但推送静默失效时拉起降级轮询。
-  /// 场景：app-server 在 relay 连接保持的情况下重启丢失订阅状态
-  /// ——订阅请求不再重发、没有任何断线事件，仅表现为流式"冻住"。
-  Timer? _pushWatchdogTimer;
+  /// 推送看门狗（按会话隔离，一次性）：订阅成功但推送静默失效时拉起
+  /// 降级轮询。场景：app-server 在 relay 连接保持的情况下重启丢失订阅
+  /// 状态——订阅请求不再重发、没有任何断线事件，仅表现为流式"冻住"。
+  /// 按会话持 Timer：全局单槽会让多会话并发流式时后武装者 cancel 掉
+  /// 先武装者的检测（后台/视口会话互相顶掉，被顶者推送失效后无人兜底）。
+  final Map<String, Timer> _pushWatchdogs = {};
 
   /// 看门狗延迟（默认 3 个轮询周期无任何推送帧即判失效；测试可调）
   @visibleForTesting
   Duration pushWatchdogDelay = const Duration(milliseconds: 3600);
+
+  /// 仅测试使用：当前已排程看门狗的归属会话集合
+  @visibleForTesting
+  Set<String> get debugWatchdogSessionIds => _pushWatchdogs.keys.toSet();
 
   // ---- 权限确认 / AskUser ----
   final StreamController<PermissionRequest?> _permissionController =
@@ -511,6 +517,7 @@ class ZcodeChatStore extends ChangeNotifier {
   }) {
     _epoch++;
     _stopFallbackPolling();
+    _stopAllPushWatchdogs();
     _rejectAllPendingReverse();
     _client = client;
     this.desktopId = desktopId;
@@ -535,6 +542,7 @@ class ZcodeChatStore extends ChangeNotifier {
     if (_client == null) return;
     _epoch++;
     _stopFallbackPolling();
+    _stopAllPushWatchdogs();
     _rejectAllPendingReverse();
     _client = null;
     desktopId = null;
@@ -3914,8 +3922,14 @@ class ZcodeChatStore extends ChangeNotifier {
     _fallbackPollTimer?.cancel();
     _fallbackPollTimer = null;
     _fallbackPollSessionId = null;
-    _pushWatchdogTimer?.cancel();
-    _pushWatchdogTimer = null;
+  }
+
+  /// 取消全部会话的看门狗（连接更换 / dispose 等整体作废点用）
+  void _stopAllPushWatchdogs() {
+    for (final t in _pushWatchdogs.values) {
+      t.cancel();
+    }
+    _pushWatchdogs.clear();
   }
 
   void _stopFallbackPollingFor(String sessionId) {
@@ -3924,17 +3938,20 @@ class ZcodeChatStore extends ChangeNotifier {
       _fallbackPollTimer = null;
       _fallbackPollSessionId = null;
     }
+    // 回合收尾即解除该会话的看门狗（轮询与看门狗同为失效兜底，随终态退场）
+    _pushWatchdogs.remove(sessionId)?.cancel();
   }
 
   /// 武装推送看门狗：会话进入流式且推送在用时安排一次延迟检查；
   /// 期间仍有推送帧到达则重新武装，静默超过阈值则拉起降级轮询
-  /// （轮询与推送并存，eventId 去重；推送恢复时自动停轮询）
+  /// （轮询与推送并存，eventId 去重；推送恢复时自动停轮询）。
+  /// 按会话隔离：某会话的武装绝不取消其他会话已排程的检测。
   void _armPushWatchdog(ZcodeSessionState state) {
     if (!state.pushAvailable || !state.subscribed) return;
     if (_client?.paired != true) return;
-    _pushWatchdogTimer?.cancel();
-    _pushWatchdogTimer = Timer(pushWatchdogDelay, () {
-      _pushWatchdogTimer = null;
+    _pushWatchdogs.remove(state.sessionId)?.cancel();
+    _pushWatchdogs[state.sessionId] = Timer(pushWatchdogDelay, () {
+      _pushWatchdogs.remove(state.sessionId);
       final s = _states[state.sessionId];
       if (s == null || !s.isStreaming || !s.pushAvailable) return;
       final lastAt = s.lastPushAt;
@@ -4366,6 +4383,7 @@ class ZcodeChatStore extends ChangeNotifier {
   @override
   void dispose() {
     _stopFallbackPolling();
+    _stopAllPushWatchdogs();
     _rejectAllPendingReverse();
     _client = null;
     _permissionController.close();
