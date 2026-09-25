@@ -47,6 +47,21 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
   String? _error;
   Timer? _pollTimer;
 
+  /// 轮询连续失败计数（成功清零）。旧实现失败路径保留旧 running 投影
+  /// 且无任何收敛手段——每 3 秒空转一次打已断链路，「工作中 X 分」持续
+  /// 增长（审查 f-render-stream-consumption-3-dup）。
+  int _consecutiveFailures = 0;
+
+  /// 连续失败达到该次数：停高频轮询并标注数据陈旧
+  static const int _kMaxConsecutiveFailures = 3;
+
+  /// 停表后的退避重试间隔（低频探测链路恢复；成功即恢复 3 秒轮询）
+  static const Duration _kStaleRetryInterval = Duration(seconds: 30);
+
+  /// 首次进入陈旧态的时刻（null = 未陈旧）。陈旧标注与 GoalStore
+  /// staleLabel 同源措辞（数据更新失败，显示 HH:MM 的旧数据）。
+  DateTime? _staleSince;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +92,49 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
     _pollTimer = null;
   }
 
+  /// 安排下一次轮询：健康期 3 秒；连续失败达到阈值后停高频轮询并标注
+  /// 陈旧，改 30 秒退避低频重试（成功即恢复），绝不无声空转已断链路
+  void _scheduleNextPoll() {
+    if (!mounted || !_isRunning) return;
+    final stale = _consecutiveFailures >= _kMaxConsecutiveFailures;
+    _pollTimer = Timer(
+      stale ? _kStaleRetryInterval : const Duration(seconds: 3),
+      () => unawaited(_pollTick()),
+    );
+  }
+
+  Future<void> _pollTick() async {
+    if (!mounted) return;
+    final gen = _generationSnapshot;
+    final (detail, error) = await _fetchDetail();
+    if (!mounted) return;
+    if (_generationDrifted(gen)) {
+      _stopPolling();
+      return;
+    }
+    // 运行状态与时间线同拍刷新：任务结束必须收敛到终态并停表，
+    // 不能永远显示「正在工作」（旧实现只重拉消息、不重拉状态）
+    setState(() {
+      if (detail != null) {
+        _detail = detail;
+        _consecutiveFailures = 0;
+        _staleSince = null;
+      } else {
+        _consecutiveFailures++;
+        if (_consecutiveFailures >= _kMaxConsecutiveFailures &&
+            _staleSince == null) {
+          _staleSince = DateTime.now();
+        }
+      }
+      if (error != null) _error = error;
+    });
+    if (!_isRunning) {
+      _stopPolling();
+      return;
+    }
+    _scheduleNextPoll();
+  }
+
   Future<void> _load() async {
     final generation = _generationSnapshot;
     final (detail, error) = await _fetchDetail();
@@ -93,25 +151,7 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
       _error = error;
     });
     if (_isRunning) {
-      _pollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) async {
-        if (!mounted) return;
-        final gen = _generationSnapshot;
-        final (detail, error) = await _fetchDetail();
-        if (!mounted) return;
-        if (_generationDrifted(gen)) {
-          _stopPolling();
-          return;
-        }
-        // 运行状态与时间线同拍刷新：任务结束必须收敛到终态并停表，
-        // 不能永远显示「正在工作」（旧实现只重拉消息、不重拉状态）
-        if (detail != null || error != null) {
-          setState(() {
-            if (detail != null) _detail = detail;
-            if (error != null) _error = error;
-          });
-        }
-        if (!_isRunning) _stopPolling();
-      });
+      _scheduleNextPoll();
     }
   }
 
@@ -158,6 +198,14 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
       final s = duration.inSeconds % 60;
       durationText = m >= 1 ? '$m 分 $s 秒' : '$s 秒';
     }
+    // 陈旧标注（与 GoalStore.staleLabel 同源措辞）：持久性拉取失败停表后
+    // 显式说明数据截至时刻——「工作中 X 分」持续增长是假象
+    final stale = _staleSince;
+    final staleText = stale == null
+        ? null
+        : '数据更新失败，显示 '
+            '${stale.hour.toString().padLeft(2, '0')}:${stale.minute.toString().padLeft(2, '0')}'
+            ' 的旧数据';
     return Scaffold(
       backgroundColor: colors.bgPrimary,
       appBar: AppBar(
@@ -169,7 +217,12 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
               widget.agentType,
               style: TextStyle(color: colors.textPrimary, fontSize: 15),
             ),
-            if (durationText.isNotEmpty)
+            if (staleText != null)
+              Text(
+                staleText,
+                style: TextStyle(color: colors.textMuted, fontSize: 11),
+              )
+            else if (durationText.isNotEmpty)
               Text(
                 _isRunning ? '工作中 $durationText' : '已工作 $durationText',
                 style: TextStyle(color: colors.textMuted, fontSize: 11),
@@ -201,7 +254,9 @@ class _SubagentSessionPageState extends State<SubagentSessionPage> {
                           ),
                         ),
                       ),
-                    if (_isRunning)
+                    // 陈旧态不再宣告「正在工作」：旧 running 投影继续展示
+                    //（数据仍在），但实时推进的动效是假象
+                    if (_isRunning && _staleSince == null)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 8),
                         child: AnimatedGradientText(
