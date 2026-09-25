@@ -3272,21 +3272,63 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
-  /// 断线补放：session/events {afterSeq: lastSeq} 拉取缺口事件
+  /// session/events 推进式拉取（断线补放与降级轮询共用）。协议实测
+  /// {afterSeq,limit} 切片 = slice(-limit)（APP-SERVER.md:311）：探测页
+  /// 满（100 条）说明缺口可能大于窗口、头部事件已被滑出——以**同一
+  /// 起点游标**不带 limit 全量收口（引擎源码 server-operations.ts:748：
+  /// limit 缺省返回 afterSeq 后缀全量；eventId 去重使与推送并存安全）。
+  /// 收口必须锚定探测起点：应用事件已把 lastSeq 推进到窗口尾，再用它
+  /// 永远绕不回窗口外的头部。返回本轮应用事件数。
+  Future<int> _pullEventsProgressive(ZcodeSessionState state) async {
+    final client = _client;
+    if (client == null || !client.paired) return 0;
+    final cursorAtStart = state.lastSeq;
+    final probe = await client.request('session/events', {
+      'sessionId': state.sessionId,
+      'afterSeq': cursorAtStart,
+      'limit': 100,
+    });
+    var probeEvents = const <dynamic>[];
+    if (probe is Map && probe['events'] is List) {
+      probeEvents = probe['events'] as List;
+    }
+    if (probeEvents.length < 100) {
+      var applied = 0;
+      for (final ev in probeEvents) {
+        if (ev is Map) {
+          applied++;
+          _applySessionEvent(state, ev);
+        }
+      }
+      return applied;
+    }
+    debugPrint('[zcode-store] 事件拉取单页触限（${probeEvents.length} 条）：'
+        '同游标无 limit 全量收口 session=${state.sessionId} '
+        'afterSeq=$cursorAtStart');
+    final full = await client.request('session/events', {
+      'sessionId': state.sessionId,
+      'afterSeq': cursorAtStart,
+    });
+    var applied = 0;
+    if (full is Map && full['events'] is List) {
+      for (final ev in full['events'] as List) {
+        if (ev is Map) {
+          applied++;
+          _applySessionEvent(state, ev);
+        }
+      }
+    }
+    return applied;
+  }
+
+  /// 断线补放：session/events {afterSeq: lastSeq} 拉取缺口事件（推进式
+  /// 拉取见 _pullEventsProgressive——头部事件如携带用户输入的 turn.started
+  /// 被窗口滑出会造成用户气泡缺失、完成通知降级，审查 f-reconnect-replay-degrade-4）
   Future<void> _replayMissedEvents(ZcodeSessionState state) async {
     final client = _client;
     if (client == null || !client.paired) return;
     try {
-      final result = await client.request('session/events', {
-        'sessionId': state.sessionId,
-        'afterSeq': state.lastSeq,
-        'limit': 100,
-      });
-      if (result is Map && result['events'] is List) {
-        for (final ev in result['events'] as List) {
-          if (ev is Map) _applySessionEvent(state, ev);
-        }
-      }
+      await _pullEventsProgressive(state);
     } catch (e) {
       // 补放失败订阅推送仍在，但水位缺口必须可见（断线窗口丢事件的高频嫌疑）
       debugPrint('[zcode-store] 断线补放失败 session=${state.sessionId}: $e');
@@ -4062,11 +4104,9 @@ class ZcodeChatStore extends ChangeNotifier {
 
   /// 降级轮询 session/events：payload.kind
   /// text_delta→追加流式消息、reasoning_delta→thinking；按 eventId 去重。
-  /// 带 afterSeq=state.lastSeq 推进式拉取——协议实测 {afterSeq,limit} 切片
-  /// = slice(-limit)（APP-SERVER.md:311），裸 limit:100 会把窗口滑出的
-  /// 中段事件静默丢失；返回满页说明缺口可能大于窗口，立即以同一游标
-  /// **不带 limit** 重拉补齐头部（引擎源码 server-operations.ts:748：
-  /// limit 缺省返回 afterSeq 后缀全量；eventId 去重使与推送/重拉并存安全）。
+  /// 推进式拉取（afterSeq 游标 + 满页无 limit 收口）见
+  /// _pullEventsProgressive——裸 limit:100 的 slice(-limit) 窗口会把
+  /// 中段事件静默丢失（eventId 去重只防重复、不防丢失）。
   Future<void> _pollOnce() async {
     final client = _client;
     final sessionId = _fallbackPollSessionId;
@@ -4076,46 +4116,8 @@ class ZcodeChatStore extends ChangeNotifier {
       return;
     }
     try {
-      var applied = 0;
-      // 第 1 页窗口探测（只数长度不应用）：协议实测 {afterSeq,limit} 切片
-      // = slice(-limit)（APP-SERVER.md:311），满页说明窗口头部可能滑出，
-      // 直接以同一游标**不带 limit** 全量拉取后按序应用（引擎源码
-      // server-operations.ts:748：limit 缺省返回 afterSeq 后缀全量；
-      // eventId 去重使与推送并存安全）。不足一页则原页按序应用。
-      final cursorAtStart = state.lastSeq;
-      final probe = await client.request('session/events', {
-        'sessionId': sessionId,
-        'afterSeq': cursorAtStart,
-        'limit': 100,
-      });
+      final applied = await _pullEventsProgressive(state);
       state.pollFailureCount = 0;
-      var probeEvents = const <dynamic>[];
-      if (probe is Map && probe['events'] is List) {
-        probeEvents = probe['events'] as List;
-      }
-      if (probeEvents.length < 100) {
-        for (final ev in probeEvents) {
-          if (ev is Map) {
-            applied++;
-            _applySessionEvent(state, ev);
-          }
-        }
-      } else {
-        debugPrint('[zcode-store] 降级轮询单页触限（${probeEvents.length} 条）：'
-            '同游标无 limit 全量收口 session=$sessionId afterSeq=$cursorAtStart');
-        final full = await client.request('session/events', {
-          'sessionId': sessionId,
-          'afterSeq': cursorAtStart,
-        });
-        if (full is Map && full['events'] is List) {
-          for (final ev in full['events'] as List) {
-            if (ev is Map) {
-              applied++;
-              _applySessionEvent(state, ev);
-            }
-          }
-        }
-      }
       if (applied >= 100) {
         debugPrint('[zcode-store] 降级轮询单轮拉取 $applied 条 '
             'session=$sessionId（事件产出速率接近窗口上限，'

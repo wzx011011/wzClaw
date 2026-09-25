@@ -353,4 +353,70 @@ void main() {
       );
     });
   });
+
+  group('f-reconnect-replay-degrade-4 断线补放游标收口', () {
+    test('缺口大于一页：补放循环拉平后 turn.started 被应用（用户气泡存在）',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-gap');
+
+      // 断线窗口内落盘批次 >100 条：seq 1 是 turn.started（携带用户输入），
+      // seq 2..150 为 text_delta。fake 按 slice(-limit) 实测语义返回
+      final events = <Map<String, dynamic>>[
+        {
+          'eventId': 'ev-gap-0',
+          'seq': 1,
+          'sessionId': 'sess-gap',
+          'type': 'turn.started',
+          'payload': {'messageId': 'srv-gap-u', 'input': '缺口首条'},
+        },
+        for (var i = 1; i < 150; i++)
+          {
+            'eventId': 'ev-gap-$i',
+            'seq': i + 1,
+            'sessionId': 'sess-gap',
+            'type': 'text_delta',
+            'payload': {'delta': '段$i '},
+          },
+      ];
+      fake.handlers['session/events'] = (params) {
+        final after = (params?['afterSeq'] as num?)?.toInt() ?? 0;
+        final limit = params?['limit'] as int?;
+        var rows = events.where((e) => (e['seq'] as int) > after).toList();
+        if (limit != null && rows.length > limit) {
+          rows = rows.sublist(rows.length - limit); // slice(-limit)
+        }
+        return {'events': rows};
+      };
+
+      store.debugSimulateRelayState(ZcodeRelayState.closed, false);
+      store.debugSimulateRelayState(ZcodeRelayState.matched, true);
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 修复点：补放满页后同游标无 limit 收口，头部 turn.started 必须被
+      // 应用（用户气泡存在）——单次 slice(-100) 会把 seq 1..50 永久丢失
+      expect(
+        store.messages.map((m) => m.text).where((t) => t.contains('缺口首条')),
+        isNotEmpty,
+        reason: 'turn.started 丢失 = 用户消息气泡缺失 + 完成通知降级',
+      );
+      // 拉平后不再重复请求同区间：本轮补放请求 = 探测 + 收口恰两次
+      final replayRequests = fake.requests
+          .where((r) => r.key == 'session/events')
+          .map((r) => r.value ?? const <String, dynamic>{})
+          .toList();
+      expect(replayRequests, hasLength(2),
+          reason: '推进式收口：探测页 + 无 limit 全量，无需多轮循环');
+      expect(
+        replayRequests.every((r) => r['afterSeq'] == 0),
+        isTrue,
+        reason: '收口必须锚定补放起点游标（应用事件已推进水位）',
+      );
+    });
+  });
 }
