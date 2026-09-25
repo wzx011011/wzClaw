@@ -1363,6 +1363,15 @@ class ZcodeChatStore extends ChangeNotifier {
         state.isStreaming = false;
         state.finalizeStreaming();
         await _refreshAuthoritative(state);
+        // 未送达对账（审查 stop-machine-4）：引擎 idle、无在途回合，且
+        // 权威时间线中无同文本确认项的尾部乐观 user 消息 = send 从未达
+        // 引擎——显式移除并报错（显式失败优于假成功：mergeAuthoritative
+        // 无删除路径，滞留的乐观消息会让用户以为已发出只是没回）
+        if (_pruneUndeliveredLocalUserMessages(state)) {
+          if (_isActive(state)) {
+            _error = '消息未能送达引擎，请重发';
+          }
+        }
         _notifyIfActive(state);
         return;
       }
@@ -1379,6 +1388,29 @@ class ZcodeChatStore extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 未送达对账（审查 stop-machine-4）：_resolveUnknownSendOutcome 的
+  /// idle 收敛后调用。引擎已接受的消息会被 mergeAuthoritative 原位消解
+  /// 成 synced 权威项（不在扫描范围）；权威时间线中无同文本确认项的
+  /// 尾部连续未确认乐观 user 消息即从未送达，显式移除。返回是否有移除。
+  bool _pruneUndeliveredLocalUserMessages(ZcodeSessionState state) {
+    final confirmedTexts = <String>{
+      for (final e in state.items)
+        if (e.synced && e.message.role == MessageRole.user) e.message.text,
+    };
+    var removed = false;
+    for (var i = state.items.length - 1; i >= 0; i--) {
+      final it = state.items[i];
+      if (it.synced) break; // 只看尾部连续未确认段，更早的历史不动
+      if (it.message.role == MessageRole.user &&
+          it.protoId == null &&
+          !confirmedTexts.contains(it.message.text)) {
+        state.items.removeAt(i);
+        removed = true;
+      }
+    }
+    return removed;
   }
 
   /// session/send「模型不可用」拒绝（字符串 result 或错误帧 -32031）：

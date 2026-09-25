@@ -808,13 +808,33 @@ void main() {
       final store = pairedStore(fake);
       addTearDown(store.dispose);
       await store.openSession('session-unk');
+      // 超时只是应答丢失、引擎实际已接受并完成：落库同文本 user 消息
+      //（stop-machine-4 对照前提：权威含同文本 → 消息保留不报错；
+      // 权威不含同文本的「从未送达」场景见
+      // f-turn-lifecycle-stop-machine-4 组，显式移除并报错）
+      server.session('session-unk').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '已结束的任务'},
+              ],
+              id: 'srv-u-accepted',
+              created: 50,
+            ),
+          );
       await store.sendMessage('已结束的任务');
       for (var i = 0; i < 10; i++) {
         await Future<void>.delayed(Duration.zero);
       }
 
       expect(store.isStreaming, isFalse, reason: '服务端 idle = 以权威真相收尾');
-      expect(store.error, isNull, reason: '结果未知不等于失败');
+      expect(store.error, isNull, reason: '结果未知不等于失败（引擎已接受）');
+      final userItems = store
+          .debugItems('session-unk')
+          .where((e) => e.message.role == MessageRole.user)
+          .toList();
+      expect(userItems, hasLength(1), reason: '已送达消息不重复、不移除');
+      expect(userItems.single.synced, isTrue, reason: '被权威消解确认');
     });
 
     test('发送被明确拒绝（错误帧）：才走失败路径', () async {
@@ -1656,6 +1676,71 @@ void main() {
         isNull,
         reason: '通知 tokens 不得回落 A 回合的 600',
       );
+    });
+  });
+
+  group('f-turn-lifecycle-stop-machine-4 发送未达对账', () {
+    test('send 超时 + 引擎 idle + 权威无同文本：乐观 user 消息移除并显式报错',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-sm4').status = 'idle';
+      fake.handlers['session/send'] = (_, [__]) =>
+          throw TimeoutException('请求超时', const Duration(seconds: 30));
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-sm4');
+      await store.sendMessage('从未送达的消息');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 修复点：引擎 idle 且权威时间线无该文本 = send 从未达引擎——
+      // 乐观消息显式移除（显式失败优于假成功滞留）
+      expect(
+        store.debugItems('session-sm4')
+            .where((e) => e.message.role == MessageRole.user),
+        isEmpty,
+        reason: '乐观 user 消息永久滞留 = 「被引擎吞了」的无声丢失',
+      );
+      expect(store.error, isNotNull, reason: '必须显式告知消息未送达');
+    });
+
+    test('send 超时 + 引擎 idle + 权威含同文本：消息保留并正常合并不报错',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('session-sm4b').status = 'idle';
+      fake.handlers['session/send'] = (_, [__]) =>
+          throw TimeoutException('请求超时', const Duration(seconds: 30));
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-sm4b');
+      // 引擎实际已接受（超时只是应答丢失）：落库同文本 user 消息
+      server.session('session-sm4b').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '其实已送达的消息'},
+              ],
+              id: 'srv-u-manual',
+              created: 50,
+            ),
+          );
+      await store.sendMessage('其实已送达的消息');
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 对照组：权威含同文本 → 消息保留（原位消解为权威项），不报错
+      final userItems = store
+          .debugItems('session-sm4b')
+          .where((e) => e.message.role == MessageRole.user)
+          .toList();
+      expect(userItems, hasLength(1), reason: '已送达的消息不重复、不移除');
+      expect(userItems.single.synced, isTrue, reason: '被权威消解确认');
+      expect(userItems.single.message.text, '其实已送达的消息');
+      expect(store.error, isNull, reason: '引擎已接受：不向用户表达失败');
     });
   });
 }
