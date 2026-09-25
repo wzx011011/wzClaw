@@ -3949,7 +3949,12 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// 降级轮询 session/events：payload.kind
-  /// text_delta→追加流式消息、reasoning_delta→thinking；按 eventId 去重
+  /// text_delta→追加流式消息、reasoning_delta→thinking；按 eventId 去重。
+  /// 带 afterSeq=state.lastSeq 推进式拉取——协议实测 {afterSeq,limit} 切片
+  /// = slice(-limit)（APP-SERVER.md:311），裸 limit:100 会把窗口滑出的
+  /// 中段事件静默丢失；返回满页说明缺口可能大于窗口，立即以同一游标
+  /// **不带 limit** 重拉补齐头部（引擎源码 server-operations.ts:748：
+  /// limit 缺省返回 afterSeq 后缀全量；eventId 去重使与推送/重拉并存安全）。
   Future<void> _pollOnce() async {
     final client = _client;
     final sessionId = _fallbackPollSessionId;
@@ -3959,15 +3964,50 @@ class ZcodeChatStore extends ChangeNotifier {
       return;
     }
     try {
-      final result = await client.request('session/events', {
+      var applied = 0;
+      // 第 1 页窗口探测（只数长度不应用）：协议实测 {afterSeq,limit} 切片
+      // = slice(-limit)（APP-SERVER.md:311），满页说明窗口头部可能滑出，
+      // 直接以同一游标**不带 limit** 全量拉取后按序应用（引擎源码
+      // server-operations.ts:748：limit 缺省返回 afterSeq 后缀全量；
+      // eventId 去重使与推送并存安全）。不足一页则原页按序应用。
+      final cursorAtStart = state.lastSeq;
+      final probe = await client.request('session/events', {
         'sessionId': sessionId,
+        'afterSeq': cursorAtStart,
         'limit': 100,
       });
       state.pollFailureCount = 0;
-      if (result is Map && result['events'] is List) {
-        for (final ev in result['events'] as List) {
-          if (ev is Map) _applySessionEvent(state, ev);
+      var probeEvents = const <dynamic>[];
+      if (probe is Map && probe['events'] is List) {
+        probeEvents = probe['events'] as List;
+      }
+      if (probeEvents.length < 100) {
+        for (final ev in probeEvents) {
+          if (ev is Map) {
+            applied++;
+            _applySessionEvent(state, ev);
+          }
         }
+      } else {
+        debugPrint('[zcode-store] 降级轮询单页触限（${probeEvents.length} 条）：'
+            '同游标无 limit 全量收口 session=$sessionId afterSeq=$cursorAtStart');
+        final full = await client.request('session/events', {
+          'sessionId': sessionId,
+          'afterSeq': cursorAtStart,
+        });
+        if (full is Map && full['events'] is List) {
+          for (final ev in full['events'] as List) {
+            if (ev is Map) {
+              applied++;
+              _applySessionEvent(state, ev);
+            }
+          }
+        }
+      }
+      if (applied >= 100) {
+        debugPrint('[zcode-store] 降级轮询单轮拉取 $applied 条 '
+            'session=$sessionId（事件产出速率接近窗口上限，'
+            '若仍有缺段请核查权威刷新）');
       }
     } catch (e) {
       if (e is ZcodeRequestException && e.code == -32004) {

@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wzxclaw_android/models/chat_message.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
+import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
 import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 import 'zcode_test_fakes.dart';
 
@@ -283,6 +284,72 @@ void main() {
         state.items.single.message.isStreaming,
         isFalse,
         reason: '工具通道写入 synced 行同样不得翻起生成中态',
+      );
+    });
+  });
+
+  group('f-streaming-ingest-cursor-4 降级轮询推进式拉取', () {
+    test('150 条事件超窗口：afterSeq 循环拉取无中段丢失', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      // 订阅失败 → pushAvailable=false，走降级轮询
+      fake.handlers['session/subscribe'] = (_) =>
+          throw const ZcodeRequestException(-32601, 'method not found');
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-c4');
+      await store.sendMessage('q');
+      expect(store.isStreaming, isTrue);
+
+      // APP-SERVER.md:311 实测语义（引擎源码 server-operations.ts:748 钉死）：
+      // 先过滤 seq>afterSeq，再 slice(-limit)；limit 缺省返回全量
+      final events = <Map<String, dynamic>>[
+        for (var i = 0; i < 150; i++)
+          {
+            'eventId': 'ev-c4-$i',
+            'seq': i + 1,
+            'sessionId': 'sess-c4',
+            'type': 'text_delta',
+            'payload': {'delta': '字$i'},
+          },
+      ];
+      fake.handlers['session/events'] = (params) {
+        final after = (params?['afterSeq'] as num?)?.toInt() ?? 0;
+        final limit = params?['limit'] as int?;
+        var rows = events.where((e) => (e['seq'] as int) > after).toList();
+        if (limit != null && rows.length > limit) {
+          rows = rows.sublist(rows.length - limit); // slice(-limit)
+        }
+        return {'events': rows};
+      };
+
+      await store.debugPollOnce();
+
+      // 修复点：推进式拉取必须把窗口滑出的头部事件补齐，无中段丢失
+      final text = store.messages
+          .where((m) => m.role == MessageRole.assistant)
+          .map((m) => m.text)
+          .join();
+      expect(
+        text,
+        [for (var i = 0; i < 150; i++) '字$i'].join(),
+        reason: '裸 limit:100 的 slice(-limit) 窗口把最早 50 条滑出并静默丢失',
+      );
+      // 轮询必须带 afterSeq 推进游标（否则与推送并存时全量重放）；
+      // 窗口溢出时必须发出无 limit 的全量收口请求补头部
+      final pollRequests = fake.requests
+          .where((r) => r.key == 'session/events')
+          .map((r) => r.value ?? const <String, dynamic>{})
+          .toList();
+      expect(
+        pollRequests.every((r) => r.containsKey('afterSeq')),
+        isTrue,
+        reason: '轮询请求必须带 afterSeq（裸 limit 的全窗重放会丢中段）',
+      );
+      expect(
+        pollRequests.any((r) => !r.containsKey('limit')),
+        isTrue,
+        reason: '满页后必须以同游标无 limit 收口，否则头部事件永不可达',
       );
     });
   });
