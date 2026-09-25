@@ -1948,4 +1948,36 @@ void main() {
           reason: '非活跃形态仍保留视口（不退列表）');
     });
   });
+
+  group('f-viewport-multi-session-4 错误横幅抑制与卡片同源', () {
+    test('阻塞卡只抑制自己会话的错误横幅，跨会话/跨节点不吞错', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-mb-x');
+
+      // 模拟 X 会话模型自愈失败置位（_handleSendRejection 的落盘形状）
+      store.modelBlockedSessionId = 'sess-mb-x';
+      store.modelBlockedContent = '未被引擎接受的消息';
+      store.modelBlockedReason = '发送失败';
+
+      // X 视口：阻塞卡可见 → 抑制错误 SnackBar（避免双重呈现，既有语义）
+      expect(
+        store.shouldSuppressErrorBanner,
+        isTrue,
+        reason: '阻塞卡在当前视口可见时抑制错误横幅（既有语义）',
+      );
+
+      // 切到 Y 会话：卡片渲染条件（modelBlockedSessionId==activeSessionId）
+      // 不再成立，抑制条件必须同源解除——否则 Y 内任何业务错误被双重
+      // 不可见（无弹条也无卡片）
+      await store.openSession('sess-mb-y');
+      expect(
+        store.shouldSuppressErrorBanner,
+        isFalse,
+        reason: 'X 的阻塞卡在 Y 视口不渲染，错误横幅不得被残留全局字段吞掉',
+      );
+    });
+  });
 }

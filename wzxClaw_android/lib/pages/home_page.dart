@@ -788,10 +788,10 @@ class _ChatPageState extends State<ChatPage> {
     _lastStopPhase = _store.activeStopPhase;
 
     // 发送失败等业务错误：store.error 上浮为 SnackBar（模型卡路径已退役，
-    // 自愈失败也走这里）
+    // 自愈失败也走这里）。抑制判定与阻塞卡渲染同源（store.shouldSuppressErrorBanner）：
+    // 跨会话/跨节点的残留阻塞字段不再吞掉本会话的错误弹条
     final err = _store.error;
-    final hasBlockedCard = _store.modelBlockedContent != null;
-    if (err != null && err != _lastShownError && !hasBlockedCard) {
+    if (err != null && err != _lastShownError && !_store.shouldSuppressErrorBanner) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(err),

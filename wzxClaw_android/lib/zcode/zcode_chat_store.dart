@@ -214,6 +214,15 @@ class ZcodeChatStore extends ChangeNotifier {
   String? modelBlockedContent;
   String? modelBlockedReason;
 
+  /// 错误 SnackBar 抑制判定（审查 f-viewport-multi-session-4）：与阻塞卡
+  /// 渲染条件（modelBlockedSessionId == activeSessionId）同源——只有
+  /// 阻塞卡在当前视口可见时才抑制错误横幅，否则其他会话/节点的业务
+  /// 错误被双重不可见（无弹条也无卡片）。页面消费本 getter，不再自判。
+  bool get shouldSuppressErrorBanner =>
+      modelBlockedContent != null &&
+      modelBlockedSessionId != null &&
+      modelBlockedSessionId == _activeSessionId;
+
   // ---- 当前连接的桌面身份（由 ConnectionManager attach 时提供）----
 
   String? desktopId;
