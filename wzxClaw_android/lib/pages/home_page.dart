@@ -71,7 +71,16 @@ class _ChatPageState extends State<ChatPage> {
   bool _isSessionLoading = false; // 切换会话时等待引擎返回数据
   bool _showScrollFab = false;
   bool _scrollPending = false;
-  int _previousGroupCount = 0;
+  /// 已包装入场动画的块键（保持包装避免槽位类型翻转重建，审查
+  /// f-render-stream-consumption-2）
+  final Set<String> _animatedBlockKeys = {};
+
+  /// 上一帧块键集合（新块判定 = 本帧键集 − 上帧键集；null = 首帧，
+  /// 首帧不播动画——对齐打开会话/整帧替换不动画的既有语义）
+  Set<String>? _previousBlockKeys;
+
+  /// 「加载更早」前插豁免下一帧动画包装（旧内容不重播入场动画）
+  bool _suppressNextAnimationFlag = false;
   // 跟踪上次渲染的会话 id
   String? _lastRenderedSessionId;
   String? _workspaceName;
@@ -707,7 +716,10 @@ class _ChatPageState extends State<ChatPage> {
         _oldestNoticeShown = false;
         _loadOlderExhausted = false;
         _turnFoldState.clear();
-        _previousGroupCount = 0;
+        // 块身份动画状态随会话上下文重置（换手后首帧不播动画）
+        _animatedBlockKeys.clear();
+        _previousBlockKeys = null;
+        _suppressNextAnimationFlag = false;
         _inputController.text = _drafts[_draftKey] ?? '';
         _inputController.selection = TextSelection.collapsed(
           offset: _inputController.text.length,
@@ -876,6 +888,8 @@ class _ChatPageState extends State<ChatPage> {
           );
         }
       } else if (maxBefore != null) {
+        // 前插的更早历史是旧内容：豁免下一帧入场动画（不重播包装）
+        _suppressNextAnimationFlag = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_scrollController.hasClients) return;
           final grown =
@@ -1816,10 +1830,22 @@ class _ChatPageState extends State<ChatPage> {
     flushTurn();
 
     final itemCount = blocks.length + (showBlockedCard ? 1 : 0);
-    // Only animate newly appended messages (not full replacement from session switch).
-    // If prev count was 0 (empty or just switched), skip animation entirely.
-    final prevCount = _previousGroupCount > 0 ? _previousGroupCount : itemCount;
-    _previousGroupCount = blocks.length;
+    // 入场动画判定 = 块键集合差集（审查 f-render-stream-consumption-2）：
+    // 旧数量比较在流式下一条增量即追平 prevCount，AnimatedMessageItem
+    // 槽位类型翻回裸块 → 子树销毁重建、150ms 淡入在 1/3 处跳变。
+    // 已包装的键永久保持包装（动画完成后 FadeTransition(1.0) 与无包装
+    // 视觉一致，翻回只会多一次无谓重建）；_suppressNextAnimationFlag
+    // 豁免「加载更早」前插——前插是旧内容，不重播入场动画。
+    final keys = blockKeys.map((k) => k.value).toSet();
+    final previousKeys = _previousBlockKeys;
+    if (previousKeys == null || _suppressNextAnimationFlag) {
+      // 首帧 / 前插豁免帧：全部块视为已有，不播入场动画
+      _suppressNextAnimationFlag = false;
+      _previousBlockKeys = keys;
+    } else {
+      _animatedBlockKeys.addAll(keys.difference(previousKeys));
+      _previousBlockKeys = keys;
+    }
 
     final list = ListView.builder(
       controller: _scrollController,
@@ -1876,8 +1902,9 @@ class _ChatPageState extends State<ChatPage> {
             child: _buildUserBubble(block as ChatMessage),
           );
         }
-        // Animate only newly appended items
-        if (index >= prevCount) {
+        // 只对「已包装入场动画的块」保持 AnimatedMessageItem 包装：
+        // 包装集合按键累积，绝不因增量通知翻回裸块
+        if (_animatedBlockKeys.contains(blockKey.value)) {
           return AnimatedMessageItem(key: blockKey, child: child);
         }
         return child;
