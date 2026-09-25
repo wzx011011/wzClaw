@@ -2757,6 +2757,32 @@ void main() {
       await store.clearLocalCache();
       expect(cache.clearAllCalls, 1);
     });
+
+    test('f-web-platform-degrade-3 clearAll 抛错不阻断内存清理', () async {
+      final cache = FakeZcodeSessionCache()..throwOnClearAll = true;
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final store = ZcodeChatStore(cache: cache)
+        ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
+      addTearDown(store.dispose);
+      await store.openSession('sess-clr');
+      var notified = 0;
+      store.addListener(() => notified++);
+      expect(store.messages, isNotEmpty);
+
+      // web：_cache.clearAll 命中 kIsWeb 抛 UnsupportedError——
+      // 「清空」的内存清理/视口关闭必须照常完成
+      await store.clearLocalCache();
+
+      expect(cache.clearAllCalls, 1, reason: '缓存清理被尝试（失败留观测）');
+      expect(
+        store.activeSessionId,
+        isNull,
+        reason: 'clearAll 抛错曾中断内存态清理，后续缓存写入会把消息写回',
+      );
+      expect(store.messages, isEmpty, reason: '内存会话态必须清空');
+      expect(notified, greaterThan(0), reason: 'notifyListeners 必须触发');
+    });
   });
 
   group('回合指标（首字延迟 / tok/s）', () {

@@ -239,6 +239,9 @@ class FakeZcodeSessionCache extends ZcodeSessionCache {
   int upsertCalls = 0;
   int clearAllCalls = 0;
 
+  /// 置 true 时 clearAll 抛 UnsupportedError（web 无本地 SQLite 的降级）
+  bool throwOnClearAll = false;
+
   @override
   Future<void> upsertMessages(
     String sessionId,
@@ -286,6 +289,9 @@ class FakeZcodeSessionCache extends ZcodeSessionCache {
   @override
   Future<void> clearAll() async {
     clearAllCalls++;
+    if (throwOnClearAll) {
+      throw UnsupportedError('web 无本地 SQLite 缓存');
+    }
     messages.clear();
     cursors.clear();
   }

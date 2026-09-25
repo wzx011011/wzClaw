@@ -1205,9 +1205,19 @@ class ZcodeChatStore extends ChangeNotifier {
   /// 内存会话态一并清空：否则已打开会话的消息仍留在内存，
   /// 后续缓存写入会把它们写回 SQLite（清了又复活）。
   /// 活动会话视图随之关闭，需重新 openSession。
+  ///
+  /// 缓存清理失败（web 无本地 SQLite 必然抛 UnsupportedError、native
+  /// 磁盘异常偶发）不阻断内存清理——「清空」的真实目的之一正是清内存/
+  /// 强制重同步，中断会让内存态原样滞留（审查 f-web-platform-degrade-3；
+  /// 失败留 debugPrint 观测，不假成功也不暴露内部 SQLite 细节）。
   Future<void> clearLocalCache() async {
-    await _cache.clearAll();
+    try {
+      await _cache.clearAll();
+    } catch (e) {
+      debugPrint('[zcode-store] 本地缓存清空失败（已忽略，继续内存清理）: $e');
+    }
     _stopFallbackPolling();
+    _stopAllPushWatchdogs();
     _states.clear();
     _activeSessionId = null;
     notifyListeners();
