@@ -495,7 +495,10 @@ class ZcodeSessionState {
     }
     it.message = it.message.copyWith(
       processParts: parts,
-      isStreaming: true,
+      // synced 权威行（中途权威替换后游标留指该行）不得翻起生成中态：
+      // finalizeStreaming 对 synced 行整体跳过，一旦置 true 便永不复位并
+      // 随缓存持久化（审查 f-streaming-ingest-cursor-3）
+      isStreaming: it.synced ? it.message.isStreaming : true,
     );
     it.dirty = true;
     if (isWaitingForResponse) isWaitingForResponse = false; // 首个增量已到达
@@ -528,7 +531,7 @@ class ZcodeSessionState {
     }
     it.message = it.message.copyWith(
       processParts: parts,
-      isStreaming: true,
+      isStreaming: it.synced ? it.message.isStreaming : true,
     );
     it.dirty = true;
     if (isWaitingForResponse) isWaitingForResponse = false;
@@ -597,7 +600,8 @@ class ZcodeSessionState {
     }
     it.message = it.message.copyWith(
       processParts: parts,
-      isStreaming: true,
+      // 同上：synced 权威行的生成中态保持原值，不因工具更新翻起
+      isStreaming: it.synced ? it.message.isStreaming : true,
     );
     it.dirty = true;
     if (isWaitingForResponse) isWaitingForResponse = false;

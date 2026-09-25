@@ -210,4 +210,80 @@ void main() {
       );
     });
   });
+
+  group('f-streaming-ingest-cursor-3 synced 行流式写入', () {
+    test('中途权威替换后同 id 增量：不置 isStreaming，收尾后保持复位', () {
+      final state = ZcodeSessionState('sess-c3');
+      state.appendTextDelta('流式中', assistantMessageId: 'msg-a', turnId: 'turn-t1');
+
+      // 工具 result 触发 finishTurn:false 权威刷新：同 id 原位替换为 synced 行
+      //（游标按设计留指该行，见 mergeAuthoritative 方法注释）
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-a',
+          turnId: 'turn-t1',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            processParts: const [ChatProcessPart.text('权威中途版')],
+          ),
+        ),
+      ]);
+      expect(state.items.single.synced, isTrue);
+
+      // 后续同 id text_delta：扫描跳 synced → cursorUsable 放行写入 synced 行
+      state.appendTextDelta('后续增量', assistantMessageId: 'msg-a');
+
+      // 修复点：流式写入通道对 synced 行保持原 isStreaming（不置 true）
+      final row = state.items.single;
+      expect(
+        row.message.isStreaming,
+        isFalse,
+        reason: 'synced 权威行被置 isStreaming=true 后收尾跳过，「生成中」永久滞留',
+      );
+      expect(row.message.text, '权威中途版后续增量');
+
+      // 回合收尾：synced=true 且 isStreaming=false（缓存不持久化假忙碌态）
+      state.finalizeStreaming();
+      expect(state.items.single.synced, isTrue);
+      expect(state.items.single.message.isStreaming, isFalse);
+    });
+
+    test('工具更新落 synced 权威行同样不置 isStreaming', () {
+      final state = ZcodeSessionState('sess-c3b');
+      state.upsertStreamingTool(
+        const ToolCallInfo(toolCallId: 'call-1', toolName: 'Bash'),
+        assistantMessageId: 'msg-a',
+        turnId: 'turn-t1',
+      );
+      state.mergeAuthoritative([
+        ZcodeSessionItem(
+          protoId: 'msg-a',
+          turnId: 'turn-t1',
+          synced: true,
+          message: ChatMessage(
+            role: MessageRole.assistant,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+            processParts: const [],
+          ),
+        ),
+      ]);
+      // 工具结果晚到落权威行（authoritative_parity 既有契约）
+      state.upsertStreamingTool(
+        const ToolCallInfo(
+          toolCallId: 'call-1',
+          toolName: 'Bash',
+          status: ToolCallStatus.done,
+          outputSummary: 'ok',
+        ),
+      );
+      expect(state.items.single.synced, isTrue);
+      expect(
+        state.items.single.message.isStreaming,
+        isFalse,
+        reason: '工具通道写入 synced 行同样不得翻起生成中态',
+      );
+    });
+  });
 }
