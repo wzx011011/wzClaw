@@ -1907,4 +1907,45 @@ void main() {
       );
     });
   });
+
+  group('f-viewport-multi-session-3 closeSession 状态收尾', () {
+    test('close 成功后容器 busy 清零；重开 -32004 非活跃形态报「已在此结束」',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      server.session('sess-cs3').status = 'running';
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-cs3');
+      // resume 快照 status=running → 容器流式（抽屉徽标「运行中」的数据源）
+      expect(store.isSessionBusy('sess-cs3'), isTrue);
+
+      await store.closeSession('sess-cs3');
+      // 修复点 1：close 成功 = 本引擎已释放，busy 必须清零——否则抽屉
+      // 永久显示「运行中」且无任何事件再来清它（订阅已随 close 失效）
+      expect(
+        store.isSessionBusy('sess-cs3'),
+        isFalse,
+        reason: '已结束会话在抽屉永久显示「运行中」= 无声状态泄漏',
+      );
+
+      // 重开已 close 的会话：resume 报 -32004 非活跃形态（不含 'not found'，
+      // 非会话消失）——closedLocally 标记命中专用文案，不得冒充桌面占用
+      fake.handlers['session/resume'] = (_) =>
+          throw const ZcodeRequestException(-32004, 'Session is not active');
+      await store.openSession('sess-cs3');
+      // 修复点 2：文案不得引导用户等待一个不会发生的「桌面端回合结束」
+      expect(
+        store.error,
+        contains('已在此结束'),
+        reason: '用户自己刚结束的会话被宣称为桌面端在跑 = 误导性占用文案',
+      );
+      expect(
+        store.error,
+        isNot(contains('正在桌面端运行中')),
+      );
+      expect(store.remoteActiveElsewhere, isTrue,
+          reason: '非活跃形态仍保留视口（不退列表）');
+    });
+  });
 }

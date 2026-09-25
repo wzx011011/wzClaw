@@ -795,13 +795,17 @@ class ZcodeChatStore extends ChangeNotifier {
   }
 
   /// -32004 桌面端占用（运行时单归属）的统一呈现：保留视口 + 明确状态条，
-  /// 不报错回列表（read 探针与 resume 主链共用）。
+  /// 不报错回列表（read 探针与 resume 主链共用）。会话刚被手机端主动
+  /// 关闭（closedLocally）时改报事实——「桌面端运行中」的引导会让用户
+  /// 等待一个不会发生的结束（审查 f-viewport-multi-session-3）。
   void _markSessionOccupiedByDesktop(ZcodeSessionState state) {
     state.remoteActiveElsewhere = true;
     state.isStreaming = false;
     state.isWaitingForResponse = false;
-    _error = '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
-        '桌面端回合结束后点"刷新"查看结果';
+    _error = state.closedLocally
+        ? '会话已在此结束（手机端已关闭），可在桌面端重新发起'
+        : '该会话正在桌面端运行中，手机端无法实时查看其流式过程；'
+            '桌面端回合结束后点"刷新"查看结果';
     notifyListeners();
   }
 
@@ -856,6 +860,7 @@ class ZcodeChatStore extends ChangeNotifier {
         resumeResult = result is Map ? result : null;
         _applyResumeMeta(state, resumeResult ?? const {});
         state.remoteActiveElsewhere = false; // 成功激活：清除桌面占用标记
+        state.closedLocally = false; // 成功激活：清除本地关闭标记
         // 代次补查（2026-09-23 引擎崩溃事故）：respawn 推送在手机断链时
         // 会永久丢失——resume 后主动查询，代次有变即作废旧物化并插
         // 「引擎已重启」通告（companion x/engine/generation 可应答）
@@ -1738,12 +1743,24 @@ class ZcodeChatStore extends ChangeNotifier {
     }
     // close 成功 = 该会话在本引擎已释放（引擎无 delete，记录仍在列表）：
     // 必须作废物化/订阅，否则重开会话会跳过 resume，向已关闭会话拉事件
-    // （架构审查 P1-1 的 session/close 入口）。
+    // （架构审查 P1-1 的 session/close 入口）。同时补齐状态收尾（对齐
+    // _handleEngineGeneration 的同场景处理）：不清 busy 会让抽屉徽标永久
+    // 亮起且无任何事件再来清它；closedLocally 标记供重开时的 -32004
+    // 非活跃形态报「已在此结束」而非冒充桌面占用（审查
+    // f-viewport-multi-session-3）。
     final closed = _states[sessionId];
     if (closed != null) {
       closed.materialized = false;
       closed.subscribed = false;
       closed.lastSeq = 0;
+      closed.closedLocally = true;
+      if (closed.isStreaming || closed.isWaitingForResponse) {
+        closed.isStreaming = false;
+        closed.isWaitingForResponse = false;
+        closed.stopPhase = ZcodeStopPhase.idle;
+        closed.finalizeStreaming();
+      }
+      _stopFallbackPollingFor(sessionId);
     }
     if (_activeSessionId == sessionId) closeSessionView();
     await refreshSessions();

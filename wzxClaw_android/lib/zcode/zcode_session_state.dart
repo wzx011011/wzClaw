@@ -150,6 +150,12 @@ class ZcodeSessionState {
   /// 订阅是否已建立（materialize 时建立，切走不移除；重连后重置）
   bool subscribed = false;
 
+  /// 本会话是否刚被手机端主动关闭（session/close 成功）。重开时命中
+  /// -32004 非活跃形态（Session is not active）须报「已在此结束」而非
+  /// 冒充「桌面端运行中」（审查 f-viewport-multi-session-3）。
+  /// 重新成功 resume 即清除。
+  bool closedLocally = false;
+
   /// 推送通道是否可用（session/subscribe 失败 → 降级轮询）
   bool pushAvailable = true;
 
