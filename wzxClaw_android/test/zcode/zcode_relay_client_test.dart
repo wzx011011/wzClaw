@@ -712,6 +712,24 @@ void main() {
       );
     });
 
+    test('f-web-platform-degrade-2 一个心跳周期内的静默：verifyAlive 不动作'
+        '（阈值不得弱化到 1×pingInterval）', () async {
+      final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
+      final client = await h.connectMatched();
+      h.server.autoReplyQueries = false;
+      // 静默 ≈60ms：落在 (1×40ms, 2×40ms) 区间——映射生产场景「web 标签页
+      // /App 切走 12s（< 15s 心跳周期）后回前台」。健康链路的应用层入站
+      // 间隔可合法达到一个心跳周期，回前台校验不得误杀；本锚同时防止
+      // 阈值未来被弱化回 1×pingInterval（15s 生产值下 12~15s 仍会误断）
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      client.verifyAlive(); // 无参默认阈值
+      // 观察窗 40ms（总 100ms < 3×40ms=120ms 周期死链判定）：
+      // 排除保活周期判死的干扰，链路保持只能归因于 verifyAlive 未动作
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(h.channels, hasLength(1), reason: '新鲜链路不得被回前台校验误断');
+      expect(client.paired, isTrue);
+    });
+
     test('close() 手动关闭：保活停止，不再发心跳', () async {
       final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
       final client = await h.connectMatched();
