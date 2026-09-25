@@ -892,6 +892,12 @@ class ZcodeSessionState {
       it.dirty = true;
     }
     streamingIndex = -1;
+    // 收尾必须连流式身份一并清空（对齐 resetTurnState 语义）：残留的
+    // streamingProtoId 会让下一回合（桌面壳发起、旧形态无 id 增量）新建
+    // 的占位继承上一回合 assistantMessageId，被旧回合收尾权威刷新按同 id
+    // 原位覆盖——T2 正文串台 + T1 占位滞留成重复行。
+    streamingProtoId = null;
+    streamingTurnId = null;
     _rollTurnBlockData(outputTokens: usage?.outputTokens);
   }
 
