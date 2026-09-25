@@ -1486,6 +1486,17 @@ class ZcodeChatStore extends ChangeNotifier {
   ZcodeStopPhase get activeStopPhase =>
       _activeState?.stopPhase ?? ZcodeStopPhase.idle;
 
+  /// 排队消息当前是否可自动冲放（审查 f-viewport-multi-session-1）：
+  /// 「空闲判定 + 是否可冲放」的单一真相——页面调度冲放定时器与定时器
+  /// 到点复查必须同源。断连（sendMessage 未连接早退且直发不回队）与
+  /// 停止未确认（放出下一条 = 引擎第三个回合）时绝不冲放。
+  bool get canAutoFlushQueue =>
+      _connState == ZcodeConnState.matched &&
+      !(_activeState?.isStreaming ?? false) &&
+      !(_activeState?.isWaitingForResponse ?? false) &&
+      !_sessionRestoring &&
+      activeStopPhase == ZcodeStopPhase.idle;
+
   /// 手动全量刷新（顶栏刷新按钮）：当前会话权威对账 + 会话列表徽标。
   /// 不主动收尾回合——引擎侧已空闲时权威投影会经 state idle 兜底落 busy，
   /// 流式中的回合只同步内容不动状态。返回是否发起了刷新。

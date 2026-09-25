@@ -766,14 +766,11 @@ class _ChatPageState extends State<ChatPage> {
         _displayMessages.isNotEmpty) {
       _scrollToBottom();
     }
-    // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）；
-    // 会话恢复在途不冲（sessionRestoring）：权威运行状态未确认，
-    // 恢复窗口内按默认空闲误发队首（2026-09-19 评审 P2）；
-    // 停止未确认也不冲（柱1）：引擎是否真停未知，绝不自动放出下一条
-    if (!_isStreaming &&
-        !_isWaiting &&
-        !_store.sessionRestoring &&
-        _store.activeStopPhase == ZcodeStopPhase.idle) {
+    // 回合边界 → 冲排队队列（500ms 去抖在 _scheduleQueueFlush 内）。
+    // 门禁单一真相 = store.canAutoFlushQueue：流式/等待/恢复在途/停止
+    // 未确认之外，还复查连接状态——断连窗口「空闲」不可信，放空队列
+    // 且 sendMessage 未连接早退不回队 = 消息永久丢失（审查 f-viewport-multi-session-1）
+    if (_store.canAutoFlushQueue) {
       _scheduleQueueFlush();
     }
 
@@ -997,10 +994,13 @@ class _ChatPageState extends State<ChatPage> {
     if (_sendQueue.isEmpty) return;
     _queueFlushTimer?.cancel();
     _queueFlushTimer = Timer(const Duration(milliseconds: 500), () {
-      if (!mounted || _isStreaming || _isWaiting) return;
-      // 会话恢复（resume/权威状态确认）在途：此刻的「空闲」不可信，
-      // 等恢复结束的 notify 重新调度（2026-09-19 评审 P2）
-      if (_store.sessionRestoring) return;
+      if (!mounted) return;
+      // 到点复查门禁（审查 f-viewport-multi-session-1）：调度时的门禁
+      // 不约束已排定的定时器——断连/停止未确认/恢复在途窗口内「空闲」
+      // 不可信，removeAt 后 sendMessage 未连接早退不回队 = 文本永久蒸发。
+      // 门禁不满足则保留队首待下次调度（单一真相 = store.canAutoFlushQueue）
+      if (!_store.canAutoFlushQueue) return;
+      if (_isStreaming || _isWaiting) return;
       if (_sendQueue.isEmpty) return;
       final item = _sendQueue.removeAt(0);
       setState(() {});
