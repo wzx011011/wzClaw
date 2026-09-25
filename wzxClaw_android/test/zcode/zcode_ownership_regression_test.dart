@@ -1371,4 +1371,109 @@ void main() {
       );
     });
   });
+
+  group('f-turn-lifecycle-stop-machine-1 本地乐观窗口的迟到终态', () {
+    test('T2 的 turn.started 未到窗口内，T1 迟到 turn.completed 只补数据不收尾',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-sm1');
+      await store.sendMessage('T1');
+      pushEvent(
+        store,
+        sessionId: 'session-sm1',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 'turn-t1',
+        payload: {'messageId': 'srv-u-0', 'input': 'T1'},
+      );
+      pushEvent(
+        store,
+        sessionId: 'session-sm1',
+        type: 'model.streaming',
+        seq: 2,
+        turnId: 'turn-t1',
+        payload: {
+          'assistantMessageId': 'msg-t1',
+          'kind': 'text_delta',
+          'delta': 'T1 部分回答',
+        },
+      );
+
+      // T2 发送在途（session/send 挂起）：beginLocalTurn 已执行——
+      // lastSeenTurnId=null 的乐观窗口
+      final sendGate = Completer<void>();
+      fake.handlers['session/send'] = (params) async {
+        await sendGate.future;
+        return {'accepted': true};
+      };
+      unawaited(store.sendMessage('T2'));
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isStreaming, isTrue, reason: '前置：T2 乐观窗口已置流式');
+
+      // T1 的 turn.completed 迟到到达（身份守卫盲区：lastSeenTurnId=null）
+      pushEvent(
+        store,
+        sessionId: 'session-sm1',
+        type: 'turn.completed',
+        seq: 3,
+        turnId: 'turn-t1',
+        payload: {'response': 'T1 done', 'resultType': 'success'},
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // 修复点：见过的回合身份 + 本地回合未取得身份 = 必非当前回合，
+      // 只补权威数据，绝不收尾 T2
+      expect(
+        store.isStreaming,
+        isTrue,
+        reason: 'T1 迟到终态不得清掉 T2 的流式标志',
+      );
+      expect(
+        notifier.shown,
+        isEmpty,
+        reason: 'T1 迟到终态不得误发「任务完成」通知',
+      );
+      expect(
+        store.messages.map((m) => m.text).where((t) => t.contains('T1 done')),
+        isEmpty,
+        reason: 'T1 的回答不得写进 T2 的空占位（幽灵气泡）',
+      );
+
+      // 放行 send → T2 的 turn.started + turn.completed 正向收尾
+      sendGate.complete();
+      await Future<void>.delayed(Duration.zero);
+      pushEvent(
+        store,
+        sessionId: 'session-sm1',
+        type: 'turn.started',
+        seq: 4,
+        turnId: 'turn-t2',
+        payload: {'messageId': 'srv-u-1', 'input': 'T2'},
+      );
+      pushEvent(
+        store,
+        sessionId: 'session-sm1',
+        type: 'turn.completed',
+        seq: 5,
+        turnId: 'turn-t2',
+        payload: {'response': 'T2 done', 'resultType': 'success'},
+      );
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(store.isStreaming, isFalse, reason: '正向收尾不受守卫影响');
+      expect(notifier.shown, hasLength(1), reason: '只通知 T2 自己的终态');
+      expect(notifier.shown.single['summary'], contains('T2 done'));
+      expect(
+        store.messages.map((m) => m.text).where((t) => t.contains('T1 done')),
+        isEmpty,
+        reason: 'T1 done 幽灵气泡不得滞留在 T2 回合内',
+      );
+    });
+  });
 }

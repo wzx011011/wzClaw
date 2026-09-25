@@ -208,6 +208,12 @@ class ZcodeSessionState {
   /// 已收尾的回合 id（session/event 与 telemetry 双通道幂等去重）
   final Set<String> endedTurnIds = {};
 
+  /// 本会话见过的回合身份（turn.started 记录）。本地回合乐观窗口
+  /// （beginLocalTurn 清 lastSeenTurnId 后、turn.started 未到）内，
+  /// 迟到终态若属于此集合必非当前回合——全量收尾会把新回合占位当成
+  /// 已终结回合写入旧回合的回答（2026-09-25 审查 stop-machine-1）。
+  final Set<String> startedTurnIds = {};
+
   /// 最近一次收到该会话推送帧的时间（推送看门狗判活用；
   /// 降级轮询的拉取结果不计入——只有真实推送能证明通道活着）
   DateTime? lastPushAt;
@@ -349,7 +355,9 @@ class ZcodeSessionState {
   /// 记录一次回合开始（turn.started）：turnId 变化才计代次（补放/重放
   /// 的同回合事件不递增）
   void noteTurnStart(String? turnId) {
-    if (turnId == null || turnId == lastSeenTurnId) return;
+    if (turnId == null) return;
+    startedTurnIds.add(turnId);
+    if (turnId == lastSeenTurnId) return;
     lastSeenTurnId = turnId;
     turnGeneration++;
   }

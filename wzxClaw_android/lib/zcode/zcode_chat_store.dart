@@ -2976,15 +2976,23 @@ class ZcodeChatStore extends ChangeNotifier {
         }
         return;
       }
-      // 有回合在途：核对回合身份（审查 P1-3 终端事件入口）。仅在能确定
-      // 当前在途回合是「另一个」turnId 时判陈旧（本地新回合已发起但
-      // turn.started 未到的窗口里 lastSeenTurnId 为 null，无法证明身份，
-      // 保持原收尾路径；该窗口由 turn.started 随后到达自愈）——旧回合的
-      // 迟到终态只补权威数据，绝不解除当前回合的流式状态。
+      // 有回合在途：核对回合身份（审查 P1-3 终端事件入口）。两种「必非
+      // 当前回合」形态都只补权威数据，绝不解除当前回合的流式状态：
+      // - lastSeenTurnId 非空且不等于 arriving turnId（turn.started 已到，
+      //   身份明确不同）；
+      // - lastSeenTurnId 为空（本地新回合已发起但 turn.started 未到的乐观
+      //   窗口）且 arriving turnId 属于本会话见过的回合身份（startedTurnIds
+      //   ）——此时 arriving 终态必属旧回合，全量收尾会把 T2 占位当成已
+      //   终结回合写入 T1 的回答并误发通知（2026-09-25 审查 stop-machine-1
+      //   ，此处原实现直接落全量收尾）。turnId 不在集合中（如 telemetry
+      //   turn.terminal 先于 turn.started 到达的合法场景）保持现收尾路径
+      //   ，该窗口由 turn.started 随后到达自愈。
       // finishTurn:false：补拉发生在当前回合在途时，若默认按发起时代次
       // 收尾，恰好等于当前代次会把 T2 错误判空闲。
       final currentTurnId = state.lastSeenTurnId;
-      if (currentTurnId != null && currentTurnId != turnId) {
+      final isForeignTurnEnd = (currentTurnId != null && currentTurnId != turnId) ||
+          (currentTurnId == null && state.startedTurnIds.contains(turnId));
+      if (isForeignTurnEnd) {
         if ((authoritativeText != null && authoritativeText.isNotEmpty) ||
             usage != null) {
           unawaited(_refreshAuthoritative(state, finishTurn: false));
