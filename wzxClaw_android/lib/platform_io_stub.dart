@@ -14,7 +14,11 @@ class InternetAddressType {
 class InternetAddress {
   const InternetAddress();
 
-  /// 与 dart:io 对齐的实例字段（诊断面比较 addr.type 用）
+  /// 与 dart:io 对齐的实例字段（诊断面比较 addr.type / 读 addr.address 用）。
+  /// web 桩无真实实例（lookup 直接抛 UnsupportedError），这里只保证编译
+  /// 符号同签名——connection_diagnostics 的诊断文案引用了 .address。
+  final String address = '';
+
   String get type => InternetAddressType.any;
 
   static Future<List<InternetAddress>> lookup(
