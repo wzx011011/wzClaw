@@ -7,7 +7,6 @@
 // 单源措辞同源）；恢复期退避低频重试，绝不能每 3 秒空转打已断链路。
 // ============================================================
 
-import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,7 +72,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     final callsAtThreshold = calls;
     expect(callsAtThreshold, greaterThanOrEqualTo(4),
-        reason: '前置：阈值前每 3 秒一次轮询（1 首拉 + 3 轮询）');
+        reason: '前置：阈值前每 3 秒一次轮询（1 首拉 + 3 轮询）',);
 
     // 停表：不再按 3 秒周期空转（退避重试间隔远大于 3 秒）
     await tester.pump(const Duration(seconds: 10));

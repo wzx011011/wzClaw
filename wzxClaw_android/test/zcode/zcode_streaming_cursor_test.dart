@@ -14,7 +14,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wzxclaw_android/models/chat_message.dart';
-import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
 import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
 import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
@@ -411,7 +410,7 @@ void main() {
           .map((r) => r.value ?? const <String, dynamic>{})
           .toList();
       expect(replayRequests, hasLength(2),
-          reason: '推进式收口：探测页 + 无 limit 全量，无需多轮循环');
+          reason: '推进式收口：探测页 + 无 limit 全量，无需多轮循环',);
       expect(
         replayRequests.every((r) => r['afterSeq'] == 0),
         isTrue,

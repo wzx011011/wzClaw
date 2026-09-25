@@ -33,7 +33,7 @@ void main() {
 
     final keyBefore = chatBlockBaseKey('turn', item.message);
     expect(keyBefore, contains(item.message.viewId!),
-        reason: '无 protoId 的占位回落 viewId 键（不再用创建毫秒）');
+        reason: '无 protoId 的占位回落 viewId 键（不再用创建毫秒）',);
 
     // 首个带 assistantMessageId 的增量到达：占位原位采纳 protoId
     state.appendTextDelta('采纳后的正文', assistantMessageId: 'msg-view');

@@ -17,7 +17,6 @@ import 'package:wzxclaw_android/pages/home_page.dart';
 import 'package:wzxclaw_android/widgets/animated_message_item.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 import 'package:wzxclaw_android/zcode/zcode_notifier.dart';
-import 'package:wzxclaw_android/zcode/zcode_relay_client.dart';
 import 'package:wzxclaw_android/zcode/zcode_session_state.dart';
 
 import '../zcode/zcode_test_fakes.dart';

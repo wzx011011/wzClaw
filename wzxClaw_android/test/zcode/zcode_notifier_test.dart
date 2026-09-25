@@ -179,7 +179,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(requested, 1, reason: 'web 后台标签页里浏览器通知是唯一的'
-          '被动观测通道（权限挂起被桌面端 120s 自动拒后须有痕迹）');
+          '被动观测通道（权限挂起被桌面端 120s 自动拒后须有痕迹）',);
     });
 
     test('resumed 状态下不请求 web 通道（前台守卫优先）', () async {

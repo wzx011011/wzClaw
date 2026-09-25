@@ -7,6 +7,9 @@
 // 能力，回前台后 UI 状态本身可见。
 
 import 'dart:async';
+// dart:html 的 Notification API 是本通道最小实现；package:web 迁移待
+// 通知交互（点击回路由）接线时一并处理，先压掉弃用告警（仅 web 构建加载）
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
 
 /// 弹浏览器通知。返回是否成功送达（未授权/不支持/抛错均 false）。

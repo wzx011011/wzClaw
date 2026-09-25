@@ -1521,7 +1521,7 @@ void main() {
       // 引擎侧 T1 结束的状态迁移 idle 补丁（实测形状无 turnId）先于
       // 发送应答到达
       store.debugHandleNotify(
-        ZcodeFrame(
+        const ZcodeFrame(
           method: 'state.updated',
           params: {
             'sessionId': 'session-sm2',
@@ -1556,7 +1556,7 @@ void main() {
       );
       expect(store.isStreaming, isTrue);
       store.debugHandleNotify(
-        ZcodeFrame(
+        const ZcodeFrame(
           method: 'state.updated',
           params: {
             'sessionId': 'session-sm2',
@@ -1574,7 +1574,7 @@ void main() {
       );
       expect(notifier.shown, hasLength(1));
       expect(notifier.shown.single['statusKnown'], isFalse,
-          reason: 'idle 兜底的通知保持中性文案口径');
+          reason: 'idle 兜底的通知保持中性文案口径',);
     });
   });
 
@@ -1600,7 +1600,7 @@ void main() {
         payload: {'messageId': 'srv-u-0', 'input': 'A'},
       );
       store.debugHandleNotify(
-        ZcodeFrame(
+        const ZcodeFrame(
           method: 'v4/telemetry/event',
           params: {
             'sessionId': 'session-sm3',
@@ -1653,7 +1653,7 @@ void main() {
       );
       // 重连确认读得 idle → 权威刷新收尾（idle 兜底同路径）
       store.debugHandleNotify(
-        ZcodeFrame(
+        const ZcodeFrame(
           method: 'state.updated',
           params: {
             'sessionId': 'session-sm3',
@@ -1828,7 +1828,7 @@ void main() {
       expect(store.isStreaming, isFalse, reason: '会话已消失，多等无意义');
       expect(store.remoteActiveElsewhere, isFalse, reason: '非占用形态');
       expect(store.error, contains('引擎已重启'),
-          reason: '显式告知引擎已重启（清残留退列表）');
+          reason: '显式告知引擎已重启（清残留退列表）',);
     });
   });
 
@@ -1945,7 +1945,7 @@ void main() {
         isNot(contains('正在桌面端运行中')),
       );
       expect(store.remoteActiveElsewhere, isTrue,
-          reason: '非活跃形态仍保留视口（不退列表）');
+          reason: '非活跃形态仍保留视口（不退列表）',);
     });
   });
 
