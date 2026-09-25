@@ -28,6 +28,10 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # web 端到端驱动（test/e2e/run-e2e.mjs → flutter drive -d web-server）：
+  # integration_test 是 Flutter SDK 内置包，随 SDK 分发，非新增第三方依赖
+  integration_test:
+    sdk: flutter
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.4
   shelf: ^1.4.0
