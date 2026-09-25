@@ -1318,4 +1318,57 @@ void main() {
       );
     });
   });
+
+  group('f-reconnect-replay-degrade-2 看门狗视口归属（后台会话不抢槽）', () {
+    test('后台会话 turn.started 不取消视口会话已武装的看门狗', () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      fake.handlers['session/events'] = (params) => {
+            'events': [
+              {
+                'eventId': 'ev-dg2-${params?['sessionId']}',
+                'seq': 1,
+                'sessionId': params?['sessionId'],
+                'type': 'text_delta',
+                'payload': {'delta': '轮询增量'},
+              },
+            ],
+          };
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      store.pushWatchdogDelay = const Duration(milliseconds: 60);
+
+      // 先物化后台会话 B（切走不移除订阅），再打开视口会话 A 并发送
+      await store.openSession('sess-dg2-b');
+      await store.openSession('sess-dg2-a');
+      await store.sendMessage('hi-a');
+
+      // 后台会话 B 的桌面端发起回合：turn.started 推送到达
+      pushEvent(
+        store,
+        sessionId: 'sess-dg2-b',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 't-dg2-b',
+        payload: {'messageId': 'srv-u-dg2b', 'input': '桌面问题'},
+      );
+
+      // 修复点：A 的看门狗必须仍在排程（旧单槽实现被 B 的武装顶掉）
+      expect(
+        store.debugWatchdogSessionIds,
+        contains('sess-dg2-a'),
+        reason: '后台会话的 turn.started 顶掉视口看门狗 = 视口推送失效后彻底失守',
+      );
+
+      // 推进超阈值且推送停发：视口 A 的看门狗到期 → 拉起 A 的降级轮询
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(
+        fake.requests
+            .where((r) => r.key == 'session/events')
+            .map((r) => r.value?['sessionId']),
+        contains('sess-dg2-a'),
+        reason: '视口会话 A 的看门狗到期必须为其拉起降级轮询',
+      );
+    });
+  });
 }
