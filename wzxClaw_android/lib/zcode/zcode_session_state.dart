@@ -285,6 +285,14 @@ class ZcodeSessionState {
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
       if (it.synced || it.message.role != MessageRole.assistant) continue;
+      // 回合边界（审查 f-streaming-ingest-cursor-2）：只清理「活的在途行」
+      // ——已收尾（isStreaming=false）的未确认残影属于上一回合，其正文/
+      // 思考由收尾权威刷新对账，绝不在此清除（否则用户连发 T2 时 T1 的
+      // 回答被整体剔除，收尾刷新失败期间从 UI 消失）。
+      if (!it.message.isStreaming &&
+          (streamingTurnId == null || it.turnId != streamingTurnId)) {
+        continue;
+      }
       final parts = it.message.processParts;
       if (parts.isEmpty) continue;
       final kept = parts

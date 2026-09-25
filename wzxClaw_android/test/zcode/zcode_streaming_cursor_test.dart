@@ -177,4 +177,37 @@ void main() {
       );
     });
   });
+
+  group('f-streaming-ingest-cursor-2 api_retry 回合边界', () {
+    test('已收尾未确认残影正文保留，仅当前在途行被清理', () {
+      final state = ZcodeSessionState('sess-c2');
+      // T1：流式回答 → 收尾（isStreaming=false，未 synced——权威刷新在途）
+      state.appendTextDelta('T1 完整回答文本', turnId: 'turn-t1');
+      state.finalizeStreaming();
+      final t1 = state.items.single;
+      expect(t1.message.isStreaming, isFalse);
+      expect(t1.synced, isFalse);
+
+      // T2 开始（sendMessage 不清 items，T1 残影保留在时间线）
+      state.beginLocalTurn();
+      state.ensureStreamingPlaceholder(turnId: 'turn-t2');
+      state.appendTextDelta('T2 进行中', turnId: 'turn-t2');
+
+      // T2 首个事件 api_retry（模型过载重试，进程内推送必达）
+      state.discardAbortedAttempt();
+
+      // 修复点：上一回合已收尾的未确认残影不得被剔除
+      expect(
+        state.items.first.message.text,
+        'T1 完整回答文本',
+        reason: 'api_retry 无回合边界会把上一回合未落权威的回答清空',
+      );
+      // 当前在途行仍正常清理（残部剔除语义不变）
+      expect(
+        state.items.last.message.processParts,
+        isEmpty,
+        reason: '活的在途行残部仍须剔除，重发从干净状态开始',
+      );
+    });
+  });
 }
