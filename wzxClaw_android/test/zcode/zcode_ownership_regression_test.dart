@@ -1743,4 +1743,92 @@ void main() {
       expect(store.error, isNull, reason: '引擎已接受：不向用户表达失败');
     });
   });
+
+  group('f-reconnect-replay-degrade-1 断链窗口换代', () {
+    test('重连 matched 补查换代作废残留；read/events 的 -32004 gone 不再误报占用',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      // 打开时播种当前代次 = 5（resume 路径同源查询）
+      fake.handlers['x/engine/generation'] = (_) => {'generation': 5};
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-rg1');
+      await store.sendMessage('hi');
+      expect(store.isStreaming, isTrue);
+
+      // 断链窗口内引擎 respawn（gen 5→6，推送因手机离线永久丢失），
+      // 新引擎中该会话不存在：read / events / subscribe 全部 gone 形态
+      fake.handlers['x/engine/generation'] = (_) => {'generation': 6};
+      Object sessionGone(Map<String, dynamic>? _) =>
+          throw const ZcodeRequestException(-32004, 'Session not found');
+      fake.handlers['session/read'] = sessionGone;
+      fake.handlers['session/events'] = sessionGone;
+      fake.handlers['session/subscribe'] = sessionGone;
+      store.debugSimulateRelayState(ZcodeRelayState.closed, false);
+      store.debugSimulateRelayState(ZcodeRelayState.matched, true);
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 修复点 (a)：matched 后主动补查 x/engine/generation
+      expect(
+        fake.requests.any((r) => r.key == 'x/engine/generation'),
+        isTrue,
+        reason: '换代推送离线丢失后，重连必须主动补查代次',
+      );
+      // 修复点 (a)：换代作废残留——流式态解除 + 「引擎已重启」通告，
+      // 绝不误报桌面占用
+      expect(
+        store.isStreaming,
+        isFalse,
+        reason: '会话已随引擎消失，流式态不得永久滞留',
+      );
+      expect(
+        store.remoteActiveElsewhere,
+        isFalse,
+        reason: '「Session not found」是会话消失，不是桌面端占用',
+      );
+      expect(
+        store.debugItems('sess-rg1')
+            .map((e) => e.message.text)
+            .where((t) => t.contains('引擎已重启')),
+        isNotEmpty,
+        reason: '出现「引擎已重启」通告收尾（而非无声冻结）',
+      );
+    });
+
+    test('无换代补查数据时 read 的 -32004 gone 形态走会话消失收尾而非占用',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      // 旧 companion 无 x/engine/generation 应答（查询失败）：
+      // 换代只能靠 read/events 的错误形态判别
+      fake.handlers['x/engine/generation'] = (_) =>
+          throw const ZcodeRequestException(-32601, 'method not found');
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('sess-rg2');
+      await store.sendMessage('hi');
+      expect(store.isStreaming, isTrue);
+
+      Object sessionGone(Map<String, dynamic>? _) =>
+          throw const ZcodeRequestException(-32004, 'Session not found');
+      fake.handlers['session/read'] = sessionGone;
+      fake.handlers['session/subscribe'] = sessionGone;
+      fake.handlers['session/events'] = sessionGone;
+      store.debugSimulateRelayState(ZcodeRelayState.closed, false);
+      store.debugSimulateRelayState(ZcodeRelayState.matched, true);
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 修复点 (b)：gone 形态走 _failSessionGone 清残留退列表，
+      // 绝不落入「保留流式多等」或「桌面占用」
+      expect(store.isStreaming, isFalse, reason: '会话已消失，多等无意义');
+      expect(store.remoteActiveElsewhere, isFalse, reason: '非占用形态');
+      expect(store.error, contains('引擎已重启'),
+          reason: '显式告知引擎已重启（清残留退列表）');
+    });
+  });
 }

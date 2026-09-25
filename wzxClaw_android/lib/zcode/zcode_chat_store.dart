@@ -593,6 +593,12 @@ class ZcodeChatStore extends ChangeNotifier {
         unawaited(refreshSessions());
       }
       unawaited(_resubscribeAll());
+      // 换代补查（审查 f-reconnect-replay-degrade-1）：companion 仅在
+      // respawn 瞬间推一次 x/engine/generation，手机离线即永久丢失——
+      // 重连 matched 后主动查询，与 resume 路径同源（复用
+      // _handleEngineGeneration 统一作废）。查询失败不阻塞：read/events
+      // 的 -32004 gone 判别兜底（旧 companion 无此应答的场景）。
+      unawaited(_probeEngineGenerationAfterReconnect());
       // 柱1：链路恢复即对账「停止未确认」的会话（引擎多半已停，读权威
       // 收敛；仍在跑则补发停止）
       unawaited(debugReconcileStopAfterReconnect());
@@ -3173,6 +3179,22 @@ class ZcodeChatStore extends ChangeNotifier {
     }
   }
 
+  /// 重连后的换代补查（与 resume 路径的代次补查同源，见
+  /// _openSessionRestoring）：覆盖「respawn 推送在手机断链时被静默丢弃」
+  /// 的窗口。查询失败静默——由 _confirmTurnAfterReconnect / _pollOnce
+  /// 的 -32004 gone 双形态判别兜底。
+  Future<void> _probeEngineGenerationAfterReconnect() async {
+    final client = _client;
+    if (client == null || !client.paired) return;
+    try {
+      final gen = await client.request('x/engine/generation');
+      final g = gen is Map ? gen['generation'] : null;
+      if (g != null) _handleEngineGeneration({'generation': g});
+    } catch (_) {
+      // 查询失败不阻塞重连链路（gone 判别兜底）
+    }
+  }
+
   /// 重连后确认在途回合（重订阅补放后一律执行，不以水位变化为前提）：
   /// running → 保留流式并恢复
   /// 看门狗/轮询；明确 idle → 权威刷新收尾；读取失败 → 按失败模式方向
@@ -3192,6 +3214,15 @@ class ZcodeChatStore extends ChangeNotifier {
       if (read is Map && read['projection'] is Map) {
         status = _nonEmpty((read['projection'] as Map)['status']);
       }
+    } on ZcodeRequestException catch (e) {
+      if (_isSessionGone(e)) {
+        // 引擎 respawn 清内存后会话消失（审查 f-reconnect-replay-degrade-1，
+        // 与 resume 路径双形态判别同源）：清残留退列表，绝不按「多等」
+        // 保留一个已不存在的流式会话
+        _failSessionGone(state);
+        return;
+      }
+      // 占用（Session is not active）等其他 -32004 / 失败：状态未知走「多等」
     } catch (_) {
       // 状态未知：走「多等」路径
     }
@@ -4084,6 +4115,14 @@ class ZcodeChatStore extends ChangeNotifier {
       }
     } catch (e) {
       if (e is ZcodeRequestException && e.code == -32004) {
+        if (_isSessionGone(e)) {
+          // 引擎 respawn 清内存后会话消失（「Session not found」形态，
+          // 审查 f-reconnect-replay-degrade-1）：清残留退列表，绝不误报
+          // 桌面占用——那会让用户对着一个不存在的会话无限等待
+          _stopFallbackPolling();
+          _failSessionGone(state);
+          return;
+        }
         // 会话已被其他运行时占用（运行时单归属，非故障）：停止轮询且不得
         // 重新物化抢占用，置占用标记交 UI 呈现（审查 P1-1 恢复方向）
         state.remoteActiveElsewhere = true;
