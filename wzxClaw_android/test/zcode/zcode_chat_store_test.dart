@@ -2761,7 +2761,17 @@ void main() {
     test('f-web-platform-degrade-3 clearAll 抛错不阻断内存清理', () async {
       final cache = FakeZcodeSessionCache()..throwOnClearAll = true;
       final fake = FakeZcodeRelayClient();
-      FakeSessionServer().bind(fake);
+      final server = FakeSessionServer()..bind(fake);
+      server.session('sess-clr').messages.add(
+            fakeMsg(
+              'user',
+              [
+                {'type': 'text', 'text': '清理前已落库的消息'},
+              ],
+              id: 'h-clr',
+              created: 1,
+            ),
+          );
       final store = ZcodeChatStore(cache: cache)
         ..attach(fake, desktopId: 'device-sid-1', desktopName: '测试桌面');
       addTearDown(store.dispose);
