@@ -208,9 +208,16 @@ class ZcodeSessionState {
   /// 禁止自动冲队，重连后自动对账。
   ZcodeStopPhase stopPhase = ZcodeStopPhase.idle;
 
-  /// 最近一次 usage.delta 的 token 计数（回合收尾通知用）
+  /// 最近一次 usage.delta 的 token 计数（回合收尾通知用）。
+  /// 新回合开始（noteTurnStart 代次前进，含远端回合）即清零——回合以
+  /// 无 token 数据的路径收尾时不得冒充上一回合的值（stop-machine-3）。
   int lastInputTokens = 0;
   int lastOutputTokens = 0;
+
+  /// 本回合是否见过 token 数据（usage.delta / model.response usage /
+  /// turn.completed usage 任一）。收尾回退（lastOutputTokens / 通知
+  /// tokens 求和）仅在此为 true 时合法——false 时回落值是残留旧值。
+  bool usageSeenThisTurn = false;
 
   /// 已收尾的回合 id（session/event 与 telemetry 双通道幂等去重）
   final Set<String> endedTurnIds = {};
@@ -360,7 +367,10 @@ class ZcodeSessionState {
   }
 
   /// 记录一次回合开始（turn.started）：turnId 变化才计代次（补放/重放
-  /// 的同回合事件不递增）。首次认领身份即解除本地乐观窗口标志。
+  /// 的同回合事件不递增）。首次认领身份即解除本地乐观窗口标志，并清零
+  /// token 计数（turnId 变化即新回合，含桌面端发起的远端回合——否则远端
+  /// 回合以无 token 数据的路径收尾时，通知与 tok/s 会冒充上一回合旧值，
+  /// 审查 stop-machine-3）。
   void noteTurnStart(String? turnId) {
     if (turnId == null) return;
     startedTurnIds.add(turnId);
@@ -368,6 +378,9 @@ class ZcodeSessionState {
     lastSeenTurnId = turnId;
     turnGeneration++;
     pendingLocalTurn = false;
+    lastInputTokens = 0;
+    lastOutputTokens = 0;
+    usageSeenThisTurn = false;
   }
 
   /// 本地发送开启新回合（turnId 未知的乐观路径；服务端 turn.started
@@ -765,9 +778,11 @@ class ZcodeSessionState {
       return;
     }
     lastFirstTokenMs = firstTokenLatencyMs;
-    // token 数优先回合收尾传入的权威 usage；缺省回落 lastOutputTokens
-    // （usage.delta / model.response 的每请求口径，多请求回合可能偏小）
-    final outTok = outputTokens ?? lastOutputTokens;
+    // token 数优先回合收尾传入的权威 usage；缺省时仅当本回合确实见过
+    // token 数据才回落 lastOutputTokens（usage.delta / model.response 的
+    // 每请求口径，多请求回合可能偏小）——未见数据时置 0 即 tok/s=null，
+    // 绝不冒充上一回合的值（审查 stop-machine-3）
+    final outTok = outputTokens ?? (usageSeenThisTurn ? lastOutputTokens : 0);
     final spanMs = _lastDeltaAt!.difference(_firstDeltaAt!).inMilliseconds;
     lastTurnTokensPerSecond =
         (spanMs > 0 && outTok > 0) ? outTok * 1000 / spanMs : null;
@@ -942,6 +957,7 @@ class ZcodeSessionState {
     streamingTurnId = null;
     lastInputTokens = 0;
     lastOutputTokens = 0;
+    usageSeenThisTurn = false;
     _toolInputBuffers.clear();
   }
 

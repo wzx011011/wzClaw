@@ -1557,4 +1557,105 @@ void main() {
           reason: 'idle 兜底的通知保持中性文案口径');
     });
   });
+
+  group('f-turn-lifecycle-stop-machine-3 远端回合 token 计数不冒充', () {
+    test('turn.started 认领新回合即清零 token 旧值；无 token 数据收尾不回落',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-sm3');
+
+      // A 回合（手机本地）：产生权威 token 数据 outputTokens=500
+      await store.sendMessage('A');
+      pushEvent(
+        store,
+        sessionId: 'session-sm3',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 'turn-a',
+        payload: {'messageId': 'srv-u-0', 'input': 'A'},
+      );
+      store.debugHandleNotify(
+        ZcodeFrame(
+          method: 'v4/telemetry/event',
+          params: {
+            'sessionId': 'session-sm3',
+            'eventId': 'tel-sm3-1',
+            'kind': 'usage.delta',
+            'inputTokens': 100,
+            'outputTokens': 500,
+          },
+        ),
+      );
+      expect(
+        store.debugState('session-sm3')!.lastOutputTokens,
+        500,
+        reason: '前置：A 回合的 token 计数已记录',
+      );
+
+      // 桌面端发起 B 回合：turn.started(B) 到达（不经 sendMessage）
+      pushEvent(
+        store,
+        sessionId: 'session-sm3',
+        type: 'turn.started',
+        seq: 2,
+        turnId: 'turn-b',
+        payload: {'messageId': 'srv-u-1', 'input': 'B'},
+      );
+      // 修复点：代次前进（新回合，含远端回合）即清零旧值
+      expect(
+        store.debugState('session-sm3')!.lastInputTokens,
+        0,
+        reason: '新回合开始不得残留上一回合的 inputTokens',
+      );
+      expect(
+        store.debugState('session-sm3')!.lastOutputTokens,
+        0,
+        reason: '新回合开始不得残留上一回合的 outputTokens',
+      );
+
+      // B 回合带正文增量，回合末尾链路中断（turn.completed/telemetry 全丢）
+      pushEvent(
+        store,
+        sessionId: 'session-sm3',
+        type: 'model.streaming',
+        seq: 3,
+        turnId: 'turn-b',
+        payload: {
+          'assistantMessageId': 'msg-b',
+          'kind': 'text_delta',
+          'delta': 'B 的回答开头',
+        },
+      );
+      // 重连确认读得 idle → 权威刷新收尾（idle 兜底同路径）
+      store.debugHandleNotify(
+        ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'session-sm3',
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // 修复点：无 token 数据的收尾显式置 null，不冒充 A 回合数值
+      expect(
+        store.lastTurnTokensPerSecond,
+        isNull,
+        reason: 'tok/s = 旧 outputTokens×1000/本回合跨度，量级完全错误',
+      );
+      expect(
+        notifier.shown.last['tokens'],
+        isNull,
+        reason: '通知 tokens 不得回落 A 回合的 600',
+      );
+    });
+  });
 }

@@ -2275,10 +2275,11 @@ class ZcodeChatStore extends ChangeNotifier {
 
     final kind = _nonEmpty(params['kind']);
     if (kind == 'usage.delta') {
-      state.lastInputTokens =
-          _toIntOrNull(params['inputTokens']) ?? state.lastInputTokens;
-      state.lastOutputTokens =
-          _toIntOrNull(params['outputTokens']) ?? state.lastOutputTokens;
+      final input = _toIntOrNull(params['inputTokens']);
+      final output = _toIntOrNull(params['outputTokens']);
+      if (input != null) state.lastInputTokens = input;
+      if (output != null) state.lastOutputTokens = output;
+      if (input != null || output != null) state.usageSeenThisTurn = true;
     } else if (kind == 'tool.lifecycle') {
       _applyToolLifecycleTelemetry(state, params);
       _notifyIfActive(state);
@@ -2917,6 +2918,7 @@ class ZcodeChatStore extends ChangeNotifier {
           final output = _toIntOrNull(usage['outputTokens']);
           if (input != null) state.lastInputTokens = input;
           if (output != null) state.lastOutputTokens = output;
+          if (input != null || output != null) state.usageSeenThisTurn = true;
         }
         return;
       case 'turn.completed':
@@ -2977,6 +2979,7 @@ class ZcodeChatStore extends ChangeNotifier {
         if (usage != null) {
           state.lastInputTokens = usage.inputTokens;
           state.lastOutputTokens = usage.outputTokens;
+          state.usageSeenThisTurn = true;
         }
         if ((authoritativeText != null && authoritativeText.isNotEmpty) ||
             usage != null) {
@@ -3026,7 +3029,12 @@ class ZcodeChatStore extends ChangeNotifier {
     _notifier.showTaskDone(
       status: status,
       statusKnown: statusIsAuthoritative,
-      tokens: tokenCount ?? (state.lastInputTokens + state.lastOutputTokens),
+      // 通知 tokens：显式 tokenCount 优先；否则仅当本回合见过 token 数据
+      // 才回落求和——未见数据时置 null，不冒充上一回合的值（stop-machine-3）
+      tokens: tokenCount ??
+          (state.usageSeenThisTurn
+              ? state.lastInputTokens + state.lastOutputTokens
+              : null),
       sessionId: state.sessionId,
       desktopId: desktopId,
       desktopName: desktopName,
@@ -4395,6 +4403,10 @@ class ZcodeChatStore extends ChangeNotifier {
   @visibleForTesting
   List<ZcodeSessionItem> debugItems(String sessionId) =>
       List.unmodifiable(_states[sessionId]?.items ?? const []);
+
+  /// 仅测试使用：会话状态容器（回合指标/游标等断言用）
+  @visibleForTesting
+  ZcodeSessionState? debugState(String sessionId) => _states[sessionId];
 
   @override
   void dispose() {
