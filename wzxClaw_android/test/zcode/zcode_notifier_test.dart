@@ -157,4 +157,50 @@ void main() {
       expect(notifier.shown, isEmpty);
     });
   });
+
+  group('f-web-platform-degrade-4 web 浏览器通知通道', () {
+    test('hidden 状态下完成：web 通知通道被请求（被动观测兜底）', () async {
+      var requested = 0;
+      ZcodeNotifier.debugWebNotificationHandler =
+          ({required String title, required String body}) async {
+        requested++;
+        return true;
+      };
+      ZcodeNotifier.debugForceWebChannel = true;
+      addTearDown(() {
+        ZcodeNotifier.debugWebNotificationHandler = null;
+        ZcodeNotifier.debugForceWebChannel = false;
+      });
+
+      // 基类实例：无本地通知插件（web 形态），走浏览器 Notification 通道
+      final webNotifier = ZcodeNotifier();
+      webNotifier.handleLifecycleState(AppLifecycleState.hidden);
+      webNotifier.showTaskDone(status: 'success', sessionId: 's1');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(requested, 1, reason: 'web 后台标签页里浏览器通知是唯一的'
+          '被动观测通道（权限挂起被桌面端 120s 自动拒后须有痕迹）');
+    });
+
+    test('resumed 状态下不请求 web 通道（前台守卫优先）', () async {
+      var requested = 0;
+      ZcodeNotifier.debugWebNotificationHandler =
+          ({required String title, required String body}) async {
+        requested++;
+        return true;
+      };
+      ZcodeNotifier.debugForceWebChannel = true;
+      addTearDown(() {
+        ZcodeNotifier.debugWebNotificationHandler = null;
+        ZcodeNotifier.debugForceWebChannel = false;
+      });
+
+      final webNotifier = ZcodeNotifier();
+      webNotifier.handleLifecycleState(AppLifecycleState.resumed);
+      webNotifier.showTaskDone(status: 'success', sessionId: 's1');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(requested, 0, reason: '用户正看着界面，不需要通知');
+    });
+  });
 }

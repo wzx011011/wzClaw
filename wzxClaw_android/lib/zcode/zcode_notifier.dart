@@ -12,6 +12,7 @@
 // 生命周期状态由 App 根入口转发。测试通过 setInstanceForTest 注入替身。
 // ============================================================
 
+import 'dart:async';
 import 'dart:convert';
 import '../platform_io.dart';
 
@@ -19,6 +20,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'web_notification_stub.dart'
+    if (dart.library.html) 'web_notification_web.dart' as web_notify;
 
 /// 通知渠道
 const String _channelId = 'zcode_remote';
@@ -49,6 +53,19 @@ class ZcodeNotifier {
 
   /// 点击通知回调（payload 为会话 id；由 UI 层接线做路由跳转）
   void Function(String? sessionId)? onTapPayload;
+
+  /// 仅测试使用：web 浏览器通知通道替身（null = 生产实现
+  /// showWebNotification）。配合 [debugForceWebChannel] 在 VM 测试中
+  /// 断言 web 分支行为。
+  @visibleForTesting
+  static Future<bool> Function({
+    required String title,
+    required String body,
+  })? debugWebNotificationHandler;
+
+  /// 仅测试使用：强制走 web 浏览器通知分支（VM 测试中 kIsWeb 恒为 false）
+  @visibleForTesting
+  static bool debugForceWebChannel = false;
 
   FlutterLocalNotificationsPlugin? _plugin;
   bool _initialized = false;
@@ -207,7 +224,18 @@ class ZcodeNotifier {
     int notificationId = 2001,
   }) {
     final plugin = _plugin;
-    if (plugin == null) return; // 未初始化（测试/非 Android）静默跳过
+    if (plugin == null) {
+      // web 分支（审查 f-web-platform-degrade-4）：web 无本地通知插件，
+      // 浏览器 Notification 是后台标签页里唯一的被动观测通道——回合
+      // 完成/权限挂起被桌面端 120s 自动拒绝后，用户回来不能毫无痕迹。
+      // 授权失败静默：通知是尽力而为能力，回前台 UI 状态可见兜底。
+      if (kIsWeb || debugForceWebChannel) {
+        final handler =
+            debugWebNotificationHandler ?? web_notify.showWebNotification;
+        unawaited(handler(title: title, body: body));
+      }
+      return; // 非 web 且未初始化：静默跳过
+    }
 
     // 尽力而为能力：展示失败只留观测，不允许未捕获异步异常冒泡
     plugin
