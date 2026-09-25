@@ -730,6 +730,48 @@ void main() {
       expect(client.paired, isTrue);
     });
 
+    test('f-web-platform-degrade-1 tick 实际间隔 ≥2×pingInterval（被宿主节流）：'
+        '只发 ping 跳过判死', () async {
+      final h = RelayHarness(
+        reconnectDelay: const Duration(milliseconds: 30),
+        pingInterval: const Duration(milliseconds: 40),
+      );
+      final client = await h.connectMatched();
+      h.server.autoReplyQueries = false;
+      // 取消周期 timer，手动驱动 tick 复现 web 后台节流形态：
+      // 15s Timer 被压到 ≈1 次/分钟，墙钟 Stopwatch 照走
+      client.debugCancelKeepaliveTimer();
+
+      // tick1：起点（lastAt 未初始化 → 正常判定，elapsed≈0 不断）
+      client.debugKeepaliveTick();
+      expect(h.channels, hasLength(1));
+
+      // 静默 150ms（> 3×40ms=120ms 死链阈值）后 tick2 到达：距上次 tick
+      // 150ms ≥ 2×40ms = 节流的证据——只发 ping 跳过判死
+      //（修复前：elapsed 150ms ≥ 120ms 直接判死，健康链路被周期性误杀，
+      // 陷入每 60~75s 一轮的断/连循环）
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      client.debugKeepaliveTick();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        h.channels,
+        hasLength(1),
+        reason: 'tick 间隔 ≥2×pingInterval = 定时器被节流，'
+            '入站静默是节流的必然产物而非断链证据',
+      );
+      expect(client.paired, isTrue);
+
+      // 对照：正常节拍（距上次 tick 30ms < 2×40ms）的 tick 仍执行判死——
+      // 入站静默已 ≈180ms ≥ 120ms → 主动断开走重连（判死语义本身保留）
+      client.debugKeepaliveTick();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(
+        h.channels.length,
+        greaterThan(1),
+        reason: '非节流的正常节拍 tick 仍按 pingLossLimit 判死（语义不变）',
+      );
+    });
+
     test('close() 手动关闭：保活停止，不再发心跳', () async {
       final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
       final client = await h.connectMatched();

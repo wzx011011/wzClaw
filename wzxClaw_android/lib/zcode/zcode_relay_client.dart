@@ -136,6 +136,9 @@ class ZcodeRelayClient {
   final Stopwatch _inboundWatch = Stopwatch();
   final Random _random = Random();
 
+  /// 上次保活 tick 时刻（节流解耦判定用，见 _keepaliveTick）
+  DateTime? _lastKeepaliveTickAt;
+
   // ---- 重连退避 ----
   int _reconnectAttempts = 0;
 
@@ -251,6 +254,19 @@ class ZcodeRelayClient {
   /// 仅测试使用：按当前尝试计数计算的下一次重连延迟（含抖动）
   @visibleForTesting
   Duration debugNextReconnectDelay() => _nextReconnectDelay();
+
+  /// 仅测试使用：手动驱动一次保活 tick（节流形态测试用，见
+  /// zcode_relay_client_test 的 f-web-platform-degrade-1 用例）
+  @visibleForTesting
+  void debugKeepaliveTick() => _keepaliveTick();
+
+  /// 仅测试使用：取消保活周期 timer（保留入站计时），让测试手动驱动
+  /// tick 而不被周期判死干扰
+  @visibleForTesting
+  void debugCancelKeepaliveTimer() {
+    _keepaliveTimer?.cancel();
+    _keepaliveTimer = null;
+  }
 
   // ---------- 内部实现 ----------
 
@@ -545,12 +561,26 @@ class ZcodeRelayClient {
   void _stopKeepalive() {
     _keepaliveTimer?.cancel();
     _keepaliveTimer = null;
+    _lastKeepaliveTickAt = null;
     _inboundWatch.stop();
   }
 
   void _keepaliveTick() {
     // 发心跳查询（relay 既有协议帧；应答 pair_status_ack 会重置活性计时）
     _send({'type': 'pair_status_query', 'device_sid': _pairing.sid});
+    // 节流解耦（审查 f-web-platform-degrade-1）：本 tick 实际间隔 ≥2×
+    // pingInterval = 定时器被宿主节流的证据（web 后台标签页把 15s 链式
+    // Timer 对齐为 ≈1 次/分钟，而墙钟 Stopwatch 持续走）——此时入站静默
+    // 时长是节流的必然产物而非断链证据，只发 ping 跳过判死；否则健康
+    // 链路被周期性误杀，陷入每 60~75s 一轮的断/连循环（权限挂起被作废、
+    // 诊断环形缓冲被刷满）。死链交由回前台 verifyAlive（页面可见性可靠
+    // 触发）与恢复正常节流后的周期判定收敛。
+    final now = DateTime.now();
+    final lastAt = _lastKeepaliveTickAt;
+    _lastKeepaliveTickAt = now;
+    if (lastAt != null && now.difference(lastAt) >= _pingInterval * 2) {
+      return;
+    }
     // 连续 pingLossLimit 个周期无任何入站帧 → 半开/死链：
     // 主动关闭，走既有断线重连流程
     if (_inboundWatch.elapsed < _pingInterval * _pingLossLimit) return;
