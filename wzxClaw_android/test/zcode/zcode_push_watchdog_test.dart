@@ -69,4 +69,68 @@ void main() {
       reason: '视口会话 B 的看门狗到期应拉起降级轮询',
     );
   });
+
+  test('f-reconnect-replay-degrade-3 推送帧到即续期看门狗：轮询停止后再次静默能重新拉起',
+      () async {
+    final fake = FakeZcodeRelayClient();
+    FakeSessionServer().bind(fake);
+    fake.handlers['session/events'] = (_) => {
+          'events': [
+            {
+              'eventId': 'ev-dg3',
+              'seq': 99,
+              'sessionId': 'sess-dg3',
+              'type': 'text_delta',
+              'payload': {'delta': '轮询增量'},
+            },
+          ],
+        };
+    final store = pairedStore(fake);
+    addTearDown(store.dispose);
+    store.pushWatchdogDelay = const Duration(milliseconds: 60);
+    await store.openSession('sess-dg3');
+    await store.sendMessage('hi');
+
+    // 第一次推送静默：看门狗到期 → 拉起降级轮询
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(
+      fake.requests.any((r) => r.key == 'session/events'),
+      isTrue,
+      reason: '前置：推送静默触发了降级轮询',
+    );
+
+    // 一帧推送恢复：轮询停止；修复点——该帧同时续期看门狗。
+    // 断言窗口取 30ms（< 60ms 看门狗延迟）：窗口内无新轮询请求即证明
+    // 「推送恢复即停轮询」；窗口之后看门狗若因推送再次静默而到期拉起
+    // 轮询，属修复后的预期自持行为
+    var pollCount =
+        fake.requests.where((r) => r.key == 'session/events').length;
+    pushEvent(
+      store,
+      sessionId: 'sess-dg3',
+      type: 'model.streaming',
+      seq: 100,
+      turnId: 't-dg3',
+      payload: {
+        'assistantMessageId': 'msg-dg3',
+        'kind': 'text_delta',
+        'delta': '推送增量',
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(
+      fake.requests.where((r) => r.key == 'session/events').length,
+      pollCount,
+      reason: '推送恢复即停轮询（既有语义，验证窗口在看门狗延迟内）',
+    );
+
+    // 同回合内推送再次静默：续期后的看门狗到期 → 轮询必须重新拉起
+    //（修复前：看门狗被消费后无人重武装，防线永久拆除）
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(
+      fake.requests.where((r) => r.key == 'session/events').length,
+      greaterThan(pollCount),
+      reason: '看门狗到期拉起轮询后，一帧推送停轮询不应永久拆除防线',
+    );
+  });
 }

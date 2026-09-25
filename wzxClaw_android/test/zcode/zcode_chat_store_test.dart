@@ -2644,7 +2644,10 @@ void main() {
       expect(fake.requests.any((e) => e.key == 'session/events'), isTrue);
       expect(store.messages.last.text, '轮询增量');
 
-      // 推送恢复：降级轮询停止（不再产生新的 session/events 请求）
+      // 推送恢复：降级轮询停止（不再产生新的 session/events 请求）。
+      // 断言窗口取 30ms（< 60ms 看门狗延迟）：degrade-3 修复后推送帧到即
+      // 续期看门狗，若此后推送持续静默超过延迟，轮询会被重新拉起（预期
+      // 自持行为）——「推送恢复即停轮询」的验证须在看门狗延迟窗口内
       pushEvent(
         store,
         sessionId: 'sess-wd',
@@ -2659,7 +2662,7 @@ void main() {
       );
       final eventsCount =
           fake.requests.where((e) => e.key == 'session/events').length;
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
       expect(
         fake.requests.where((e) => e.key == 'session/events').length,
         eventsCount,

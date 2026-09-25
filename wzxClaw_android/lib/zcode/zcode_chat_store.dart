@@ -2157,6 +2157,14 @@ class ZcodeChatStore extends ChangeNotifier {
         _applySessionEvent(state, params);
         // 推送恢复：停掉可能因看门狗拉起的降级轮询（eventId 去重本就并存安全）
         _stopFallbackPollingFor(state.sessionId);
+        // 帧到即续期看门狗（审查 f-reconnect-replay-degrade-3）：推送帧本身
+        // 就是「通道活着」的证据，与 lastPushAt 更新同点收口。没有这一步，
+        // 看门狗到期拉起轮询后一帧推送停轮询即永久拆除防线——同回合内
+        // 订阅再次静默失效就彻底失守，手动刷新（finishTurn:false）也救不回。
+        // turn.completed 等终态帧到达时 hasTurnInFlight 已清，不会重武装。
+        if (state.hasTurnInFlight && state.pushAvailable) {
+          _armPushWatchdog(state);
+        }
         return;
       case 'state.updated':
         _handleStateUpdated(params);
