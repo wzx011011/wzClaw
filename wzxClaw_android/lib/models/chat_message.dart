@@ -322,6 +322,12 @@ class ChatMessage {
   /// 权威，这里只是渲染层的镜像，二者由同步层写入时保持一致）。
   final String? protoId;
 
+  /// 客户端视图身份（流式占位创建即定、权威替换时继承；不持久化）。
+  /// 块身份键用它兜底 protoId：占位在「无 id → 采纳 protoId」转换前后
+  /// 键恒定，TurnBlockView Element 不重挂载、折叠状态不丢
+  /// （审查 f-render-stream-consumption-1）。
+  final String? viewId;
+
   /// 产出该消息的 agent（引擎 info.agent；null / 'zcode-agent' = 主时间线）
   final String? agent;
 
@@ -347,6 +353,7 @@ class ChatMessage {
     this.usage,
     this.model,
     this.protoId,
+    this.viewId,
     this.agent,
     this.durationMs,
     this.errorKind,
@@ -400,6 +407,7 @@ class ChatMessage {
     TokenUsage? usage,
     String? model,
     String? protoId,
+    String? viewId,
     String? agent,
     int? durationMs,
     String? errorKind,
@@ -414,6 +422,7 @@ class ChatMessage {
         usage: usage ?? this.usage,
         model: model ?? this.model,
         protoId: protoId ?? this.protoId,
+        viewId: viewId ?? this.viewId,
         agent: agent ?? this.agent,
         durationMs: durationMs ?? this.durationMs,
         errorKind: errorKind ?? this.errorKind,

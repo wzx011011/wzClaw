@@ -4384,11 +4384,18 @@ class _TurnEntry {
   final List<ChatMessage> messages;
 }
 
-/// 块身份基础串（顶层函数，供回归测试直接钉契约）：优先协议 id
-/// protoId——权威合并前后同 id → 同键，折叠/展开状态跟块走；无协议 id
-/// 的本地乐观消息回退创建毫秒（turn.started 采纳/首个增量采纳后会切换
-/// 到 protoId 键，此转换发生在流式最初期，用户尚未产生折叠状态）。
+/// 块身份基础串（顶层函数，供回归测试直接钉契约）：客户端视图身份
+/// viewId 优先——流式占位创建即定、采纳 protoId 与权威替换时继承，
+/// 「无 id 占位 → 采纳 protoId」前后键恒定，折叠/展开状态跟块走，
+/// 运行中窗口的快照投影（reconcileActiveTools 建无 id 占位）不再打破
+/// 折叠状态（审查 f-render-stream-consumption-1）；历史/权威消息无
+/// viewId 回落协议 id protoId；本地乐观消息（无 viewId 无 protoId）
+/// 回退创建毫秒。
 String chatBlockBaseKey(String kind, ChatMessage first) {
+  final viewId = first.viewId;
+  if (viewId != null && viewId.isNotEmpty) {
+    return '$kind:${first.role.name}:$viewId';
+  }
   final protoId = first.protoId;
   final identity = (protoId != null && protoId.isNotEmpty)
       ? protoId

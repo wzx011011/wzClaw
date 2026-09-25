@@ -19,8 +19,8 @@ import 'dart:collection';
 
 import '../models/chat_message.dart';
 
-/// 事件去重集合上限（超出裁剪最旧一半，防止长会话内存膨胀）
-const int _kMaxAppliedEventIds = 4000;
+  /// 事件去重集合上限（超出裁剪最旧一半，防止长会话内存膨胀）
+  const int _kMaxAppliedEventIds = 4000;
 
 /// 停止请求状态机（柱1）。语义词典（legacy 协议无官方 stopState 投影，
 /// 对照官方 v4 sessionControlSchema.stopState 的客户端等价实现）：
@@ -126,6 +126,9 @@ class ZcodeSessionState {
 
   /// 时钟源（计时/采样统一走它；测试注入受控时钟，生产为墙钟）
   final DateTime Function() _clock;
+
+  /// 流式占位视图身份计数器（viewId 生成用；容器内单调递增）
+  int _viewIdSeq = 0;
 
   /// 渲染消息（按时间序；尾部为最新）
   final List<ZcodeSessionItem> items = [];
@@ -487,6 +490,10 @@ class ZcodeSessionState {
           createdAt: _clock(),
           isStreaming: true,
           protoId: assistantMessageId ?? streamingProtoId,
+          // 客户端视图身份：创建即定，采纳 protoId 与权威替换时继承，
+          // 块身份键在「无 id 占位 → 采纳 protoId」前后恒定（审查
+          // f-render-stream-consumption-1）
+          viewId: 'sv-${_clock().millisecondsSinceEpoch}-${++_viewIdSeq}',
         ),
         protoId: assistantMessageId ?? streamingProtoId,
         turnId: turnId ?? streamingTurnId,
@@ -1004,7 +1011,7 @@ class ZcodeSessionState {
       final id = inc.protoId;
       final existingIdx = id == null ? null : byProto[id];
       if (existingIdx != null) {
-        items[existingIdx] = _healToolInputs(items[existingIdx], inc);
+        items[existingIdx] = _inheritViewId(items[existingIdx], inc);
         if (id != null) byProto[id] = existingIdx;
         batchAnchor = existingIdx;
         continue;
@@ -1040,7 +1047,7 @@ class ZcodeSessionState {
                     local.turnId == inc.turnId),
         };
         if (!canReconcile) continue;
-        items[i] = inc;
+        items[i] = _inheritViewId(items[i], inc);
         if (id != null) byProto[id] = i;
         reconciled = true;
         batchAnchor = i;
@@ -1079,6 +1086,24 @@ class ZcodeSessionState {
         batchAnchor = insertAt;
       }
     }
+  }
+
+  /// 权威替换时的工具输入回填 + 视图身份继承：占位（viewId 有值）被
+  /// 权威消息原位替换时继承其 viewId——块身份键在替换前后恒定，
+  /// TurnBlockView Element 不重挂载、折叠状态不丢
+  /// （审查 f-render-stream-consumption-1）。
+  ZcodeSessionItem _inheritViewId(ZcodeSessionItem oldItem, ZcodeSessionItem inc) {
+    final healed = _healToolInputs(oldItem, inc);
+    final oldViewId = oldItem.message.viewId;
+    if (oldViewId == null || healed.message.viewId != null) return healed;
+    return ZcodeSessionItem(
+      protoId: healed.protoId,
+      turnId: healed.turnId,
+      synced: healed.synced,
+      truncated: healed.truncated,
+      dirty: healed.dirty,
+      message: healed.message.copyWith(viewId: oldViewId),
+    );
   }
 
   /// 权威替换时的工具输入回填：0.16.9 真机偶发权威 part 缺 state.input
