@@ -182,6 +182,13 @@ class ZcodeSessionState {
   /// 当前流式消息的 assistantMessageId（占位条目的 protoId）
   String? streamingProtoId;
 
+  /// 本地回合乐观窗口标志（beginLocalTurn 置位）：session/send 在途、
+  /// turn.started 未认领身份。窗口内的 state.updated idle 补丁（不带
+  /// turnId）不得兜底收尾——它可能只是上一回合结束的状态迁移。
+  /// turn.started 认领身份（noteTurnStart）或回合收尾（finalizeStreaming）
+  /// 时清除。
+  bool pendingLocalTurn = false;
+
   /// 当前实时事件所属回合。仅用于把同一回合的过程项落在正确消息上，
   /// 消息的权威身份始终是 session/messages 的 info.id。
   String? streamingTurnId;
@@ -353,13 +360,14 @@ class ZcodeSessionState {
   }
 
   /// 记录一次回合开始（turn.started）：turnId 变化才计代次（补放/重放
-  /// 的同回合事件不递增）
+  /// 的同回合事件不递增）。首次认领身份即解除本地乐观窗口标志。
   void noteTurnStart(String? turnId) {
     if (turnId == null) return;
     startedTurnIds.add(turnId);
     if (turnId == lastSeenTurnId) return;
     lastSeenTurnId = turnId;
     turnGeneration++;
+    pendingLocalTurn = false;
   }
 
   /// 本地发送开启新回合（turnId 未知的乐观路径；服务端 turn.started
@@ -369,6 +377,9 @@ class ZcodeSessionState {
   void beginLocalTurn() {
     turnGeneration++;
     lastSeenTurnId = null;
+    // 乐观窗口标志（审查 stop-machine-2）：turn.started 认领身份或收尾
+    // 时清除——窗口内引擎的 idle 状态补丁（不带 turnId）不得兜底收尾
+    pendingLocalTurn = true;
   }
 
   // ──────────────────────────────────────────────
@@ -912,6 +923,8 @@ class ZcodeSessionState {
       it.dirty = true;
     }
     streamingIndex = -1;
+    // 收尾即解除本地乐观窗口标志（stop-machine-2）
+    pendingLocalTurn = false;
     // 收尾必须连流式身份一并清空（对齐 resetTurnState 语义）：残留的
     // streamingProtoId 会让下一回合（桌面壳发起、旧形态无 id 增量）新建
     // 的占位继承上一回合 assistantMessageId，被旧回合收尾权威刷新按同 id

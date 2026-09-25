@@ -2216,7 +2216,15 @@ class ZcodeChatStore extends ChangeNotifier {
       state.isStreaming = true;
       _notifyIfActive(state);
     } else if (status == 'idle') {
-      if (state.isStreaming) {
+      if (state.pendingLocalTurn) {
+        // 本地回合乐观窗口（session/send 在途、turn.started 未认领身份，
+        // 审查 stop-machine-2）：idle 补丁不携带 turnId（实测形状），可能
+        // 只是上一回合结束的状态迁移——绝不据此收尾刚发送的回合（误清
+        // 流式标志 + 滚存错误指标 + 误发中性通知 + 短暂放行队列冲放）。
+        // 该回合若真已结束（send 被拒/未达），由 _resolveUnknownSendOutcome
+        // /重连确认/后续事件收敛——失败模式偏「多等」。
+        _notifyIfActive(state);
+      } else if (state.isStreaming) {
         // 兜底回合收尾（可能错过 turn.completed / turn.terminal）：idle
         // 补丁不携带终态，失败回合也会走到这里——通知必须走中性文案
         _handleTurnEnd(

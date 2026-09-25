@@ -2564,11 +2564,22 @@ void main() {
       final store = pairedStore(fake);
       await store.openSession('sess-dup');
       await store.sendMessage('hi');
+      // turn.started 先认领回合身份（真实链路 sendMessage 后必到；
+      // 未认领的乐观窗口内 idle 兜底被 stop-machine-2 守卫挡下，
+      // 不在本用例的场景内）
+      pushEvent(
+        store,
+        sessionId: 'sess-dup',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 'turn-dup',
+        payload: {'messageId': 'srv-u-0', 'input': 'hi'},
+      );
       pushEvent(
         store,
         sessionId: 'sess-dup',
         type: 'model.streaming',
-        seq: 1,
+        seq: 2,
         turnId: 'turn-dup',
         payload: {
           'assistantMessageId': 'msg-dup',
@@ -2595,7 +2606,7 @@ void main() {
         store,
         sessionId: 'sess-dup',
         type: 'turn.completed',
-        seq: 2,
+        seq: 3,
         turnId: 'turn-dup',
         payload: {
           'response': '答案',

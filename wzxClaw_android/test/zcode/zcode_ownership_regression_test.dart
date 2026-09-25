@@ -1476,4 +1476,85 @@ void main() {
       );
     });
   });
+
+  group('f-turn-lifecycle-stop-machine-2 本地乐观窗口的 idle 兜底', () {
+    test('sendMessage 后 turn.started 前的 idle 补丁不误收尾 T2；认领后照常兜底',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      FakeSessionServer().bind(fake);
+      final notifier = FakeZcodeNotifier();
+      ZcodeNotifier.setInstanceForTest(notifier);
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      await store.openSession('session-sm2');
+
+      // T2 发送在途（session/send 挂起）：乐观窗口
+      final sendGate = Completer<void>();
+      fake.handlers['session/send'] = (params) async {
+        await sendGate.future;
+        return {'accepted': true};
+      };
+      unawaited(store.sendMessage('T2'));
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isStreaming, isTrue);
+
+      // 引擎侧 T1 结束的状态迁移 idle 补丁（实测形状无 turnId）先于
+      // 发送应答到达
+      store.debugHandleNotify(
+        ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'session-sm2',
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // 修复点：本地在途回合未认领身份，idle 补丁不下收尾
+      expect(
+        store.isStreaming,
+        isTrue,
+        reason: 'T1 结束的 idle 补丁不得误清刚发送的 T2 的流式标志',
+      );
+      expect(
+        notifier.shown,
+        isEmpty,
+        reason: 'idle 兜底误收尾会误发一条中性「回合已结束」通知',
+      );
+
+      // turn.started 认领身份后：idle 兜底照常工作（对照组）
+      sendGate.complete();
+      await Future<void>.delayed(Duration.zero);
+      pushEvent(
+        store,
+        sessionId: 'session-sm2',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 'turn-t2',
+        payload: {'messageId': 'srv-u-0', 'input': 'T2'},
+      );
+      expect(store.isStreaming, isTrue);
+      store.debugHandleNotify(
+        ZcodeFrame(
+          method: 'state.updated',
+          params: {
+            'sessionId': 'session-sm2',
+            'patch': {'status': 'idle'},
+          },
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        store.isStreaming,
+        isFalse,
+        reason: '身份已认领后 idle 补丁照常兜底收尾',
+      );
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.single['statusKnown'], isFalse,
+          reason: 'idle 兜底的通知保持中性文案口径');
+    });
+  });
 }
