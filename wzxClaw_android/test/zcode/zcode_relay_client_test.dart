@@ -689,6 +689,29 @@ void main() {
       expect(client.paired, isTrue);
     });
 
+    test('f-reconnect-replay-degrade-5 verifyAlive 默认阈值随 pingInterval：'
+        '超过 2×心跳的静默才断线', () async {
+      final h = RelayHarness(
+        reconnectDelay: const Duration(milliseconds: 30),
+        pingInterval: const Duration(milliseconds: 50),
+      );
+      final client = await h.connectMatched();
+      h.server.autoReplyQueries = false; // 停止应答，让入站静默可累积
+      // 静默 ≈110ms：落在 (2×50ms=100ms, 3×50ms=150ms 周期死链判定) 区间
+      // ——旧默认 10s 阈值下此区间完全不设防，生产上「回前台时 elapsed
+      // 恰超一个心跳周期」的健康链路被误杀。观察窗 140ms < 150ms，
+      // 排除周期死链判定的干扰，断开只能来自 verifyAlive
+      await Future<void>.delayed(const Duration(milliseconds: 110));
+      final before = h.channels.length;
+      client.verifyAlive(); // 无参默认阈值（修复后 = 2×pingInterval）
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        h.channels.length,
+        greaterThan(before),
+        reason: '超过 2×pingInterval 的静默 = 死链，回前台校验应主动断开',
+      );
+    });
+
     test('close() 手动关闭：保活停止，不再发心跳', () async {
       final h = RelayHarness(pingInterval: const Duration(milliseconds: 40));
       final client = await h.connectMatched();

@@ -567,12 +567,20 @@ class ZcodeRelayClient {
   /// 停摆，链路多半已被系统或对端回收；回前台若仍显示已连接，要等最多
   /// 一个死链窗口才会发现。此方法供生命周期回调立即调用——已认证但超过
   /// [threshold] 无任何入站帧 → 视为死链，主动断开走快速重连。
-  void verifyAlive({Duration threshold = const Duration(seconds: 10)}) {
+  ///
+  /// [threshold] 缺省 = 2×pingInterval（审查 f-reconnect-replay-degrade-5 /
+  /// f-web-platform-degrade-2）：健康链路的应用层入站间隔可合法达到一个
+  /// 心跳周期（15s 一条 pair_status_ack；web 前台 10~15s 级标签页切换、
+  /// Android 短暂切走同理），阈值必须显著大于一个心跳周期——旧固定 10s
+  /// 小于 15s 心跳周期，会把新鲜链路误判为死链造成回前台必现闪断；
+  /// 2×=30s 仍远小于 relay 的 45s 陈旧判定与 60s 回收。
+  void verifyAlive({Duration? threshold}) {
     final state = _state;
     if (state != ZcodeRelayState.matched && state != ZcodeRelayState.waiting) {
       return; // 未认证：断线重连流程本就自理
     }
-    if (_inboundWatch.elapsed <= threshold) return; // 链路新鲜
+    final effective = threshold ?? _pingInterval * 2;
+    if (_inboundWatch.elapsed <= effective) return; // 链路新鲜
     final socket = _socket;
     if (socket == null) return;
     _stopKeepalive();
