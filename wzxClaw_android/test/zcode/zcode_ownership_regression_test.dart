@@ -1831,4 +1831,80 @@ void main() {
           reason: '显式告知引擎已重启（清残留退列表）');
     });
   });
+
+  group('f-viewport-multi-session-2 恢复完成的纪元守卫', () {
+    test('旧纪元 openSession 恢复完成不得抢走新视口会话的降级轮询槽',
+        () async {
+      final fake = FakeZcodeRelayClient();
+      final server = FakeSessionServer()..bind(fake);
+      // 订阅一律失败：两个会话都走降级轮询
+      fake.handlers['session/subscribe'] = (_) =>
+          throw const ZcodeRequestException(-32601, 'method not found');
+
+      final store = pairedStore(fake);
+      addTearDown(store.dispose);
+      // A 先完整打开一次并置为流式（pushAvailable=false 的流式会话）
+      await store.openSession('sess-vp2-a');
+      pushEvent(
+        store,
+        sessionId: 'sess-vp2-a',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 't-vp2a',
+        payload: {'messageId': 'srv-a', 'input': 'A'},
+      );
+      expect(store.debugState('sess-vp2-a')!.isStreaming, isTrue);
+
+      // A 的 session/messages 挂起（尾窗拉取多轮往返在途）——
+      // 只对第二次 openSession 的恢复生效
+      final gate = Completer<void>();
+      fake.handlers['session/messages'] = (params) async {
+        if (params?['sessionId'] == 'sess-vp2-a') {
+          await gate.future;
+        }
+        final s = server.session(params?['sessionId'] as String? ?? '');
+        return {'messages': List.of(s.messages)};
+      };
+
+      // 第二次 openSession(A)：恢复挂起在尾窗拉取
+      final reopenA = store.openSession('sess-vp2-a');
+      await Future<void>.delayed(Duration.zero);
+
+      // 切到 B：B 同为流式 + 推送不可用，恢复完成接管轮询槽
+      await store.openSession('sess-vp2-b');
+      pushEvent(
+        store,
+        sessionId: 'sess-vp2-b',
+        type: 'turn.started',
+        seq: 1,
+        turnId: 't-vp2b',
+        payload: {'messageId': 'srv-b', 'input': 'B'},
+      );
+      await store.sendMessage('hi-b'); // B 流式 + 视口 → 拉起 B 的轮询
+      fake.requests.removeWhere((r) => true); // 清空前置请求记录
+
+      // 放行 A 的尾窗响应：A 的旧纪元恢复继续走到尾段；等待一个轮询
+      // 周期（1.2s）观察降级轮询实际在拉哪个会话
+      gate.complete();
+      await reopenA;
+      await Future<void>.delayed(const Duration(milliseconds: 1400));
+
+      // 修复点：旧纪元恢复完成不得把轮询槽改写到 A——此后 events 请求
+      // 必须仍指向视口会话 B（B 的唯一更新通道被剥夺 = 流式冻结无自愈）
+      final eventsTargets = fake.requests
+          .where((r) => r.key == 'session/events')
+          .map((r) => r.value?['sessionId'])
+          .toSet();
+      expect(
+        eventsTargets,
+        contains('sess-vp2-b'),
+        reason: '视口会话 B 的降级轮询必须继续',
+      );
+      expect(
+        eventsTargets,
+        isNot(contains('sess-vp2-a')),
+        reason: '后台会话 A 的旧纪元恢复不得接管轮询槽',
+      );
+    });
+  });
 }

@@ -932,11 +932,17 @@ class ZcodeChatStore extends ChangeNotifier {
       );
     }
 
-    // 运行中：推送不可用 → 降级轮询；推送在用 → 武装看门狗
-    if (state.isStreaming && !state.pushAvailable) {
-      _startFallbackPollingFor(state.sessionId);
-    } else if (state.isStreaming) {
-      _armPushWatchdog(state);
+    // 运行中：推送不可用 → 降级轮询；推送在用 → 武装看门狗。
+    // 纪元守卫（审查 f-viewport-multi-session-2）：尾窗拉取多轮往返期间
+    // 用户可能已切到别的会话——旧纪元恢复完成若无守卫地把轮询槽/看门狗
+    // 从当前视口会话抢走，新视口的流式渲染冻结且无自愈（与紧随其后的
+    // _backfillTruncatedMessages/notifyListeners 守卫对齐，此处缺失是遗漏）
+    if (_viewportValid(sessionId, epoch)) {
+      if (state.isStreaming && !state.pushAvailable) {
+        _startFallbackPollingFor(state.sessionId);
+      } else if (state.isStreaming) {
+        _armPushWatchdog(state);
+      }
     }
     _upsertOpenedListing(state);
     unawaited(_persistSession(state));
