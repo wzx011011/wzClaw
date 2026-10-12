@@ -8,6 +8,9 @@
 //   场景 B：流式传输中途断掉 app 的 relay 连接（经控制通道通知宿主掐代理）
 //           → app 自动重连 → 断言 UI 收敛到权威完整状态（占位不悬挂、
 //           文本不缺失、无重复气泡）。
+//   场景 C：dynamic workflow 回合（CreateWorkflow + display 因果图，剧本 C）
+//           → 断言工作流卡运行态动作词、卡目标=工作流名、完成态折叠计数、
+//           详情区阶段流水线，store 层 display 逐字段。
 //
 // 配对链接与控制通道地址经 --dart-define 注入（hermetic：每次运行由
 // run-e2e.mjs 动态生成端口与凭据）。
@@ -25,7 +28,8 @@ import 'package:wzxclaw_android/pages/home_page.dart';
 import 'package:wzxclaw_android/zcode/zcode_chat_store.dart';
 
 // fake 引擎剧本（relay/zcode/test/fixtures/fake-app-server.js e2e 分支）：
-// 两个回合剧本交替。助手回复 = 前半（旁白段）+ 工具调用 + 后半（答案段），
+// 三个回合剧本轮转（A/B 为两段文本夹 Read；C 为 CreateWorkflow 工作流回合）。
+// 助手回复 = 前半（旁白段）+ 工具调用 + 后半（答案段），
 // 段间被工具行隔开——渲染为独立的段落 Text，断言必须分段做。文案全为
 // 平实中文（无 markdown 语法字符），单段落渲染可被 textContaining 稳定命中。
 const String kTurnAHead = '山间的清晨总带着一层薄雾，露水停在松针尖端，迟迟不肯落下。';
@@ -44,6 +48,15 @@ const String kTurnBTailEnd = '咸味的故事。';
 
 const String kTurnAUserMessage = '给我一句有画面感的话';
 const String kTurnBUserMessage = '再来一句海边的';
+
+// 场景 C（dynamic workflow 回合，剧本 C）：工作流卡运行态/折叠计数/
+// 详情阶段流水线；数据源 = CreateWorkflow 工具帧的 display 因果图
+const String kTurnCUserMessage = '跑一个最小工作流试试';
+const String kTurnCTailEnd = '整理完成。';
+const String kWorkflowName = '冒烟整理工作流';
+const String kWorkflowRunningLabel = '正在启动工作流';
+const String kWorkflowFoldCounts = '工作流 1';
+const String kWorkflowPhaseLine = 'smoke：smoke-worker';
 
 const String kPlaceholderText = '输入未捕获';
 
@@ -194,6 +207,20 @@ Future<void> triggerRelayDrop(String ctrlUrl) async {
   await channel.sink.close();
 }
 
+/// 带时限的可见性等待（返回是否命中，不抛错——供重试循环判定）。
+Future<bool> waitVisible(
+  WidgetTester tester,
+  String text,
+  Duration timeout,
+) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 120));
+    if (contentVisible(tester, text)) return true;
+  }
+  return contentVisible(tester, text);
+}
+
 /// 内容匹配计数（覆盖三种渲染介质，互斥不重计）：
 /// 1. MarkdownBodyLite 纯文本 → Text（其内部 RichText 由 findRichText 命中）
 /// 2. MarkdownBody(selectable:true)/SelectableText → EditableText
@@ -229,7 +256,7 @@ void main() {
     base64Decode(const String.fromEnvironment('WZXCLAW_E2E_PAIRING_URL_B64')),
   );
 
-  testWidgets('网页版端到端：配对 → 流式渐进渲染 → 工具事件 → 断线恢复收敛',
+  testWidgets('网页版端到端：配对 → 流式渐进渲染 → 工具事件 → 断线恢复收敛 → 工作流卡',
       (tester) async {
     expect(pairingUrl, isNotEmpty, reason: '必须经 --dart-define 注入配对链接');
     expect(ctrlUrl, isNotEmpty, reason: '必须经 --dart-define 注入控制通道地址');
@@ -429,6 +456,144 @@ void main() {
       contentVisible(tester, kPlaceholderText),
       isFalse,
       reason: '断线恢复后不得出现「$kPlaceholderText」类占位文案',
+    );
+
+    // ── 场景 C：dynamic workflow 回合（工作流卡渲染）──────────────
+    await pumpUntil(
+      tester,
+      () => !ZcodeChatStore.instance.isStreaming &&
+          !ZcodeChatStore.instance.isWaitingForResponse,
+      timeout: const Duration(seconds: 20),
+      what: '回合 B 完全空闲（场景 C 前置）',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+    await tester.pump(const Duration(milliseconds: 800)); // 队列冲放窗口
+    unawaited(ZcodeChatStore.instance.sendMessage(kTurnCUserMessage));
+    await pumpUntil(
+      tester,
+      () => storeTextsDump().contains('跑一个最小工作流'),
+      timeout: const Duration(seconds: 10),
+      what: 'store 收到场景 C 用户消息',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+
+    // 工作流卡运行态：CreateWorkflow 调度后显示动作词；卡目标=工作流名
+    // 在输入流收尾帧解析出来（比动作词晚 ~1s），两者分别等到——名字出现
+    // 时仍处于运行窗口（scheduled→result），运行态断言依然成立
+    await pumpUntil(
+      tester,
+      () => contentVisible(tester, kWorkflowRunningLabel),
+      timeout: const Duration(seconds: 20),
+      step: const Duration(milliseconds: 80),
+      what: '工作流卡运行态「$kWorkflowRunningLabel」',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+    await pumpUntil(
+      tester,
+      () => contentVisible(tester, kWorkflowName),
+      timeout: const Duration(seconds: 15),
+      step: const Duration(milliseconds: 80),
+      what: '工作流卡目标「$kWorkflowName」',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+
+    // 回合完成：答案段接续 + 完成态折叠头计数
+    await pumpUntil(
+      tester,
+      () => contentVisible(tester, kTurnCTailEnd),
+      timeout: const Duration(seconds: 20),
+      what: '场景 C 答案段「$kTurnCTailEnd」',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+    await tester.pump(const Duration(seconds: 1)); // 给收尾刷新留一拍
+    expect(
+      contentVisible(tester, kWorkflowFoldCounts),
+      isTrue,
+      reason: '工作流完成态折叠头计数「$kWorkflowFoldCounts」应可见',
+    );
+    expect(
+      contentVisible(tester, kPlaceholderText),
+      isFalse,
+      reason: '场景 C 不得出现「$kPlaceholderText」类占位文案',
+    );
+
+    // 展开回合块（点头部 InkWell）→ 工作流行重新可见 → 点行展开详情：
+    // 阶段流水线（display 因果图投影：smoke：smoke-worker · N 步）。
+    // 点 InkWell 整行中心（计数文本在 Expanded 里，文本框中心偏右，
+    // 可能与右下角悬浮按钮重叠）；完成后仍有权威刷新/后台任务补丁的
+    // 重建竞态，必要时重试点开
+    var rowVisible = false;
+    for (var attempt = 1; attempt <= 3 && !rowVisible; attempt++) {
+      final countsFinder = find.textContaining(kWorkflowFoldCounts).first;
+      await tester.ensureVisible(countsFinder);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tap(
+        find
+            .ancestor(
+              of: countsFinder,
+              matching: find.byType(InkWell),
+            )
+            .first,
+        warnIfMissed: false,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      rowVisible = await waitVisible(
+        tester,
+        kWorkflowName,
+        const Duration(seconds: 3),
+      );
+    }
+    expect(
+      rowVisible,
+      isTrue,
+      reason: '点折叠头后工作流行应重新可见（重试 3 次）',
+    );
+    final rowFinder = find.textContaining(kWorkflowName).first;
+    await tester.ensureVisible(rowFinder);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(
+      find
+          .ancestor(
+            of: rowFinder,
+            matching: find.byType(InkWell),
+          )
+          .first,
+      warnIfMissed: false,
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await pumpUntil(
+      tester,
+      () => contentVisible(tester, kWorkflowPhaseLine),
+      timeout: const Duration(seconds: 8),
+      what: '工作流详情阶段流水线「$kWorkflowPhaseLine」',
+      debugInfo: () => 'store=${storeTextsDump()}',
+    );
+
+    // store 权威数据层：display 因果图逐字段（UI 之外的第二通道）
+    final assistantsC = assistantMessages();
+    expect(
+      assistantsC.length,
+      3,
+      reason: '场景 C 后应恰三条助手消息（无重复气泡）',
+    );
+    final turnCParts = assistantsC[2].processParts;
+    expect(
+      turnCParts.map((p) => p.kind.name).join(','),
+      'text,tool,text',
+      reason: '场景 C 权威 part 序列应为 text→tool→text',
+    );
+    final wfTool = turnCParts[1].toolCall!;
+    expect(wfTool.toolName, 'CreateWorkflow');
+    expect(wfTool.workflowName, kWorkflowName);
+    final wfDisplay = wfTool.workflowDisplay;
+    expect(wfDisplay, isNotNull, reason: '权威回填后 display 因果图不得丢失');
+    expect(wfDisplay!.ok, isTrue);
+    expect(wfDisplay.causalityGraph!.phases.single.name, 'smoke');
+    expect(wfDisplay.causalityGraph!.lanes.single.name, 'smoke-worker');
+    expect(
+      contentVisible(tester, kPlaceholderText),
+      isFalse,
+      reason: '场景 C 结束后不得出现占位文案',
     );
   });
 }

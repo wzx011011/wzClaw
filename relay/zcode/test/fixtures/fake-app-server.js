@@ -202,6 +202,24 @@ function e2eStateUpdate(sessionId, status) {
   send({ method: 'state.updated', params: { sessionId, patch: { status } } });
 }
 
+// 后台任务投影补丁（workflow 回合用；形状 = probe-workflow 实测的
+// projection.backgroundJobs 元素）
+function e2eBgJobsUpdate(sessionId, jobs) {
+  send({ method: 'state.updated', params: { sessionId, patch: { backgroundJobs: jobs } } });
+}
+
+// workflow 生命周期遥测（kind=workflow.lifecycle，probe-workflow 实测两枚相位）
+function e2eWorkflowTelemetry(sessionId, turnId, toolCallId, workflow, phase, extra) {
+  send({
+    method: 'v4/telemetry/event',
+    params: {
+      sessionId, eventSeq: ++e2e.seq, turnId,
+      kind: 'workflow.lifecycle', phase, runId: workflow.runId, toolCallId,
+      ...extra,
+    },
+  });
+}
+
 // 场景剧本：两段文本夹一次工具调用。分片以 300ms 间隔吐出——给 UI 留出
 // 「增量之间」的断言窗口；文案全为平实中文（无 markdown 语法字符），
 // 渲染为单段落，浏览器端 find.textContaining 可稳定命中。
@@ -223,6 +241,45 @@ const e2eScripts = [
     tailParts: ['风从', '海面带回', '咸味的故事。'],
     inputTokens: 21,
     outputTokens: 45,
+  },
+  {
+    // 场景 C：dynamic workflow 回合（APP-SERVER.md「workflow 数据面实测」
+    // 形状：CreateWorkflow 工具 + result.display 因果图 + workflow.lifecycle
+    // 遥测 + backgroundJobs taskKind=workflow 投影）
+    tag: 'C',
+    prefix: 'C',
+    headParts: ['收到，', '我用工作流来编排整理任务。'],
+    tool: {
+      name: 'CreateWorkflow',
+      input: {
+        name: '冒烟整理工作流',
+        script: 'phase("smoke");\nawait agent("smoke-worker").ask("只回复ok");\nreturn "done";',
+      },
+      output: '工作流已在后台启动：dwfrun_e2e_smoke。完成后会收到通知。',
+    },
+    workflow: {
+      runId: 'dwfrun_e2e_smoke',
+      childSessionId: 'sess_dwf_e2e_smoke_actor_1',
+      display: {
+        kind: 'create_workflow',
+        ok: true,
+        errorCount: 0,
+        diagnostics: [],
+        causalityGraph: {
+          steps: [{ id: 'ask#1', kind: 'ask', label: 'smoke-worker', line: 2, column: 8, lane: 'actor#1', phase: 'phase#1' }],
+          lanes: [{ id: 'actor#1', name: 'smoke-worker', line: 1, column: 8 }],
+          participants: [{ id: 'phase#1:actor#1', phase: 'phase#1', lane: 'actor#1', steps: ['ask#1'] }],
+          handoffs: [],
+          phases: [{ id: 'phase#1', name: 'smoke', line: 1, column: 1 }],
+          phaseEdges: [],
+          exits: ['phase#1'],
+          sink: ['ask#1'],
+        },
+      },
+    },
+    tailParts: ['冒烟子代理已经回来，', '答案收好了，整理完成。'],
+    inputTokens: 9,
+    outputTokens: 27,
   },
 ];
 let e2eScriptCursor = 0;
@@ -296,8 +353,25 @@ function e2eRunTurn(sessionId, content) {
     assistantMessageId: assistantId, toolCallId,
     kind: 'result', name: script.tool.name,
     duration: e2eToolRunMs,
-    result: { success: true, content: script.tool.output },
+    result: {
+      success: true, content: script.tool.output,
+      // workflow 回合：display 因果图挂 result（probe-workflow 实测 live 形状）
+      ...(script.workflow ? { display: script.workflow.display } : {}),
+    },
   }));
+  if (script.workflow) {
+    // workflow 回合追加观测面：actor-spawned 遥测 + 后台任务 running 投影
+    step(100, () => {
+      e2eWorkflowTelemetry(sessionId, turnId, toolCallId, script.workflow,
+        'actor-spawned', { agentId: 'actor#1@1', childSessionId: script.workflow.childSessionId });
+      e2eBgJobsUpdate(sessionId, [{
+        taskId: script.workflow.runId, toolCallId, toolName: 'CreateWorkflow',
+        taskKind: 'workflow', cancellable: false,
+        description: script.tool.input.name, status: 'running',
+        startedAt: new Date().toISOString(),
+      }]);
+    });
+  }
   // ④ 后半文本逐片 + 权威全文 + 回合收尾
   for (let i = 0; i < script.tailParts.length; i++) {
     step(e2eDeltaGapMs, () => {
@@ -352,6 +426,10 @@ function e2eRunTurn(sessionId, content) {
               status: 'completed',
               input: script.tool.input,
               output: script.tool.output,
+              // workflow 回合：display 挂 state.metadata（probe-workflow 实测权威形状）
+              ...(script.workflow ? {
+                metadata: { schemaVersion: 1, display: script.workflow.display },
+              } : {}),
               time: { start: startedAt, end: Date.now() },
             },
           },
@@ -359,6 +437,20 @@ function e2eRunTurn(sessionId, content) {
         ],
       },
     );
+    if (script.workflow) {
+      // run 收尾晚于回合（引擎实测：工具即回、后台续跑）：run-settled 遥测
+      // + 后台任务 completed 投影
+      e2eWorkflowTelemetry(sessionId, turnId, toolCallId, script.workflow,
+        'run-settled', { status: 'completed' });
+      e2eBgJobsUpdate(sessionId, [{
+        taskId: script.workflow.runId, toolCallId, toolName: 'CreateWorkflow',
+        taskKind: 'workflow', cancellable: false,
+        description: script.tool.input.name, status: 'completed',
+        startedAt: new Date().toISOString(),
+        terminalId: script.workflow.runId,
+        completedAt: new Date().toISOString(),
+      }]);
+    }
     st.status = 'idle';
     e2e.turn = null;
   });
