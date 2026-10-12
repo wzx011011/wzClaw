@@ -978,3 +978,97 @@ contextUsed/contextWindow 数字。移动端实现：基础条用
   `session/read` → `projection.status`（idle/running/…，create 返回同形状）。
   probe-runtime2.js 时代的 `session/status` 调用实为未验证项，以此为准修正。
 - `session/setMode {mode:'yolo'}` 实测 "ok"（此前仅 schema）。
+
+## workflow 数据面实测（2026-10-11，probe-workflow.js）
+
+> 直连真 app-server stdio（probe-toolturn 模式），临时工作区，模型 glm-5.3-flash。
+> 触发方式：`workspace/updateDynamicWorkflowPolicy {enabled:true}` **必须在
+> session/create 之前调**——`dynamic-workflow-policy.ts` 实测语义是「只影响
+> 之后创建/恢复的 record，已活跃 record 的工具面不回收」，create 后再开无效。
+
+### 引擎侧可用性门（探针踩坑记录）
+
+1. 裸 spawn 只给 `ANTHROPIC_API_KEY`（± `ANTHROPIC_BASE_URL`）不够：CLI 用自身
+   登录态发模型请求，与 env 无关，默认模型 group 403
+   "No active subscription found for this group"。
+2. 唯一实证可服务通道 = companion 同款 plan overlay：clone
+   `~/.zcode/v2/provider_config.json` 为底 + 注入 custom provider 规则
+   （`access:{type:'zhipu-coding-plan-api-key',apiKey}`、`api:{type:'anthropic-messages',baseUrl}`、
+   模型小写 id）→ `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` 指向副本。
+   空骨架底本会被整份拒绝（目录归零）；account: 前缀规则禁止带 access。
+3. `session/setModel` 契约：`model:{providerId,modelId,options?:{reasoningLevel}}`，
+   推理档位嵌在 model.options（顶层传 -32602）；plan/imported 模型档位必填
+   （缺失 -32603），档位取目录条目 `reasoning.levels[].value`。
+4. CreateWorkflow 是 **alwaysAsk**：yolo 模式下仍弹
+   `interaction/requestPermission`（input 带 {name, script} 全文）。
+
+### 数据源四件套（手机端渲染的协议依据）
+
+**① CreateWorkflow 工具 part**（session/messages part + tool.updated）：
+`state.metadata.display` 携带 create_workflow 显示结构（vendor
+`toolCallCreateWorkflowDisplaySchema` 逐字对应）：
+
+```
+state.input  = { name, script }
+state.output = 引擎 prose（"run started ... ID: dwfrun-…  draft .zcode\workflow-drafts\<名>.dwf.ts"）
+state.metadata = {
+  schemaVersion: 1,
+  display: {
+    kind: "create_workflow", ok: true, errorCount: 0, diagnostics: [],
+    causalityGraph: {
+      steps:        [{id,kind:"ask"|"world-read",label,line,column,lane,phase,source?,lanes?,repeat?}],
+      lanes:        [{id,name?,line,column}],
+      participants: [{id,phase,lane,steps[],member?{index,of},many?}],
+      handoffs:     [],           // [{from,to,types?}]
+      phases:       [{id,name?,line,column,alongside?}],
+      phaseEdges:   [], exits: [], sink: [], truncated?
+    }
+  },
+  serialization: {truncated,originalBytes,returnedBytes,budgetStrategy},
+  readFileState: {...draft 文件读回执}
+}
+```
+
+**注意 runId 不在工具 part 的结构化字段里**——只在 output prose 文本内。
+结构化 runId 走遥测或 workflows/runs（联接键 toolCallId）。
+
+**② workflow.lifecycle 遥测**（v4/telemetry/event，手机已订阅通道）：
+`kind:"workflow.lifecycle"`，phase 实测两枚：
+
+- `actor-spawned`：`{runId, toolCallId, agentId:"actor#1@1",
+  childSessionId:"sess_dwf-<runId>-actor_1_1"}`（子会话联接键）
+- `run-settled`：`{runId, toolCallId, status:"completed"}`
+  （其余 status 语义按 vendor 枚举 pending/running/completed/errored/stopped）
+
+单 actor run 全程只有这 2 条；node-* 富进度只在 journal，
+**不上 app-server 遥测线**——手机端 live 进度只有 actor 计数档。
+
+**③ 后台任务投影**（session/read → `projection.backgroundJobs`，state.updated
+patch.backgroundJobs 推送转移）：taskId ≡ runId，
+`{taskId, toolCallId, toolName:"CreateWorkflow", taskKind:"workflow",
+cancellable:false, description:<工作流名>, status, startedAt, terminalId?,
+completedAt?}`——手机后台任务面板已消费（「工作流」标签）。
+
+**④ workflows/runs 实调**（workspace 型，本次补上「变更型未真调」的欠账）：
+`{runs:[{runId, name, status, createdAt, updatedAt, spentTokens,
+parentSessionId, toolCallId, cwd}]}`——紧凑 run 历史，
+toolCallId 联回工具卡。
+
+### 完成通知回合
+
+run 结束后引擎自动开通知回合：synthetic user 消息（不出现在用户可见转录，
+`semantics.uiVisibility:"hidden"`），`metadata.originMeta.workflowNotification`
+= `{kind:"terminal", status:"completed", summary, result, resultForm:"prose",
+reports:{count,shown,preview[]}, durationMs}`（vendor
+workflowNotificationMetaSchema terminal 分支逐字对应）。用户面可见的
+「结果」是引擎随后对该通知回合的 assistant 文本回复。
+
+### 手机端未接的面（本轮明确不做）
+
+- v4 conversation projection 的 `workflowRuns` 富投影（actors/nodes/reports/
+  pendingQuestions/artifacts）：走桌面 GUI 自己的通道，
+  **app-server 线（state.updated/session/read）实测从不携带**——手机端
+  per-node live 进度无协议源，除非将来接 v4 bridge。
+- `workflows/get`/`delete`/`move`/`updateMeta`、runArtifacts/ArtifactData/
+  ArtifactRead（本 run 无 artifact 发布，未实测）。
+- AmendWorkflow 设置轮 display、saved workflow（SaveWorkflow）形状。
