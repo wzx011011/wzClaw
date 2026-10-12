@@ -1,0 +1,201 @@
+{
+  "create": {
+    "ok": true,
+    "sessionId": "sess_37e3cc7b-4ec1-4d35-8c3e-5fd97a366307"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "infoKeys": [
+        "agent",
+        "anchor",
+        "contextSnapshot",
+        "id",
+        "modelSelection",
+        "role",
+        "semantics",
+        "sessionID",
+        "time",
+        "tools"
+      ],
+      "parts": [
+        {
+          "type": "text",
+          "keys": [
+            "id",
+            "messageID",
+            "sessionID",
+            "text",
+            "time",
+            "type"
+          ],
+          "time": {
+            "start": 1789877665481,
+            "end": 1789877665481
+          },
+          "id": "part_mu9ay5l5_bfd748ef-a24b-4a42-b39a-622bad79aed1",
+          "textLen": 33
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "infoKeys": [
+        "agent",
+        "anchor",
+        "cost",
+        "finish",
+        "id",
+        "mode",
+        "modelId",
+        "parentID",
+        "path",
+        "planEnabled",
+        "providerId",
+        "role",
+        "semantics",
+        "sessionID",
+        "time",
+        "tokens"
+      ],
+      "parts": [
+        {
+          "type": "step-start",
+          "keys": [
+            "id",
+            "messageID",
+            "sessionID",
+            "type"
+          ],
+          "time": null,
+          "id": "part_mu9ay67v_4336bee3-e89c-40a1-809d-df30ffb26575",
+          "textLen": null
+        },
+        {
+          "type": "reasoning",
+          "keys": [
+            "id",
+            "messageID",
+            "sessionID",
+            "text",
+            "time",
+            "type"
+          ],
+          "time": {
+            "start": 1789877666292,
+            "end": 1789877672279
+          },
+          "id": "part_mu9ayatz_5560050b-d95d-4ff1-8e30-e19435a01e4d",
+          "textLen": 23
+        },
+        {
+          "type": "text",
+          "keys": [
+            "id",
+            "messageID",
+            "sessionID",
+            "text",
+            "time",
+            "type"
+          ],
+          "time": {
+            "start": 1789877666292,
+            "end": 1789877672286
+          },
+          "id": "part_mu9ayau6_961fd920-7378-4cf0-a8bf-2e7820254c2c",
+          "textLen": 5
+        },
+        {
+          "type": "step-finish",
+          "keys": [
+            "cost",
+            "id",
+            "messageID",
+            "reason",
+            "sessionID",
+            "tokens",
+            "type"
+          ],
+          "time": null,
+          "id": "part_mu9ayauk_ada64524-ff06-4234-9f4a-3e12a9943b99",
+          "textLen": null
+        }
+      ]
+    }
+  ],
+  "rawAssistantParts": [
+    {
+      "type": "step-start",
+      "id": "part_mu9ay67v_4336bee3-e89c-40a1-809d-df30ffb26575",
+      "sessionID": "sess_37e3cc7b-4ec1-4d35-8c3e-5fd97a366307",
+      "messageID": "msg_mu9ay67n_a329b4cd-2b40-46a9-8b3a-3dca2c7958b9"
+    },
+    {
+      "type": "reasoning",
+      "text": "**Calculating 137×214**",
+      "time": {
+        "start": 1789877666292,
+        "end": 1789877672279
+      },
+      "id": "part_mu9ayatz_5560050b-d95d-4ff1-8e30-e19435a01e4d",
+      "sessionID": "sess_37e3cc7b-4ec1-4d35-8c3e-5fd97a366307",
+      "messageID": "msg_mu9ay67n_a329b4cd-2b40-46a9-8b3a-3dca2c7958b9"
+    },
+    {
+      "type": "text",
+      "text": "29318",
+      "time": {
+        "start": 1789877666292,
+        "end": 1789877672286
+      },
+      "id": "part_mu9ayau6_961fd920-7378-4cf0-a8bf-2e7820254c2c",
+      "sessionID": "sess_37e3cc7b-4ec1-4d35-8c3e-5fd97a366307",
+      "messageID": "msg_mu9ay67n_a329b4cd-2b40-46a9-8b3a-3dca2c7958b9"
+    },
+    {
+      "type": "step-finish",
+      "reason": "stop",
+      "cost": 0,
+      "tokens": {
+        "total": 21684,
+        "input": 21643,
+        "output": 41,
+        "reasoning": 33,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "id": "part_mu9ayauk_ada64524-ff06-4234-9f4a-3e12a9943b99",
+      "sessionID": "sess_37e3cc7b-4ec1-4d35-8c3e-5fd97a366307",
+      "messageID": "msg_mu9ay67n_a329b4cd-2b40-46a9-8b3a-3dca2c7958b9"
+    }
+  ],
+  "subagentsNoChildren": {
+    "resultKeys": [
+      "revision",
+      "childSessionIds",
+      "running",
+      "ended"
+    ],
+    "raw": {
+      "revision": 2,
+      "childSessionIds": [],
+      "running": [],
+      "ended": {
+        "total": 0,
+        "items": []
+      }
+    }
+  },
+  "verdict": {
+    "reasoningHasTime": true,
+    "reasoningKeys": [
+      null
+    ],
+    "textHasTime": true,
+    "textKeys": [
+      null
+    ]
+  }
+}

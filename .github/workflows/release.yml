@@ -1,66 +1,21 @@
-name: Release
+name: Product Release
 
 on:
   push:
     tags:
-      - "v*"
+      - "android-v*"
+
+concurrency:
+  group: product-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  desktop-release:
-    name: Desktop Release (Windows)
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    defaults:
-      run:
-        working-directory: wzxClaw_desktop
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: wzxClaw_desktop/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Windows installer
-        run: npx electron-vite build; npx electron-builder --win --publish never
-        env:
-          CI: true
-
-      - name: Upload Desktop Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: wzxClaw ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          files: |
-            wzxClaw_desktop/dist/*.exe
-            wzxClaw_desktop/dist/*.msi
-          body: |
-            ## wzxClaw ${{ github.ref_name }}
-
-            ### Install
-            Download and run the `.exe` installer. No additional setup needed — configure your API keys inside the application after launch.
-
-            ### Changelog
-            See commit history for details.
-
-  android-release:
-    name: Android Release APK
+  android-release-candidate:
+    name: Android Release Candidate (validated artifact only)
+    if: startsWith(github.ref_name, 'android-v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         working-directory: wzxClaw_android
@@ -71,39 +26,63 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
+          distribution: temurin
           java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.x"
-          channel: "stable"
+          flutter-version: "3.41.6"
+          channel: stable
           cache: true
 
-      - name: Get dependencies
-        run: flutter pub get
+      - name: Verify tag matches pubspec version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#android-v}"
+          app_version="$(perl -ne 'print $1 if /^version:\s*([^+\s]+)/' pubspec.yaml)"
+          test -n "$app_version"
+          test "$tag_version" = "$app_version" || {
+            printf 'Tag version %s does not match pubspec version %s\n' "$tag_version" "$app_version" >&2
+            exit 1
+          }
+          printf 'VERSION=%s\n' "$app_version" >> "$GITHUB_ENV"
 
-      - name: Build APK (release, no signing)
-        run: flutter build apk --release --no-shrink
+      - name: Clean and get dependencies
+        run: |
+          flutter clean
+          flutter pub get
 
-      - name: Upload Android Release
-        uses: softprops/action-gh-release@v2
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Build release-mode APK
+        run: flutter build apk --release
+
+      - name: Verify and name APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk="build/app/outputs/flutter-apk/app-release.apk"
+          output_apk="build/app/outputs/flutter-apk/wzxClaw-android-release-v${VERSION}.apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
+          test -n "$apksigner" || { printf 'apksigner not found\n' >&2; exit 1; }
+          "$apksigner" verify --verbose "$source_apk"
+          unzip -t "$source_apk"
+          cp "$source_apk" "$output_apk"
+          sha256sum "$output_apk" > "${output_apk}.sha256"
+
+      # 当前工程使用 debug signing，且 runner 未配置 NAS 凭据；这里只上传受控候选产物，
+      # 不创建 GitHub Release，也不冒充已完成 NAS 正式发布。
+      - name: Upload validated candidate
+        uses: actions/upload-artifact@v4
         with:
-          name: wzxClaw Android ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          files: wzxClaw_android/build/app/outputs/flutter-apk/app-release.apk
-          body: |
-            ## wzxClaw Android ${{ github.ref_name }}
-
-            ### Install
-            1. Download `app-release.apk`
-            2. Enable "Install from unknown sources" on your device
-            3. Install the APK
-
-            ### Usage
-            Start wzxClaw desktop, ensure the relay server is running, and configure the connection URL in the Android app settings.
-
-            ### Note
-            This APK is unsigned — for personal use only.
+          name: wzxClaw-android-release-v${{ env.VERSION }}-candidate
+          path: |
+            wzxClaw_android/build/app/outputs/flutter-apk/wzxClaw-android-release-v${{ env.VERSION }}.apk
+            wzxClaw_android/build/app/outputs/flutter-apk/wzxClaw-android-release-v${{ env.VERSION }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 14

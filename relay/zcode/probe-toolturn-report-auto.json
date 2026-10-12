@@ -1,0 +1,260 @@
+{
+  "tmpCwd": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-fzIZIT",
+  "create": {
+    "ok": true,
+    "session": {
+      "createdAt": 1789348647133,
+      "mode": "build",
+      "model": {
+        "modelId": "glm-5.3",
+        "providerId": "builtin:bigmodel-coding-plan"
+      },
+      "traceId": "6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77",
+      "sessionId": "sess_4902d65d-6e14-410d-abab-77e15d64e9d3",
+      "sessionKind": "interactive",
+      "status": "idle",
+      "target": null,
+      "title": "",
+      "updatedAt": 1789348647133,
+      "workspace": {
+        "workspacePath": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-toolturn-fzIZIT",
+        "workspaceKey": "C:_Users_67376_AppData_Local_Temp_zcode-probe-toolturn-fzIZIT"
+      }
+    }
+  },
+  "subscribe": {
+    "ok": true,
+    "eventSeq": 0
+  },
+  "setMode_probe": {
+    "ok": false,
+    "resp": {
+      "code": -32602,
+      "data": {
+        "name": "ZodError",
+        "message": "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"plan\",\n      \"build\",\n      \"edit\",\n      \"yolo\",\n      \"auto\"\n    ],\n    \"path\": [\n      \"mode\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"plan\\\"|\\\"build\\\"|\\\"edit\\\"|\\\"yolo\\\"|\\\"auto\\\"\"\n  }\n]"
+      },
+      "message": "Invalid params — mode: Invalid option: expected one of \"plan\"|\"build\"|\"edit\"|\"yolo\"|\"auto\""
+    }
+  },
+  "permissionSnapshot": null,
+  "modeSnapshot": null,
+  "turn1_send": {
+    "accepted": true,
+    "sessionId": "sess_4902d65d-6e14-410d-abab-77e15d64e9d3",
+    "stateRevision": 1
+  },
+  "turn1": {
+    "turnId": null,
+    "done": true,
+    "waitedMs": null,
+    "stoppedForSafety": true
+  },
+  "turn2_malformed_empty-object": {
+    "turnId": null,
+    "done": true,
+    "sendResp": true,
+    "stderrNew": [],
+    "turnCompletedPayload": null
+  },
+  "turn3_malformed_wrong-type-approved-string": {
+    "turnId": null,
+    "done": true,
+    "sendResp": true,
+    "stderrNew": [],
+    "turnCompletedPayload": null
+  },
+  "reverseRequests": [],
+  "eventByType": {
+    "session.titleUpdated": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"b81fce7f-eb5b-4380-a321-7fbb98735ae7\",\"payload\":{\"previousTitle\":\"\",\"source\":\"first_input\",\"title\":\"请使用 Bash（Shell）工具执行命令：echo hello。必须调用工具执行，不要直接回答；执行完后告诉我工...\"},\"seq\":1,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348648749,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"session.titleUpdated\"}}"
+    },
+    "turn.started": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"31982acd-2a34-40e2-8e2c-9c29352f0836\",\"payload\":{\"turnNumber\":0,\"input\":\"请使用 Bash（Shell）工具执行命令：echo hello。必须调用工具执行，不要直接回答；执行完后告诉我工具的输出。\",\"messageId\":\"msg_mu0jzhr3_effe3b8e-6cff-4605-8f47-67ad650ec85e\",\"foregroundExecutionId\":\"runtime_command_1\",\"queryId\":\"query_6bc97867-08b6-4077-bf75-5e46d54491c9\"},\"seq\":2,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348648863,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"turn.started\"}}"
+    },
+    "session.updated": {
+      "count": 14,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"7a970d27-9275-42cc-941f-1df034d5be50\",\"payload\":{\"messageCount\":6,\"model\":\"builtin:bigmodel-coding-plan/glm-5.3\",\"modelRef\":{\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\"},\"toolCount\":24,\"iteration\":0},\"seq\":3,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348650284,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"session.updated\"}}"
+    },
+    "model.streaming": {
+      "count": 10,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"6d321d82-711c-4bcb-8429-361892009b72\",\"payload\":{\"assistantMessageId\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b\",\"delta\":\"\",\"done\":false,\"kind\":\"tool_input_start\",\"toolCallId\":\"call_e6328b076bbe4177825025eb\",\"toolName\":\"Bash\"},\"seq\":6,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348651811,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"model.streaming\"}}"
+    },
+    "tool.updated": {
+      "count": 9,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"b0ba2f11-5154-4d1c-80a2-3bfe38790695\",\"payload\":{\"toolCallId\":\"call_e6328b076bbe4177825025eb\",\"assistantMessageId\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b\",\"toolName\":\"Bash\",\"dependencies\":[],\"parallelGroupIndex\":0,\"canRunParallel\":false,\"schedule\":{\"parallelGroups\":[[\"call_e6328b076bbe4177825025eb\"]],\"executionOrder\":[\"call_e6328b076bbe4177825025eb\"]},\"kind\":\"scheduled\",\"inputByteLength\":52,\"inputOmitted\":true,\"inputRef\":\"model_stream\"},\"seq\":12,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348651837,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"tool.updated\"}}"
+    },
+    "streamRecovery.updated": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"6289da8b-b7a1-4c8e-88c1-a3fb7e8d4771\",\"payload\":{\"anchorId\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b:call_e6328b076bbe4177825025eb:tool-result\",\"attemptId\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b:end-of-stream\",\"kind\":\"tool_result\",\"assistantMessageId\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b\",\"toolCallId\":\"call_e6328b076bbe4177825025eb\",\"toolName\":\"Bash\",\"resultPartId\":\"part_mu0jzk1i_6a6797fa-b09f-4eeb-8db5-b708823815b7\",\"committedToolCallIds\":[\"call_e6328b076bbe4177825025eb\"],\"committedAt\":\"2026-09-14T01:17:45.621Z\"},\"seq\":17,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348665644,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"streamRecovery.updated\"}}"
+    },
+    "turn.completed": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"e67c1e01-bc44-4389-a4c4-54b3e5885af1\",\"payload\":{\"response\":\"工具执行成功，输出为：`hello`\",\"tokenCount\":27705,\"usage\":{\"source\":\"provider\",\"modelRequestCount\":2,\"inputTokens\":27673,\"outputTokens\":32,\"totalTokens\":27705,\"cacheReadTokens\":13952,\"cacheWriteTokens\":0,\"reasoningTokens\":0,\"webFetchRequests\":0,\"webSearchRequests\":0},\"toolCallCount\":1,\"historyRoundCount\":2,\"duration\":20132,\"resultType\":\"success\",\"cacheStats\":{\"totalMessages\":9,\"cachedMessages\":8,\"lastCacheHit\":true,\"cacheReadTokens\":13760}},\"seq\":24,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348668467,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"type\":\"turn.completed\"}}"
+    },
+    "turn.steerQueued": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"session/event\",\"params\":{\"deliveryKind\":\"web-remote-replayable\",\"eventId\":\"6c388fd2-df4f-4c50-bb12-32e7a484f630\",\"payload\":{\"queryId\":\"query_ef904f42-e579-411d-83b1-8f1d6e725d10\",\"pendingInputId\":\"pending_turn_0a57b099-6a23-407a-88b7-a041fe81f475_1\",\"input\":\"用 Bash 工具在当前目录创建文件 test.txt（内容 hi），必须调用工具。\",\"inputPreview\":\"用 Bash 工具在当前目录创建文件 test.txt（内容 hi），必须调用工具。\",\"inputSize\":90,\"targetTurnId\":\"turn_0a57b099-6a23-407a-88b7-a041fe81f475\",\"queueLength\":1},\"seq\":28,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"timestamp\":1789348672260,\"traceId\":\"6ea17137-66ec-4d5f-8bbb-2eb1a0fc9d77\",\"turnId\":\"turn_0a57b099-6a23-407a-88b7-a041fe81f475\",\"type\":\"turn.steerQueued\"}}"
+    }
+  },
+  "telemetryByKind": {
+    "turn.started": {
+      "count": 2,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"31982acd-2a34-40e2-8e2c-9c29352f0836\",\"eventSeq\":2,\"occurredAt\":1789348648863,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"turn.started\"}}"
+    },
+    "model.request.status": {
+      "count": 9,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"5bda2c62-8ced-4a20-8af1-31f2bfe7955d\",\"eventSeq\":4,\"occurredAt\":1789348648994,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"model.request.status\",\"requestId\":\"e9bf36d4-2971-4bb7-8263-9ee689a5941b\",\"status\":\"model_request_started\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"transport\":\"http\",\"querySource\":\"session_title\",\"queryId\":\"query_6bc97867-08b6-4077-bf75-5e46d54491c9\",\"a"
+    },
+    "usage.delta": {
+      "count": 3,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"d050ab63-d919-4bbb-a0c0-742336754cb6\",\"eventSeq\":17,\"occurredAt\":1789348651823,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"usage.delta\",\"requestId\":\"8bf7ba30-c450-4163-b2aa-cd84b6fe64ac\",\"providerId\":\"builtin:bigmodel-coding-plan\",\"modelId\":\"glm-5.3\",\"providerKind\":\"anthropic\",\"providerHostname\":\"open.bigmodel.cn\",\"inputTokens\":13814,\"outputTokens\":20,\"totalTokens\":13834,\"reasoningTokens\":0,\"cacheReadTokens\":192,\"cacheWriteTokens\":0}}"
+    },
+    "tool.lifecycle": {
+      "count": 7,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"b0ba2f11-5154-4d1c-80a2-3bfe38790695\",\"eventSeq\":19,\"occurredAt\":1789348651837,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"tool.lifecycle\",\"phase\":\"scheduled\",\"toolCallId\":\"call_e6328b076bbe4177825025eb\",\"toolName\":\"Bash\"}}"
+    },
+    "stream.chunk": {
+      "count": 8,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"f0e287c1-634b-42a2-836f-75922548709d\",\"eventSeq\":32,\"occurredAt\":1789348668411,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"stream.chunk\",\"channel\":\"text\",\"chunkLength\":2,\"firstChunk\":true,\"assistantMessageId\":\"msg_mu0jzupw_1484bed5-e27b-4001-9d5c-914a4e351424\"}}"
+    },
+    "turn.terminal": {
+      "count": 1,
+      "firstRaw": "{\"method\":\"v4/telemetry/event\",\"params\":{\"version\":1,\"eventId\":\"e67c1e01-bc44-4389-a4c4-54b3e5885af1\",\"eventSeq\":44,\"occurredAt\":1789348668467,\"sessionId\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"turnId\":\"turn_32f7a016-3c02-4369-8fdb-a49fc342c8bf\",\"kind\":\"turn.terminal\",\"status\":\"success\",\"resultType\":\"success\",\"durationMs\":20132,\"tokenCount\":27705,\"toolCallCount\":1}}"
+    }
+  },
+  "statePatches": [
+    {
+      "reason": "prompt_started",
+      "patchKeys": [
+        "status"
+      ],
+      "status": "running",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_completed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_started",
+      "patchKeys": [
+        "status"
+      ],
+      "status": "running",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_completed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_started",
+      "patchKeys": [
+        "status"
+      ],
+      "status": "running",
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    },
+    {
+      "reason": "prompt_completed",
+      "patchKeys": [
+        "mode",
+        "model",
+        "permission",
+        "thoughtLevel"
+      ],
+      "status": null,
+      "hasActiveToolCalls": false,
+      "activeToolCallsRaw": null
+    }
+  ],
+  "authoritativeMessages": [
+    {
+      "role": "user",
+      "id": "msg_mu0jzhr3_effe3b8e-6cff-4605-8f47-67ad650ec85e",
+      "partTypes": [
+        "text"
+      ],
+      "toolPartRaw": [],
+      "textHead": "请使用 Bash（Shell）工具执行命令：echo hello。必须调用工具执行，不要直接回答；执行完后告诉我工具的输出。"
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b",
+      "partTypes": [
+        "step-start",
+        "tool",
+        "step-finish"
+      ],
+      "toolPartRaw": [
+        "{\"type\":\"tool\",\"callID\":\"call_e6328b076bbe4177825025eb\",\"tool\":\"Bash\",\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"echo hello\",\"description\":\"Print hello\"},\"output\":\"✓ 代理已开启: 127.0.0.1:7897\\nhello\",\"title\":\"Bash\",\"metadata\":{\"schemaVersion\":1,\"serialization\":{\"truncated\":false,\"originalBytes\":41,\"returnedBytes\":41,\"budgetStrategy\":\"artifact\"}},\"time\":{\"start\":1789348651854,\"end\":1789348665621}},\"id\":\"part_mu0jzk1i_6a6797fa-b09f-4eeb-8db5-b708823815b7\",\"sessionID\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"messageID\":\"msg_mu0jziu7_b18203cf-c998-404e-925c-1d6bc7f8844b\"}"
+      ],
+      "textHead": ""
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0jzupw_1484bed5-e27b-4001-9d5c-914a4e351424",
+      "partTypes": [
+        "step-start",
+        "text",
+        "step-finish"
+      ],
+      "toolPartRaw": [],
+      "textHead": "工具执行成功，输出为：`hello`"
+    },
+    {
+      "role": "user",
+      "id": "msg_mu0jzyn3_f5e6cc43-352d-4665-9655-f207a356980d",
+      "partTypes": [
+        "text"
+      ],
+      "toolPartRaw": [],
+      "textHead": "再用 Bash 工具执行一次命令：echo probe2。必须调用工具。"
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0jzyzv_15105636-5168-462c-8968-1c73e80937af",
+      "partTypes": [
+        "step-start",
+        "tool",
+        "step-finish"
+      ],
+      "toolPartRaw": [
+        "{\"type\":\"tool\",\"callID\":\"call_8716a660249446c68e192461\",\"tool\":\"Bash\",\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"echo probe2\",\"description\":\"Print probe2\"},\"output\":\"✓ 代理已开启: 127.0.0.1:7897\\nprobe2\",\"title\":\"Bash\",\"metadata\":{\"schemaVersion\":1,\"serialization\":{\"truncated\":false,\"originalBytes\":42,\"returnedBytes\":42,\"budgetStrategy\":\"artifact\"}},\"time\":{\"start\":1789348673146,\"end\":1789348674705}},\"id\":\"part_mu0k00h3_238d551e-4b9d-42e0-b3f5-9ae8ed754fb6\",\"sessionID\":\"sess_4902d65d-6e14-410d-abab-77e15d64e9d3\",\"messageID\":\"msg_mu0jzyzv_15105636-5168-462c-8968-1c73e80937af\"}"
+      ],
+      "textHead": ""
+    },
+    {
+      "role": "assistant",
+      "id": "msg_mu0k01pn_ceaf1fea-25b6-408f-b50f-c99065601da1",
+      "partTypes": [
+        "step-start"
+      ],
+      "toolPartRaw": [],
+      "textHead": ""
+    }
+  ],
+  "tmpDirLeftovers": []
+}

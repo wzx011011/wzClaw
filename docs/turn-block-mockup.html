@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回合块（Turn Block）设计原型 — wzxClaw</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --bubble: #1c2330;
+    --border: #2d333b;
+    --ink: #e6edf3;
+    --muted: #8b949e;
+    --accent: #4493f8;
+    --success: #3fb950;
+    --error: #f85149;
+    --warn: #d29922;
+    --tool-bg: #1a2029;
+    --user-bubble: #0f5132;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, "Microsoft YaHei", sans-serif;
+    font-size: 14px; padding: 24px 12px 60px; line-height: 1.5;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  h2 { font-size: 16px; margin: 32px 0 10px; }
+  .desc { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .coltitle { font-size: 13px; color: var(--muted); text-align: center; margin-bottom: 8px; font-weight: 600; }
+
+  /* ── 手机壳 ── */
+  .phone {
+    background: #010409; border: 1px solid var(--border); border-radius: 18px;
+    padding: 14px 10px 10px; max-width: 390px; margin: 0 auto; min-height: 560px;
+  }
+  .statusbar { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); padding: 0 6px 10px; }
+  .appbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; border-bottom: 1px solid var(--border); }
+  .appbar .t { font-weight: 600; }
+  .appbar .s { font-size: 11px; color: var(--muted); }
+  .conn { color: var(--success); font-size: 12px; padding: 6px 8px; }
+  .conn::before { content: "● "; }
+  .msg-user {
+    background: var(--user-bubble); border-radius: 14px 14px 4px 14px;
+    padding: 8px 12px; margin: 12px 0 12px auto; max-width: 78%; width: fit-content;
+  }
+  .msg-user.ok::after { content: " ✓ 已通过新链路执行"; font-size: 10px; color: #9ad; display: block; margin-top: 2px; }
+
+  /* ── 回合块（新设计核心）：文档流范式——无外框无分隔线，留白即分隔 ── */
+  .turn {
+    margin: 18px 0 22px;
+  }
+  .turn-head {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    cursor: pointer; user-select: none; background: var(--tool-bg);
+  }
+  .turn-head .chev { color: var(--muted); font-size: 12px; transition: transform .15s; }
+  .turn.open .turn-head .chev { transform: rotate(90deg); }
+  .turn-head .spin { color: var(--accent); font-size: 13px; animation: rot 1s linear infinite; display: inline-block; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .turn-head .done-ic { color: var(--success); font-size: 13px; }
+  .turn-head b { font-weight: 600; font-size: 13px; }
+  .turn-head .cnt { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .turn-body { padding: 4px 12px 10px; }
+  .turn.collapsed .turn-body .proc { display: none; }
+
+  /* 思考行 */
+  .think {
+    display: flex; align-items: center; gap: 6px; padding: 7px 0 5px;
+    color: var(--muted); font-size: 12.5px; cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .think .dur { color: var(--accent); }
+  .think-content {
+    color: var(--muted); font-size: 12px; background: #11161d;
+    border-left: 2px solid var(--border); padding: 6px 8px; margin: 0 0 8px;
+    white-space: pre-wrap;
+  }
+  .proc-hide { display: none; }
+
+  /* 工具行 */
+  .tool {
+    display: flex; align-items: baseline; gap: 7px; padding: 4px 0;
+    font-size: 13px;
+  }
+  .tool:last-of-type { border-bottom: none; }
+  .tool.exp { cursor: pointer; }
+  .tool.exp:hover { background: #141a21; }
+  .tool .verb { color: var(--muted); white-space: nowrap; }
+  .tool .file { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool .dir { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool .stat-add { color: var(--success); font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
+  .tool .stat-del { color: var(--error); font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
+  .tool .fail {
+    color: var(--error); font-size: 11px; border: 1px solid var(--error);
+    border-radius: 4px; padding: 0 4px; white-space: nowrap;
+  }
+  .tool .retried { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .tool .tm { color: var(--muted); font-family: Consolas, monospace; font-size: 11px; margin-left: auto; }
+  .tool .chev2 { color: var(--muted); font-size: 10px; transition: transform .15s; }
+  .tool.open .chev2 { transform: rotate(90deg); }
+  .tooldetail {
+    display: none; margin: 2px 0 8px; padding: 8px 10px;
+    background: #0b0f14; border: 1px solid var(--border); border-radius: 8px;
+    font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.6;
+    overflow-x: auto; white-space: pre;
+  }
+  .tool.open + .tooldetail { display: block; }
+  .tooldetail .d-add { color: var(--success); }
+  .tooldetail .d-del { color: var(--error); }
+  .tooldetail .d-cmd { color: var(--accent); }
+  .tooldetail .d-dim { color: var(--muted); }
+
+  /* 正文 markdown（示意） */
+  .answer { padding: 6px 0 2px; }
+  .answer table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 8px 0; }
+  .answer th, .answer td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
+  .answer th { background: #1a2029; }
+
+  /* 块级操作按钮 */
+  .blockbar {
+    display: flex; justify-content: flex-end; gap: 4px;
+    margin-top: 8px;
+  }
+  .blockbar button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 12px; padding: 3px 8px; border-radius: 6px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .blockbar button:hover { background: var(--tool-bg); color: var(--ink); }
+
+  /* 叙述文本：穿插在工具行之间的中间叙述（对齐桌面端） */
+  .narration { padding: 6px 0 4px; font-size: 13px; color: var(--ink); }
+  .narration code { background: #1a2029; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+
+  /* 旧设计碎片 */
+  .old-think { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 10px 0; font-size: 12.5px; color: var(--muted); }
+  .old-tools { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 10px 0; background: var(--tool-bg); }
+  .old-tools .row { display: flex; gap: 6px; font-size: 12.5px; padding: 3px 0; }
+  .old-tools .row .plus { color: var(--success); }
+  .old-answer { background: var(--bubble); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
+  .tag { display: inline-block; font-size: 11px; border-radius: 12px; padding: 1px 8px; font-weight: 600; }
+  .t-new { background: #d1fae5; color: #065f46; }
+  .t-old { background: #fee2e2; color: #991b1b; }
+
+  /* 决策清单 */
+  table.dec { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.dec th, table.dec td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; }
+  table.dec th { background: #1a2029; }
+  .q { color: var(--warn); }
+  ul.tight { margin: 6px 0; padding-left: 18px; }
+  ul.tight li { margin-bottom: 5px; font-size: 13.5px; }
+</style>
+</head>
+<body>
+  <div style="max-width:1180px;margin:0 auto 20px;padding:12px 16px;border:2px solid #f85149;background:#2a1719;color:#ffb4ad;font-weight:700;">HISTORICAL PROTOTYPE：此页面是历史 UI 原型，不代表当前实现或产品路线图。</div>
+<div class="wrap">
+  <h1>回合块（Turn Block）设计原型</h1>
+  <div class="sub">目标：一个回合 = 一个容器，思考/工具/正文按真实顺序内联；过程可折叠；块尾统一操作按钮。以下全部可点击交互。</div>
+
+  <h2>一、同一回合：现状 vs 新设计</h2>
+  <div class="grid2">
+    <div>
+      <div class="coltitle"><span class="tag t-old">现状</span> 三种独立组件拼贴，过程不完整、顺序不可靠</div>
+      <div class="phone">
+        <div class="statusbar"><span>10:10</span><span>5G ▮▮▮</span></div>
+        <div class="msg-user ok">会话前面再增加两个状态提示</div>
+        <div class="old-think">🧠 思考（独立块，无时长）</div>
+        <div class="old-tools">
+          <div class="row">✎ 编辑 zcode_chat_store.dart <span class="plus">+8</span></div>
+          <div class="row">✎ 编辑 session_list_tile.dart <span class="plus">+23</span> ⚠执行失败</div>
+          <div class="row">🔍 查阅 session_list_tile.dart</div>
+        </div>
+        <div class="old-answer">v1.2.24 已上架……（正文和过程是分离的两块）</div>
+        <div class="old-tools">
+          <div class="row">✎ 编辑 session_list_tile.dart <span class="plus">+5</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="coltitle"><span class="tag t-new">新设计</span> 单容器 · 真实顺序 · 块级按钮（点头部切换折叠）</div>
+      <div class="phone">
+        <div class="statusbar"><span>10:10</span><span>5G ▮▮▮</span></div>
+        <div class="msg-user ok">会话前面再增加两个状态提示</div>
+        <div class="turn open" id="t1">
+          <div class="turn-head" onclick="toggle('t1')">
+            <span class="chev">▶</span>
+            <span class="done-ic">✔</span>
+            <b>已工作 5 分 53 秒</b>
+            <span class="cnt">编辑 3 · 查阅 2</span>
+          </div>
+          <div class="turn-body">
+            <div class="proc">
+              <div class="think" onclick="toggleThink('th1')">
+                🧠 思考 · <span class="dur">持续了几秒</span> <span style="margin-left:auto">▾</span>
+              </div>
+              <div class="think-content proc-hide" id="th1">需要加状态提示。直连栈有实时状态（isSessionBusy），
+meta.status 跨进程会 stale 不作转圈依据；绿点用「看过跑→完成」的转换检测，点开即消。</div>
+              <div class="tool exp open" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">编辑</span><span class="file">zcode_chat_store.dart</span><span class="stat-add">+8</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">// 输入（Edit）· session/setThoughtLevel 无关，省略</span>
+<span class="d-del">-   String? get lastError => _error;</span>
+<span class="d-add">+   /// 该会话是否正在本进程内运行（后台会话同样覆盖）。</span>
+<span class="d-add">+   bool isSessionBusy(String sessionId) {</span>
+<span class="d-add">+     final s = _states[sessionId];</span>
+<span class="d-add">+     return s != null && (s.isStreaming || s.isWaitingForResponse);</span>
+<span class="d-add">+   }</span>
+<span class="d-dim">// 输出：已完成 · 96 字符</span></div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">编辑</span><span class="file">session_list_tile.dart</span><span class="stat-add">+23</span><span class="stat-del">-1</span><span class="fail">⚠ 执行失败</span><span class="retried">已重试恢复</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">// 输出（错误原文）：</span>
+<span class="d-del">Edit failed: old_string not found in file（上下文行号偏移）</span>
+<span class="d-dim">// 失败后 agent 自动调整上下文重试，第二次成功——所以整回合仍是 ✔</span></div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">查阅</span><span class="file">· 2 文件</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">聚合行：展开逐文件显示（session_list_tile.dart / project_drawer.dart 各自的读取片段）</span></div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">编辑</span><span class="file">session_list_tile.dart</span><span class="stat-add">+5</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">// 输入（Edit）：同上 diff 形态，略</span></div>
+            </div>
+            <div class="answer">
+              v1.2.24 已上架（三关验证过），会话标题前的状态提示做好了：
+              <table>
+                <tr><th>提示</th><th>含义</th></tr>
+                <tr><td>转圈 🔄</td><td>正在处理——该会话正在跑回合</td></tr>
+                <tr><td>绿点 🟢</td><td>已完成待查看——点开即消</td></tr>
+                <tr><td>脉冲点</td><td>引擎报 running 但不在本进程跑</td></tr>
+              </table>
+            </div>
+            <div class="blockbar">
+              <button>⧉ 复制</button>
+              <button>⬇ 下载</button>
+              <button>⤢ 全文</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>二、三种回合状态（点头部体验折叠）</h2>
+  <div class="grid2">
+    <div>
+      <div class="coltitle">长工作流运行中（19 分 9 秒 · 真实 electron 升级任务形态）</div>
+      <div class="phone">
+        <div class="turn open" id="t2">
+          <div class="turn-head" onclick="toggle('t2')">
+            <span class="chev">▶</span>
+            <span class="spin">✻</span>
+            <b>工作中 19 分 9 秒</b>
+            <span class="cnt">终端 8 · 编辑 9 · 写入 1 · 思考 7</span>
+          </div>
+          <div class="turn-body">
+            <div class="proc">
+              <div class="tool"><span class="verb">终端</span><span class="file">cd /e/ai/wzxClaw/companion_app && npm install 2&gt;&1…</span><span class="tm">✓</span></div>
+              <div class="think">⏳ 思考 · <span class="dur">持续了几秒</span> <span style="margin-left:auto">▾</span></div>
+              <div class="narration">E41 宿主 Node 是 <code>24.18.0</code>，<code>node:sqlite</code> 可用——硬门槛起直接通过。再用 E41 宿主跑真 runtime 验证：</div>
+              <div class="tool"><span class="verb">终端</span><span class="file">ELECTRON_RUN_AS_NODE=1 … zcode.js --…</span><span class="tm">✓</span></div>
+              <div class="think">⏳ 思考 · <span class="dur">持续了几秒</span></div>
+              <div class="narration">E41 宿主跑真 runtime 输出 <code>0.16.5</code> 正确。第 1 步完成，进入第 2 步——打包脚本：</div>
+              <div class="tool"><span class="verb">写入</span><span class="dir">companion_app/scripts/</span><span class="file">prepare-runtime.js</span><span class="stat-add">+106</span><span class="tm">✓</span></div>
+              <div class="tool"><span class="verb">编辑</span><span class="dir">companion_app/</span><span class="file">package.json</span><span class="stat-add">+3</span><span class="tm">✓</span></div>
+              <div class="tool"><span class="verb">编辑</span><span class="dir">companion_app/</span><span class="file">package.json</span><span class="stat-add">+6</span><span class="tm">✓</span></div>
+              <div class="narration">脚本从真实安装拷出 47.9MB。<code>runtime-bundle/</code> 不能进 git，先忽略，再写回归测试：</div>
+              <div class="tool"><span class="verb">读取</span><span class="dir">relay/zcode/</span><span class="file">companion.js</span><span class="tm">✓</span></div>
+              <div class="tool"><span class="verb">编辑</span><span class="dir">relay/zcode/</span><span class="file">companion.js</span><span class="stat-add">+14</span><span class="tm">✓</span></div>
+              <div class="narration">现在写测试。relay 套件补两个 resolver 用例（bundled 兜底 + 官方优先顺序钉死）：</div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">查阅</span><span class="file">· 2 搜索</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">聚合行：展开逐条显示两次搜索的关键词与命中数</span></div>
+              <div class="think">⏳ 思考 · <span class="dur">持续了几秒</span></div>
+              <div class="narration">修正 bundled 测试的目录布局（需与打包布局 <code>resources/zcode-runtime/glm/</code> 一致）：</div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">编辑</span><span class="dir">relay/zcode/test/</span><span class="file">companion.test.js</span><span class="stat-add">+11</span> <span class="stat-del">-10</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">// old/new 红绿 diff 对照（此处省略）</span></div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">终端</span><span class="file">· 2 个命令</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">聚合行：展开显示两条命令（npm test 2&gt;&1 | grep… 与 npm run dist:dir 2&gt;&1 | tail…）各自输出</span></div>
+              <div class="narration">全部通过（Companion 15 + relay 81）。第 5 步：版本 test.6、完整打包（含 runtime）、CI 推送：</div>
+              <div class="tool exp" onclick="toggleTool(this)">
+                <span class="chev2">▶</span>
+                <span class="verb">终端</span><span class="file">· 2 个命令</span>
+              </div>
+              <div class="tooldetail"><span class="d-dim">聚合行：展开显示 sed 版本号 + ls dist 校验两条命令</span></div>
+            </div>
+            <div class="answer" style="color:var(--muted)">（19 分钟长任务的中间过程——叙述、思考、工具按真实顺序内联）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="coltitle">历史回合（默认折叠，只留一行摘要 + 正文）</div>
+      <div class="phone">
+        <div class="turn collapsed" id="t3">
+          <div class="turn-head" onclick="toggle('t3')">
+            <span class="chev">▶</span>
+            <span class="done-ic">✔</span>
+            <b>已工作 42 秒</b>
+            <span class="cnt">执行 2 · 查阅 1</span>
+          </div>
+          <div class="turn-body">
+            <div class="proc">
+              <div class="tool"><span class="verb">查阅</span><span class="file">· 1 文件</span></div>
+              <div class="tool"><span class="verb">执行</span><span class="file">git push origin main</span><span class="stat-add">ok</span></div>
+              <div class="tool"><span class="verb">执行</span><span class="file">git log --oneline -3</span><span class="stat-add">ok</span></div>
+            </div>
+            <div class="answer">已推送 3 个提交到远端，分支与 origin 一致。</div>
+          </div>
+        </div>
+        <div class="turn collapsed" id="t4">
+          <div class="turn-head" onclick="toggle('t4')">
+            <span class="chev">▶</span>
+            <span class="done-ic">✔</span>
+            <b>已工作 8 秒</b>
+            <span class="cnt">查阅 1</span>
+          </div>
+          <div class="turn-body">
+            <div class="proc">
+              <div class="tool"><span class="verb">查阅</span><span class="file">· 1 文件</span></div>
+            </div>
+            <div class="answer">纯文本回合：没有工具调用时不出现回合头，就是普通一条回复。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>三、锁定在设计里的决策（实现按此执行）</h2>
+  <div class="panel" style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;">
+    <table class="dec">
+      <tr><th style="width:30%">决策</th><th>定稿</th></tr>
+      <tr><td>回复无边框</td><td><b>文档流范式（对齐官方/主流 harness）</b>：助手输出直接铺页面背景，不套气泡/容器——表格、代码占满宽度；用户消息保留气泡区分角色；工具行/思考行/回合头各自保留浅底色条做视觉分层</td></tr>
+      <tr><td>回合头常显</td><td>回合内 ≥1 个工具或思考 → 必有回合头；纯文本回合不出现（就是普通一条回复）</td></tr>
+      <tr><td>折叠语义</td><td>折叠只藏「过程」（思考 + 工具行），<b>正文永远显示</b>；历史回合默认折叠，当前回合默认展开</td></tr>
+      <tr><td>头部内容</td><td>运行中：<b>正在工作…</b> + 转圈 + 实时动词计数；完成：<b>已工作 X 分 X 秒</b> + 「编辑 N · 查阅 M」中文动词计数</td></tr>
+      <tr><td>思考行</td><td>🧠 思考 · 持续了 N 秒，点击展开灰色思考内容（二级折叠）</td></tr>
+      <tr><td>工具行</td><td>中文动词 + 文件末段 + 行数增减（+N -M，从 Edit 输入的 old/new 算）+ 查阅聚合「· N 文件」+ 运行计时 + 失败标（⚠ 执行失败 · 已重试恢复）</td></tr>
+      <tr><td><b>动作类型五分法</b></td><td><b>终端⌘（命令截断显示）· 写入（新文件 +N）· 编辑（+N -M）· 读取（单文件）· 查阅（搜索/多文件聚合）；尾部灰勾 = 完成</b></td></tr>
+      <tr><td><b>思考在时间线内</b></td><td><b>思考行与工具行、叙述文本穿插在真实时间线位置</b>（不是独立前置块）——「⏳ 思考 · 持续了几秒」可展开内容</td></tr>
+      <tr><td><b>叙述文本内联</b></td><td><b>agent 在工具之间的中间叙述（如"E41 宿主 Node 是 24.18.0…"）按原序渲染在流程中</b>——这是「过程完整」的关键，历史路径也必须保序</td></tr>
+      <tr><td><b>聚合规则</b></td><td>连续同类聚合：「查阅 · N 搜索 / N 文件」「终端 · N 个命令 ▾」（聚合行可展开逐条）；编辑/写入不聚合（逐文件可见）</td></tr>
+      <tr><td><b>工具行二级展开</b></td><td><b>每个工具行可点开</b>：终端 = 完整命令 + 输出；编辑 = old/new 红绿 diff；写入 = 新文件内容；查阅 = 逐文件/逐搜索。输入不再 200 字符截断——全量保存，展开时按需渲染</td></tr>
+      <tr><td>块级按钮</td><td>复制（正文 Markdown）/ 下载（.md）/ 全文（放大查看）——位于块尾右下，整回合一组</td></tr>
+      <tr><td>数据结构</td><td>回合 = 有序 parts 列表（thinking/text/tool 按引擎原序）；流式与历史两条路径产出<b>同构</b>结构——顺序完整性的根治</td></tr>
+    </table>
+  </div>
+
+  <h2>四、需要你拍板的两个点</h2>
+  <div class="panel">
+    <ul class="tight">
+      <li><span class="q">Q1 块级按钮集合</span>：目前定了 复制 / 下载(.md) / 全文(⤢) 三个。要加「重发这条消息」吗？（官方有，但语义上重发=再花一次 token）</li>
+      <li><span class="q">Q2 历史回合默认态</span>：目前定「历史默认折叠、当前回合默认展开」。也可以改成「全部默认展开」（信息全但长）。</li>
+    </ul>
+  </div>
+
+<script>
+  function toggle(id) { document.getElementById(id).classList.toggle('open'); }
+  function toggleThink(id) { document.getElementById(id).classList.toggle('proc-hide'); }
+  function toggleTool(el) { el.classList.toggle('open'); }
+</script>
+</div>
+</body>
+</html>

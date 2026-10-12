@@ -1,807 +1,425 @@
+// ============================================================
+// connection_manager — ZCode 连接唯一 owner
+//
+// 唯一创建并关闭 ZcodeRelayClient（主连接及短时在线 probe），负责配对切换、
+// 重连、状态流和通用 x/* 请求。PairingStore 是唯一配对持久化；收到的
+// app-server 帧经 attach/ingest 投给单例 ZcodeChatStore。
+// ============================================================
+
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../config/app_config.dart';
 import '../models/connection_state.dart';
 import '../models/desktop_info.dart';
-import '../models/ws_message.dart';
-import 'android_foreground_keepalive.dart';
-import 'secure_settings.dart';
-import 'session_sync_service.dart';
-import 'ws_transport.dart';
+import '../zcode/zcode_pairing.dart';
+import '../zcode/zcode_chat_store.dart';
+import '../zcode/zcode_keepalive_controller.dart';
+import 'pairing_store.dart';
+import 'pairing_url.dart';
+import '../zcode/zcode_relay_client.dart';
 
-/// Singleton WebSocket connection manager for wzxClaw Android.
-///
-/// Manages a single WebSocket connection to the wzxClaw desktop IDE with:
-/// - Connection state machine (disconnected/connecting/connected/reconnecting)
-/// - Application-level heartbeat (ping/pong) with timeout detection
-/// - Idle monitor (force-reconnect after 60s of no messages)
-/// - Exponential backoff reconnection with jitter
-/// - Send queue that buffers messages during disconnection
-/// - App lifecycle handling (pause stops heartbeat, resume force-reconnects)
-/// - Connection sequence guard to prevent stale callback processing
-///
-/// This is the sole owner of the WebSocket connection. All pages subscribe
-/// to [stateStream] and [messageStream] but never create connections directly.
-class ConnectionManager with WidgetsBindingObserver implements WsTransport {
-  static const _backgroundKeepAliveEnabledKey =
-      'background_keepalive_enabled';
-
-  // -- Singleton --
-  static final ConnectionManager _instance = ConnectionManager._();
-  static ConnectionManager get instance => _instance;
+class ConnectionManager {
   ConnectionManager._() {
-    WidgetsBinding.instance.addObserver(this);
-    _loadBackgroundKeepAlivePreference();
+    // 保活判定的链路数据源注入（依赖倒置：controller 不反向 import 本类）
+    ZcodeKeepAliveController.linkedProvider =
+        () => _stateNow != WsConnectionState.disconnected;
   }
 
-  // -- Public state streams --
+  static final ConnectionManager _instance = ConnectionManager._();
+  static ConnectionManager get instance => _instance;
+
+  /// 连接代次：每次新建或断开 client 递增。多步操作（附件分块/下载分块/
+  /// git 两步查询）开始时固定请求入口、以代次校验存活——切换节点后旧操作
+  /// 绝不允许动态借用新连接（架构审查 P1-2）。
+  int _generation = 0;
+  int get connectionGeneration => _generation;
+
+  /// 多步操作专用：返回绑定当前连接的请求入口；未连接/未配对返回 null
+  /// （调用方回退原路径自然报错）。绑定后整个操作周期走同一 client，
+  /// 代次漂移（切节点/重连）即抛 StateError 终止操作。
+  Future<dynamic> Function(String method, [Map<String, dynamic>? params])?
+      boundRequester() {
+    final client = _client;
+    final generation = _generation;
+    if (client == null ||
+        _stateNow != WsConnectionState.connected ||
+        !client.paired) {
+      return null;
+    }
+    Future<dynamic> bound(String method, [Map<String, dynamic>? params]) async {
+      if (_generation != generation) {
+        throw StateError('节点已切换，多步操作终止');
+      }
+      if (!client.paired) throw StateError('节点连接已断开，操作终止');
+      return client.request(method, params);
+    }
+
+    return bound;
+  }
+
+  /// 仅测试使用：构造独立实例（生产走 [instance] 单例）
+  @visibleForTesting
+  static ConnectionManager createForTest() => ConnectionManager._();
+
+  /// 仅测试使用：注入给内部 ZcodeRelayClient 的连接工厂
+  ///（null = 生产直连）。测试借此计数建连、扮演 relay 服务端。
+  @visibleForTesting
+  static WebSocketChannel Function(Uri url)? debugSocketFactory;
+
+  /// 仅测试使用：注入 client 替身并递增代次（boundRequester 契约测试用；
+  /// 与真实路径一致：每次 attach 都代表一次新连接 = 新代次）
+  @visibleForTesting
+  void debugAttachClient(ZcodeRelayClient client) {
+    _client?.close();
+    _generation++;
+    _client = client;
+    _stateNow = WsConnectionState.connected;
+  }
+
+  // ---- 对外流（签名与 f25b231 一致）----
+
   final StreamController<WsConnectionState> _stateController =
       StreamController<WsConnectionState>.broadcast();
   Stream<WsConnectionState> get stateStream => _stateController.stream;
 
-  final StreamController<WsMessage> _messageController =
-      StreamController<WsMessage>.broadcast();
-  Stream<WsMessage> get messageStream => _messageController.stream;
-
-  /// [WsTransport] 接口别名，与 [messageStream] 返回同一个 Stream。
-  @override
-  Stream<WsMessage> get incoming => _messageController.stream;
-
-  // -- Last error stream --
-  String? _lastError;
-  String? get lastError => _lastError;
   final StreamController<String?> _errorController =
       StreamController<String?>.broadcast();
   Stream<String?> get errorStream => _errorController.stream;
 
-  // -- Desktop list (multi-desktop support) --
-  final List<DesktopInfo> _desktops = [];
-  List<DesktopInfo> get desktops => List.unmodifiable(_desktops);
   final StreamController<List<DesktopInfo>> _desktopsController =
       StreamController<List<DesktopInfo>>.broadcast();
   Stream<List<DesktopInfo>> get desktopsStream => _desktopsController.stream;
 
-  // -- Selected desktop for routing --
   String? _selectedDesktopId;
   String? get selectedDesktopId => _selectedDesktopId;
+
   final StreamController<String?> _selectedDesktopIdController =
       StreamController<String?>.broadcast();
-  Stream<String?> get selectedDesktopIdStream => _selectedDesktopIdController.stream;
+  Stream<String?> get selectedDesktopIdStream =>
+      _selectedDesktopIdController.stream;
 
-  // -- Backward-compatible convenience getters --
-  bool get desktopOnline => _desktops.isNotEmpty;
+  bool get desktopOnline => _desktops.any((d) => d.online);
   Stream<bool> get desktopOnlineStream =>
       _desktopsController.stream.map((list) => list.isNotEmpty);
+
   String? get desktopIdentity {
-    if (_selectedDesktopId != null) {
-      final match = _desktops.where((d) => d.desktopId == _selectedDesktopId);
-      if (match.isNotEmpty) return match.first.displayLabel;
-    }
-    return _desktops.isNotEmpty ? _desktops.first.displayLabel : null;
+    final sid = _pairing?.sid;
+    final d = _desktops.where((d) => d.desktopId == sid).firstOrNull ??
+        (_desktops.any((d) => d.online)
+            ? _desktops.firstWhere((d) => d.online)
+            : null);
+    final name = d?.name;
+    return (name != null && name.isNotEmpty) ? name : null;
   }
+
+  /// f25b231 UI 契约：最近一次连接错误（同步读）
+  String? lastError;
+
+  /// f25b231 UI 契约：当前桌面列表（同步读）
+  List<DesktopInfo> get desktops => List.unmodifiable(_desktops);
+
   Stream<String?> get desktopIdentityStream =>
       _desktopsController.stream.map((_) => desktopIdentity);
 
-  // -- Internal state --
-  WsConnectionState _state = WsConnectionState.disconnected;
-  WsConnectionState get state => _state;
+  WsConnectionState get state => _stateNow;
 
-  WebSocketChannel? _channel;
-  String? _url;
-  String? _authToken;
-  int _reconnectAttempt = 0;
+  // ---- 内部状态 ----
 
-  // Timers
-  Timer? _heartbeatTimer;
-  Timer? _heartbeatTimeoutTimer;
-  Timer? _idleTimer;
-  Timer? _reconnectTimer;
+  final List<DesktopInfo> _desktops = [];
+  ZcodeRelayClient? _client;
+  ZcodePairingInfo? _pairing;
+  String? _desktopName;
+  WsConnectionState _stateNow = WsConnectionState.disconnected;
 
-  DateTime? _lastMessageTime;
+  // ---- 连接 ----
 
-  /// Connection sequence number -- incremented on each new connect() call.
-  /// Stale stream listeners check this value and bail out if it doesn't match.
-  int _connSeq = 0;
-
-  /// Send queue -- holds prioritized messages queued during disconnection.
-  /// Higher priority values are sent first when the queue flushes.
-  final List<_QueueEntry> _sendQueue = [];
-
-  /// Tracks whether we are expecting a pong (heartbeat sent, awaiting reply).
-  bool _waitingForPong = false;
-
-  /// Set to true when the app enters [AppLifecycleState.paused].
-  /// Used to skip the reconnect probe when only [inactive] was triggered.
-  bool _wasPaused = false;
-  bool _backgroundKeepAliveEnabled = false;
-
-  bool get backgroundKeepAliveEnabled => _backgroundKeepAliveEnabled;
-
-  // ============================================================
-  // Public API
-  // ============================================================
-
-  /// Connect to the given WebSocket URL.
-  ///
-  /// [url] should be like `ws://192.168.1.100:3000/?token=xxx`.
-  /// If already connected or connecting, this will force-close the old
-  /// connection first (via disconnect), then open a fresh one.
-  void connect(String url) {
-    // If there is an existing connection, tear it down first.
-    if (_state != WsConnectionState.disconnected) {
-      disconnect();
+  /// [url] 为配对链接：https://host/pair?sid=..&hash=..（&name=.. 可选）
+  Future<bool> connect(String url) async {
+    final parsed = parsePairingUrlAny(url);
+    if (parsed == null) {
+      lastError = '连接地址无效：请使用配对链接';
+      _errorController.add(lastError!);
+      _setState(WsConnectionState.disconnected);
+      return false;
     }
-
-    late final int seq;
+    disconnect();
+    final name = _paramOf(url, 'name');
+    _desktopName = name;
+    _pairing = ZcodePairingInfo(
+      relayWsUrl: parsed.relayWsUrl,
+      sid: parsed.sid,
+      hash: parsed.hash,
+      desktopName: (name == null || name.isEmpty) ? null : name,
+    );
     try {
-      final uri = Uri.parse(url);
-      final token = uri.queryParameters['token'] ?? _authToken ?? '';
-      final params = Map<String, String>.from(uri.queryParameters)
-        ..remove('token');
-      final connectUri = uri.replace(queryParameters: params);
-
-      _url = connectUri.toString();
-      _authToken = token;
-      seq = ++_connSeq;
-
-      _setState(WsConnectionState.connecting);
-      debugPrint('[ConnectionManager] connecting to ${connectUri.scheme}://${connectUri.host}${connectUri.hasPort ? ':${connectUri.port}' : ''}${connectUri.path}');
-
-      final protocols = token.isNotEmpty ? ['wzxclaw-$token'] : <String>[];
-
-      _channel = IOWebSocketChannel.connect(
-        connectUri,
-        protocols: protocols,
-      );
+      await PairingStore.instance.upsert(_pairing!);
+      await PairingStore.instance.setActiveSid(parsed.sid);
     } catch (e) {
-      // Invalid URL or connection failure -- schedule reconnect.
-      debugPrint('[ConnectionManager] connect error: $e');
-      _setError('连接失败: $e');
-      _scheduleReconnect();
-      return;
+      lastError = '保存配对失败: $e';
+      _errorController.add(lastError!);
+      _pairing = null;
+      return false;
     }
+    _connectPairing();
+    return true;
+  }
 
-    _channel!.stream.listen(
-      (data) {
-        if (seq != _connSeq) return; // stale connection, ignore
-        _onMessage(data);
-      },
-      onDone: () {
-        if (seq != _connSeq) return;
-        _onChannelDone();
-      },
-      onError: (error) {
-        if (seq != _connSeq) return;
-        _onChannelError(error);
+  void _connectPairing() {
+    final pairing = _pairing;
+    if (pairing == null) return;
+    // 防御性关闭：任何路径到达这里都不得遗留旧 client——泄漏的旧连接既把
+    // 同一份推送流重复投进消息流（正文交错重复渲染），又占着 relay 的
+    // probe 槽（重连风暴下 3 槽打满触发 CAPACITY 拒绝）
+    _client?.close();
+    _generation++; // 新连接 = 新代次（在途多步操作的绑定入口随即失效）
+    _setState(WsConnectionState.connecting);
+    final client = ZcodeRelayClient(
+      pairing: pairing,
+      socketFactory: debugSocketFactory,
+      onStateChange: _onZcodeState,
+      onNotify: _onZcodeNotify,
+      onRequest: _onZcodeReverse,
+      onRelayError: (code, message) {
+        _errorController.add('中继拒绝（$code）：$message');
       },
     );
-
-    // Mark connected when WebSocket handshake completes.
-    // Do not wait for a message -- relay does not send anything on connect.
-    _channel!.ready.then((_) {
-      if (seq == _connSeq && _state == WsConnectionState.connecting) {
-        _setError(null); // Clear error on successful connection
-        _setState(WsConnectionState.connected);
-        _startHeartbeat();
-        _startIdleMonitor();
-        _flushQueue();
-        // Announce mobile identity to desktop with device details
-        _rawSend(jsonEncode({
-          'event': WsEvents.identityMobileAnnounce,
-          'data': {
-            'name': 'wzxClaw Android',
-            'platform': 'android',
-            'osVersion': Platform.operatingSystemVersion,
-            'appVersion': '2.0',
-          },
-        }),);
-        _syncSelectedDesktopTarget();
-      }
-    }).catchError((error) {
-      if (seq == _connSeq) {
-        _setError('握手失败: $error');
-        _onChannelError(error);
-      }
-    });
+    _client = client;
+    // R1 换接线桥：连接交给直连栈供帧（聊天数据源正在切换 ZcodeChatStore，
+    // 见 .planning/PLAN-chat-rewire.md）。翻译层暂留喂工作区/标题数据源
+    // （SessionSyncService），R1 收尾即零消费方，R3 删除。
+    ZcodeChatStore.instance.attach(
+      client,
+      desktopId: pairing.sid,
+      desktopName: _desktopName ?? pairing.desktopName ?? '桌面 ZCode',
+    );
+    client.connect();
   }
 
-  /// Clean disconnect.
-  void disconnect() {
-    _cancelAllTimers();
-    unawaited(AndroidForegroundKeepAlive.instance.stop());
-    _sendQueue.clear();
-    _waitingForPong = false;
-    _desktops.clear();
-    _desktopsController.add([]);
-    _selectedDesktopId = null;
-    _selectedDesktopIdController.add(null);
-
-    if (_channel != null) {
-      try {
-        _channel!.sink.close(1000, 'client disconnect');
-      } catch (_) {
-        // Channel may already be closed.
-      }
-      _channel = null;
-    }
-
-    _setState(WsConnectionState.disconnected);
-  }
-
-  /// Send a message over the WebSocket.
-  ///
-  /// If connected and heartbeat is healthy, sends immediately.
-  /// Otherwise, queues the message for delivery on reconnect.
-  /// [priority] controls send order when flushing (higher = sent first).
-  void send(WsMessage message, {int priority = 0}) {
-    final json = message.toJsonString();
-
-    if (_state == WsConnectionState.connected && !_waitingForPong) {
-      _rawSend(json);
-    } else {
-      if (_sendQueue.length >= AppConfig.maxQueueSize) {
-        // Evict lowest priority entry (queue is sorted desc, last is lowest).
-        _sendQueue.removeLast();
-      }
-      // Insert maintaining sort order (descending priority).
-      final entry = _QueueEntry(json, priority);
-      final idx = _sendQueue.indexWhere((e) => e.priority < priority);
-      if (idx == -1) {
-        _sendQueue.add(entry);
-      } else {
-        _sendQueue.insert(idx, entry);
-      }
+  void _onZcodeState(ZcodeRelayState s, bool paired) {
+    // 换接线桥：relay 状态同步进直连栈（matched 触发其自动拉会话列表、
+    // 掉线触发其在途反向请求作废）
+    ZcodeChatStore.instance.ingestRelayState(s, paired);
+    switch (s) {
+      case ZcodeRelayState.matched:
+        if (_stateNow != WsConnectionState.connected) {
+          _setState(WsConnectionState.connected);
+          _emitDesktopOnline();
+        }
+        break;
+      case ZcodeRelayState.waiting:
+        // 多配对：列表常驻，仅当前桌面标记离线（relay 可达、桌面不在）
+        unawaited(_refreshDesktopList());
+        _setState(WsConnectionState.connecting);
+        break;
+      case ZcodeRelayState.closed:
+        unawaited(_refreshDesktopList());
+        _setState(WsConnectionState.disconnected);
+        break;
+      case ZcodeRelayState.idle:
+      case ZcodeRelayState.connecting:
+      case ZcodeRelayState.authenticating:
+        _setState(WsConnectionState.connecting);
+        break;
     }
   }
 
-  /// Select a specific desktop for message routing.
-  /// Pass null to broadcast to all desktops.
-  /// If not connected, stores the selection to be sent on reconnect.
+  void _emitDesktopOnline() {
+    final pairing = _pairing;
+    if (pairing == null) return;
+    _selectedDesktopId = pairing.sid;
+    _selectedDesktopIdController.add(pairing.sid);
+    unawaited(_refreshDesktopList());
+  }
+
+  int _listGen = 0;
+
+  /// 由配对存储重建桌面列表：全部已保存配对常驻，
+  /// 当前配对按连接状态标在线（matched），其余离线。
+  Future<void> _refreshDesktopList() async {
+    final gen = ++_listGen;
+    final stored = await PairingStore.instance.loadAll();
+    if (gen != _listGen) return; // 过期响应：期间已有新刷新
+    final isCurrentOnline = _stateNow == WsConnectionState.connected;
+    _desktops
+      ..clear()
+      ..addAll([
+        for (final sp in stored)
+          DesktopInfo(
+            desktopId: sp.info.sid,
+            name: (sp.info.sid == _pairing?.sid && _desktopName != null)
+                ? _desktopName
+                : (sp.info.desktopName ?? '桌面 ZCode'),
+            platform: 'zcode',
+            connectedAt: sp.addedAt,
+            online: isCurrentOnline && sp.info.sid == _pairing?.sid,
+          ),
+      ]);
+    _desktopsController.add(List.from(_desktops));
+  }
+
+  /// 外部触发的列表刷新（landing 初始化等）
+  Future<void> refreshDesktops() => _refreshDesktopList();
+
+  /// 切换到已保存的某台桌面并连接；未找到返回 false
+  Future<bool> connectToStored(String sid) async {
+    final stored = await PairingStore.instance.loadAll();
+    final hit = stored.where((s) => s.info.sid == sid).firstOrNull;
+    if (hit == null) return false;
+    disconnect();
+    _desktopName = hit.info.desktopName;
+    _pairing = hit.info;
+    unawaited(PairingStore.instance.setActiveSid(sid));
+    _connectPairing();
+    return true;
+  }
+
+  /// 删除已保存配对；删的是当前连接的桌面时先断开
+  Future<void> removePairing(String sid) async {
+    if (sid == _pairing?.sid && _client != null) disconnect();
+    await PairingStore.instance.remove(sid);
+    await _refreshDesktopList();
+  }
+
+  // ---- 入站：引擎通知帧 → 直连栈 ----
+
+  void _onZcodeNotify(ZcodeFrame frame) {
+    // 换接线桥：引擎通知帧原样投递直连栈（store 自行按帧归属路由）
+    ZcodeChatStore.instance.ingestNotifyFrame(frame);
+  }
+
+  Future<dynamic> _onZcodeReverse(ZcodeFrame frame) {
+    return ZcodeChatStore.instance.ingestReverseRequest(frame);
+  }
+
+  // ---- 出站：纯连接层通用请求通道 ----
+
+  /// 直发 zcode/companion 请求（companion 本地扩展方法 `x/*`：git 分支/
+  /// 模型目录/用量等，见 APP-SERVER.md「companion 本地扩展协议」）。
+  /// 未连接或未配对时抛 StateError。
+  Future<dynamic> zcodeRequest(String method, [Map<String, dynamic>? params]) {
+    final client = _client;
+    if (client == null ||
+        _stateNow != WsConnectionState.connected ||
+        !client.paired) {
+      throw StateError('未连接桌面');
+    }
+    return client.request(method, params);
+  }
+
+  /// 短连接探测也由连接层创建，页面不直接拥有 ZcodeRelayClient。
+  Future<bool> probePairing(
+    ZcodePairingInfo pairing, {
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final completer = Completer<bool>();
+    late final ZcodeRelayClient probe;
+    probe = ZcodeRelayClient(
+      pairing: pairing,
+      socketFactory: debugSocketFactory,
+      onStateChange: (state, paired) {
+        if (completer.isCompleted) return;
+        if (state == ZcodeRelayState.matched) completer.complete(true);
+        if (state == ZcodeRelayState.waiting ||
+            state == ZcodeRelayState.closed) {
+          completer.complete(false);
+        }
+      },
+    );
+    try {
+      probe.connect();
+      return await completer.future.timeout(timeout, onTimeout: () => false);
+    } catch (e) {
+      debugPrint('[connection] 桌面在线探测失败: $e');
+      return false;
+    } finally {
+      probe.close();
+    }
+  }
+
+  // ---- 桌面选择（单桌面语义：保留 API 兼容，无路由作用）----
+
   void selectDesktop(String? desktopId) {
-    // Always store the selection so it can be sent after reconnect.
     _selectedDesktopId = desktopId;
     _selectedDesktopIdController.add(desktopId);
-
-    // Persist selection so it survives app restarts.
-    SharedPreferences.getInstance().then((prefs) {
-      if (desktopId != null) {
-        prefs.setString('selected_desktop_id', desktopId);
-      } else {
-        prefs.remove('selected_desktop_id');
-      }
-    });
-
-    if (_state != WsConnectionState.connected) return;
-
-    if (desktopId == null) {
-      _rawSend(jsonEncode({'event': WsEvents.targetClear}));
-    } else {
-      _rawSend(
-        jsonEncode({
-          'event': WsEvents.targetSelect,
-          'data': {'desktopId': desktopId},
-        }),
-      );
-    }
   }
 
-  /// Clear desktop selection and remove persisted preference.
-  void clearDesktopSelection() => selectDesktop(null);
+  // ---- 生命周期 ----
 
-  Future<void> setBackgroundKeepAliveEnabled(bool enabled) async {
-    _backgroundKeepAliveEnabled = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_backgroundKeepAliveEnabledKey, enabled);
-    if (!enabled) {
-      await AndroidForegroundKeepAlive.instance.stop();
-    }
-  }
+  // cFSC 互斥标志：入口守卫（状态检查）到 _connectPairing 之间隔着两个
+  // await，并发触发（回前台双触发）会双双穿过得各自建连——互斥标志挡住
+  // 同入口重入，两个 await 之后再复查状态挡住跨入口（点按桌面切换）穿插
+  bool _restoringConfig = false;
 
   Future<void> connectFromSavedConfiguration() async {
-    if (_state != WsConnectionState.disconnected) {
-      return;
-    }
-
+    if (_stateNow != WsConnectionState.disconnected || _restoringConfig) return;
+    _restoringConfig = true;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final serverUrl = prefs.getString('server_url');
-      if (serverUrl == null || serverUrl.isEmpty) {
-        return;
+      final stored = await PairingStore.instance.loadAll();
+      // await 窗口内状态可能已被其它入口改变（回前台双触发、点按桌面切换）。
+      // 不复查会把窗口内新建的 client 无 close 覆盖——正是上面注释里的泄漏源
+      if (_stateNow != WsConnectionState.disconnected) return;
+      if (stored.isNotEmpty) {
+        final active = await PairingStore.instance.activeSid();
+        if (_stateNow != WsConnectionState.disconnected) return;
+        final hit = stored.where((s) => s.info.sid == active).firstOrNull ??
+            stored.first;
+        _desktopName = hit.info.desktopName;
+        _pairing = hit.info;
+        _connectPairing();
       }
-
-      final token = await SecureSettings.getAuthToken();
-      final uri = Uri.parse(serverUrl);
-      final params = Map<String, String>.from(uri.queryParameters);
-      params['role'] = 'mobile';
-      if (token.isNotEmpty) {
-        params['token'] = token;
-      }
-
-      connect(uri.replace(queryParameters: params).toString());
     } catch (e) {
-      _setError('恢复连接配置失败: $e');
+      _errorController.add('恢复连接配置失败: $e');
+    } finally {
+      _restoringConfig = false;
     }
   }
 
-  Future<void> wakeAndReconnect(String reason) async {
-    _reconnectAttempt = 0;
-
-    if (_state == WsConnectionState.connected) {
-      _startHeartbeat();
-      _startIdleMonitor();
-      _syncSelectedDesktopTarget();
-      return;
-    }
-
-    if (_url != null) {
-      _forceReconnect(reason);
-      return;
-    }
-
-    await connectFromSavedConfiguration();
-  }
-
-  void _selectDesktop(String desktopId) {
-    _selectedDesktopId = desktopId;
-    _selectedDesktopIdController.add(desktopId);
-    _rawSend(
-      jsonEncode({
-        'event': WsEvents.targetSelect,
-        'data': {'desktopId': desktopId},
-      }),
-    );
-  }
-
-  // ============================================================
-  // Lifecycle handling (WidgetsBindingObserver)
-  // ============================================================
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.paused:
-        _wasPaused = true;
-        _handleAppBackgrounded();
-        break;
-
-      case AppLifecycleState.inactive:
-        // Transient state (notification shade, volume overlay, etc.).
-        // Reset _wasPaused here too — some Android transitions skip resumed
-        // and go paused → inactive directly when returning to foreground.
-        if (_wasPaused) {
-          _wasPaused = false;
-          _handleAppForegrounded();
-        }
-        break;
-
-      case AppLifecycleState.resumed:
-        // Only act if the app was truly backgrounded (paused), not just
-        // briefly inactive.  This prevents constant reconnect flicker.
-        if (_wasPaused) {
-          _wasPaused = false;
-          _handleAppForegrounded();
-        }
-        break;
-
-      case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
-        break;
-    }
-  }
-
-  /// Quick-reconnect on app resume.  After backgrounding, the relay server
-  /// likely already dropped us, so skip the probe and reconnect immediately.
-  /// Reset backoff counter so reconnection starts with minimal delay.
-  void _resumeCheck() {
-    _reconnectAttempt = 0;
-    _forceReconnect('app resumed from pause');
-  }
-
-  void _handleAppForegrounded() {
-    unawaited(AndroidForegroundKeepAlive.instance.stop());
-    if (_url == null) return;
-
-    if (_state == WsConnectionState.connected) {
-      _startHeartbeat();
-      _startIdleMonitor();
-      _syncSelectedDesktopTarget();
-      // 通知 SessionSyncService 刷新数据（后台期间桌面可能新增了消息）
-      SessionSyncService.instance.onAppForegrounded();
-      return;
-    }
-
-    _resumeCheck();
-  }
-
-  void _handleAppBackgrounded() {
-    if (_shouldRunForegroundKeepAlive) {
-      unawaited(AndroidForegroundKeepAlive.instance.start());
-      if (_state == WsConnectionState.connected) {
-        _startHeartbeat();
-        _startIdleMonitor();
-      }
-      return;
-    }
-
-    _stopHeartbeat();
-    _stopIdleMonitor();
-  }
-
-  bool get _shouldRunForegroundKeepAlive =>
-      Platform.isAndroid &&
-      _backgroundKeepAliveEnabled &&
-      _url != null &&
-      _state != WsConnectionState.disconnected;
-
-  // ============================================================
-  // Message handling
-  // ============================================================
-
-  void _onMessage(dynamic data) {
-    if (data is! String) return; // ignore binary frames
-
-    try {
-      final json = jsonDecode(data) as Map<String, dynamic>;
-      final event = json['event'] as String? ?? '';
-      _lastMessageTime = DateTime.now();
-
-      if (event == WsEvents.pong) {
-        // Pong received -- connection is verified bidirectional.
-        // Reset backoff only after real proof the connection works.
-        _waitingForPong = false;
-        _heartbeatTimeoutTimer?.cancel();
-        _reconnectAttempt = 0;
-        // 刷新在心跳探测期间被队列缓存的消息
-        _flushQueue();
-        return;
-      }
-
-      // Handle desktop identity announcement (forwarded by relay)
-      if (event == WsEvents.identityAnnounce) {
-        // The relay already tracks identity; we rely on system:desktop_list
-        // but also update from direct announcements for backward compat.
-        final d = json['data'];
-        if (d is Map<String, dynamic>) {
-          final name = d['name'] as String? ?? 'wzxClaw';
-          // Update matching desktop's name if we have one
-          if (_desktops.length == 1) {
-            _desktops[0] = DesktopInfo(
-              desktopId: _desktops[0].desktopId,
-              name: name,
-              platform: _desktops[0].platform,
-              connectedAt: _desktops[0].connectedAt,
-            );
-            _desktopsController.add(List.from(_desktops));
-          }
-        }
-        return;
-      }
-
-      // System events from relay — don't broadcast to chat
-      if (event.startsWith('system:')) {
-        if (event == WsEvents.systemDesktopList) {
-          // Full desktop list update from relay.
-          final list = (json['data'] as Map<String, dynamic>?)?['desktops'] as List<dynamic>? ?? [];
-          final newDesktops = <DesktopInfo>[];
-          for (final item in list) {
-            if (item is Map<String, dynamic>) {
-              newDesktops.add(DesktopInfo.fromJson(item));
-            }
-          }
-          // Only notify if the list actually changed to avoid flicker.
-          if (_desktops.length != newDesktops.length ||
-              !_desktops.every((d) => newDesktops.any((n) => n.desktopId == d.desktopId))) {
-            _desktops
-              ..clear()
-              ..addAll(newDesktops);
-            _desktopsController.add(List.from(_desktops));
-          }
-          // Restore saved selection if still available (no auto-select).
-          SharedPreferences.getInstance().then((prefs) {
-            final savedId = prefs.getString('selected_desktop_id');
-            if (_selectedDesktopId == null && savedId != null &&
-                _desktops.any((d) => d.desktopId == savedId)) {
-              _selectDesktop(savedId);
-            } else if (_selectedDesktopId != null &&
-                _desktops.any((d) => d.desktopId == _selectedDesktopId)) {
-              _syncSelectedDesktopTarget();
-            } else if (_selectedDesktopId == null && _desktops.length == 1) {
-              // 桌面重连后 UUID 变化，旧 savedId 已失效。
-              // 仅一台桌面时自动重选，避免工作区视图永久消失。
-              _selectDesktop(_desktops.first.desktopId);
-            }
-          });
-          // Clear selection if selected desktop is gone.
-          if (_selectedDesktopId != null && !_desktops.any((d) => d.desktopId == _selectedDesktopId)) {
-            _selectedDesktopId = null;
-            _selectedDesktopIdController.add(null);
-          }
-        } else if (event == WsEvents.systemDesktopConnected) {
-          // Enriched event with desktopId.
-          final d = json['data'] as Map<String, dynamic>?;
-          final desktopId = d?['desktopId'] as String?;
-          if (desktopId != null && !_desktops.any((e) => e.desktopId == desktopId)) {
-            _desktops.add(
-              DesktopInfo(
-                desktopId: desktopId,
-                name: d?['name'] as String?,
-                platform: d?['platform'] as String?,
-                connectedAt: DateTime.now().millisecondsSinceEpoch,
-              ),
-            );
-            _desktopsController.add(List.from(_desktops));
-          }
-          if (_selectedDesktopId == desktopId) {
-            _syncSelectedDesktopTarget();
-          }
-          // No auto-select: user must choose manually from LandingPage.
-        } else if (event == WsEvents.systemDesktopDisconnected) {
-          final d = json['data'] as Map<String, dynamic>?;
-          final desktopId = d?['desktopId'] as String?;
-          if (desktopId != null) {
-            _desktops.removeWhere((e) => e.desktopId == desktopId);
-            _desktopsController.add(List.from(_desktops));
-            if (_selectedDesktopId == desktopId) {
-              _selectedDesktopId = null;
-              _selectedDesktopIdController.add(null);
-            }
-          }
-        } else if (event == WsEvents.systemTargetConfirmed) {
-          final d = json['data'] as Map<String, dynamic>?;
-          final confirmedId = d?['desktopId'] as String?;
-          if (confirmedId != _selectedDesktopId) {
-            _selectedDesktopId = confirmedId;
-            _selectedDesktopIdController.add(confirmedId);
-          }
-        } else if (event == WsEvents.systemNoDesktop) {
-          // 手机发出命令时桌面端不在线，relay 回传此事件。
-          // 注入合成事件：先 done 重置 streaming 状态，再 error 展示错误气泡。
-          final errMsg = (json['data'] as Map<String, dynamic>?)?['error'] as String? ??
-              'Desktop is offline. Please open wzxClaw on your computer.';
-          _messageController.add(WsMessage(event: WsEvents.agentDone, data: {'cancelled': true}));
-          _messageController.add(WsMessage(event: WsEvents.agentError, data: {'error': errMsg, 'recoverable': false}));
-        }
-        return;
-      }
-
-      // Broadcast all other messages to subscribers.
-      final message = WsMessage.fromJson(json);
-      _messageController.add(message);
-    } catch (_) {
-      // Malformed JSON -- ignore silently (T-01-02 mitigation).
-      // Do not crash on invalid data.
-    }
-  }
-
-  // ============================================================
-  // Heartbeat
-  // ============================================================
-
-  void _startHeartbeat() {
-    _stopHeartbeat();
-    _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
-      if (_state != WsConnectionState.connected) return;
-
-      // Send application-level ping.
-      _waitingForPong = true;
-      _rawSend(jsonEncode({'event': WsEvents.ping}));
-
-      // Start timeout -- if no pong within 8 seconds, connection is dead.
-      _heartbeatTimeoutTimer = Timer(AppConfig.heartbeatTimeout, () {
-        if (_waitingForPong) {
-          _forceReconnect('heartbeat timeout');
-        }
-      });
-    });
-  }
-
-  void _stopHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-    _heartbeatTimeoutTimer?.cancel();
-    _heartbeatTimeoutTimer = null;
-    _waitingForPong = false;
-  }
-
-  // ============================================================
-  // Idle monitor
-  // ============================================================
-
-  void _startIdleMonitor() {
-    _stopIdleMonitor();
-    _lastMessageTime = DateTime.now();
-
-    // Check every 10 seconds whether the connection has gone idle.
-    _idleTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (_state != WsConnectionState.connected) return;
-      if (_lastMessageTime == null) return;
-
-      final elapsed = DateTime.now().difference(_lastMessageTime!);
-      if (elapsed > AppConfig.maxIdleTime) {
-        _forceReconnect('idle timeout (${elapsed.inSeconds}s)');
-      }
-    });
-  }
-
-  void _stopIdleMonitor() {
-    _idleTimer?.cancel();
-    _idleTimer = null;
-  }
-
-  // ============================================================
-  // Reconnection
-  // ============================================================
-
-  void _forceReconnect(String reason) {
-    // Cancel all timers first.
-    _cancelAllTimers();
-
-    // Clear desktop state -- stale after reconnect.
-    _desktops.clear();
-    _desktopsController.add([]);
-
-    // Increment sequence to invalidate stale onDone/onError callbacks
-    // from the channel we are about to close.
-    _connSeq++;
-
-    // Close the channel with an abnormal close code.
-    if (_channel != null) {
-      try {
-        _channel!.sink.close(4000, reason);
-      } catch (_) {
-        // Channel may already be closed.
-      }
-      _channel = null;
-    }
-
-    _setState(WsConnectionState.reconnecting);
-    _scheduleReconnect();
-  }
-
-  void _scheduleReconnect() {
-    _reconnectTimer?.cancel();
-
-    // Exponential backoff: min(30s, base * 2^attempt) + jitter(0-500ms)
-    final baseMs = AppConfig.reconnectBaseDelay.inMilliseconds;
-    final maxMs = AppConfig.reconnectMaxDelay.inMilliseconds;
-    final delayMs = (baseMs * (1 << _reconnectAttempt)).clamp(0, maxMs);
-    final jitter = Random().nextInt(AppConfig.jitterMaxMs);
-    final totalDelay = Duration(milliseconds: delayMs + jitter);
-
-    _reconnectAttempt++;
-
-    _reconnectTimer = Timer(totalDelay, () {
-      if (_url != null) {
-        connect(_url!);
-      }
-    });
-
-    if (_state != WsConnectionState.disconnected) {
-      _setState(WsConnectionState.reconnecting);
-    }
-  }
-
-  // ============================================================
-  // Channel events
-  // ============================================================
-
-  void _onChannelDone() {
-    _stopHeartbeat();
-    _stopIdleMonitor();
-
-    if (_state != WsConnectionState.disconnected) {
-      // Not an intentional disconnect -- schedule reconnect.
-      _setState(WsConnectionState.reconnecting);
-      _scheduleReconnect();
-    }
-  }
-
-  void _onChannelError(Object error) {
-    debugPrint('[ConnectionManager] channel error: $error');
-    _stopHeartbeat();
-    _stopIdleMonitor();
-    _setError('$error');
-
-    if (_state != WsConnectionState.disconnected) {
-      _setState(WsConnectionState.reconnecting);
-      _scheduleReconnect();
-    }
-  }
-
-  // ============================================================
-  // Send queue
-  // ============================================================
-
-  void _flushQueue() {
-    // Send highest priority first (queue is already sorted descending).
-    _sendQueue.sort((a, b) => b.priority.compareTo(a.priority));
-    while (_sendQueue.isNotEmpty) {
-      final entry = _sendQueue.removeAt(0);
-      _rawSend(entry.json);
-    }
-  }
-
-  // ============================================================
-  // Helpers
-  // ============================================================
-
-  void _setState(WsConnectionState newState) {
-    if (_state == newState) return;
-    _state = newState;
-    _stateController.add(newState);
-  }
-
-  void _setError(String? error) {
-    _lastError = error;
-    _errorController.add(error);
-  }
-
-  void _rawSend(String json) {
-    if (_channel != null) {
-      try {
-        _channel!.sink.add(json);
-      } catch (_) {
-        // Channel might be closed -- ignore.
+  void handleLifecycleState(AppLifecycleState state) {
+    // 保活/重连由 ZcodeRelayClient 自理（ping + 指数退避）；
+    // 前台唤醒时仅在断线状态下触发一次配置恢复
+    if (state == AppLifecycleState.resumed) {
+      if (_stateNow == WsConnectionState.disconnected) {
+        unawaited(connectFromSavedConfiguration());
+      } else {
+        // Android 后台期间定时器被冻结、链路多半已被回收，而客户端还挂着
+        // matched 状态：立即校验活性，死链当场断开走快速重连，不再干等
+        // 下一个保活周期（最长 45s）才暴露断线
+        _client?.verifyAlive();
       }
     }
   }
 
-  void _syncSelectedDesktopTarget() {
-    if (_state != WsConnectionState.connected || _selectedDesktopId == null) {
-      return;
-    }
-    _rawSend(
-      jsonEncode({
-        'event': WsEvents.targetSelect,
-        'data': {'desktopId': _selectedDesktopId},
-      }),
-    );
+  void disconnect() {
+    _client?.close();
+    _client = null;
+    _generation++; // 断开 = 新代次（在途多步操作的绑定入口随即失效）
+    ZcodeChatStore.instance.detach();
+    _selectedDesktopId = null;
+    _selectedDesktopIdController.add(null);
+    _setState(WsConnectionState.disconnected);
+    unawaited(_refreshDesktopList());
   }
 
-  Future<void> _loadBackgroundKeepAlivePreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _backgroundKeepAliveEnabled =
-          prefs.getBool(_backgroundKeepAliveEnabledKey) ?? false;
-    } catch (_) {
-      _backgroundKeepAliveEnabled = false;
-    }
-  }
-
-  void _cancelAllTimers() {
-    _stopHeartbeat();
-    _stopIdleMonitor();
-    _reconnectTimer?.cancel();
-    _reconnectTimer = null;
-  }
-
-  // ============================================================
-  // Cleanup (call when app is shutting down)
-  // ============================================================
-
-  /// Dispose all resources. Call only when the app is being destroyed.
   void dispose() {
     disconnect();
-    WidgetsBinding.instance.removeObserver(this);
     _stateController.close();
-    _messageController.close();
     _errorController.close();
     _desktopsController.close();
     _selectedDesktopIdController.close();
   }
-}
 
-/// Internal send-queue entry with priority support.
-class _QueueEntry {
-  final String json;
-  final int priority;
-  const _QueueEntry(this.json, this.priority);
+  void _setState(WsConnectionState s) {
+    _stateNow = s;
+    _stateController.add(s);
+  }
+
+  String? _paramOf(String url, String name) {
+    try {
+      return Uri.parse(url).queryParameters[name];
+    } catch (_) {
+      return null;
+    }
+  }
 }

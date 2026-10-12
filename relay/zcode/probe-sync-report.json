@@ -1,0 +1,206 @@
+{
+  "sessionCount": 50,
+  "picked": {
+    "running": [],
+    "A": "sess_a2a59f50-dc25-43fe-9b79-d4b59b9b8d45",
+    "B": "sess_13061668-4d8a-4ac4-a7ad-e179c7ffe273"
+  },
+  "sessionRead": {
+    "ok": false,
+    "bytes": 2,
+    "keys": [],
+    "error": "Session is not active: sess_a2a59f50-dc25-43fe-9b79-d4b59b9b8d45"
+  },
+  "resumeA": {
+    "bytes": 414142,
+    "keys": [
+      "messages",
+      "projection",
+      "protocol",
+      "runtime",
+      "session",
+      "settings",
+      "slashCommands",
+      "todos",
+      "todoGroups"
+    ],
+    "messageCount": 48,
+    "messagesTruncated": false
+  },
+  "subscribe": {
+    "error": {
+      "code": -32602,
+      "msg": "Invalid params — deliveryKind: Invalid option: expected one of \"desktop-continuous\"|\"web-remote-replayable\""
+    },
+    "resultKeys": []
+  },
+  "events": {
+    "A_active": {
+      "note": "本进程 active",
+      "ok": true,
+      "count": 8,
+      "eventIds": [
+        "063d63e6-d6c1-4dff-ad88-3b1cd235bb87",
+        "283d4f5a-43f2-4454-a2aa-c9c0e502a327",
+        "dc9f7ad7-8b0c-48c7-870b-a6dd22773bb2",
+        "3cbd95b8-981d-4649-b06b-1b7727efc5d6",
+        "fa74bf87-3686-4058-84bf-fa2a41876352",
+        "66d7da1a-73cb-4674-b44c-ec2029bd893b"
+      ],
+      "payloadKinds": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "topKeys": [
+        "eventId",
+        "payload",
+        "seq",
+        "sessionId",
+        "timestamp",
+        "traceId",
+        "turnId",
+        "type"
+      ],
+      "carriesSessionId": [
+        "sessionId=sess_a2a59f50-…"
+      ]
+    },
+    "B_notResumed": {
+      "note": "从未 resume 的第三会话",
+      "ok": false,
+      "count": 0,
+      "error": "Session is not active: sess_13061668-4d8a-4ac4-a7ad-e179c7ffe273",
+      "eventIds": [],
+      "payloadKinds": [],
+      "topKeys": [],
+      "carriesSessionId": []
+    }
+  },
+  "resumeB_bytes": 30449347,
+  "afterSwitch_readA": {
+    "ok": true,
+    "count": 5
+  },
+  "pushedFrames": [
+    {
+      "method": "session/requestRuntimePreferences",
+      "id": "server-1",
+      "paramKeys": [
+        "sessionId",
+        "scope"
+      ],
+      "isReverseRequest": true,
+      "sessionIdFields": [
+        "sessionId=sess_a2a59f50-…"
+      ]
+    },
+    {
+      "method": "session/requestRuntimePreferences",
+      "id": "server-2",
+      "paramKeys": [
+        "sessionId",
+        "scope"
+      ],
+      "isReverseRequest": true,
+      "sessionIdFields": [
+        "sessionId=sess_a2a59f50-…"
+      ]
+    },
+    {
+      "method": "session/requestRuntimePreferences",
+      "id": "server-3",
+      "paramKeys": [
+        "sessionId",
+        "scope"
+      ],
+      "isReverseRequest": true,
+      "sessionIdFields": [
+        "sessionId=sess_13061668-…"
+      ]
+    },
+    {
+      "method": "session/requestRuntimePreferences",
+      "id": "server-4",
+      "paramKeys": [
+        "sessionId",
+        "scope"
+      ],
+      "isReverseRequest": true,
+      "sessionIdFields": [
+        "sessionId=sess_13061668-…"
+      ]
+    },
+    {
+      "method": "process/mcpTelemetry",
+      "id": null,
+      "paramKeys": [
+        "arch",
+        "kind",
+        "mcpId",
+        "mcpInstanceId",
+        "mcpIsolation",
+        "mcpSource",
+        "occurredAt",
+        "platform"
+      ]
+    },
+    {
+      "method": "process/mcpTelemetry",
+      "id": null,
+      "paramKeys": [
+        "arch",
+        "configuredCount",
+        "connectedCount",
+        "failedCount",
+        "kind",
+        "occurredAt",
+        "platform",
+        "processCount",
+        "sessionId"
+      ],
+      "sessionIdFields": [
+        "sessionId=sess_a2a59f50-…"
+      ]
+    },
+    {
+      "method": "process/mcpTelemetry",
+      "id": null,
+      "paramKeys": [
+        "arch",
+        "kind",
+        "mcpId",
+        "mcpInstanceId",
+        "mcpIsolation",
+        "mcpSource",
+        "occurredAt",
+        "platform"
+      ]
+    },
+    {
+      "method": "process/mcpTelemetry",
+      "id": null,
+      "paramKeys": [
+        "arch",
+        "configuredCount",
+        "connectedCount",
+        "failedCount",
+        "kind",
+        "occurredAt",
+        "platform",
+        "processCount",
+        "sessionId"
+      ],
+      "sessionIdFields": [
+        "sessionId=sess_13061668-…"
+      ]
+    }
+  ],
+  "pushedSummary": {
+    "session/requestRuntimePreferences": 4,
+    "process/mcpTelemetry": 4
+  }
+}

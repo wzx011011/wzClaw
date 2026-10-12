@@ -2,18 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
-import '../models/desktop_info.dart';
-import 'desktop_picker.dart';
 
-/// A thin status bar showing the current WebSocket connection state,
-/// with an optional desktop picker when multiple desktops are available.
+/// A thin status bar showing the current WebSocket connection state.
 class ConnectionStatusBar extends StatefulWidget {
   const ConnectionStatusBar({
     super.key,
     required this.state,
-    this.desktops = const [],
-    this.selectedDesktopId,
-    this.onDesktopSelect,
     this.desktopIdentity,
     this.desktopOnline = false,
     this.errorMessage,
@@ -21,9 +15,6 @@ class ConnectionStatusBar extends StatefulWidget {
   });
 
   final WsConnectionState state;
-  final List<DesktopInfo> desktops;
-  final String? selectedDesktopId;
-  final ValueChanged<String?>? onDesktopSelect;
   final String? desktopIdentity;
   final bool desktopOnline;
   final String? errorMessage;
@@ -64,10 +55,6 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
       statusText = state.label;
     }
 
-    final showPicker = state == WsConnectionState.connected &&
-        widget.desktops.length > 1 &&
-        widget.onDesktopSelect != null;
-
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -79,63 +66,70 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
           ),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Status row
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: dotColor,
-                    shape: BoxShape.circle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    statusText,
+                    style: TextStyle(
+                      color: dotColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  if (hasError)
+                    GestureDetector(
+                      onTap: () => setState(() => _errorExpanded = !_errorExpanded),
+                      child: Text(
+                        errorMessage,
+                        style: TextStyle(
+                          color: colors.textMuted,
+                          fontSize: 11,
+                        ),
+                        maxLines: _errorExpanded ? null : 1,
+                        overflow: _errorExpanded ? null : TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // 非连接态的诊断快捷入口：断连场景下最常用的工具不再藏在设置里
+            if (state != WsConnectionState.connected)
+              GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/connection-diagnostics'),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Icon(Icons.monitor_heart_outlined,
+                          size: 13, color: dotColor,),
+                      const SizedBox(width: 3),
                       Text(
-                        statusText,
-                        style: TextStyle(
-                          color: dotColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
+                        '诊断',
+                        style: TextStyle(color: dotColor, fontSize: 11),
                       ),
-                      if (hasError)
-                        GestureDetector(
-                          onTap: () => setState(() => _errorExpanded = !_errorExpanded),
-                          child: Text(
-                            errorMessage,
-                            style: TextStyle(
-                              color: colors.textMuted,
-                              fontSize: 11,
-                            ),
-                            maxLines: _errorExpanded ? null : 1,
-                            overflow: _errorExpanded ? null : TextOverflow.ellipsis,
-                          ),
-                        ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          // Desktop picker
-          if (showPicker)
-            DesktopPicker(
-              desktops: widget.desktops,
-              selectedDesktopId: widget.selectedDesktopId,
-              onSelect: widget.onDesktopSelect!,
-            ),
-        ],
+              ),
+          ],
+        ),
       ),
     );
   }

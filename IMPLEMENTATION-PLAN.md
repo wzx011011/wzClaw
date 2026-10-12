@@ -1,5 +1,7 @@
-# wzxClaw 功能完善实施计划
+# wzxClaw 功能完善实施计划（Historical）
 
+> **历史文档：** 本计划描述 2026-05-07 时旧 Electron Desktop 的功能工作，不是当前产品路线图或实施依据。现役架构请以根 `README.md`、`AGENTS.md` 和 `relay/zcode/APP-SERVER.md` 为准。
+>
 > 基于 Claude Code (E:\ai\claude-code) 对比分析，2026-05-07 制定
 
 ---

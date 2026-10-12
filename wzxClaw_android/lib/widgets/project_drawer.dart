@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../models/connection_state.dart';
-import '../models/session_meta.dart';
-import '../services/chat_store.dart';
+import '../models/desktop_info.dart';
 import '../services/connection_manager.dart';
-import '../services/session_sync_service.dart';
+import '../zcode/zcode_chat_store.dart';
 import 'session_list_tile.dart';
-import 'workspace_picker_card.dart';
+import 'swipe_actions_tile.dart';
+import 'workspace_switcher_sheet.dart';
 
 /// Drawer widget displaying the current desktop workspace and its sessions.
 class ProjectDrawer extends StatefulWidget {
@@ -18,6 +21,73 @@ class ProjectDrawer extends StatefulWidget {
 }
 
 class _ProjectDrawerState extends State<ProjectDrawer> {
+  static const _kPinnedKey = 'wzxclaw-zcode-pinned-sessions';
+  static const _kArchivedKey = 'wzxclaw-zcode-archived-sessions';
+  static const _kAliasesKey = 'wzxclaw-zcode-session-aliases';
+
+  Set<String> _pinnedIds = {};
+  Set<String> _archivedIds = {};
+  bool _showArchived = false;
+
+  // 会话状态指示：最近一次构建时在跑的会话 / 完成 待查看的绿点
+  // （内存态——应用重启后绿点不追溯，正在跑的由 store 实时状态恢复）
+  final Set<String> _busySeen = {};
+  final Set<String> _resultDots = {};
+
+  // 会话搜索：非空时忽略工作区范围，跨工作区按标题过滤
+  bool _searchOpen = false;
+  String _sessionQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  // 会话本地备注名（SharedPreferences，非引擎能力；显示与搜索均生效）
+  Map<String, String> _aliases = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocalState();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadLocalState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _pinnedIds = (prefs.getStringList(_kPinnedKey) ?? const []).toSet();
+      _archivedIds = (prefs.getStringList(_kArchivedKey) ?? const []).toSet();
+      final rawAliases = prefs.getString(_kAliasesKey);
+      if (rawAliases != null) {
+        final decoded = jsonDecode(rawAliases);
+        if (decoded is Map) {
+          _aliases = decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+        }
+      }
+    });
+  }
+
+  Future<void> _togglePin(String sessionId) async {
+    final next = Set<String>.from(_pinnedIds);
+    if (!next.remove(sessionId)) next.add(sessionId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kPinnedKey, next.toList());
+    if (!mounted) return;
+    setState(() => _pinnedIds = next);
+  }
+
+  /// 归档 = 本地隐藏（引擎无归档概念）：主列表不显示，收进「已归档」折叠区
+  Future<void> _toggleArchive(String sessionId) async {
+    final next = Set<String>.from(_archivedIds);
+    if (!next.remove(sessionId)) next.add(sessionId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kArchivedKey, next.toList());
+    if (!mounted) return;
+    setState(() => _archivedIds = next);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +106,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 Divider(color: colors.border, height: 1),
                 _buildSessionSection(context, colors),
                 Divider(color: colors.border, height: 1),
-                _buildFileBrowseEntry(context, colors),
+                _buildGoalPanelEntry(context, colors),
               ],
             ),
           ),
@@ -153,12 +223,10 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         overflow: TextOverflow.ellipsis,
       );
     }
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
+    return ListenableBuilder(
+      listenable: ZcodeChatStore.instance,
+      builder: (context, _) {
+        final wsName = _currentWorkspaceName();
         final display = wsName.isNotEmpty
             ? '$platformInfo · $wsName'
             : platformInfo;
@@ -172,6 +240,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
         );
       },
     );
+  }
+
+  /// 当前工作区名：取 store 选择态路径末段（无选择/空 = ''）
+  String _currentWorkspaceName() {
+    final path = ZcodeChatStore.instance.selectedWorkspacePath;
+    if (path == null || path.isEmpty) return '';
+    return _workspaceDisplayName(path);
   }
 
   /// 弹出桌面端选择器
@@ -253,7 +328,7 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                           : null,
                       onTap: () {
                         Navigator.pop(ctx);
-                        ConnectionManager.instance.selectDesktop(d.desktopId);
+                        _switchDesktop(d);
                       },
                     );
                   },
@@ -266,99 +341,122 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  /// 弹出工作区切换选择器
-  void _showWorkspaceSwitcher(AppColors colors) {
-    SessionSyncService.instance.fetchWorkspaces();
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.bgSecondary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                    Text('切换工作区',
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,),),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(ctx),
-                    child: Text('关闭',
-                    style: TextStyle(color: colors.textMuted, fontSize: 13,),),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            StreamBuilder<List<WorkspaceItem>>(
-              stream: SessionSyncService.instance.workspacesStream,
-              initialData: SessionSyncService.instance.workspaces,
-              builder: (context, snapshot) {
-                final workspaces = snapshot.data ?? [];
-                if (workspaces.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Text('暂无工作区',
-                    style: TextStyle(color: colors.textMuted, fontSize: 14,),),
-                  );
-                }
-                return ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(ctx).size.height * 0.55,
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: workspaces.length,
-                    itemBuilder: (ctx, i) {
-                      final ws = workspaces[i];
-                      return WorkspacePickerCard(
-                        workspace: ws,
-                        colors: colors,
-                        onWorkspaceTap: () {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                        },
-                        onSessionTap: (sessionId) {
-                          Navigator.pop(ctx);
-                          final path = ws.primaryPath;
-                          if (path != null && path.isNotEmpty) {
-                            SessionSyncService.instance.switchWorkspace(path);
-                          }
-                          SessionSyncService.instance.setActiveSession(sessionId);
-                        },
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+  /// 抽屉内切换桌面端：走真实连接切换（connectToStored）。
+  /// 此前这里调 selectDesktop 只改选中标记，连接与请求仍留在原桌面
+  /// （「当前」标签与实际目标不符，P1 修复）。「当前」标记由连接身份
+  /// 驱动：连接成功后 ConnectionManager 会把 selectedDesktopId 对齐。
+  Future<void> _switchDesktop(DesktopInfo d) async {
+    final cm = ConnectionManager.instance;
+    // 点的就是当前已连接的桌面：无需重连
+    if (d.desktopId == cm.selectedDesktopId &&
+        cm.state == WsConnectionState.connected) {
+      return;
+    }
+    final ok = await cm.connectToStored(d.desktopId);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('切换桌面失败：未找到该配对'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
         ),
+      );
+    }
+  }
+
+  /// 弹出工作区切换选择器（共享实现，欢迎页同款）
+  void _showWorkspaceSwitcher(AppColors colors) {
+    showWorkspaceSwitcherSheet(context);
+  }
+
+  /// 主列表范围：当前选中工作区的未归档会话（列表跟随上方选择；
+  /// 未选择工作区或会话缺工作区信息时不隐藏）。工作区条目的计数徽标
+  /// 与会话列表共用同一口径。
+  List<ZcodeSessionMeta> _scopedSessions() {
+    final store = ZcodeChatStore.instance;
+    final selectedKey = store.selectedWorkspaceKey;
+    final selectedPath = store.selectedWorkspacePath;
+    final hasScope = (selectedKey?.isNotEmpty ?? false) ||
+        (selectedPath?.isNotEmpty ?? false);
+    bool inScope(ZcodeSessionMeta s) {
+      if (_archivedIds.contains(s.sessionId)) return false;
+      if (!hasScope) return true;
+      if (selectedKey != null &&
+          selectedKey.isNotEmpty &&
+          s.workspaceKey == selectedKey) {
+        return true;
+      }
+      if (selectedPath != null &&
+          selectedPath.isNotEmpty &&
+          s.workspacePath == selectedPath) {
+        return true;
+      }
+      return false;
+    }
+
+    return store.sessions.where(inScope).toList();
+  }
+
+  /// 备注/改备注：空文本 = 清除备注（回退引擎标题）
+  Future<void> _editAlias(
+      BuildContext context, String sessionId, String fallbackTitle,) async {
+    final colors = AppColors.of(context);
+    final controller = TextEditingController(text: _aliases[sessionId] ?? '');
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: colors.bgElevated,
+        title: Text(
+          '会话备注',
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          style: TextStyle(color: colors.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: fallbackTitle,
+            hintStyle: TextStyle(color: colors.textMuted, fontSize: 13),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text('取消', style: TextStyle(color: colors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: Text('保存', style: TextStyle(color: colors.accent)),
+          ),
+        ],
       ),
     );
+    if (saved == null) return; // 未提交（取消）
+    if (!mounted) return;
+    setState(() {
+      if (saved.isEmpty) {
+        _aliases.remove(sessionId);
+      } else {
+        _aliases[sessionId] = saved;
+      }
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kAliasesKey, jsonEncode(_aliases));
+    } catch (_) {/* 备注尽力而为 */}
   }
 
   /// Workspace section — 显示当前工作区及切换按钮。
   Widget _buildWorkspaceSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final wsInfo = wsSnap.data;
-        final wsName = wsInfo?.workspaceName ?? '';
+    return ListenableBuilder(
+      listenable: ZcodeChatStore.instance,
+      builder: (context, _) {
+        final wsName = _currentWorkspaceName();
+        // 会话计数与会话列表同一口径（当前工作区未归档会话）
+        final sessionCount = _scopedSessions().length;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,6 +519,13 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    Text(
+                      '$sessionCount 会话',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textMuted,
+                      ),
+                    ),
                   ],
                 ),
               )
@@ -458,33 +563,32 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
     );
   }
 
-  Widget _buildFileBrowseEntry(BuildContext context, AppColors colors) {
+  /// 任务面板（悬浮窗还原：目标/进程/计划/智能体）
+  Widget _buildGoalPanelEntry(BuildContext context, AppColors colors) {
     return ListTile(
-      leading: Icon(Icons.folder_open, color: colors.textSecondary, size: 20),
+      leading: Icon(Icons.monitor_heart_outlined,
+          color: colors.textSecondary, size: 20,),
       title: Text(
-        '浏览文件',
+        '任务面板',
         style: TextStyle(color: colors.textSecondary, fontSize: 14),
       ),
       dense: true,
       onTap: () {
         Navigator.pop(context);
-        Navigator.pushNamed(context, '/files');
+        Navigator.pushNamed(context, '/goal-panel');
       },
     );
   }
 
+  /// 会话区 —— Option A：数据源为手机本地索引（只含手机创建/导入的
+  /// 会话），引擎 session/list 仅在「从引擎导入」时显式拉取。
   Widget _buildSessionSection(BuildContext context, AppColors colors) {
-    return StreamBuilder<WorkspaceInfo?>(
-      stream: SessionSyncService.instance.workspaceInfoStream,
-      initialData: SessionSyncService.instance.workspaceInfo,
-      builder: (context, wsSnap) {
-        final hasWorkspace = wsSnap.data != null;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
           child: Row(
             children: [
               Icon(Icons.history, size: 16, color: colors.textSecondary),
@@ -498,19 +602,32 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                 ),
               ),
               const Spacer(),
+              // 会话搜索：跨工作区按标题过滤
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    if (_searchOpen) {
+                      _searchController.clear();
+                      _sessionQuery = '';
+                    }
+                    _searchOpen = !_searchOpen;
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    _searchOpen ? Icons.search_off : Icons.search,
+                    size: 16,
+                    color: _searchOpen ? colors.accent : colors.textMuted,
+                  ),
+                ),
+              ),
+              // 新任务：进入欢迎态（首条消息时才建引擎会话）
               Builder(
                 builder: (context) => GestureDetector(
-                  onTap: () async {
-                    final result =
-                        await SessionSyncService.instance.createSession();
-                    if (result != null) {
-                      final sessionId = result['id'] as String?;
-                      if (sessionId != null) {
-                        SessionSyncService.instance.setActiveSession(sessionId);
-                        ChatStore.instance.switchToSession(sessionId, userInitiated: true);
-                        if (context.mounted) Navigator.pop(context);
-                      }
-                    }
+                  onTap: () {
+                    ZcodeChatStore.instance.closeSessionView();
+                    if (context.mounted) Navigator.pop(context);
                   },
                   child: Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -519,16 +636,14 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
                   ),
                 ),
               ),
-              StreamBuilder<bool>(
-                stream: SessionSyncService.instance.loadingStream,
-                initialData: SessionSyncService.instance.isLoading,
-                builder: (context, snapshot) {
-                  final isLoading = snapshot.data ?? false;
+              ListenableBuilder(
+                listenable: ZcodeChatStore.instance,
+                builder: (context, _) {
+                  final isLoading = ZcodeChatStore.instance.sessionsLoading;
                   return GestureDetector(
                     onTap: isLoading
                         ? null
-                        : () =>
-                            SessionSyncService.instance.fetchSessions(),
+                        : () => ZcodeChatStore.instance.refreshSessions(),
                     child: isLoading
                         ? SizedBox(
                             width: 14,
@@ -549,74 +664,229 @@ class _ProjectDrawerState extends State<ProjectDrawer> {
             ],
           ),
         ),
-        if (!hasWorkspace)
+        if (_searchOpen)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Text(
-              '请先选择工作区',
-              style: TextStyle(color: colors.textMuted, fontSize: 13),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: TextStyle(color: colors.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '跨工作区搜索会话标题',
+                hintStyle:
+                    TextStyle(color: colors.textMuted, fontSize: 12),
+                prefixIcon: Icon(Icons.search,
+                    size: 16, color: colors.textMuted,),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              onChanged: (v) => setState(() => _sessionQuery = v),
             ),
-          )
-        else
-        StreamBuilder<List<SessionMeta>>(
-          stream: SessionSyncService.instance.sessionsStream,
-          initialData: SessionSyncService.instance.sessions,
-          builder: (context, snapshot) {
-            final sessions = snapshot.data ?? [];
+          ),
+        ListenableBuilder(
+          listenable: ZcodeChatStore.instance,
+          builder: (context, _) {
+        final store = ZcodeChatStore.instance;
+        // 搜索非空：忽略工作区范围，跨工作区按标题过滤；否则 = 当前
+        // 工作区的未归档会话（对齐官方：列表跟随上方选中的工作区）
+        final query = _sessionQuery.trim().toLowerCase();
+        final sessions = query.isEmpty
+            ? _scopedSessions()
+            : store.sessions
+                .where(
+                  (s) =>
+                      !_archivedIds.contains(s.sessionId) &&
+                      (_aliases[s.sessionId] ?? s.title)
+                          .toLowerCase()
+                          .contains(query),
+                )
+                .toList();
 
+            final activeId = store.activeSessionId;
+
+            // 状态转换跟踪：运行中 → 记住；从运行转为非运行 → 挂绿点
+            // （点开会话时清除）。绿点只在「看过它跑」的前提下出现，
+            // 不伪造官方的云端未读语义。
+            for (final s in sessions) {
+              final busy = store.isSessionBusy(s.sessionId) ||
+                  s.status == 'running';
+              if (busy) {
+                _busySeen.add(s.sessionId);
+                _resultDots.remove(s.sessionId);
+              } else if (_busySeen.remove(s.sessionId)) {
+                _resultDots.add(s.sessionId);
+              }
+            }
+
+            Widget mainList;
             if (sessions.isEmpty) {
-              return Padding(
+              final hasElsewhere = store.sessions
+                  .any((s) => !_archivedIds.contains(s.sessionId));
+              final allArchived = _archivedIds.isNotEmpty;
+              mainList = Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Text(
-                  '暂无会话记录',
+                  query.isNotEmpty
+                      ? '没有匹配「${_sessionQuery.trim()}」的会话'
+                      : hasElsewhere
+                          ? '当前工作区暂无会话\n可切换工作区查看其他会话'
+                          : (allArchived
+                              ? '会话已全部归档\n可在下方展开查看'
+                              : '暂无会话记录\n连接大脑节点后自动加载'),
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               );
+            } else {
+            // 列表跟随上方选中的工作区，不再渲染工作区分组头：工作区名
+            // 与会话计数由上方专门的工作区条目承载（2026-09-18 用户定）。
+            // 排序：置顶优先，其余按引擎排序（新→旧）
+            sessions.sort((a, b) {
+              final ra = _pinnedIds.contains(a.sessionId) ? 0 : 1;
+              final rb = _pinnedIds.contains(b.sessionId) ? 0 : 1;
+              if (ra != rb) return ra - rb;
+              return b.updatedAt.compareTo(a.updatedAt);
+            });
+
+            mainList = Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final session in sessions)
+                  SwipeActionsTile(
+                      actions: [
+                        SwipeAction(
+                          label: _pinnedIds.contains(session.sessionId)
+                              ? '取消置顶'
+                              : '置顶',
+                          icon: Icons.push_pin,
+                          color: colors.accent,
+                          onTap: () => _togglePin(session.sessionId),
+                        ),
+                        SwipeAction(
+                          label:
+                              _aliases[session.sessionId] == null ? '备注' : '改备注',
+                          icon: Icons.edit_note,
+                          color: colors.textSecondary,
+                          onTap: () => _editAlias(
+                              context, session.sessionId, session.title,),
+                        ),
+                        SwipeAction(
+                          label: '归档',
+                          icon: Icons.archive_outlined,
+                          color: const Color(0xFF8B5CF6),
+                          onTap: () => _toggleArchive(session.sessionId),
+                        ),
+                        SwipeAction(
+                          label: '结束',
+                          icon: Icons.stop_circle_outlined,
+                          color: colors.error,
+                          onTap: () => ZcodeChatStore.instance
+                              .closeSession(session.sessionId),
+                        ),
+                      ],
+                      child: SessionListTile(
+                        session: session,
+                        alias: _aliases[session.sessionId],
+                        pinned: _pinnedIds.contains(session.sessionId),
+                        busy: store.isSessionBusy(session.sessionId),
+                        resultDot: _resultDots.contains(session.sessionId),
+                        isActive: session.sessionId == activeId,
+                        onTap: () => _onSessionTap(context, session),
+                      ),
+                    ),
+              ],
+            );
             }
 
-            return StreamBuilder<String?>(
-              stream: SessionSyncService.instance.activeSessionStream,
-              initialData: SessionSyncService.instance.activeSessionId,
-              builder: (context, activeSnapshot) {
-                final activeId = activeSnapshot.data;
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: sessions.map((session) {
-                    final isActive = session.id == activeId;
-                    return SessionListTile(
-                      session: session,
-                      isActive: isActive,
-                      onTap: () => _onSessionTap(context, session),
-                    );
-                  }).toList(),
-                );
-              },
+            // ── 已归档折叠区：归档会话本地隐藏于此，可取消归档或直接打开 ──
+            final archivedSessions = store.sessions
+                .where((s) => _archivedIds.contains(s.sessionId))
+                .toList()
+              ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                mainList,
+                if (archivedSessions.isNotEmpty)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkWell(
+                        onTap: () =>
+                            setState(() => _showArchived = !_showArchived),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                          child: Row(children: [
+                            Icon(
+                              _showArchived
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 14,
+                              color: colors.textMuted,
+                            ),
+                            const SizedBox(width: 6),
+                            Text('已归档 ${archivedSessions.length}',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.textMuted,),),
+                          ],),
+                        ),
+                      ),
+                      if (_showArchived)
+                        for (final session in archivedSessions)
+                          SwipeActionsTile(
+                            actions: [
+                              SwipeAction(
+                                label: '取消归档',
+                                icon: Icons.unarchive_outlined,
+                                color: colors.accent,
+                                onTap: () =>
+                                    _toggleArchive(session.sessionId),
+                              ),
+                            ],
+                            child: SessionListTile(
+                              session: session,
+                              isActive: session.sessionId == activeId,
+                              onTap: () => _onSessionTap(context, session),
+                            ),
+                          ),
+                    ],
+                  ),
+              ],
             );
           },
         ),
-          ],
-        );
-      },
+      ],
     );
   }
 
-  Future<void> _onSessionTap(BuildContext context, SessionMeta session) async {
-    SessionSyncService.instance.setActiveSession(session.id);
-    // 先切换（立即显示骨架屏），再异步拉取消息，避免切换后 loading 永远不关闭
-    ChatStore.instance.switchToSession(session.id, userInitiated: true);
-
+  Future<void> _onSessionTap(
+    BuildContext context,
+    ZcodeSessionMeta session,
+  ) async {
+    // 统一入口：openSession（materialize + 订阅 + 补放）；抽屉先收起，
+    // 拉取在后台继续。点开即消费完成绿点。
+    _resultDots.remove(session.sessionId);
+    _busySeen.remove(session.sessionId);
+    unawaited(ZcodeChatStore.instance.openSession(session.sessionId));
     if (context.mounted) Navigator.pop(context);
+  }
 
-    try {
-      // 修复：长会话超过 50 条时只取首页会丢消息；改用全量分页拉取
-      final messages = await SessionSyncService.instance
-          .loadAllSessionMessages(session.id, forceRefresh: true);
-      ChatStore.instance.loadFetchedMessages(session.id, messages);
-    } catch (_) {
-      // 拉取失败也要关闭 loading，避免骨架屏永久显示
-      ChatStore.instance.loadFetchedMessages(session.id, []);
+  /// 工作区组名：取路径末段（E:\ai\wzxClaw → wzxClaw；非路径 key 原样）
+  String _workspaceDisplayName(String key) {
+    final normalized = key.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final idx = normalized.lastIndexOf('/');
+    if (idx >= 0 && idx < normalized.length - 1) {
+      return normalized.substring(idx + 1);
     }
+    return key;
   }
 
   Widget _buildFooter(AppColors colors) {

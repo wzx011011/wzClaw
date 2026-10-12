@@ -47,7 +47,7 @@ void main() {
       await tester.pumpWidget(buildSubject());
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: SizedBox.shrink()),
-      ));
+      ),);
       await tester.pumpAndSettle();
       // No exceptions thrown — test passes if we reach here
       expect(find.byType(ThinkingIndicator), findsNothing);

@@ -1,0 +1,251 @@
+{
+  "create": {
+    "ok": true
+  },
+  "groundTruth": {
+    "count": 6,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jshzw_801a7190-5f80-4851-bb03-6e60a96b3096",
+        "role": "user",
+        "created": 1789348322594,
+        "textHead": "分页测试第 1 条：请只"
+      },
+      {
+        "id": "msg_mu0jsk0p_7ec64f08-363b-47a7-98a8-08952f5f6684",
+        "role": "assistant",
+        "created": 1789348325210,
+        "textHead": "1"
+      },
+      {
+        "id": "msg_mu0jtrcl_5e80889f-854c-4ea1-b9cb-7117068d90fa",
+        "role": "user",
+        "created": 1789348381371,
+        "textHead": "分页测试第 2 条：请只"
+      },
+      {
+        "id": "msg_mu0jtrnt_6ca1dacb-3bc6-407c-aac0-4da77a3784a5",
+        "role": "assistant",
+        "created": 1789348381769,
+        "textHead": "2"
+      },
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  },
+  "q1_pageOrder": {
+    "ascendingPairs": 5,
+    "descendingPairs": 0,
+    "ties": 0,
+    "verdict": "ascending(old→new)"
+  },
+  "q3_timestamp": {
+    "samples": [
+      1789348322594,
+      1789348325210,
+      1789348381371,
+      1789348381769,
+      1789348441409,
+      1789348441786
+    ],
+    "maxDigits": 13,
+    "granularity": "milliseconds",
+    "distinctCount": 6,
+    "total": 6,
+    "tiePairs": 0
+  },
+  "q1_limit2": {
+    "count": 2,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  },
+  "q1_limitWindow": {
+    "limit2Ids": [
+      "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+      "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92"
+    ],
+    "matchesOldestN": false,
+    "matchesNewestN": true,
+    "verdict": "newest-N(tail)"
+  },
+  "q2_afterFirst": {
+    "count": 5,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jsk0p_7ec64f08-363b-47a7-98a8-08952f5f6684",
+        "role": "assistant",
+        "created": 1789348325210,
+        "textHead": "1"
+      },
+      {
+        "id": "msg_mu0jtrcl_5e80889f-854c-4ea1-b9cb-7117068d90fa",
+        "role": "user",
+        "created": 1789348381371,
+        "textHead": "分页测试第 2 条：请只"
+      },
+      {
+        "id": "msg_mu0jtrnt_6ca1dacb-3bc6-407c-aac0-4da77a3784a5",
+        "role": "assistant",
+        "created": 1789348381769,
+        "textHead": "2"
+      },
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  },
+  "q2_verdict": {
+    "afterIds": [
+      "msg_mu0jsk0p_7ec64f08-363b-47a7-98a8-08952f5f6684",
+      "msg_mu0jtrcl_5e80889f-854c-4ea1-b9cb-7117068d90fa",
+      "msg_mu0jtrnt_6ca1dacb-3bc6-407c-aac0-4da77a3784a5",
+      "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+      "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92"
+    ],
+    "equalsAllAfterCursor": true,
+    "equalsNewestN": false,
+    "verdict": "cursor-forward(从游标向后取)"
+  },
+  "q4_afterFirstLimit2": {
+    "count": 2,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  },
+  "q4_verdict": {
+    "ids": [
+      "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+      "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92"
+    ],
+    "equalsFirst2AfterCursor": false,
+    "equalsNewest2": true,
+    "verdict": "newest-N(limit 生效于尾部,游标被忽略/仅过滤)"
+  },
+  "q2b_afterMid": {
+    "count": 2,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  },
+  "q2b_verdict": {
+    "midId": "msg_mu0jtrnt_6ca1dacb-3bc6-407c-aac0-4da77a3784a5",
+    "ids": [
+      "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+      "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92"
+    ],
+    "equalsRemainder": true
+  },
+  "q2c_afterLast": {
+    "count": 0,
+    "respKeys": [
+      "messages"
+    ],
+    "items": []
+  },
+  "q5_unknownCursor": {
+    "count": 5,
+    "respKeys": [
+      "messages"
+    ],
+    "items": [
+      {
+        "id": "msg_mu0jsk0p_7ec64f08-363b-47a7-98a8-08952f5f6684",
+        "role": "assistant",
+        "created": 1789348325210,
+        "textHead": "1"
+      },
+      {
+        "id": "msg_mu0jtrcl_5e80889f-854c-4ea1-b9cb-7117068d90fa",
+        "role": "user",
+        "created": 1789348381371,
+        "textHead": "分页测试第 2 条：请只"
+      },
+      {
+        "id": "msg_mu0jtrnt_6ca1dacb-3bc6-407c-aac0-4da77a3784a5",
+        "role": "assistant",
+        "created": 1789348381769,
+        "textHead": "2"
+      },
+      {
+        "id": "msg_mu0jv1oc_b6eb57c0-b9c9-47f7-b976-b9fd1b97de32",
+        "role": "user",
+        "created": 1789348441409,
+        "textHead": "分页测试第 3 条：请只"
+      },
+      {
+        "id": "msg_mu0jv1yy_4345424a-147f-4f84-bdfa-318b82fe1c92",
+        "role": "assistant",
+        "created": 1789348441786,
+        "textHead": "3"
+      }
+    ]
+  }
+}

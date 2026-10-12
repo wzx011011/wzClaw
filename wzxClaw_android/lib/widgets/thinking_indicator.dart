@@ -5,6 +5,95 @@ import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
 
+/// 实时思维链面板：无内容时显示 Shimmer 占位；reasoning_delta 内容到达后
+/// 切换为灰色折叠面板实时滚动（对应桌面端「思考」块）。
+class AgentThinkingBlock extends StatefulWidget {
+  final Stream<String> thinkingStream;
+  const AgentThinkingBlock({super.key, required this.thinkingStream});
+
+  @override
+  State<AgentThinkingBlock> createState() => _AgentThinkingBlockState();
+}
+
+class _AgentThinkingBlockState extends State<AgentThinkingBlock> {
+  bool _expanded = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<String>(
+      stream: widget.thinkingStream,
+      initialData: '',
+      builder: (context, snap) {
+        final text = snap.data ?? '';
+        if (text.trim().isEmpty) return const ThinkingIndicator();
+        final colors = AppColors.of(context);
+        return Container(
+          margin: const EdgeInsets.only(left: 12, right: 48, top: 4, bottom: 4),
+          decoration: BoxDecoration(
+            color: colors.bgTertiary,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.psychology_outlined,
+                          size: 16, color: colors.accent,),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '思考中',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        _expanded
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_right,
+                        size: 18,
+                        color: colors.textMuted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_expanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    // reverse 锚定底部：新内容到达自动贴底，无需滚动控制器
+                    child: SingleChildScrollView(
+                      reverse: true,
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.45,
+                          color: colors.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Shimmer "Thinking..." indicator shown while waiting for the first token.
 class ThinkingIndicator extends StatefulWidget {
   const ThinkingIndicator({super.key});
