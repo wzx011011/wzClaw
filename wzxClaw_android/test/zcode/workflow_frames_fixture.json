@@ -1,0 +1,255 @@
+{
+ "sessionId": "sess_probe_wf",
+ "frames": [
+  {
+   "method": "session/event",
+   "params": {
+    "sessionId": "sess_probe_wf",
+    "type": "model.streaming",
+    "payload": {
+     "assistantMessageId": "msg_mv44yk7v_d996cfd7-5dd7-4c10-8a3d-63dc724dc832",
+     "delta": "",
+     "done": false,
+     "kind": "tool_input_start",
+     "toolCallId": "call_eb41db894f14463a974c67ea",
+     "toolName": "CreateWorkflow"
+    }
+   }
+  },
+  {
+   "method": "session/event",
+   "params": {
+    "sessionId": "sess_probe_wf",
+    "type": "model.streaming",
+    "payload": {
+     "assistantMessageId": "msg_mv44yk7v_d996cfd7-5dd7-4c10-8a3d-63dc724dc832",
+     "delta": "",
+     "done": false,
+     "input": {
+      "name": "最小冒烟工作流",
+      "script": "phase(\"smoke\");\n\nconst answer = await agent(\"smoke-worker\").ask(\n  \"只回复两个字符:ok。不要使用任何工具,不要读文件,不要执行命令。\",\n);\n\nlog(`smoke-worker 已给出答案:「${answer}」`);\n\nreport({ subagent: \"smoke-worker\", answer });\n\nreturn `smoke 冒烟工作流完成:子代理 smoke-worker 的答案是「${answer}」。`;\n"
+     },
+     "kind": "tool_call",
+     "toolCallId": "call_eb41db894f14463a974c67ea",
+     "toolName": "CreateWorkflow"
+    }
+   }
+  },
+  {
+   "method": "session/event",
+   "params": {
+    "sessionId": "sess_probe_wf",
+    "type": "tool.updated",
+    "payload": {
+     "toolCallId": "call_eb41db894f14463a974c67ea",
+     "assistantMessageId": "msg_mv44yk7v_d996cfd7-5dd7-4c10-8a3d-63dc724dc832",
+     "toolName": "CreateWorkflow",
+     "dependencies": [],
+     "parallelGroupIndex": 0,
+     "canRunParallel": true,
+     "schedule": {
+      "parallelGroups": [
+       [
+        "call_eb41db894f14463a974c67ea"
+       ]
+      ],
+      "executionOrder": [
+       "call_eb41db894f14463a974c67ea"
+      ]
+     },
+     "kind": "scheduled",
+     "inputByteLength": 420,
+     "inputOmitted": true,
+     "inputRef": "model_stream"
+    }
+   }
+  },
+  {
+   "method": "session/event",
+   "params": {
+    "sessionId": "sess_probe_wf",
+    "type": "tool.updated",
+    "payload": {
+     "toolCallId": "call_eb41db894f14463a974c67ea",
+     "toolName": "CreateWorkflow",
+     "startedAt": 1791742090600,
+     "readOnly": false,
+     "sideEffectScope": "none",
+     "kind": "started"
+    }
+   }
+  },
+  {
+   "method": "session/event",
+   "params": {
+    "sessionId": "sess_probe_wf",
+    "type": "tool.updated",
+    "payload": {
+     "toolCallId": "call_eb41db894f14463a974c67ea",
+     "result": {
+      "success": true,
+      "content": "The workflow script compiled cleanly and the run started in the background with ID: dwfrun-4e08f1c4-9b01-4efa-ad60-7c8205367984. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait. The script is saved at .zcode\\workflow-drafts\\最小冒烟工作流.dwf.ts; to revise it later, edit that file and pass `path` to AmendWorkflow.",
+      "display": {
+       "kind": "create_workflow",
+       "ok": true,
+       "errorCount": 0,
+       "diagnostics": [],
+       "causalityGraph": {
+        "steps": [
+         {
+          "id": "ask#1",
+          "kind": "ask",
+          "label": "smoke-worker",
+          "line": 3,
+          "column": 44,
+          "lane": "actor#1",
+          "phase": "phase#1"
+         }
+        ],
+        "lanes": [
+         {
+          "id": "actor#1",
+          "name": "smoke-worker",
+          "line": 3,
+          "column": 22
+         }
+        ],
+        "participants": [
+         {
+          "id": "phase#1:actor#1",
+          "phase": "phase#1",
+          "lane": "actor#1",
+          "steps": [
+           "ask#1"
+          ]
+         }
+        ],
+        "handoffs": [],
+        "phases": [
+         {
+          "id": "phase#1",
+          "name": "smoke",
+          "line": 1,
+          "column": 1
+         }
+        ],
+        "phaseEdges": [],
+        "exits": [
+         "phase#1"
+        ],
+        "sink": [
+         "ask#1"
+        ]
+       }
+      },
+      "perf": {
+       "totalMs": 483,
+       "permissionWaitMs": 171
+      },
+      "truncated": false,
+      "originalBytes": 466,
+      "returnedBytes": 466,
+      "budgetStrategy": "truncate"
+     },
+     "duration": 123,
+     "kind": "result"
+    }
+   }
+  }
+ ],
+ "authoritativePart": {
+  "type": "tool",
+  "callID": "call_eb41db894f14463a974c67ea",
+  "declarationIndex": 0,
+  "tool": "CreateWorkflow",
+  "state": {
+   "status": "completed",
+   "input": {
+    "name": "最小冒烟工作流",
+    "script": "phase(\"smoke\");\n\nconst answer = await agent(\"smoke-worker\").ask(\n  \"只回复两个字符:ok。不要使用任何工具,不要读文件,不要执行命令。\",\n);\n\nlog(`smoke-worker 已给出答案:「${answer}」`);\n\nreport({ subagent: \"smoke-worker\", answer });\n\nreturn `smoke 冒烟工作流完成:子代理 smoke-worker 的答案是「${answer}」。`;\n"
+   },
+   "output": "The workflow script compiled cleanly and the run started in the background with ID: dwfrun-4e08f1c4-9b01-4efa-ad60-7c8205367984. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait. The script is saved at .zcode\\workflow-drafts\\最小冒烟工作流.dwf.ts; to revise it later, edit that file and pass `path` to AmendWorkflow.",
+   "title": "CreateWorkflow",
+   "metadata": {
+    "schemaVersion": 1,
+    "display": {
+     "kind": "create_workflow",
+     "ok": true,
+     "errorCount": 0,
+     "diagnostics": [],
+     "causalityGraph": {
+      "steps": [
+       {
+        "id": "ask#1",
+        "kind": "ask",
+        "label": "smoke-worker",
+        "line": 3,
+        "column": 44,
+        "lane": "actor#1",
+        "phase": "phase#1"
+       }
+      ],
+      "lanes": [
+       {
+        "id": "actor#1",
+        "name": "smoke-worker",
+        "line": 3,
+        "column": 22
+       }
+      ],
+      "participants": [
+       {
+        "id": "phase#1:actor#1",
+        "phase": "phase#1",
+        "lane": "actor#1",
+        "steps": [
+         "ask#1"
+        ]
+       }
+      ],
+      "handoffs": [],
+      "phases": [
+       {
+        "id": "phase#1",
+        "name": "smoke",
+        "line": 1,
+        "column": 1
+       }
+      ],
+      "phaseEdges": [],
+      "exits": [
+       "phase#1"
+      ],
+      "sink": [
+       "ask#1"
+      ]
+     }
+    },
+    "serialization": {
+     "truncated": false,
+     "originalBytes": 466,
+     "returnedBytes": 466,
+     "budgetStrategy": "truncate"
+    },
+    "readFileState": {
+     "schemaVersion": 1,
+     "tool": "CreateWorkflow",
+     "path": "C:\\Users\\67376\\AppData\\Local\\Temp\\zcode-probe-workflow-Cu0vPZ\\.zcode\\workflow-drafts\\最小冒烟工作流.dwf.ts",
+     "content": "phase(\"smoke\");\n\nconst answer = await agent(\"smoke-worker\").ask(\n  \"只回复两个字符:ok。不要使用任何工具,不要读文件,不要执行命令。\",\n);\n\nlog(`smoke-worker 已给出答案:「${answer}」`);\n\nreport({ subagent: \"smoke-worker\", answer });\n\nreturn `smoke 冒烟工作流完成:子代理 smoke-worker 的答案是「${answer}」。`;\n",
+     "isPartialView": false,
+     "readAtMs": 1791742090608,
+     "revisionId": "mtime:1791742090607:size:357",
+     "mtimeMs": 1791742090607,
+     "sizeBytes": 357
+    }
+   },
+   "time": {
+    "start": 1791742090600,
+    "end": 1791742090723
+   }
+  },
+  "id": "part_mv44z8ws_fc37f38e-315d-451c-8e1c-ef936d6b1d5e",
+  "sessionID": "sess_b5c4de61-5249-47bf-b9c0-0764cbc87bd9",
+  "messageID": "msg_mv44yk7v_d996cfd7-5dd7-4c10-8a3d-63dc724dc832"
+ }
+}

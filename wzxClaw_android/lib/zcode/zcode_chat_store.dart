@@ -63,6 +63,7 @@ import 'zcode_notifier.dart';
 import 'zcode_relay_client.dart';
 import 'zcode_reverse_models.dart';
 import 'zcode_session_cache.dart';
+import 'zcode_workflow_display.dart';
 import 'zcode_session_state.dart';
 
 /// 流式轮询间隔（降级路径：推送不可用时才启用）
@@ -2850,6 +2851,10 @@ class ZcodeChatStore extends ChangeNotifier {
         : (payload['input'] is Map ? payload['input'] as Map : const {});
     final metadata =
         payload['metadata'] is Map ? payload['metadata'] as Map : const {};
+    // 工作流名与 inputFull 同源：本帧有输入用本帧的（tool_input_* 流式
+    // 累积/tool_call 内联），否则继承上一帧——输入流收尾帧即可出名字
+    final effectiveInputFull =
+        hasInput ? _fullOf(input) : previous?.inputFull;
     String? meta(List<String> keys) =>
         _firstNonEmpty(payload, keys) ??
         _firstNonEmpty(inputMap, keys) ??
@@ -2888,6 +2893,18 @@ class ZcodeChatStore extends ChangeNotifier {
       outputTruncated: outputTruncated ?? previous?.outputTruncated ?? false,
       // 先败后成 = 已重试恢复：生命周期内见错即置位并随缓存持久化
       everError: toolError || (previous?.everError ?? false),
+      // live 形状（probe-workflow 实测）：tool.updated result 载荷把 display
+      // 放在 result.display；activeToolCalls 快照路径放 metadata.display
+      workflowDisplay: ZcodeWorkflowDisplay.fromEngineJson(
+            metadata['display'] ??
+                (payload['result'] is Map
+                    ? (payload['result'] as Map)['display']
+                    : null),
+          ) ??
+          previous?.workflowDisplay,
+      workflowName:
+          _workflowNameOf(inputMap, effectiveInputFull) ??
+              previous?.workflowName,
     );
   }
 
@@ -4443,7 +4460,33 @@ class ZcodeChatStore extends ChangeNotifier {
       background: p['background'] == true,
       description: meta(['description']),
       outputTruncated: state['truncated'] == true || p['truncated'] == true,
+      // 编排工具的结构化显示挂 state.metadata.display（probe-workflow 实测，
+      // APP-SERVER.md「workflow 数据面实测」）
+      workflowDisplay:
+          ZcodeWorkflowDisplay.fromEngineJson(metadata['display']),
+      workflowName: _workflowNameOf(inputMap, _fullOf(input)),
     );
+  }
+
+  /// 编排工作流名（input.name，CreateWorkflow/SaveWorkflow 实测带）；
+  /// 非编排工具或无名 run 返回 null。
+  /// live 帧兜底（probe-workflow 实测）：scheduled 帧只带 inputRef——名字
+  /// 要么来自内联 input 的 name 键，要么从有效输入全文（tool_input_* 流式
+  /// 累积 / tool_call 内联）的 JSON 提取；输入未完整时解析失败静默为 null
+  ///（权威回填会补），不留占位。
+  String? _workflowNameOf(Map inputMap, [String? inputFull]) {
+    final name = inputMap['name'];
+    if (name is String && name.isNotEmpty) return name;
+    final full = inputFull?.trim();
+    if (full == null || !full.startsWith('{')) return null;
+    try {
+      final decoded = jsonDecode(full);
+      final fromFull = decoded is Map ? decoded['name'] : null;
+      if (fromFull is String && fromFull.isNotEmpty) return fromFull;
+    } catch (_) {
+      // 输入未完整/畸形：无名可提，行上暂缺名不致命
+    }
+    return null;
   }
 
   /// info.time.created → DateTime（毫秒时间戳或 ISO 字符串兜底）

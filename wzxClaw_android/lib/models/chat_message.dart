@@ -7,6 +7,8 @@
 // toolCalls 列表——旧模型已删除，不做兼容。
 // ============================================================
 
+import '../zcode/zcode_workflow_display.dart';
+
 /// 消息主体：user 发言或 assistant 产出（后者承载过程行）
 enum MessageRole { user, assistant }
 
@@ -56,6 +58,15 @@ class ToolCallInfo {
   /// 实时投影 OR 累积并随缓存持久化；权威数据只有终态，尽力而为。
   final bool everError;
 
+  /// CreateWorkflow/SaveWorkflow 等编排工具的结构化显示
+  /// （引擎 state.metadata.display / live result.display，APP-SERVER.md
+  /// 「workflow 数据面实测」）。非编排工具恒 null。
+  final ZcodeWorkflowDisplay? workflowDisplay;
+
+  /// 编排的工作流名（引擎 input.name）；无名字的 run（AmendWorkflow 设置轮）
+  /// 为 null，卡片回退 kind 标签。
+  final String? workflowName;
+
   const ToolCallInfo({
     required this.toolCallId,
     required this.toolName,
@@ -77,6 +88,8 @@ class ToolCallInfo {
     this.description,
     this.outputTruncated = false,
     this.everError = false,
+    this.workflowDisplay,
+    this.workflowName,
   });
 
   ToolCallInfo copyWith({
@@ -99,6 +112,8 @@ class ToolCallInfo {
     String? description,
     bool? outputTruncated,
     bool? everError,
+    ZcodeWorkflowDisplay? workflowDisplay,
+    String? workflowName,
   }) =>
       ToolCallInfo(
         toolCallId: toolCallId,
@@ -121,6 +136,8 @@ class ToolCallInfo {
         description: description ?? this.description,
         outputTruncated: outputTruncated ?? this.outputTruncated,
         everError: everError ?? this.everError,
+        workflowDisplay: workflowDisplay ?? this.workflowDisplay,
+        workflowName: workflowName ?? this.workflowName,
       );
 
   Map<String, dynamic> toJson() => {
@@ -145,6 +162,8 @@ class ToolCallInfo {
         if (description != null) 'description': description,
         if (outputTruncated) 'outputTruncated': true,
         if (everError) 'everError': true,
+        if (workflowDisplay != null) 'workflowDisplay': workflowDisplay!.toJson(),
+        if (workflowName != null) 'workflowName': workflowName,
       };
 
   factory ToolCallInfo.fromJson(Map<String, dynamic> json) {
@@ -182,6 +201,8 @@ class ToolCallInfo {
       description: json['description'] as String?,
       outputTruncated: json['outputTruncated'] == true,
       everError: json['everError'] == true,
+      workflowDisplay: ZcodeWorkflowDisplay.fromCacheJson(json['workflowDisplay']),
+      workflowName: json['workflowName'] as String?,
     );
   }
 }

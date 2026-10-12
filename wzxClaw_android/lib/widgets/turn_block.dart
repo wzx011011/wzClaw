@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
 import '../models/chat_message.dart';
+import '../zcode/zcode_workflow_display.dart';
 import 'streaming_shimmer.dart';
 
 /// ── 回合块（Turn Block）视图模型与渲染 ─────────────────────────────
@@ -16,7 +17,7 @@ import 'streaming_shimmer.dart';
 /// 家族决定种类标签（shell→终端、read→读取、search→搜索、write→写入、
 /// edit→编辑、message→消息，其余=工具名）；查阅桶决定查阅组成员资格；
 /// terminalGroupable 决定终端组成员资格（非白名单且有命令的 shell）。
-enum _ToolFamily { shell, read, search, write, edit, message, other }
+enum _ToolFamily { shell, read, search, write, edit, message, workflow, other }
 
 class _ToolClass {
   const _ToolClass(this.family, {this.bucket, this.terminalGroupable = false});
@@ -95,6 +96,20 @@ Map<String, dynamic>? _tryParseInputObject(String? input) {
 /// 家族 + 分组资格分类。消息卡按输入结构识别（to + message/summary，
 /// 官方 kind local_agent_message），不认工具名。
 _ToolClass _classifyTool(String toolName, String? input) {
+  // 编排家族：dynamic workflow 工具面（0.16.9 实测注册表，probe-workflow）；
+  // 结构化显示走 ToolCallInfo.workflowDisplay，标签见 _familyLabel
+  switch (toolName) {
+    case 'CreateWorkflow':
+    case 'AmendWorkflow':
+    case 'SaveWorkflow':
+    case 'EvalWorkflowSnippet':
+    case 'ListSavedWorkflows':
+    case 'ListWorkflowRuns':
+    case 'GetWorkflowRun':
+    case 'ResumeWorkflowRun':
+    case 'ResolveWorkflowQuestion':
+      return const _ToolClass(_ToolFamily.workflow);
+  }
   // 官方 kind=message（app.asar 映射表逐字提取）：子智能体向协调器回报
   // （输入 summary+message，无 to），与 SendMessage 同类
   if (toolName == 'RespondToCoordinator') {
@@ -191,6 +206,29 @@ String _familyLabel(_ToolClass cls, String toolName, {required bool running}) {
       return running ? '编辑' : '已编辑';
     case _ToolFamily.message:
       return running ? '正在发送消息' : '消息';
+    case _ToolFamily.workflow:
+      // 官方 chat.toolCall.kind.* 无 workflow 专项标签（app.asar 复查
+      // 2026-10-11），此处为语义自定标签（设计原则 5：近似词典显式化）
+      switch (toolName) {
+        case 'SaveWorkflow':
+          return '保存工作流';
+        case 'AmendWorkflow':
+          return '调整工作流';
+        case 'EvalWorkflowSnippet':
+          return '测试片段';
+        case 'ListSavedWorkflows':
+          return '工作流库';
+        case 'ListWorkflowRuns':
+          return '运行历史';
+        case 'GetWorkflowRun':
+          return '运行详情';
+        case 'ResumeWorkflowRun':
+          return '恢复运行';
+        case 'ResolveWorkflowQuestion':
+          return '回答问题';
+        default:
+          return running ? '正在启动工作流' : '工作流';
+      }
     case _ToolFamily.other:
       if (toolName == 'WebFetch' || toolName == 'web-fetch') return '获取';
       // 官方 kind 标签优先（TodoWrite=待办/TaskOutput=任务输出/…）；
@@ -467,6 +505,8 @@ class _ToolView {
     this.everError = false,
     this.subagentType,
     this.lifecycle,
+    this.workflowDisplay,
+    this.workflowName,
   });
 
   final String name;
@@ -477,6 +517,12 @@ class _ToolView {
   final DateTime createdAt;
   final String? subagentType;
   final String? lifecycle;
+
+  /// 编排工具的结构化显示（store 从引擎 metadata.display 提取）
+  final ZcodeWorkflowDisplay? workflowDisplay;
+
+  /// 编排的工作流名（input.name）；无名 run 为 null
+  final String? workflowName;
 
   /// 同 callID 历史上是否失败过（先败后成 = 已重试恢复）
   final bool everError;
@@ -614,7 +660,11 @@ TurnVM buildTurnVM(
     final label = _familyLabel(cls, view.name, running: running);
     // 已完成但输入缺失（0.16.9 偶发）：显式标注而非空白行
     final resolvedTarget = _toolTarget(view.name, view.input);
-    final target = resolvedTarget.isEmpty && !running ? '输入未捕获' : resolvedTarget;
+    // 工作流行目标 = 工作流名（引擎 input.name）；结构化名优先于裸输入摘要
+    final target = cls.family == _ToolFamily.workflow
+        ? (view.workflowName ??
+            (resolvedTarget.isEmpty && !running ? '输入未捕获' : resolvedTarget))
+        : (resolvedTarget.isEmpty && !running ? '输入未捕获' : resolvedTarget);
     parts.add(
       TurnPart.tool(
         TurnToolRow(
@@ -691,6 +741,8 @@ TurnVM buildTurnVM(
       everError: tool.everError || tool.isError,
       subagentType: tool.subagentType,
       lifecycle: tool.lifecycle,
+      workflowDisplay: tool.workflowDisplay,
+      workflowName: tool.workflowName,
     );
   }
 
@@ -917,7 +969,14 @@ TurnToolRow _memberRow(_ToolView view) {
 }
 
 List<TurnDetailLine> _memberDetails(_ToolView view) {
-  final lines = <TurnDetailLine>[_memberLine(view)];
+  // 工作流行：结构化因果图投影（阶段流水线/参与者/诊断）置顶，
+  // 原始输入（脚本 JSON）与输出照常附后
+  final lines = <TurnDetailLine>[];
+  final cls = _classifyTool(view.name, view.input);
+  if (cls.family == _ToolFamily.workflow) {
+    lines.addAll(_workflowLines(view));
+  }
+  lines.add(_memberLine(view));
   final input = view.input?.trim();
   if (input != null && input.isNotEmpty) {
     lines.add(
@@ -930,6 +989,69 @@ List<TurnDetailLine> _memberDetails(_ToolView view) {
   final output = view.output?.trim();
   if (output != null && output.isNotEmpty) {
     lines.add(TurnDetailLine(output));
+  }
+  return lines;
+}
+
+/// 工作流卡的展开细节：阶段流水线 + 参与者摘要 + 编译诊断。
+/// 数据源 = ToolCallInfo.workflowDisplay（probe-workflow 实测形状）；
+/// 无结构化显示（引擎未给/解析失败）时返回空表，回退纯名字行。
+List<TurnDetailLine> _workflowLines(_ToolView view) {
+  final display = view.workflowDisplay;
+  if (display == null) return const [];
+  final lines = <TurnDetailLine>[];
+  final graph = display.causalityGraph;
+  if (graph != null) {
+    if (graph.phases.isNotEmpty) {
+      // 阶段流水线：按阶段表序聚合参与者（fan-out 展开成员/many 卡计数）
+      for (final phase in graph.phases) {
+        final members = graph.participants
+            .where((p) => p.phase == phase.id)
+            .toList(growable: false);
+        final laneNames = <String>[];
+        var stepCount = 0;
+        for (final m in members) {
+          final lane = graph.lanes.where((l) => l.id == m.lane).firstOrNull;
+          final name = lane?.name ?? m.lane;
+          final suffix = m.many
+              ? '×N'
+              : (m.memberIndex != null && m.memberOf != null
+                  ? '×${m.memberOf}'
+                  : '');
+          final label = '$name$suffix';
+          if (!laneNames.contains(label)) laneNames.add(label);
+          stepCount += m.steps.length;
+        }
+        lines.add(TurnDetailLine(
+          '${phase.name ?? '未分阶段'}：${laneNames.isEmpty ? '（无参与者）' : laneNames.join('、')}'
+          '${stepCount > 0 ? ' · $stepCount 步' : ''}',
+        ),);
+      }
+    } else {
+      // 无 phase 标记的脚本：退回车道视图（每车道一行的步骤计数）
+      for (final lane in graph.lanes) {
+        final steps =
+            graph.steps.where((s) => s.lane == lane.id).length;
+        lines.add(TurnDetailLine('${lane.name ?? lane.id} · $steps 步'),);
+      }
+    }
+    if (graph.truncated || display.truncated) {
+      lines.add(const TurnDetailLine('（图过大已被引擎截断，仅显示部分）'),);
+    }
+  }
+  if (!display.ok || display.diagnostics.isNotEmpty) {
+    for (final d in display.diagnostics) {
+      lines.add(TurnDetailLine(
+        '编译诊断 L${d.line}C${d.column} #${d.code}：${d.message}',
+        kind: DetailLineKind.del,
+      ),);
+    }
+    if (display.diagnostics.isEmpty && !display.ok) {
+      lines.add(const TurnDetailLine(
+        '编译失败（引擎未返回诊断明细）',
+        kind: DetailLineKind.del,
+      ),);
+    }
   }
   return lines;
 }
